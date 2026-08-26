@@ -622,3 +622,53 @@ async fn node_timeout_is_structured_and_tampered_snapshot_is_rejected() {
         .expect_err("tampered content hash must fail");
     assert!(error.to_string().contains("content hash mismatch"));
 }
+
+#[tokio::test]
+async fn commit_builtin_cannot_be_overridden_or_accept_unvalidated_artifacts() {
+    let workflow = published(
+        vec![
+            node(
+                "input",
+                "input",
+                WorkflowNodeKind::ImageInput,
+                Vec::new(),
+                vec![port("candidates")],
+            ),
+            node(
+                "commit",
+                "commit",
+                WorkflowNodeKind::Commit,
+                vec![port("candidates")],
+                vec![port("candidates")],
+            ),
+        ],
+        vec![edge("input", "commit", None)],
+    );
+    let mut executor = PublishedDagExecutor::new();
+    executor
+        .register_runner("commit", Arc::new(PassthroughRunner), false)
+        .expect("attempted override registration");
+    let candidate = artifact(0.99, ArtifactValidationState::Unvalidated);
+    let request = DagExecutionRequest {
+        run_id: RunId::new(),
+        image_id: candidate.image_id,
+        initial_artifacts: vec![candidate],
+        cancellation: CancellationToken::new(),
+    };
+    let result = executor
+        .execute(&workflow, &request)
+        .await
+        .expect("safe failure result");
+    assert_eq!(result.status, DagRunStatus::Failed);
+    let commit_trace = result
+        .checkpoint
+        .traces
+        .iter()
+        .find(|trace| trace.node_id == "commit")
+        .expect("commit trace");
+    assert_eq!(
+        commit_trace.error.as_ref().map(|error| error.code.as_str()),
+        Some("unsafe_commit_input")
+    );
+    assert!(result.committed.is_empty());
+}
