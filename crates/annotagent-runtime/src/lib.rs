@@ -2,6 +2,7 @@
 
 mod context;
 mod control;
+mod dag;
 mod engine;
 mod hybrid;
 mod registry;
@@ -10,6 +11,7 @@ mod tool_registry;
 
 pub use context::*;
 pub use control::*;
+pub use dag::*;
 pub use engine::*;
 pub use hybrid::*;
 pub use registry::*;

@@ -169,6 +169,7 @@ export interface WorkflowEdge {
   from_port: string;
   to_node: string;
   to_port: string;
+  route?: string;
 }
 
 export interface WorkflowDraft {

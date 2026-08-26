@@ -63,6 +63,9 @@ pub struct WorkflowEdge {
     pub from_port: String,
     pub to_node: String,
     pub to_port: String,
+    /// Optional route selected by a Gate node. `None` means an unconditional data edge.
+    #[serde(default)]
+    pub route: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -376,6 +379,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                     from_port: "candidates".to_owned(),
                     to_node: task_id.clone(),
                     to_port: format!("from_{dependency}"),
+                    route: None,
                 });
             }
             nodes.push(WorkflowDraftNode {
@@ -430,6 +434,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 from_port: "candidates".to_owned(),
                 to_node: "validate_candidates".to_owned(),
                 to_port: format!("from_{id}"),
+                route: None,
             });
         }
         nodes.push(system_node(
@@ -1219,6 +1224,7 @@ mod tests {
                 from_port: "candidates".to_owned(),
                 to_node: "commit".to_owned(),
                 to_port: "candidates".to_owned(),
+                route: None,
             }],
         );
         let report = WorkflowStaticValidator.validate(
