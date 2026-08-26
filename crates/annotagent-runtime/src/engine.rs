@@ -7,13 +7,14 @@ use std::{
 
 use annotagent_core::{
     AdditionalUsage, AgentTool, Annotation, AnnotationId, AnnotationProvenance, AnnotationRevision,
-    AnnotationRevisionId, AnnotationSource, AnnotationValue, ArtifactId, ArtifactRole,
-    ArtifactValidationState, Budget, CoreError, DomainSkill, ImageFrame, ImageId, IssueSeverity,
-    LabelId, ModelImage, ModelMessage, ModelRequest, ModelRole, PricingConfig, ProjectSchema,
-    RefinementContext, ReviewDecision, ReviewStatus, RevisionActor, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, SuggestedAction, TaskConfig, TaskId, TaskKind,
+    AnnotationRevisionId, AnnotationSource, AnnotationValue, ArtifactId, ArtifactProvenance,
+    ArtifactRole, ArtifactValidationState, Budget, CoreError, DomainSkill, ImageFrame, ImageId,
+    IssueSeverity, LabelId, ModelImage, ModelMessage, ModelRequest, ModelRole, PricingConfig,
+    ProjectSchema, RefinementContext, ReviewDecision, ReviewStatus, RevisionActor, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, SuggestedAction, TaskConfig, TaskId, TaskKind,
     TaskRunStatus, ToolContext, ToolDefinition, ToolResult, UsageRecord, UsageSource, UsageTotals,
-    ValidationContext, ValidationEvidence, ValidationIssue, VisionArtifact, VisionModelProvider,
+    ValidationContext, ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue,
+    VisionModelProvider,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -269,6 +270,7 @@ impl AgentRuntime {
                 .await?;
                 continue;
             }
+            let task_started = Instant::now();
             let outcome = match tokio::time::timeout(
                 self.config.task_timeout,
                 self.run_task(&request, task, &committed, &tools),
@@ -277,12 +279,15 @@ impl AgentRuntime {
             {
                 Ok(Ok(outcome)) => outcome,
                 Err(_) => {
+                    let elapsed_ms =
+                        u64::try_from(task_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     let message = format!(
-                        "task {} timed out after {} ms",
-                        task.id,
-                        self.config.task_timeout.as_millis()
+                        "task timeout: task={} node={} elapsed_ms={} code=task_timeout",
+                        task.id, task.id, elapsed_ms
                     );
                     all_issues.push(runtime_issue("task_timeout", &message));
+                    self.publish_task_failure(&request, task, elapsed_ms, "task_timeout", &message)
+                        .await?;
                     failed_tasks.insert(task.id.clone());
                     if task.required {
                         required_failures.insert(task.id.clone());
@@ -294,8 +299,21 @@ impl AgentRuntime {
                     continue;
                 }
                 Ok(Err(error)) => {
-                    let message = format!("task {} failed: {error}", task.id);
+                    let elapsed_ms =
+                        u64::try_from(task_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let message = format!(
+                        "task failed: task={} node={} elapsed_ms={} code=task_runtime_failed error={error}",
+                        task.id, task.id, elapsed_ms
+                    );
                     all_issues.push(runtime_issue("task_runtime_failed", &message));
+                    self.publish_task_failure(
+                        &request,
+                        task,
+                        elapsed_ms,
+                        "task_runtime_failed",
+                        &message,
+                    )
+                    .await?;
                     failed_tasks.insert(task.id.clone());
                     if task.required {
                         required_failures.insert(task.id.clone());
@@ -358,26 +376,38 @@ impl AgentRuntime {
             _ => RunStatus::Completed,
         };
         if !matches!(status, RunStatus::BudgetExceeded) {
+            let operational_detail = operational_issues
+                .iter()
+                .map(|issue| format!("{}: {}", issue.code, issue.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let append_detail = |summary: String| {
+                if operational_detail.is_empty() {
+                    summary
+                } else {
+                    format!("{summary}; details: {operational_detail}")
+                }
+            };
             let terminal_reason = match status {
-                RunStatus::Failed => format!(
+                RunStatus::Failed => append_detail(format!(
                     "required tasks failed: {}",
                     required_failures
                         .iter()
                         .map(TaskId::as_str)
                         .collect::<Vec<_>>()
                         .join(", ")
-                ),
+                )),
                 RunStatus::CompletedWithReview => {
                     "one or more candidates require human review".to_owned()
                 }
-                RunStatus::Partial => format!(
+                RunStatus::Partial => append_detail(format!(
                     "optional tasks failed: {}",
                     optional_failures
                         .iter()
                         .map(TaskId::as_str)
                         .collect::<Vec<_>>()
                         .join(", ")
-                ),
+                )),
                 RunStatus::Completed => {
                     "all configured tasks succeeded, including valid empty results".to_owned()
                 }
@@ -523,6 +553,8 @@ impl AgentRuntime {
                 Ok(Ok(response)) => response,
                 Ok(Err(error)) => {
                     provider_failures += 1;
+                    let elapsed_ms =
+                        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     let additional = AdditionalUsage {
                         image_count: u64::from(request.model_image.is_some()),
                         request_count: 1,
@@ -540,8 +572,7 @@ impl AgentRuntime {
                         endpoint_summary: self.provider.name().to_owned(),
                         started_at,
                         completed_at: Utc::now(),
-                        duration_ms: u64::try_from(started.elapsed().as_millis())
-                            .unwrap_or(u64::MAX),
+                        duration_ms: elapsed_ms,
                         tokens: unknown_tokens.clone(),
                         additional: additional.clone(),
                         request_id: None,
@@ -557,15 +588,28 @@ impl AgentRuntime {
                         let mut totals = self.usage.lock().await;
                         totals.add(&failure_record);
                     }
+                    let summary = format!(
+                        "provider error: task={} node={} provider={} model={} elapsed_ms={} retry={} code=provider_error error={error}",
+                        task.id,
+                        task.id,
+                        self.provider.name(),
+                        self.config.model,
+                        elapsed_ms,
+                        provider_failures,
+                    );
                     self.publish(
                         RunEvent::new(
                             request.run_id,
                             RunEventKind::ModelCallFailed,
-                            RunEventPayload::Message {
-                                summary: format!(
-                                    "model request failed ({provider_failures}/{}): {error}",
-                                    self.config.max_retries
-                                ),
+                            RunEventPayload::ProviderFailure {
+                                task_id: task.id.clone(),
+                                node_id: task.id.to_string(),
+                                provider: self.provider.name().to_owned(),
+                                model: self.config.model.clone(),
+                                elapsed_ms,
+                                retry_count: provider_failures,
+                                error_code: "provider_error".to_owned(),
+                                summary,
                             },
                         )
                         .scoped(Some(request.image_id), Some(task.id.clone())),
@@ -1571,6 +1615,8 @@ impl AgentRuntime {
         let mut output = CandidateDecision::default();
         let peer_candidates = candidates.clone();
         for mut candidate in candidates {
+            let mut latest_refiner_artifact = None;
+            let mut artifact_revision = 0_u32;
             let correction_risk = self
                 .store
                 .correction_risk(
@@ -1602,6 +1648,32 @@ impl AgentRuntime {
                 )
                 .await?;
                 let before = candidate.snapshot();
+                if latest_refiner_artifact.is_none() {
+                    let original = VisionArtifact {
+                        id: ArtifactId::new(),
+                        image_id: candidate.image_id,
+                        task_id: Some(task.id.clone()),
+                        label: candidate.label.clone(),
+                        role: ArtifactRole::Candidate,
+                        value: VisionArtifactValue::from_annotation_value(&before.value),
+                        source_node: format!("{refiner_id}.input"),
+                        confidence: before.confidence,
+                        metadata: BTreeMap::new(),
+                        validation_state: ArtifactValidationState::Unvalidated,
+                        provenance: ArtifactProvenance {
+                            provider: candidate.provenance.provider.clone(),
+                            model: candidate.provenance.model.clone(),
+                            ..ArtifactProvenance::default()
+                        },
+                        revision: 1,
+                        replaces_artifact_id: None,
+                        created_at: Utc::now(),
+                    };
+                    self.record_artifact_created(request, task, &original, "original candidate")
+                        .await?;
+                    latest_refiner_artifact = Some(original.id);
+                    artifact_revision = 1;
+                }
                 let result = refiner
                     .refine(&RefinementContext {
                         project: &request.project,
@@ -1613,6 +1685,39 @@ impl AgentRuntime {
                 candidate = result.annotation;
                 candidate.source = AnnotationSource::ModelAndTool;
                 refiner_confidence = Some(result.confidence);
+                artifact_revision = artifact_revision.saturating_add(1);
+                let refined_artifact = VisionArtifact {
+                    id: ArtifactId::new(),
+                    image_id: candidate.image_id,
+                    task_id: Some(task.id.clone()),
+                    label: candidate.label.clone(),
+                    role: ArtifactRole::RefinedCandidate,
+                    value: VisionArtifactValue::from_annotation_value(&candidate.value),
+                    source_node: refiner_id.clone(),
+                    confidence: Some(result.confidence),
+                    metadata: BTreeMap::from([(
+                        "refiner_summary".to_owned(),
+                        json!(result.summary),
+                    )]),
+                    validation_state: ArtifactValidationState::Unvalidated,
+                    provenance: ArtifactProvenance {
+                        provider: candidate.provenance.provider.clone(),
+                        model: candidate.provenance.model.clone(),
+                        tool: Some(refiner_id.clone()),
+                        input_artifact_ids: latest_refiner_artifact.into_iter().collect(),
+                        ..ArtifactProvenance::default()
+                    },
+                    revision: artifact_revision,
+                    replaces_artifact_id: latest_refiner_artifact,
+                    created_at: Utc::now(),
+                };
+                refined_artifact
+                    .validate()
+                    .map_err(|error| RuntimeError::Candidate(error.to_string()))?;
+                self.record_artifact_created(request, task, &refined_artifact, "refined candidate")
+                    .await?;
+                latest_refiner_artifact = Some(refined_artifact.id);
+                candidate.provenance.artifact_ids.push(refined_artifact.id);
                 self.store
                     .record_revision(&AnnotationRevision {
                         revision_id: AnnotationRevisionId::new(),
@@ -1719,9 +1824,25 @@ impl AgentRuntime {
                         .scoped(Some(request.image_id), Some(task.id.clone())),
                     )
                     .await?;
+                    self.finalize_refiner_artifact(
+                        request,
+                        task,
+                        latest_refiner_artifact,
+                        ArtifactValidationState::Valid,
+                        true,
+                    )
+                    .await?;
                     output.committed.push(candidate);
                 }
                 ReviewDecision::Retry { reasons } => {
+                    self.finalize_refiner_artifact(
+                        request,
+                        task,
+                        latest_refiner_artifact,
+                        ArtifactValidationState::Invalid,
+                        false,
+                    )
+                    .await?;
                     output.retry = true;
                     output.issues.push(runtime_issue(
                         "policy_retry",
@@ -1746,9 +1867,25 @@ impl AgentRuntime {
                         .scoped(Some(request.image_id), Some(task.id.clone())),
                     )
                     .await?;
+                    self.finalize_refiner_artifact(
+                        request,
+                        task,
+                        latest_refiner_artifact,
+                        ArtifactValidationState::NeedsReview,
+                        false,
+                    )
+                    .await?;
                     output.review_queue.push(candidate);
                 }
                 ReviewDecision::Reject { reasons } => {
+                    self.finalize_refiner_artifact(
+                        request,
+                        task,
+                        latest_refiner_artifact,
+                        ArtifactValidationState::Invalid,
+                        false,
+                    )
+                    .await?;
                     output.issues.push(runtime_issue(
                         "policy_rejected",
                         &format!("candidate rejected: {}", reasons.join("; ")),
@@ -1757,6 +1894,84 @@ impl AgentRuntime {
             }
         }
         Ok(output)
+    }
+
+    async fn record_artifact_created(
+        &self,
+        request: &ImageRunRequest,
+        task: &TaskConfig,
+        artifact: &VisionArtifact,
+        stage: &str,
+    ) -> Result<(), RuntimeError> {
+        artifact
+            .validate()
+            .map_err(|error| RuntimeError::Candidate(error.to_string()))?;
+        self.store
+            .record_artifact(request.run_id, artifact)
+            .await
+            .map_err(RuntimeError::Store)?;
+        self.publish(
+            RunEvent::new(
+                request.run_id,
+                RunEventKind::ArtifactCreated,
+                RunEventPayload::Artifact {
+                    artifact_ids: vec![artifact.id],
+                    summary: format!(
+                        "{stage}: {} revision {} from {}",
+                        artifact.value.kind_name(),
+                        artifact.revision,
+                        artifact.source_node
+                    ),
+                },
+            )
+            .scoped(Some(request.image_id), Some(task.id.clone())),
+        )
+        .await
+    }
+
+    async fn finalize_refiner_artifact(
+        &self,
+        request: &ImageRunRequest,
+        task: &TaskConfig,
+        artifact_id: Option<ArtifactId>,
+        state: ArtifactValidationState,
+        committed: bool,
+    ) -> Result<(), RuntimeError> {
+        let Some(artifact_id) = artifact_id else {
+            return Ok(());
+        };
+        self.store
+            .set_artifact_validation_state(request.run_id, artifact_id, state)
+            .await
+            .map_err(RuntimeError::Store)?;
+        self.publish(
+            RunEvent::new(
+                request.run_id,
+                RunEventKind::ArtifactValidated,
+                RunEventPayload::Artifact {
+                    artifact_ids: vec![artifact_id],
+                    summary: format!("refined artifact validation result: {state:?}"),
+                },
+            )
+            .scoped(Some(request.image_id), Some(task.id.clone())),
+        )
+        .await?;
+        if committed {
+            self.publish(
+                RunEvent::new(
+                    request.run_id,
+                    RunEventKind::ArtifactCommitted,
+                    RunEventPayload::Artifact {
+                        artifact_ids: vec![artifact_id],
+                        summary: "validated refined artifact committed without geometry rewrite"
+                            .to_owned(),
+                    },
+                )
+                .scoped(Some(request.image_id), Some(task.id.clone())),
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn publish(&self, event: RunEvent) -> Result<(), RuntimeError> {
@@ -1813,6 +2028,31 @@ impl AgentRuntime {
                             .unwrap_or_else(|| "unknown".to_owned()),
                         reason.map_or_else(String::new, |reason| format!(": {reason}")),
                     ),
+                },
+            )
+            .scoped(Some(request.image_id), Some(task.id.clone())),
+        )
+        .await
+    }
+
+    async fn publish_task_failure(
+        &self,
+        request: &ImageRunRequest,
+        task: &TaskConfig,
+        elapsed_ms: u64,
+        error_code: &str,
+        summary: &str,
+    ) -> Result<(), RuntimeError> {
+        self.publish(
+            RunEvent::new(
+                request.run_id,
+                RunEventKind::TaskFailed,
+                RunEventPayload::TaskFailure {
+                    task_id: task.id.clone(),
+                    node_id: task.id.to_string(),
+                    elapsed_ms,
+                    error_code: error_code.to_owned(),
+                    summary: summary.to_owned(),
                 },
             )
             .scoped(Some(request.image_id), Some(task.id.clone())),
@@ -2018,6 +2258,8 @@ fn is_operational_issue(code: &str) -> bool {
             | "max_steps_or_no_submission"
             | "model_requested_review"
             | "repeated_tool_call"
+            | "task_timeout"
+            | "task_runtime_failed"
             | "tool_call_budget_exceeded"
     )
 }

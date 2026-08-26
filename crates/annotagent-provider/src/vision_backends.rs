@@ -292,6 +292,8 @@ mod tests {
             metadata: BTreeMap::new(),
             validation_state: ArtifactValidationState::Unvalidated,
             provenance: ArtifactProvenance::default(),
+            revision: 1,
+            replaces_artifact_id: None,
             created_at: chrono::Utc::now(),
         }
     }

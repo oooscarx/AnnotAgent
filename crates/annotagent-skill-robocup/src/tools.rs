@@ -71,6 +71,8 @@ impl AgentTool for RoboCupFieldLineTool {
             metadata: BTreeMap::default(),
             validation_state: ArtifactValidationState::Unvalidated,
             provenance: ArtifactProvenance::default(),
+            revision: 1,
+            replaces_artifact_id: None,
             created_at: chrono::Utc::now(),
         };
         let refined = VisionArtifact {
@@ -94,6 +96,8 @@ impl AgentTool for RoboCupFieldLineTool {
                 input_artifact_ids: vec![original_id],
                 ..ArtifactProvenance::default()
             },
+            revision: 2,
+            replaces_artifact_id: Some(original_id),
             created_at: chrono::Utc::now(),
         };
         Ok(ToolResult::with_artifacts(

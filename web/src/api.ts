@@ -105,6 +105,7 @@ export function subscribeEvents(onEvent: (event: RunEvent) => void, onReconnect:
     "run_started",
     "task_started",
     "task_completed",
+    "task_failed",
     "model_call_started",
     "model_call_completed",
     "model_call_failed",

@@ -18,6 +18,7 @@ pub enum TaskKind {
     Keypoints,
     Polyline,
     Polygon,
+    SemanticMask,
     InstanceMask,
     Attributes,
     Relations,
@@ -61,13 +62,22 @@ pub enum AnnotationValue {
     Polygon {
         rings: Vec<Vec<NormalizedPoint>>,
     },
+    SemanticMask {
+        mask: MaskEncoding,
+    },
     InstanceMask {
         mask: MaskEncoding,
+    },
+    Attributes {
+        values: BTreeMap<String, AttributeValue>,
     },
     Relation {
         source: AnnotationId,
         predicate: String,
         target: AnnotationId,
+    },
+    Relations {
+        relations: Vec<RelationValue>,
     },
 }
 
@@ -84,10 +94,21 @@ impl AnnotationValue {
                 "polyline needs at least two points".to_owned(),
             )),
             Self::Polygon { rings }
+            | Self::SemanticMask {
+                mask: MaskEncoding::Polygon { rings },
+            }
             | Self::InstanceMask {
                 mask: MaskEncoding::Polygon { rings },
             } => validate_rings(rings),
-            Self::InstanceMask {
+            Self::SemanticMask {
+                mask:
+                    MaskEncoding::CocoRle {
+                        width,
+                        height,
+                        counts,
+                    },
+            }
+            | Self::InstanceMask {
                 mask:
                     MaskEncoding::CocoRle {
                         width,
@@ -99,6 +120,16 @@ impl AnnotationValue {
                     "COCO RLE needs non-zero dimensions and counts".to_owned(),
                 ))
             }
+            Self::Attributes { values }
+                if values.is_empty() || values.iter().any(|(key, value)| {
+                    key.trim().is_empty()
+                        || matches!(value, AttributeValue::Number(number) if !number.is_finite())
+                }) =>
+            {
+                Err(CoreError::Validation(
+                    "attributes need non-empty keys and finite values".to_owned(),
+                ))
+            }
             Self::Relation {
                 source,
                 predicate,
@@ -106,6 +137,16 @@ impl AnnotationValue {
             } if source == target || predicate.trim().is_empty() => {
                 Err(CoreError::InvalidGeometry(
                     "relation needs distinct endpoints and a predicate".to_owned(),
+                ))
+            }
+            Self::Relations { relations }
+                if relations.is_empty()
+                    || relations
+                        .iter()
+                        .any(|relation| relation.validate().is_err()) =>
+            {
+                Err(CoreError::Validation(
+                    "relations need typed distinct endpoints and predicates".to_owned(),
                 ))
             }
             _ => Ok(()),
@@ -120,8 +161,10 @@ impl AnnotationValue {
             Self::Keypoints { .. } => TaskKind::Keypoints,
             Self::Polyline { .. } => TaskKind::Polyline,
             Self::Polygon { .. } => TaskKind::Polygon,
+            Self::SemanticMask { .. } => TaskKind::SemanticMask,
             Self::InstanceMask { .. } => TaskKind::InstanceMask,
-            Self::Relation { .. } => TaskKind::Relations,
+            Self::Attributes { .. } => TaskKind::Attributes,
+            Self::Relation { .. } | Self::Relations { .. } => TaskKind::Relations,
         }
     }
 }
@@ -142,6 +185,31 @@ pub enum AttributeValue {
     Number(f64),
     Boolean(bool),
     StringList(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum RelationEndpoint {
+    Annotation(AnnotationId),
+    Artifact(ArtifactId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationValue {
+    pub source: RelationEndpoint,
+    pub predicate: String,
+    pub target: RelationEndpoint,
+}
+
+impl RelationValue {
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.source == self.target || self.predicate.trim().is_empty() {
+            return Err(CoreError::Validation(
+                "relation needs distinct typed endpoints and a predicate".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

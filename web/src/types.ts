@@ -2,6 +2,7 @@ export type RunStatus =
   | "pending"
   | "running"
   | "paused"
+  | "awaiting_review"
   | "completed"
   | "completed_with_review"
   | "partial"

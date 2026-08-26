@@ -162,6 +162,7 @@ impl TuiState {
             RunEventPayload::Annotation { summary, .. }
             | RunEventPayload::Artifact { summary, .. }
             | RunEventPayload::ProviderFailure { summary, .. }
+            | RunEventPayload::TaskFailure { summary, .. }
             | RunEventPayload::Message { summary } => {
                 self.push(format!("{:?}: {summary}", event.kind));
             }
@@ -562,6 +563,7 @@ fn status_label(status: RunStatus) -> &'static str {
         RunStatus::Pending => "Draft",
         RunStatus::Running => "Running",
         RunStatus::Paused => "Paused",
+        RunStatus::AwaitingReview => "Awaiting review",
         RunStatus::CompletedWithReview => "Completed with review",
         RunStatus::Partial => "Partial",
         RunStatus::Completed => "Completed",
@@ -576,7 +578,9 @@ fn status_tone(status: RunStatus) -> StatusTone {
         RunStatus::Pending => StatusTone::Neutral,
         RunStatus::Running | RunStatus::Paused => StatusTone::Running,
         RunStatus::Completed => StatusTone::Success,
-        RunStatus::CompletedWithReview | RunStatus::Partial => StatusTone::Warning,
+        RunStatus::AwaitingReview | RunStatus::CompletedWithReview | RunStatus::Partial => {
+            StatusTone::Warning
+        }
         RunStatus::Cancelled
         | RunStatus::BudgetExceeded
         | RunStatus::Failed

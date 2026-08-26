@@ -24,6 +24,7 @@ annotagent-provider = { path = "../annotagent-provider" }
 annotagent-skill-robocup = { path = "../annotagent-skill-robocup" }
 tempfile = "3"
 tokio.workspace = true
+tokio-util.workspace = true
 uuid.workspace = true
 
 [lints]

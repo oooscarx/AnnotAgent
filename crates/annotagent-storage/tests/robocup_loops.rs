@@ -498,6 +498,17 @@ async fn coarse_field_line_is_refined_validated_committed_and_revisioned() {
         .collect();
     assert!(event_kinds.contains(&RunEventKind::RefinementStarted));
     assert!(event_kinds.contains(&RunEventKind::RefinementCompleted));
+    let artifacts = store.list_artifacts(run_id).expect("persisted artifacts");
+    let original = artifacts
+        .iter()
+        .find(|artifact| artifact.revision == 1)
+        .expect("original artifact revision");
+    let refined = artifacts
+        .iter()
+        .find(|artifact| artifact.revision == 2)
+        .expect("refined artifact revision");
+    assert_eq!(refined.replaces_artifact_id, Some(original.id));
+    assert!(refined.provenance.input_artifact_ids.contains(&original.id));
 }
 
 #[tokio::test]

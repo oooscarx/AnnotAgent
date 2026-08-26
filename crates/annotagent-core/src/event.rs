@@ -11,8 +11,8 @@ pub enum RunStatus {
     Pending,
     Running,
     Paused,
+    AwaitingReview,
     Completed,
-    #[serde(alias = "awaiting_review")]
     CompletedWithReview,
     Partial,
     Cancelled,
@@ -25,15 +25,20 @@ impl RunStatus {
     #[must_use]
     pub const fn can_transition_to(self, next: Self) -> bool {
         use RunStatus::{
-            BudgetExceeded, Cancelled, Completed, CompletedWithReview, Failed, Interrupted,
-            Partial, Paused, Pending, Running,
+            AwaitingReview, BudgetExceeded, Cancelled, Completed, CompletedWithReview, Failed,
+            Interrupted, Partial, Paused, Pending, Running,
         };
         matches!(
             (self, next),
             (Pending | Paused, Running | Cancelled)
                 | (
+                    AwaitingReview,
+                    Running | CompletedWithReview | Cancelled | Interrupted
+                )
+                | (
                     Running,
                     Paused
+                        | AwaitingReview
                         | Completed
                         | CompletedWithReview
                         | Partial
@@ -68,6 +73,7 @@ pub enum RunEventKind {
     ImageStarted,
     TaskStarted,
     TaskCompleted,
+    TaskFailed,
     SkillResourceLoaded,
     ModelCallStarted,
     ModelCallCompleted,
@@ -140,6 +146,13 @@ pub enum RunEventPayload {
         error_code: String,
         summary: String,
     },
+    TaskFailure {
+        task_id: TaskId,
+        node_id: String,
+        elapsed_ms: u64,
+        error_code: String,
+        summary: String,
+    },
     Usage {
         totals: UsageTotals,
     },
@@ -189,6 +202,8 @@ mod tests {
         assert!(!RunStatus::Completed.can_transition_to(RunStatus::Running));
         assert!(!RunStatus::Cancelled.can_transition_to(RunStatus::Paused));
         assert!(RunStatus::Paused.can_transition_to(RunStatus::Running));
+        assert!(RunStatus::Running.can_transition_to(RunStatus::AwaitingReview));
+        assert!(RunStatus::AwaitingReview.can_transition_to(RunStatus::Running));
     }
 
     #[test]

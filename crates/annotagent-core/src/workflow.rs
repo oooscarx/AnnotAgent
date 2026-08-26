@@ -348,7 +348,7 @@ fn topological_order(nodes: &[WorkflowDraftNode]) -> Result<Vec<String>, String>
 }
 
 #[must_use]
-pub const fn all_artifact_kinds() -> [ArtifactKind; 7] {
+pub const fn all_artifact_kinds() -> [ArtifactKind; 9] {
     [
         ArtifactKind::Classification,
         ArtifactKind::BoundingBox,
@@ -357,5 +357,7 @@ pub const fn all_artifact_kinds() -> [ArtifactKind; 7] {
         ArtifactKind::Polygon,
         ArtifactKind::SemanticMask,
         ArtifactKind::InstanceMask,
+        ArtifactKind::Attributes,
+        ArtifactKind::Relations,
     ]
 }

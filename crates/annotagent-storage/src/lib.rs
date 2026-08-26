@@ -5,9 +5,9 @@ use std::{collections::BTreeMap, path::Path, sync::Mutex};
 use annotagent_core::{
     Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue, ArtifactId,
     ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage, ProjectId,
-    PublishedWorkflowVersion, RevisionActor, RunEvent, RunId, RunStatus, TaskId, TaskRunStatus,
-    ToolCallId, ToolResult, UsageRecord, ValidationIssue, VisionArtifact, WorkflowDraft,
-    WorkflowDraftStatus,
+    PublishedWorkflowVersion, RelationEndpoint, RevisionActor, RunEvent, RunEventPayload, RunId,
+    RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -85,6 +85,8 @@ pub struct HistoryDocument {
     pub events: Vec<RunEvent>,
     pub annotations: Vec<Annotation>,
     pub revisions: Vec<AnnotationRevision>,
+    #[serde(default)]
+    pub task_runs: Vec<HistoryTaskRun>,
     pub usage: Vec<UsageRecord>,
     #[serde(default)]
     pub model_messages: Vec<HistoryModelMessage>,
@@ -147,6 +149,31 @@ impl SqliteStore {
                 "CREATE INDEX IF NOT EXISTS idx_runs_project_created ON runs(project_id, created_at DESC)",
                 [],
             )?;
+            let has_distinct_review_state = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 1)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_distinct_review_state {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute(
+                    "UPDATE runs SET status = 'completed_with_review' WHERE status = 'awaiting_review'",
+                    [],
+                )?;
+                transaction.execute(
+                    "UPDATE active_project_runs SET status = 'completed_with_review' WHERE status = 'awaiting_review'",
+                    [],
+                )?;
+                transaction.execute(
+                    "DELETE FROM active_project_runs WHERE status = 'completed_with_review'",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (1, ?1, ?2)",
+                    params!["distinct_awaiting_review_state", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
             Ok(())
         })
     }
@@ -468,7 +495,7 @@ impl SqliteStore {
             for run_id in &run_ids {
                 transaction.execute(
                     "UPDATE runs SET status = 'interrupted', terminal_reason = ?2, updated_at = ?3
-                     WHERE id = ?1 AND status IN ('pending', 'running', 'paused')",
+                     WHERE id = ?1 AND status IN ('pending', 'running', 'paused', 'awaiting_review')",
                     params![
                         run_id.to_string(),
                         "run was interrupted because no worker lease survived server startup",
@@ -632,6 +659,38 @@ impl SqliteStore {
                  WHERE a.run_id = ?1 ORDER BY r.created_at",
                 run_id,
             )?;
+            let mut task_statement = connection.prepare(
+                "SELECT image_id, task_id, status, reason, updated_at
+                 FROM task_runs WHERE run_id = ?1 ORDER BY updated_at, task_id",
+            )?;
+            let task_runs = task_statement
+                .query_map([run_id.to_string()], |row| {
+                    let image_id = row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    let status_text = row.get::<_, String>(2)?;
+                    let status = serde_json::from_value(serde_json::Value::String(status_text))
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?;
+                    Ok(HistoryTaskRun {
+                        run_id,
+                        image_id,
+                        task_id: TaskId::from(row.get::<_, String>(1)?),
+                        status,
+                        reason: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
             let usage = query_json_rows::<UsageRecord>(
                 connection,
                 "SELECT usage_json FROM usage_records WHERE run_id = ?1 ORDER BY id",
@@ -702,6 +761,7 @@ impl SqliteStore {
                 events,
                 annotations,
                 revisions,
+                task_runs,
                 usage,
                 model_messages,
                 artifacts,
@@ -736,20 +796,49 @@ impl SqliteStore {
             let ids_remapped = target_run_id != original_run_id;
             document.run.id = target_run_id;
             let mut annotation_ids = BTreeMap::new();
+            let mut artifact_ids = BTreeMap::new();
+            let mut tool_call_ids = BTreeMap::new();
             if ids_remapped {
                 for annotation in &mut document.annotations {
                     let replacement = annotagent_core::AnnotationId::new();
                     annotation_ids.insert(annotation.id, replacement);
                     annotation.id = replacement;
                 }
+                for artifact in &mut document.artifacts {
+                    let replacement = ArtifactId::new();
+                    artifact_ids.insert(artifact.id, replacement);
+                    artifact.id = replacement;
+                }
+                for call in &mut document.tool_calls {
+                    let replacement = ToolCallId::new(format!("imported-{}", Uuid::new_v4()));
+                    tool_call_ids.insert(call.call_id.clone(), replacement.clone());
+                    call.call_id = replacement;
+                }
                 for annotation in &mut document.annotations {
-                    if let AnnotationValue::Relation { source, target, .. } = &mut annotation.value {
-                        if let Some(replacement) = annotation_ids.get(source) {
-                            *source = *replacement;
+                    remap_annotation_value(
+                        &mut annotation.value,
+                        &annotation_ids,
+                        &artifact_ids,
+                    );
+                    for artifact_id in &mut annotation.provenance.artifact_ids {
+                        if let Some(replacement) = artifact_ids.get(artifact_id) {
+                            *artifact_id = *replacement;
                         }
-                        if let Some(replacement) = annotation_ids.get(target) {
-                            *target = *replacement;
+                    }
+                }
+                for artifact in &mut document.artifacts {
+                    if let Some(replaces) = artifact.replaces_artifact_id
+                        && let Some(replacement) = artifact_ids.get(&replaces)
+                    {
+                        artifact.replaces_artifact_id = Some(*replacement);
+                    }
+                    for input in &mut artifact.provenance.input_artifact_ids {
+                        if let Some(replacement) = artifact_ids.get(input) {
+                            *input = *replacement;
                         }
+                    }
+                    if let VisionArtifactValue::Relations { relations } = &mut artifact.value {
+                        remap_relations(relations, &annotation_ids, &artifact_ids);
                     }
                 }
                 let mut revision_ids = BTreeMap::new();
@@ -767,16 +856,117 @@ impl SqliteStore {
                     {
                         revision.parent_revision_id = Some(*replacement);
                     }
+                    if let Some(before) = &mut revision.before {
+                        remap_annotation_value(
+                            &mut before.value,
+                            &annotation_ids,
+                            &artifact_ids,
+                        );
+                    }
+                    if let Some(after) = &mut revision.after {
+                        remap_annotation_value(
+                            &mut after.value,
+                            &annotation_ids,
+                            &artifact_ids,
+                        );
+                    }
+                }
+                let string_ids = annotation_ids
+                    .iter()
+                    .map(|(source, target)| (source.to_string(), target.to_string()))
+                    .chain(
+                        artifact_ids
+                            .iter()
+                            .map(|(source, target)| (source.to_string(), target.to_string())),
+                    )
+                    .chain(tool_call_ids.iter().map(|(source, target)| {
+                        (source.as_str().to_owned(), target.as_str().to_owned())
+                    }))
+                    .collect::<BTreeMap<_, _>>();
+                for entry in &mut document.model_messages {
+                    if let Some(call_id) = &entry.message.tool_call_id
+                        && let Some(replacement) = tool_call_ids.get(call_id)
+                    {
+                        entry.message.tool_call_id = Some(replacement.clone());
+                    }
+                    for call in &mut entry.message.tool_calls {
+                        if let Some(replacement) = tool_call_ids.get(&call.id) {
+                            call.id = replacement.clone();
+                        }
+                        remap_json_strings(&mut call.arguments, &string_ids);
+                    }
+                    if let Ok(mut value) = serde_json::from_str(&entry.message.content) {
+                        remap_json_strings(&mut value, &string_ids);
+                        entry.message.content = serde_json::to_string(&value)?;
+                    }
+                }
+                for call in &mut document.tool_calls {
+                    remap_json_strings(&mut call.arguments, &string_ids);
+                    if let Some(result) = &mut call.result {
+                        remap_json_strings(&mut result.persisted_result, &string_ids);
+                        remap_json_strings(&mut result.model_result, &string_ids);
+                        for artifact in &mut result.artifacts {
+                            if let Some(replacement) = artifact_ids.get(&artifact.id) {
+                                artifact.id = *replacement;
+                            }
+                            if let Some(replaces) = artifact.replaces_artifact_id
+                                && let Some(replacement) = artifact_ids.get(&replaces)
+                            {
+                                artifact.replaces_artifact_id = Some(*replacement);
+                            }
+                            remap_copy_ids(
+                                &mut artifact.provenance.input_artifact_ids,
+                                &artifact_ids,
+                            );
+                            if let VisionArtifactValue::Relations { relations } =
+                                &mut artifact.value
+                            {
+                                remap_relations(relations, &annotation_ids, &artifact_ids);
+                            }
+                        }
+                    }
                 }
             }
             for event in &mut document.events {
                 event.run_id = target_run_id;
                 if ids_remapped {
                     event.event_id = annotagent_core::EventId::new();
+                    match &mut event.payload {
+                        RunEventPayload::Tool { call_id, .. } => {
+                            if let Some(replacement) = tool_call_ids.get(call_id) {
+                                *call_id = replacement.clone();
+                            }
+                        }
+                        RunEventPayload::Annotation { annotation_ids: ids, .. } => {
+                            remap_copy_ids(ids, &annotation_ids);
+                        }
+                        RunEventPayload::Artifact { artifact_ids: ids, .. } => {
+                            remap_copy_ids(ids, &artifact_ids);
+                        }
+                        _ => {}
+                    }
                 }
+            }
+            for task_run in &mut document.task_runs {
+                task_run.run_id = target_run_id;
             }
             let transaction = connection.unchecked_transaction()?;
             insert_history_run(&transaction, &document.run)?;
+            for task_run in &document.task_runs {
+                transaction.execute(
+                    "INSERT INTO task_runs
+                     (run_id, image_id, task_id, status, reason, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        target_run_id.to_string(),
+                        task_run.image_id.to_string(),
+                        task_run.task_id.as_str(),
+                        enum_string(task_run.status)?,
+                        task_run.reason,
+                        task_run.updated_at,
+                    ],
+                )?;
+            }
             for event in &document.events {
                 transaction.execute(
                     "INSERT INTO run_events
@@ -871,17 +1061,12 @@ impl SqliteStore {
                 )?;
             }
             for call in &document.tool_calls {
-                let call_id = if ids_remapped {
-                    ToolCallId::new(format!("imported-{}", Uuid::new_v4()))
-                } else {
-                    call.call_id.clone()
-                };
                 transaction.execute(
                     "INSERT INTO tool_calls
                      (call_id, run_id, name, arguments_json, result_json, error, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
-                        call_id.as_str(),
+                        call.call_id.as_str(),
                         target_run_id.to_string(),
                         call.name,
                         serde_json::to_string(&sanitize_trace_value(&call.arguments))?,
@@ -1037,6 +1222,79 @@ fn insert_history_run(
     Ok(())
 }
 
+fn remap_copy_ids<T: Copy + Ord>(ids: &mut [T], replacements: &BTreeMap<T, T>) {
+    for id in ids {
+        if let Some(replacement) = replacements.get(id) {
+            *id = *replacement;
+        }
+    }
+}
+
+fn remap_relations(
+    relations: &mut [annotagent_core::RelationValue],
+    annotation_ids: &BTreeMap<annotagent_core::AnnotationId, annotagent_core::AnnotationId>,
+    artifact_ids: &BTreeMap<ArtifactId, ArtifactId>,
+) {
+    for relation in relations {
+        for endpoint in [&mut relation.source, &mut relation.target] {
+            match endpoint {
+                RelationEndpoint::Annotation(id) => {
+                    if let Some(replacement) = annotation_ids.get(id) {
+                        *id = *replacement;
+                    }
+                }
+                RelationEndpoint::Artifact(id) => {
+                    if let Some(replacement) = artifact_ids.get(id) {
+                        *id = *replacement;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn remap_annotation_value(
+    value: &mut AnnotationValue,
+    annotation_ids: &BTreeMap<annotagent_core::AnnotationId, annotagent_core::AnnotationId>,
+    artifact_ids: &BTreeMap<ArtifactId, ArtifactId>,
+) {
+    match value {
+        AnnotationValue::Relation { source, target, .. } => {
+            if let Some(replacement) = annotation_ids.get(source) {
+                *source = *replacement;
+            }
+            if let Some(replacement) = annotation_ids.get(target) {
+                *target = *replacement;
+            }
+        }
+        AnnotationValue::Relations { relations } => {
+            remap_relations(relations, annotation_ids, artifact_ids);
+        }
+        _ => {}
+    }
+}
+
+fn remap_json_strings(value: &mut serde_json::Value, replacements: &BTreeMap<String, String>) {
+    match value {
+        serde_json::Value::String(string) => {
+            if let Some(replacement) = replacements.get(string) {
+                string.clone_from(replacement);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                remap_json_strings(value, replacements);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for value in object.values_mut() {
+                remap_json_strings(value, replacements);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
 fn sanitize_trace_value(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(object) => serde_json::Value::Object(
@@ -1118,7 +1376,10 @@ impl RuntimeStore for SqliteStore {
                 "UPDATE runs SET status = ?2, terminal_reason = ?3, updated_at = ?4 WHERE id = ?1",
                 params![run_id.to_string(), status, reason, Utc::now().to_rfc3339()],
             )?;
-            if matches!(status.as_str(), "pending" | "running" | "paused") {
+            if matches!(
+                status.as_str(),
+                "pending" | "running" | "paused" | "awaiting_review"
+            ) {
                 transaction.execute(
                     "UPDATE active_project_runs SET status = ?2, updated_at = ?3 WHERE run_id = ?1",
                     params![run_id.to_string(), status, Utc::now().to_rfc3339()],
@@ -1516,7 +1777,10 @@ fn sqlite_u64(value: u64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use annotagent_core::{RunEventKind, RunEventPayload};
+    use annotagent_core::{
+        ArtifactProvenance, ArtifactRole, AttributeValue, RunEventKind, RunEventPayload,
+        VisionArtifactValue,
+    };
 
     use super::*;
 
@@ -1525,6 +1789,7 @@ mod tests {
         let store = SqliteStore::open_in_memory().expect("in-memory database");
         let tables = store.schema_tables().expect("schema tables");
         for required in [
+            "schema_migrations",
             "projects",
             "project_snapshots",
             "images",
@@ -1557,6 +1822,94 @@ mod tests {
         }
     }
 
+    #[test]
+    fn legacy_terminal_awaiting_review_is_migrated_once() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE runs (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT,
+                    project_name TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    project_schema_json TEXT NOT NULL,
+                    terminal_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE active_project_runs (
+                    project_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    idempotency_key TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO runs VALUES (
+                    'legacy', NULL, 'legacy', 'legacy', 'mock', 'mock',
+                    'awaiting_review', '{}', NULL, '2026-01-01T00:00:00Z',
+                    '2026-01-01T00:00:00Z'
+                );
+                INSERT INTO active_project_runs VALUES (
+                    'legacy-project', 'legacy', 'awaiting_review', NULL,
+                    '2026-01-01T00:00:00Z'
+                );",
+            )
+            .expect("legacy schema");
+        let store = SqliteStore {
+            connection: Mutex::new(connection),
+        };
+        store.migrate().expect("upgrade legacy schema");
+        let migrated = store
+            .with_connection(|connection| {
+                Ok(connection.query_row(
+                    "SELECT status FROM runs WHERE id = 'legacy'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?)
+            })
+            .expect("migrated status");
+        assert_eq!(migrated, "completed_with_review");
+        let active_count =
+            store
+                .with_connection(|connection| {
+                    Ok(connection.query_row(
+                        "SELECT COUNT(*) FROM active_project_runs",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .expect("active rows");
+        assert_eq!(active_count, 0);
+
+        store
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO runs VALUES (
+                        'suspended', NULL, 'new', 'generic', 'mock', 'mock',
+                        'awaiting_review', '{}', NULL, '2026-01-02T00:00:00Z',
+                        '2026-01-02T00:00:00Z'
+                    )",
+                    [],
+                )?;
+                Ok(())
+            })
+            .expect("new suspended run");
+        store.migrate().expect("idempotent migration");
+        let suspended = store
+            .with_connection(|connection| {
+                Ok(connection.query_row(
+                    "SELECT status FROM runs WHERE id = 'suspended'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?)
+            })
+            .expect("suspended status");
+        assert_eq!(suspended, "awaiting_review");
+    }
+
     #[tokio::test]
     async fn event_history_round_trips() {
         let store = SqliteStore::open_in_memory().expect("in-memory database");
@@ -1585,6 +1938,33 @@ mod tests {
         );
         store.record_event(&event).await.expect("record event");
         assert_eq!(store.list_events(run_id).expect("events"), vec![event]);
+
+        let artifact = VisionArtifact {
+            id: ArtifactId::new(),
+            image_id: ImageId::new(),
+            task_id: Some(TaskId::from("attributes")),
+            label: None,
+            role: ArtifactRole::Candidate,
+            value: VisionArtifactValue::Attributes {
+                values: BTreeMap::from([("verified".to_owned(), AttributeValue::Boolean(true))]),
+            },
+            source_node: "generic.attributes".to_owned(),
+            confidence: Some(0.9),
+            metadata: BTreeMap::new(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            provenance: ArtifactProvenance::default(),
+            revision: 1,
+            replaces_artifact_id: None,
+            created_at: Utc::now(),
+        };
+        store
+            .record_artifact(run_id, &artifact)
+            .await
+            .expect("record artifact");
+        assert_eq!(
+            store.list_artifacts(run_id).expect("artifacts"),
+            vec![artifact]
+        );
     }
 
     #[test]

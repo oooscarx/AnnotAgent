@@ -39,6 +39,8 @@ pub enum ArtifactKind {
     Polygon,
     SemanticMask,
     InstanceMask,
+    Attributes,
+    Relations,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

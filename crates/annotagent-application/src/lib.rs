@@ -155,6 +155,7 @@ fn task_kind_name(kind: annotagent_core::TaskKind) -> String {
         annotagent_core::TaskKind::Keypoints => "keypoints",
         annotagent_core::TaskKind::Polyline => "polyline",
         annotagent_core::TaskKind::Polygon => "polygon",
+        annotagent_core::TaskKind::SemanticMask => "semantic_mask",
         annotagent_core::TaskKind::InstanceMask => "instance_mask",
         annotagent_core::TaskKind::Attributes => "attributes",
         annotagent_core::TaskKind::Relations => "relations",
@@ -533,7 +534,10 @@ impl LocalApplication {
             .find(|run| {
                 matches!(
                     run.status,
-                    RunStatus::Pending | RunStatus::Running | RunStatus::Paused
+                    RunStatus::Pending
+                        | RunStatus::Running
+                        | RunStatus::Paused
+                        | RunStatus::AwaitingReview
                 )
             })
             .cloned();
@@ -542,7 +546,10 @@ impl LocalApplication {
             .find(|run| {
                 !matches!(
                     run.status,
-                    RunStatus::Pending | RunStatus::Running | RunStatus::Paused
+                    RunStatus::Pending
+                        | RunStatus::Running
+                        | RunStatus::Paused
+                        | RunStatus::AwaitingReview
                 )
             })
             .cloned();

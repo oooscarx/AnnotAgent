@@ -1,18 +1,50 @@
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use annotagent_core::{
     AgentTool, AnnotationRefiner, AnnotationValidator, Budget, CoreResult, CorrectionKind,
     DatasetConfig, DomainSkill, ExportConfig, ImageFrame, ImageId, ImageMetadata, IssueSeverity,
-    PricingConfig, ProjectDescriptor, ProjectSchema, ReviewConfig, ReviewContext, ReviewDecision,
-    ReviewPolicy, RuntimeConfig, SkillManifest, SkillResource, SkillResourceRequest,
-    SuggestedAction, TaskConfig, TaskGraph, TaskId, TaskKind, TaskNode, TaskTemplate,
-    ValidationContext, ValidationEvidence, ValidationIssue,
+    ModelCapabilities, ModelRequest, ModelResponse, PricingConfig, ProjectDescriptor,
+    ProjectSchema, ReviewConfig, ReviewContext, ReviewDecision, ReviewPolicy, RuntimeConfig,
+    SkillManifest, SkillResource, SkillResourceRequest, SuggestedAction, TaskConfig, TaskGraph,
+    TaskId, TaskKind, TaskNode, TaskTemplate, ValidationContext, ValidationEvidence,
+    ValidationIssue, VisionModelProvider,
 };
 use annotagent_provider::{MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider};
 use annotagent_runtime::{AgentLoopConfig, AgentRuntime, ImageRunRequest};
 use annotagent_storage::SqliteStore;
 use rust_decimal::Decimal;
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
+
+struct SlowProvider;
+
+#[async_trait::async_trait]
+impl VisionModelProvider for SlowProvider {
+    fn name(&self) -> &str {
+        "slow_fixture"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities {
+            vision: true,
+            tool_calls: true,
+            json_schema: true,
+            usage_reporting: false,
+            multi_image: false,
+        }
+    }
+
+    async fn complete(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> CoreResult<ModelResponse> {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        Err(annotagent_core::CoreError::Provider(
+            "slow fixture unexpectedly completed".to_owned(),
+        ))
+    }
+}
 
 struct ConfidenceValidator;
 
@@ -287,6 +319,11 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
         annotagent_core::HISTORY_SCHEMA_VERSION
     );
     assert_eq!(history.annotations.len(), 1);
+    assert_eq!(history.task_runs.len(), 1);
+    assert_eq!(
+        history.task_runs[0].status,
+        annotagent_core::TaskRunStatus::Succeeded
+    );
     assert_eq!(history.usage.len(), 1);
     assert_eq!(history.tool_calls.len(), 1);
     let history_directory = tempfile::tempdir().expect("history directory");
@@ -303,14 +340,25 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
         .expect("history import with ID collision");
     assert!(imported.ids_remapped);
     assert_ne!(imported.run_id, run_id);
-    assert_eq!(
-        store
-            .history(imported.run_id)
-            .expect("imported history")
-            .annotations
-            .len(),
-        1
-    );
+    let imported_history = store.history(imported.run_id).expect("imported history");
+    assert_eq!(imported_history.annotations.len(), 1);
+    assert_eq!(imported_history.task_runs.len(), 1);
+    assert_eq!(imported_history.task_runs[0].run_id, imported.run_id);
+    let assistant_call_id = imported_history
+        .model_messages
+        .iter()
+        .flat_map(|entry| &entry.message.tool_calls)
+        .next()
+        .expect("imported assistant tool call")
+        .id
+        .clone();
+    let tool_message_id = imported_history
+        .model_messages
+        .iter()
+        .find_map(|entry| entry.message.tool_call_id.clone())
+        .expect("imported tool result message");
+    assert_eq!(assistant_call_id, tool_message_id);
+    assert_eq!(assistant_call_id, imported_history.tool_calls[0].call_id);
     assert!(!imported.warnings.is_empty());
 }
 
@@ -392,12 +440,152 @@ async fn provider_failure_is_recorded_and_retried_without_consuming_the_agent_st
     assert_eq!(history.usage.len(), 2);
     assert!(!history.usage[0].success);
     assert!(history.usage[1].success);
-    assert!(
-        history
-            .events
-            .iter()
-            .any(|event| { event.kind == annotagent_core::RunEventKind::ModelCallFailed })
+    assert!(history.events.iter().any(|event| {
+        event.kind == annotagent_core::RunEventKind::ModelCallFailed
+            && matches!(
+                &event.payload,
+                annotagent_core::RunEventPayload::ProviderFailure {
+                    provider,
+                    model,
+                    retry_count: 1,
+                    error_code,
+                    ..
+                } if provider == "mock" && model == "mock-vision" && error_code == "provider_error"
+            )
+    }));
+}
+
+#[tokio::test]
+async fn task_timeout_is_structured_in_events_and_terminal_history() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite store"));
+    let runtime = AgentRuntime::new(
+        Arc::new(BboxSkill::new()),
+        Arc::new(SlowProvider),
+        store.clone(),
+        PricingConfig::default(),
+        Budget::default(),
+        AgentLoopConfig {
+            task_timeout: Duration::from_millis(10),
+            provider_request_timeout: Duration::from_secs(1),
+            max_retries: 0,
+            ..AgentLoopConfig::default()
+        },
     );
+    let run_id = annotagent_core::RunId::new();
+    let result = runtime
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: annotagent_core::ProjectId::new(),
+            project_root: PathBuf::from("."),
+            project: Arc::new(project()),
+            image_id: ImageId::new(),
+            image: Arc::new(ImageFrame {
+                metadata: ImageMetadata {
+                    width: 1,
+                    height: 1,
+                    mime_type: "image/png".to_owned(),
+                    sha256: "task-timeout-fixture".to_owned(),
+                },
+                rgb: vec![0, 128, 0],
+            }),
+            model_image: None,
+        })
+        .await
+        .expect("task timeout becomes a terminal result");
+
+    assert_eq!(result.status, annotagent_core::RunStatus::Failed);
+    let history = store.history(run_id).expect("history");
+    let failure = history
+        .events
+        .iter()
+        .find(|event| event.kind == annotagent_core::RunEventKind::TaskFailed)
+        .expect("structured task failure event");
+    assert!(matches!(
+        &failure.payload,
+        annotagent_core::RunEventPayload::TaskFailure {
+            task_id,
+            node_id,
+            elapsed_ms,
+            error_code,
+            summary,
+        } if task_id.as_str() == "objects"
+            && node_id == "objects"
+            && *elapsed_ms >= 1
+            && error_code == "task_timeout"
+            && summary.contains("elapsed_ms=")
+    ));
+    let reason = history.run.terminal_reason.expect("terminal reason");
+    assert!(reason.contains("task_timeout"), "{reason}");
+    assert!(reason.contains("elapsed_ms="), "{reason}");
+}
+
+#[tokio::test]
+async fn provider_timeout_preserves_provider_model_task_retry_and_elapsed() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite store"));
+    let runtime = AgentRuntime::new(
+        Arc::new(BboxSkill::new()),
+        Arc::new(SlowProvider),
+        store.clone(),
+        PricingConfig::default(),
+        Budget::default(),
+        AgentLoopConfig {
+            task_timeout: Duration::from_secs(1),
+            provider_request_timeout: Duration::from_millis(10),
+            max_retries: 0,
+            ..AgentLoopConfig::default()
+        },
+    );
+    let run_id = annotagent_core::RunId::new();
+    let result = runtime
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: annotagent_core::ProjectId::new(),
+            project_root: PathBuf::from("."),
+            project: Arc::new(project()),
+            image_id: ImageId::new(),
+            image: Arc::new(ImageFrame {
+                metadata: ImageMetadata {
+                    width: 1,
+                    height: 1,
+                    mime_type: "image/png".to_owned(),
+                    sha256: "provider-timeout-fixture".to_owned(),
+                },
+                rgb: vec![0, 128, 0],
+            }),
+            model_image: None,
+        })
+        .await
+        .expect("provider timeout becomes a terminal result");
+
+    assert_eq!(result.status, annotagent_core::RunStatus::Failed);
+    let history = store.history(run_id).expect("history");
+    let failure = history
+        .events
+        .iter()
+        .find(|event| event.kind == annotagent_core::RunEventKind::ModelCallFailed)
+        .expect("structured provider timeout event");
+    assert!(matches!(
+        &failure.payload,
+        annotagent_core::RunEventPayload::ProviderFailure {
+            task_id,
+            node_id,
+            provider,
+            model,
+            elapsed_ms,
+            retry_count: 1,
+            error_code,
+            summary,
+        } if task_id.as_str() == "objects"
+            && node_id == "objects"
+            && provider == "slow_fixture"
+            && model == "mock-vision"
+            && *elapsed_ms >= 1
+            && error_code == "provider_timeout"
+            && summary.contains("retry=1")
+    ));
+    let reason = history.run.terminal_reason.expect("terminal reason");
+    assert!(reason.contains("provider_timeout"), "{reason}");
+    assert!(reason.contains("slow_fixture"), "{reason}");
 }
 
 #[tokio::test]
