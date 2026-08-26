@@ -7,7 +7,7 @@ annotagent init <directory> --skill robocup
 annotagent project validate <project.yaml>
 annotagent import --project <project.yaml> --images <directory>
 annotagent run --project <project.yaml> --provider <mock|openai_compatible> [--config file] [--limit N]
-annotagent tui --project <project.yaml>
+annotagent tui [--project <project.yaml>]
 annotagent serve --workspace <directory> [--port 8787] [--open]
 annotagent skills list
 annotagent skills show robocup
@@ -30,6 +30,9 @@ All paths are relative to the local Axum server.
 | GET | `/api/skills`, `/api/skills/{id}` | Skill boundary, tools, validators, resources, template |
 | GET/POST | `/api/projects` | Dashboard list or validated project creation |
 | GET | `/api/projects/{id}` | Project summary |
+| GET | `/api/workflows` | Actual configured Workflow compatibility views |
+| GET | `/api/models` | Saved workspace Model Binding |
+| GET | `/api/runs` | Cross-Project Run summaries with Workflow/Skill/model context and usage |
 | POST | `/api/projects/{id}/import` | Controlled workspace-folder image import |
 | GET | `/api/projects/{id}/images` | Ordered image list |
 | GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
@@ -48,6 +51,12 @@ All paths are relative to the local Axum server.
 | GET | `/api/events?run_id=...` | Live SSE stream |
 
 Errors are JSON objects with an HTTP status and a concrete message. User paths are canonicalized against the workspace before reads.
+
+## Product DTO compatibility
+
+Project responses include Dataset, Annotation Schema, `EnabledSkill`, active/available `WorkflowVersion`, and `ModelBinding` fields. Project schema v1 still executes one Skill and one configured task graph. Workflow responses therefore describe the real compatibility graph; they do not imply that draft persistence, arbitrary graph execution, dry run, or publish endpoints exist.
+
+Run list summaries derive Project, compatibility Workflow version, Skill version, provider/model binding, usage, cost, and status from persisted history. First-class immutable Workflow snapshots remain a documented storage migration.
 
 ## SSE
 

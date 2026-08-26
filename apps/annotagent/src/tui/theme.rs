@@ -23,7 +23,6 @@ pub struct AnnotAgentTheme {
     primary: Color,
     selection: Color,
     teal: Color,
-    violet: Color,
     success: Color,
     warning: Color,
     danger: Color,
@@ -54,7 +53,6 @@ impl AnnotAgentTheme {
             primary: Color::Rgb(96, 165, 250),
             selection: Color::Rgb(37, 99, 235),
             teal: Color::Rgb(45, 212, 191),
-            violet: Color::Rgb(167, 139, 250),
             success: Color::Rgb(74, 222, 128),
             warning: Color::Rgb(251, 191, 36),
             danger: Color::Rgb(248, 113, 113),
@@ -73,7 +71,6 @@ impl AnnotAgentTheme {
             primary: Color::Indexed(75),
             selection: Color::Indexed(27),
             teal: Color::Indexed(43),
-            violet: Color::Indexed(141),
             success: Color::Indexed(77),
             warning: Color::Indexed(214),
             danger: Color::Indexed(203),
@@ -112,14 +109,6 @@ impl AnnotAgentTheme {
     pub fn title(self) -> Style {
         Style::default()
             .fg(self.teal)
-            .bg(self.bg)
-            .add_modifier(Modifier::BOLD)
-    }
-
-    #[must_use]
-    pub fn skill(self) -> Style {
-        Style::default()
-            .fg(self.violet)
             .bg(self.bg)
             .add_modifier(Modifier::BOLD)
     }

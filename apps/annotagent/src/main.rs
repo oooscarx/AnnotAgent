@@ -19,7 +19,11 @@ use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
-#[command(name = "annotagent", version, about = "RoboCup AnnotAgent")]
+#[command(
+    name = "annotagent",
+    version,
+    about = "Composable annotation workflows for vision data"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -45,7 +49,7 @@ enum Command {
     Run(RunArgs),
     Tui {
         #[arg(long)]
-        project: PathBuf,
+        project: Option<PathBuf>,
     },
     Serve {
         #[arg(long, default_value = "./workspace")]
@@ -172,10 +176,7 @@ fn init_project(directory: &Path, skill: &str) -> Result<()> {
     )?;
     annotagent_image_tools::generate_synthetic_robocup(&directory.join("images/demo.png"))
         .map_err(|error| anyhow::anyhow!(error))?;
-    println!(
-        "created RoboCup AnnotAgent project at {}",
-        directory.display()
-    );
+    println!("created AnnotAgent project at {}", directory.display());
     println!(
         "next: annotagent project validate {}",
         project_file.display()
@@ -514,7 +515,7 @@ async fn demo(name: &str) -> Result<()> {
     if name != "robocup" {
         bail!("unknown demo {name:?}; available demo: robocup");
     }
-    println!("RoboCup AnnotAgent offline demo (deterministic Mock Provider)");
+    println!("AnnotAgent RoboCup example (deterministic Mock Provider)");
     run_command(&RunArgs {
         project: PathBuf::from("examples/robocup/project.yaml"),
         provider: "mock".to_owned(),
@@ -529,7 +530,7 @@ async fn serve_command(workspace: &Path, port: u16, open: bool) -> Result<()> {
     let state = annotagent_server::ServerState::new(application)?;
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let url = format!("http://{address}");
-    println!("RoboCup AnnotAgent GUI: {url}");
+    println!("AnnotAgent GUI: {url}");
     println!("workspace: {}", workspace.display());
     if open {
         webbrowser::open(&url)?;

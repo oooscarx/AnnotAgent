@@ -1,7 +1,10 @@
 import type {
   Annotation,
+  DashboardData,
   HistoryRun,
   ImageItem,
+  ModelBinding,
+  ProjectWorkflow,
   ProjectSummary,
   ReviewItem,
   RunEvent,
@@ -22,8 +25,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string }>("/api/health"),
-  dashboard: () =>
-    request<{ projects: ProjectSummary[]; runs: HistoryRun[] }>("/api/projects"),
+  dashboard: () => request<DashboardData>("/api/projects"),
   createProject: (id: string, yaml: string) =>
     request<ProjectSummary>("/api/projects", {
       method: "POST",
@@ -43,6 +45,9 @@ export const api = {
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),
   runEvents: (runId: string) =>
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
+  runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
+  workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
+  models: () => request<{ models: ModelBinding[] }>("/api/models"),
   reviews: () => request<{ reviews: ReviewItem[] }>("/api/reviews"),
   review: (id: string) => request<ReviewItem>(`/api/reviews/${id}`),
   revise: (annotation: Annotation, reason: string) =>

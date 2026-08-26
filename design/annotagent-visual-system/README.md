@@ -1,10 +1,10 @@
 # AnnotAgent Visual System 1.0
 
-这是 **AnnotAgent Core** 的完整视觉系统包，并包含 **RoboCup AnnotAgent** 的领域扩展规则。它不是一张只能放在汇报里的漂亮海报，而是一组可以直接落进 Web GUI、Ratatui TUI、README、favicon 和课堂演示的工程资产。
+这是 **AnnotAgent Core** 的完整视觉系统包，并包含 RoboCup Perception Skill 的领域扩展与示例项目资产。AnnotAgent 是产品；RoboCup 不是产品壳，也不拥有全局导航或通用空状态。
 
 ## 最重要的规则
 
-1. **Core 品牌叫 AnnotAgent。** RoboCup 是默认 Domain Skill，不重新发明一套无关 Logo。
+1. **Core 品牌叫 AnnotAgent。** Skill 是可注册扩展；RoboCup 只是其中一个示例。
 2. **代码中的唯一视觉真相**是 `tokens/tokens.json`、`tokens/tokens.css` 和 `brand/logo/svg/`。
 3. `reference/` 中两张 AI 生成品牌板只用于气质参考。不要从图片吸色，不要把图片裁下来当正式 Logo，也不要照着其中可能失真的小字实现界面。
 4. 功能状态不能只靠颜色表达。必须同时使用文字、形状、图标或线型。
@@ -12,10 +12,10 @@
 
 ## 目录
 
-- `brand/logo/`：核心 Logo、RoboCup lockup、favicon、PWA 图标和 OG 卡片。
+- `brand/logo/`：Core Logo、favicon、PWA 图标和 OG 卡片；RoboCup lockup 是 Skill/Application 示例资产。
 - `brand/icons/`：原创、统一笔画的标注与 Agent 图标。
 - `brand/palette/`：颜色定义和快速预览。
-- `brand/robocup/`：RoboCup 标签到通用 annotation color slot 的映射。
+- `brand/robocup/`：RoboCup Skill badge、示例资产及 label 到通用 annotation slot 的映射。
 - `tokens/`：JSON、CSS、TypeScript 与 Tailwind preset。
 - `web/`：可复制到 React 项目的主题 CSS、Logo 与状态组件。
 - `tui/`：Ratatui 色彩映射和 ASCII 标识。
@@ -51,12 +51,13 @@ design/annotagent-visual-system/codex/CODEX-PROMPT.md
 
 ## 快速人工接入
 
-Web：
+Web 运行时必须按产品层级投放：
 
 ```text
 web/src/styles/annotagent-tokens.css
 web/src/styles/annotagent-theme.css
-web/public/brand/
+web/public/brand/core/
+web/public/brand/skills/robocup/
 ```
 
 TUI：
@@ -75,4 +76,4 @@ brand/logo/svg/robocup-annotagent-lockup-light.svg
 
 ## 商用提醒
 
-本包提供视觉设计，不提供名称或商标法律清查。公开商业化前仍应检查 `AnnotAgent` 和 `RoboCup AnnotAgent` 的名称冲突、RoboCup 相关标识使用规范以及目标地区商标情况。软件行业很喜欢先做三个月品牌，再在第四个月发现名字被注册了，因此最好不要复刻这项传统。
+本包提供视觉设计，不提供名称或商标法律清查。公开商业化前仍应检查 `AnnotAgent` 名称冲突、RoboCup 相关标识使用规范以及目标地区商标情况。

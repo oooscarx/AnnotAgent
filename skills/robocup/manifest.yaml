@@ -1,6 +1,6 @@
 version: 1
 id: robocup
-display_name: RoboCup Perception Annotation
+display_name: RoboCup Perception
 description: RoboCup robot soccer perception dataset annotation and deterministic quality control
 rust_implementation: annotagent-skill-robocup
 summary_resources:
@@ -26,4 +26,3 @@ correction_taxonomy:
   - duplicate_object
   - inaccurate_geometry
   - other
-

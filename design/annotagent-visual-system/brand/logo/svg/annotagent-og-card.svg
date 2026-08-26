@@ -18,12 +18,12 @@
       <path fill="url(#aaGradient)" fill-rule="evenodd" d="M36 99 59.5 31.5C61.2 26.6 64.6 24 69.8 24h5.1c5.1 0 8.6 2.7 10.3 7.5L109 99H86.4l-6.7-20.3H54.4L47.9 99H36Zm25.1-41.1h12.2l-6-18.1-6.2 18.1Z"/>
       <path d="M55.3 77.8h23.6" stroke="rgba(255,255,255,.72)" stroke-width="3" stroke-linecap="round"/>
     </g>
-<text x="430" y="275" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="100" font-weight="750" letter-spacing="-4"><tspan fill="white">Annot</tspan><tspan fill="#00B3A4">Agent</tspan></text>
-<text x="438" y="337" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="550" fill="#CBD5E1">Agentic annotation · deterministic validation · human review</text>
+<text x="430" y="275" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="100" font-weight="750" letter-spacing="-4" fill="white">Annot</text>
+<text x="674" y="275" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="100" font-weight="750" letter-spacing="-4" fill="#00B3A4">Agent</text>
+<text x="438" y="337" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="550" fill="#CBD5E1">Composable annotation workflows for vision data.</text>
 <g transform="translate(438 395)">
- <rect width="202" height="48" rx="24" fill="#0F2A45" stroke="#2DD4BF" stroke-opacity=".5"/>
- <circle cx="25" cy="24" r="6" fill="#2DD4BF"/><text x="44" y="31" font-family="Inter, sans-serif" font-size="20" fill="white">AnnotAgent Core</text>
- <g transform="translate(224 0)"><rect width="214" height="48" rx="24" fill="#0F2A45" stroke="#A78BFA" stroke-opacity=".5"/><circle cx="25" cy="24" r="6" fill="#A78BFA"/><text x="44" y="31" font-family="Inter, sans-serif" font-size="20" fill="white">RoboCup Skill</text></g>
+ <rect width="392" height="48" rx="24" fill="#0F2A45" stroke="#2DD4BF" stroke-opacity=".5"/>
+ <circle cx="25" cy="24" r="6" fill="#2DD4BF"/><text x="44" y="31" font-family="Inter, sans-serif" font-size="20" fill="white">Projects · Workflows · Models · Review</text>
 </g>
 <text x="92" y="574" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="21" fill="#94A3B8">MODEL -> TOOL -> VALIDATOR → REVIEW → COMMIT</text>
 </svg>

@@ -2,9 +2,9 @@
 
 ## 1. 品牌层级
 
-- **AnnotAgent**：Core Runtime 与通用产品品牌。
-- **RoboCup AnnotAgent**：`AnnotAgent Core + RoboCup Skill` 的产品展示名。
-- Domain Skill 使用 badge、descriptor 和标签映射扩展 Core，不更换核心 A 标志。
+- **AnnotAgent**：Core Runtime 与唯一全局产品品牌。
+- **Domain Skill**：使用 badge、descriptor 和标签映射扩展 Core，不拥有全局产品界面。
+- **Example Application**：可以组合 Core 与 Skill 的示例 lockup，但只能用于对应 Project、示例或历史材料。
 
 ## 2. Logo 含义
 
@@ -26,7 +26,8 @@
 推荐 descriptor：
 
 - Core：`Agentic annotation · auditable by design`
-- RoboCup：`VLM-assisted annotation and quality control for robot soccer perception`
+- 通用产品：`Composable annotation workflows for vision data.`
+- RoboCup Skill：`VLM-assisted annotation and quality control for robot soccer perception`
 
 产品 UI 内不要反复放营销 slogan。界面首先是工具，不是机场广告牌。
 

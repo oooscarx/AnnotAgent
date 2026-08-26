@@ -141,7 +141,7 @@ impl DatasetExporter for CocoExporter {
         write_json(
             &path,
             &json!({
-                "info": {"description": "RoboCup AnnotAgent export", "version": "1"},
+                "info": {"description": "AnnotAgent export", "version": "1"},
                 "images": images,
                 "categories": categories.iter().enumerate().map(|(index, name)| {
                     json!({"id": index + 1, "name": name})

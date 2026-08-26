@@ -12,15 +12,18 @@ use std::{
 };
 
 use annotagent_application::{
-    AnnotAgentApplication, LocalApplication, Settings, stable_project_id,
+    AnnotAgentApplication, LocalApplication, ModelBinding, ProjectSummary, Settings,
+    WorkflowVersion, stable_project_id,
 };
 use annotagent_core::{
     Annotation, AnnotationId, CorrectionFeatures, CorrectionRecord, DatasetExporter, ExportRequest,
-    LabelId, ProjectSnapshot, ReviewStatus, RunId, SnapshotImage,
+    LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId, RunStatus, SnapshotImage,
+    UsageTotals,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
 };
+use annotagent_storage::HistoryRun;
 use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
@@ -232,6 +235,9 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/skills", get(list_skills))
         .route("/api/skills/{skill_id}", get(get_skill))
         .route("/api/projects", get(list_projects).post(create_project))
+        .route("/api/workflows", get(list_workflows))
+        .route("/api/models", get(list_models))
+        .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route("/api/projects/{project_id}/import", post(import_images))
         .route("/api/projects/{project_id}/images", get(list_images))
@@ -267,7 +273,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         api.fallback(|| async {
             (
                 StatusCode::NOT_FOUND,
-                "RoboCup AnnotAgent Web build not found; run npm --prefix web run build",
+                "AnnotAgent Web build not found; run npm --prefix web run build",
             )
         })
     }
@@ -292,7 +298,7 @@ async fn shutdown_signal() {
 async fn health(State(state): State<ServerState>) -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "service": "RoboCup AnnotAgent",
+        "service": "AnnotAgent",
         "workspace": state.application.workspace(),
         "database": state.application.database_path(),
     }))
@@ -379,13 +385,186 @@ async fn get_skill(
     Ok(Json(skill_detail(skill.as_ref())))
 }
 
-async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let projects = state
+fn workspace_model_binding(settings: &Settings) -> ModelBinding {
+    let offline = settings.default_provider == "mock";
+    ModelBinding {
+        id: "default-vision".to_owned(),
+        provider: settings.default_provider.clone(),
+        model: if offline {
+            "deterministic-mock".to_owned()
+        } else {
+            settings.provider.model.clone()
+        },
+        role: "vision".to_owned(),
+        scope: "workspace_default".to_owned(),
+    }
+}
+
+async fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
+    let mut projects = state
         .application
         .list_projects()
         .map_err(ApiError::internal)?;
-    let runs = state.application.list_runs().map_err(ApiError::internal)?;
-    Ok(Json(json!({"projects": projects, "runs": runs})))
+    let binding = {
+        let settings = state.settings.read().await;
+        workspace_model_binding(&settings)
+    };
+    for project in &mut projects {
+        project.model_bindings = vec![binding.clone()];
+        for workflow in &mut project.available_workflow_versions {
+            for node in &mut workflow.nodes {
+                node.model_binding = Some(binding.id.clone());
+            }
+        }
+        for node in &mut project.active_workflow.nodes {
+            node.model_binding = Some(binding.id.clone());
+        }
+    }
+    Ok(projects)
+}
+
+#[derive(Debug, Serialize)]
+struct RunSummary {
+    id: RunId,
+    project_name: String,
+    workflow_name: String,
+    workflow_version: String,
+    skill_versions: Vec<String>,
+    model_bindings: Vec<ModelBinding>,
+    provider: String,
+    model: String,
+    status: RunStatus,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost: String,
+    terminal_reason: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
+    let project = serde_json::from_str::<ProjectSchema>(&run.project_schema_json).ok();
+    let workflow_version = project
+        .as_ref()
+        .map_or_else(|| "legacy".to_owned(), |schema| schema.version.to_string());
+    let skill_version = project.as_ref().map_or_else(
+        || "unknown".to_owned(),
+        |schema| schema.project.skill_version.clone(),
+    );
+    let usage = state
+        .application
+        .store()
+        .history(run.id)
+        .map_err(ApiError::internal)?
+        .usage;
+    let mut totals = UsageTotals::default();
+    for record in &usage {
+        totals.add(record);
+    }
+    Ok(RunSummary {
+        id: run.id,
+        project_name: run.project_name,
+        workflow_name: "Configured task graph".to_owned(),
+        workflow_version,
+        skill_versions: vec![format!("{}@{}", run.skill_id, skill_version)],
+        model_bindings: vec![ModelBinding {
+            id: "default-vision".to_owned(),
+            provider: run.provider.clone(),
+            model: run.model.clone(),
+            role: "vision".to_owned(),
+            scope: "run_snapshot".to_owned(),
+        }],
+        provider: run.provider,
+        model: run.model,
+        status: run.status,
+        input_tokens: totals.input_tokens,
+        output_tokens: totals.output_tokens,
+        cost: totals.cost.to_string(),
+        terminal_reason: run.terminal_reason,
+        created_at: run.created_at,
+        updated_at: run.updated_at,
+    })
+}
+
+fn product_runs(state: &ServerState) -> ApiResult<Vec<RunSummary>> {
+    state
+        .application
+        .list_runs()
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|run| run_summary(state, run))
+        .collect()
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectWorkflow {
+    project_id: String,
+    project_name: String,
+    workflow: WorkflowVersion,
+}
+
+async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let projects = product_projects(&state).await?;
+    let runs = product_runs(&state)?;
+    let models = {
+        let settings = state.settings.read().await;
+        vec![workspace_model_binding(&settings)]
+    };
+    let installed_skills = state
+        .application
+        .skills()
+        .list()
+        .iter()
+        .map(|skill| {
+            json!({
+                "id": skill.id(),
+                "display_name": skill.manifest().display_name,
+                "version": skill.manifest().version,
+            })
+        })
+        .collect::<Vec<_>>();
+    let review_queue = reviews(&state)?.len();
+    Ok(Json(json!({
+        "projects": projects,
+        "runs": runs,
+        "models": models,
+        "installed_skills": installed_skills,
+        "review_queue": review_queue,
+    })))
+}
+
+async fn list_workflows(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let workflows = product_projects(&state)
+        .await?
+        .into_iter()
+        .flat_map(|project| {
+            let project_id = project.id;
+            let project_name = project.name;
+            project
+                .available_workflow_versions
+                .into_iter()
+                .map(move |workflow| ProjectWorkflow {
+                    project_id: project_id.clone(),
+                    project_name: project_name.clone(),
+                    workflow,
+                })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({"workflows": workflows})))
+}
+
+async fn list_models(State(state): State<ServerState>) -> Json<Value> {
+    let model = {
+        let settings = state.settings.read().await;
+        workspace_model_binding(&settings)
+    };
+    Json(json!({
+        "models": [model],
+    }))
+}
+
+async fn list_run_summaries(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({"runs": product_runs(&state)?})))
 }
 
 #[derive(Debug, Deserialize)]
@@ -409,10 +588,23 @@ async fn get_project(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
-    let project = state
+    let mut project = state
         .application
         .get_project(&project_id)
         .map_err(ApiError::not_found)?;
+    let binding = {
+        let settings = state.settings.read().await;
+        workspace_model_binding(&settings)
+    };
+    project.model_bindings = vec![binding.clone()];
+    for node in &mut project.active_workflow.nodes {
+        node.model_binding = Some(binding.id.clone());
+    }
+    for workflow in &mut project.available_workflow_versions {
+        for node in &mut workflow.nodes {
+            node.model_binding = Some(binding.id.clone());
+        }
+    }
     Ok(Json(json!(project)))
 }
 
@@ -1024,7 +1216,8 @@ mod tests {
         let body = to_bytes(response.into_body(), 64 * 1024)
             .await
             .expect("body");
-        assert!(String::from_utf8_lossy(&body).contains("RoboCup AnnotAgent"));
+        let health: Value = serde_json::from_slice(&body).expect("health JSON");
+        assert_eq!(health["service"], json!("AnnotAgent"));
         let response = service
             .oneshot(
                 axum::http::Request::builder()
@@ -1063,6 +1256,37 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
 
+        let dashboard =
+            response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
+                .await;
+        let project = &dashboard["projects"][0];
+        assert_eq!(project["name"], json!("RoboCup Demo Dataset"));
+        assert_eq!(project["enabled_skills"][0]["id"], json!("robocup"));
+        assert_eq!(
+            project["active_workflow"]["name"],
+            json!("Configured task graph")
+        );
+        assert_eq!(project["active_workflow"]["status"], json!("published"));
+        assert_eq!(project["model_bindings"][0]["id"], json!("default-vision"));
+
+        let workflows =
+            response_json(request(&service, axum::http::Method::GET, "/api/workflows", None).await)
+                .await;
+        assert_eq!(
+            workflows["workflows"][0]["project_id"],
+            json!("review-demo")
+        );
+        assert!(
+            workflows["workflows"][0]["workflow"]["nodes"]
+                .as_array()
+                .is_some_and(|nodes| !nodes.is_empty())
+        );
+
+        let models =
+            response_json(request(&service, axum::http::Method::GET, "/api/models", None).await)
+                .await;
+        assert_eq!(models["models"][0]["provider"], json!("mock"));
+
         let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
         assert_eq!(sse.status(), StatusCode::OK);
         let mut event_stream = sse.into_body().into_data_stream();
@@ -1086,6 +1310,15 @@ mod tests {
         assert!(String::from_utf8_lossy(&first_event).contains("run_"));
 
         wait_for_status(&application, run_id, RunStatus::AwaitingReview).await;
+        let runs =
+            response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
+                .await;
+        assert_eq!(runs["runs"][0]["workflow_version"], json!("1"));
+        assert_eq!(runs["runs"][0]["skill_versions"][0], json!("robocup@1"));
+        assert_eq!(
+            runs["runs"][0]["model_bindings"][0]["scope"],
+            json!("run_snapshot")
+        );
         let run_response = request(
             &service,
             axum::http::Method::GET,

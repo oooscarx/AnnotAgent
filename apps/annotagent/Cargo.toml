@@ -1,6 +1,6 @@
 [package]
 name = "annotagent"
-description = "RoboCup AnnotAgent CLI, TUI, and server composition root"
+description = "AnnotAgent CLI, TUI, and server composition root"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

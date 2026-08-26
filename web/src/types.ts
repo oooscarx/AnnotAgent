@@ -11,20 +11,116 @@ export type RunStatus =
 export interface HistoryRun {
   id: string;
   project_name: string;
-  skill_id: string;
+  workflow_name: string;
+  workflow_version: string;
+  skill_versions: string[];
+  model_bindings: ModelBinding[];
   provider: string;
   model: string;
   status: RunStatus;
+  input_tokens: number;
+  output_tokens: number;
+  cost: string;
   terminal_reason?: string;
   created_at: string;
+  updated_at: string;
+}
+
+export type WorkflowStatus = "draft" | "valid" | "published" | "archived";
+
+export interface EnabledSkill {
+  id: string;
+  display_name: string;
+  version: string;
+}
+
+export interface ModelBinding {
+  id: string;
+  provider: string;
+  model: string;
+  role: string;
+  scope: string;
+}
+
+export interface WorkflowNodeSummary {
+  id: string;
+  node_type: string;
+  depends_on: string[];
+  model_binding?: string;
+  validators: string[];
+  refiners: string[];
+  human_review_gate: boolean;
+  fallback?: string;
+}
+
+export interface WorkflowVersion {
+  workflow_id: string;
+  name: string;
+  version: string;
+  status: WorkflowStatus;
+  validation_status: string;
+  is_default: boolean;
+  source: string;
+  nodes: WorkflowNodeSummary[];
+}
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  current_version: string;
+  status: WorkflowStatus;
+  validation_status: string;
+  is_default: boolean;
+  node_count: number;
 }
 
 export interface ProjectSummary {
   id: string;
   name: string;
+  description?: string;
+  dataset: {
+    root: string;
+    include: string[];
+    recursive: boolean;
+    image_count: number;
+  };
+  annotation_schema: {
+    id: string;
+    kind: string;
+    labels: string[];
+    required: boolean;
+  }[];
+  enabled_skills: EnabledSkill[];
+  workflows: WorkflowSummary[];
+  active_workflow: WorkflowVersion;
+  available_workflow_versions: WorkflowVersion[];
+  model_bindings: ModelBinding[];
+  export_formats: string[];
+  /** Compatibility field from ProjectSchema v1. */
   skill_id: string;
   image_count: number;
-  recent_run?: HistoryRun;
+  recent_run?: {
+    id: string;
+    provider: string;
+    model: string;
+    status: RunStatus;
+    created_at: string;
+    updated_at: string;
+  };
+}
+
+export interface DashboardData {
+  projects: ProjectSummary[];
+  runs: HistoryRun[];
+  models: ModelBinding[];
+  installed_skills: EnabledSkill[];
+  review_queue: number;
+}
+
+export interface ProjectWorkflow {
+  project_id: string;
+  project_name: string;
+  workflow: WorkflowVersion;
 }
 
 export interface ImageItem {

@@ -1,13 +1,17 @@
 # AnnotAgent UX Guidelines
 
-## 信息架构
+## 产品信息架构
 
-推荐固定三栏：
+全局产品导航固定为 Dashboard、Projects、Workflows、Models、Skills、Runs、Review 和 Settings。Skill 不拥有全局页面；只有进入 Project 或 Skill 上下文后才显示领域名称和 badge。
+
+Review 工作区推荐三栏：
 
 1. 左侧：Project / Image / Review Queue。
 2. 中间：图像画布与标注编辑。
 3. 右侧：Annotation、属性、Validation Evidence。
 4. Agent Trace 作为可折叠底栏或右栏 Tab，不抢占主画布。
+
+未打开 Project 时只显示 AnnotAgent Core 产品语言，不展示任何 Skill 领域标签、图片或 badge。
 
 ## 视觉优先级
 

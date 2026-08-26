@@ -1,12 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
+import type { AnnotationVisualContext } from "../annotationVisuals";
 import type { Annotation, Point } from "../types";
 
 interface Props {
   imageUrl?: string;
   annotations: Annotation[];
   selectedId?: string;
-  skillId?: string;
+  visualContext?: AnnotationVisualContext;
   onSelect: (id: string) => void;
   onChange: (annotation: Annotation) => void;
 }
@@ -20,7 +21,7 @@ export function AnnotationCanvas({
   imageUrl,
   annotations,
   selectedId,
-  skillId,
+  visualContext,
   onSelect,
   onChange,
 }: Props) {
@@ -109,7 +110,7 @@ export function AnnotationCanvas({
       </div>
       <ul className="canvas-annotation-list" aria-label="Annotations on canvas">
         {annotations.map((annotation) => {
-          const visual = annotationVisual(annotation, skillId);
+          const visual = annotationVisual(annotation, visualContext);
           return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {Math.round((annotation.confidence ?? 0) * 100)}%</small></span></button></li>;
         })}
         {annotations.length === 0 && <li className="canvas-annotation-empty">No annotations selected</li>}
@@ -135,7 +136,7 @@ export function AnnotationCanvas({
         }}
       >
         <defs>
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((slot) => (
+          {([1, 2, 3, 4, 5, 6, 7, 8] as const).map((slot) => (
             <pattern key={slot} id={`aa-diagonal-${slot}`} width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
               <line x1="0" y1="0" x2="0" y2="12" stroke={annotationColor(slot)} strokeWidth="4" />
             </pattern>
@@ -154,7 +155,7 @@ export function AnnotationCanvas({
             <AnnotationShape
               key={annotation.id}
               annotation={annotation}
-              visual={annotationVisual(annotation, skillId)}
+              visual={annotationVisual(annotation, visualContext)}
               selected={annotation.id === selectedId}
               onSelect={() => onSelect(annotation.id)}
               onVertex={(ring, index, event) => {

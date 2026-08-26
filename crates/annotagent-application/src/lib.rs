@@ -52,9 +52,147 @@ pub struct PreparedRun {
 pub struct ProjectSummary {
     pub id: String,
     pub name: String,
+    pub description: Option<String>,
+    pub dataset: ProjectDatasetSummary,
+    pub annotation_schema: Vec<AnnotationTaskSummary>,
+    pub enabled_skills: Vec<EnabledSkill>,
+    pub workflows: Vec<WorkflowSummary>,
+    pub active_workflow: WorkflowVersion,
+    pub available_workflow_versions: Vec<WorkflowVersion>,
+    pub model_bindings: Vec<ModelBinding>,
+    pub export_formats: Vec<String>,
+    /// Compatibility field for v1 clients. New clients use `enabled_skills`.
     pub skill_id: String,
     pub image_count: usize,
     pub recent_run: Option<HistoryRun>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectDatasetSummary {
+    pub root: String,
+    pub include: Vec<String>,
+    pub recursive: bool,
+    pub image_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnnotationTaskSummary {
+    pub id: String,
+    pub kind: String,
+    pub labels: Vec<String>,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EnabledSkill {
+    pub id: String,
+    pub display_name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelBinding {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub role: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowStatus {
+    Draft,
+    Valid,
+    Published,
+    Archived,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowNodeSummary {
+    pub id: String,
+    pub node_type: String,
+    pub depends_on: Vec<String>,
+    pub model_binding: Option<String>,
+    pub validators: Vec<String>,
+    pub refiners: Vec<String>,
+    pub human_review_gate: bool,
+    pub fallback: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowVersion {
+    pub workflow_id: String,
+    pub name: String,
+    pub version: String,
+    pub status: WorkflowStatus,
+    pub validation_status: String,
+    pub is_default: bool,
+    pub source: String,
+    pub nodes: Vec<WorkflowNodeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowSummary {
+    pub id: String,
+    pub name: String,
+    pub current_version: String,
+    pub status: WorkflowStatus,
+    pub validation_status: String,
+    pub is_default: bool,
+    pub node_count: usize,
+}
+
+fn task_kind_name(kind: annotagent_core::TaskKind) -> String {
+    match kind {
+        annotagent_core::TaskKind::Classification => "classification",
+        annotagent_core::TaskKind::BoundingBox => "bounding_box",
+        annotagent_core::TaskKind::Keypoints => "keypoints",
+        annotagent_core::TaskKind::Polyline => "polyline",
+        annotagent_core::TaskKind::Polygon => "polygon",
+        annotagent_core::TaskKind::InstanceMask => "instance_mask",
+        annotagent_core::TaskKind::Attributes => "attributes",
+        annotagent_core::TaskKind::Relations => "relations",
+    }
+    .to_owned()
+}
+
+fn compatibility_workflow(project: &ProjectSchema, skill: &dyn DomainSkill) -> WorkflowVersion {
+    let graph = skill.workflow();
+    let dependency_map: HashMap<_, _> = graph
+        .nodes
+        .into_iter()
+        .map(|node| (node.id, node.depends_on))
+        .collect();
+    let nodes = project
+        .tasks
+        .iter()
+        .map(|task| WorkflowNodeSummary {
+            id: task.id.to_string(),
+            node_type: task_kind_name(task.kind),
+            depends_on: dependency_map
+                .get(&task.id)
+                .unwrap_or(&task.depends_on)
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            model_binding: Some("default-vision".to_owned()),
+            validators: task.validators.clone(),
+            refiners: task.refiners.clone(),
+            human_review_gate: true,
+            fallback: Some("bounded retry, then human review".to_owned()),
+        })
+        .collect();
+    WorkflowVersion {
+        workflow_id: format!("{}-configured", skill.id()),
+        name: "Configured task graph".to_owned(),
+        version: project.version.to_string(),
+        status: WorkflowStatus::Published,
+        validation_status: "valid".to_owned(),
+        is_default: true,
+        source: "project tasks + registered Skill graph".to_owned(),
+        nodes,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -235,7 +373,7 @@ impl LocalApplication {
 
     pub fn get_project(&self, project_id: &str) -> Result<ProjectSummary> {
         let path = self.project_path(project_id)?;
-        let (project, _) = load_project_with_registry(&path, &self.skills)?;
+        let (project, skill) = load_project_with_registry(&path, &self.skills)?;
         let dataset = path
             .parent()
             .unwrap_or(&self.workspace)
@@ -246,10 +384,59 @@ impl LocalApplication {
             .list_runs()?
             .into_iter()
             .find(|run| run.project_name == project.project.name);
+        let workflow = compatibility_workflow(&project, skill.as_ref());
+        let workflow_summary = WorkflowSummary {
+            id: workflow.workflow_id.clone(),
+            name: workflow.name.clone(),
+            current_version: workflow.version.clone(),
+            status: workflow.status,
+            validation_status: workflow.validation_status.clone(),
+            is_default: workflow.is_default,
+            node_count: workflow.nodes.len(),
+        };
+        let model_bindings = recent_run
+            .as_ref()
+            .map(|run| {
+                vec![ModelBinding {
+                    id: "default-vision".to_owned(),
+                    provider: run.provider.clone(),
+                    model: run.model.clone(),
+                    role: "vision".to_owned(),
+                    scope: "latest_run".to_owned(),
+                }]
+            })
+            .unwrap_or_default();
         Ok(ProjectSummary {
             id: project_id.to_owned(),
-            name: project.project.name,
-            skill_id: project.project.skill,
+            name: project.project.name.clone(),
+            description: None,
+            dataset: ProjectDatasetSummary {
+                root: project.dataset.root.to_string_lossy().into_owned(),
+                include: project.dataset.include.clone(),
+                recursive: project.dataset.recursive,
+                image_count,
+            },
+            annotation_schema: project
+                .tasks
+                .iter()
+                .map(|task| AnnotationTaskSummary {
+                    id: task.id.to_string(),
+                    kind: task_kind_name(task.kind),
+                    labels: task.labels.clone(),
+                    required: task.required,
+                })
+                .collect(),
+            enabled_skills: vec![EnabledSkill {
+                id: skill.id().to_owned(),
+                display_name: skill.manifest().display_name.clone(),
+                version: project.project.skill_version.clone(),
+            }],
+            workflows: vec![workflow_summary],
+            active_workflow: workflow.clone(),
+            available_workflow_versions: vec![workflow],
+            model_bindings,
+            export_formats: project.export.formats.clone(),
+            skill_id: project.project.skill.clone(),
             image_count,
             recent_run,
         })
@@ -884,6 +1071,37 @@ mod tests {
         let app = LocalApplication::new(&workspace).expect("app");
         assert!(app.project_path("../outside").is_err());
         assert!(app.project_path("a/b").is_err());
+    }
+
+    #[test]
+    fn project_summary_separates_project_skill_and_workflow() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        let summary = application
+            .create_project(
+                "robocup-demo",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("Project summary");
+
+        assert_eq!(summary.name, "RoboCup Demo Dataset");
+        assert_eq!(summary.enabled_skills.len(), 1);
+        assert_eq!(summary.enabled_skills[0].id, "robocup");
+        assert_eq!(summary.enabled_skills[0].display_name, "RoboCup Perception");
+        assert_eq!(summary.active_workflow.name, "Configured task graph");
+        assert_eq!(summary.active_workflow.status, WorkflowStatus::Published);
+        assert_eq!(
+            summary.workflows[0].node_count,
+            summary.annotation_schema.len()
+        );
+        assert!(
+            summary
+                .active_workflow
+                .nodes
+                .iter()
+                .any(|node| { node.id == "field_line" && node.depends_on == ["field_region"] })
+        );
+        assert!(summary.model_bindings.is_empty());
     }
 
     #[tokio::test]

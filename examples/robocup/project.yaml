@@ -1,6 +1,6 @@
 version: 1
 project:
-  name: RoboCup Demo
+  name: RoboCup Demo Dataset
   skill: robocup
   skill_version: "1"
   language: zh-CN
@@ -67,4 +67,3 @@ review:
     - team_color_conflict
 export:
   formats: [native, coco, yolo, labelme]
-

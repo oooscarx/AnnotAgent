@@ -59,3 +59,14 @@ This file records work and commands actually performed in the implementation ses
 - In-app browser — Dashboard, Project, Review, Skills and Settings rendered; the synthetic project run streamed SSE to `run completed` with 7 requests and cost `0.00252`; project selection remained stable after the stale-closure fix.
 
 The generated databases, live frame, Web build directory, node modules and temporary export/history files remain ignored or outside the repository.
+
+## 2026-08-27 product hierarchy refactor
+
+- Recast AnnotAgent as the global product shell and scoped RoboCup to a registered Skill, example Project, domain visual profile, and retained example lockups.
+- Added the product entity/LLM boundary design in `docs/PRODUCT_HIERARCHY.md`; added honest compatibility DTOs for Projects, Workflows, Model Bindings, Skills, and Run summaries without claiming arbitrary graph execution.
+- Rebuilt Web information architecture around Dashboard, Projects, Workflows, Models, Skills, Runs, Review, and Settings. The Workflow page renders the actual configured task graph and keeps suggestion/edit/dry-run/publish controls disabled with explicit limitations.
+- Split Vite assets into `brand/core` and `brand/skills/robocup`, removed domain identity from HTML/PWA metadata and the Core OG card, and synchronized the canonical visual-system checksum manifest.
+- Isolated the domain mapping behind `SkillVisualProfile`; Project, stable Skill-id, schema, and stable-hash fallback priority is covered by tests.
+- Made the TUI Project optional, gave its no-Project state a generic product title, and loaded Project/Workflow/Skill context dynamically after `--project` or `/open`.
+- Rust formatting, Clippy with warnings denied, all 49 Rust tests, all-feature build, Web typecheck, 12 Web tests, and production build passed.
+- In-app browser acceptance used a disposable workspace: the no-Project Dashboard contained no domain wording or badge; all eight navigation entries rendered; an isolated example Project showed its Skill, active Workflow, six real nodes, model binding, dependencies, validators, fallback, and review gates. Roadmap actions were visibly disabled. The browser tab, server, SQLite database, and temporary Project were removed afterward.

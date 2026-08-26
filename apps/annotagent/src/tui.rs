@@ -1,4 +1,9 @@
-use std::{io, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use annotagent_application::{AnnotAgentApplication, LocalApplication};
 use annotagent_core::{RunEvent, RunEventPayload, RunStatus};
@@ -28,8 +33,27 @@ struct ActiveRun {
     events: broadcast::Receiver<RunEvent>,
 }
 
+#[derive(Debug, Clone)]
+struct ProjectContext {
+    name: String,
+    workflow: String,
+    skills: String,
+}
+
+impl ProjectContext {
+    fn load(path: &Path) -> Result<Self> {
+        let (project, skill) = runner::load_project(path)?;
+        Ok(Self {
+            name: project.project.name,
+            workflow: format!("Configured task graph@v{}", project.version),
+            skills: skill.manifest().display_name.clone(),
+        })
+    }
+}
+
 struct TuiState {
-    project: PathBuf,
+    project: Option<PathBuf>,
+    project_context: Option<ProjectContext>,
     application: Arc<LocalApplication>,
     input: String,
     trace: Vec<String>,
@@ -41,18 +65,25 @@ struct TuiState {
 }
 
 impl TuiState {
-    fn new(project: PathBuf, application: Arc<LocalApplication>) -> Self {
-        Self {
+    fn new(project: Option<PathBuf>, application: Arc<LocalApplication>) -> Result<Self> {
+        let project_context = project.as_deref().map(ProjectContext::load).transpose()?;
+        let trace = if project.is_some() {
+            "Ready. Press r or enter /run to start the deterministic demo."
+        } else {
+            "No project opened. Use /open <project.yaml> or /init for setup help."
+        };
+        Ok(Self {
             project,
+            project_context,
             application,
             input: String::new(),
-            trace: vec!["Ready. Press r or enter /run to start the deterministic demo.".to_owned()],
+            trace: vec![trace.to_owned()],
             status: RunStatus::Pending,
             current_task: "-".to_owned(),
             usage: "input 0 · output 0 · cost 0".to_owned(),
             active: None,
             quit: false,
-        }
+        })
     }
 
     fn push(&mut self, message: impl Into<String>) {
@@ -67,11 +98,13 @@ impl TuiState {
             self.push("A run is already active.");
             return Ok(());
         }
+        let Some(project) = self.project.as_deref() else {
+            self.push("No project opened. Use /open <project.yaml> first.");
+            return Ok(());
+        };
         let mut events = self.application.subscribe();
         while events.try_recv().is_ok() {}
-        let started = self
-            .application
-            .start_run_path(&self.project, "mock", None)?;
+        let started = self.application.start_run_path(project, "mock", None)?;
         self.active = Some(ActiveRun {
             run_id: started.run_id,
             events,
@@ -215,11 +248,25 @@ impl TuiState {
                 Ok(())
             }
             "/open" => {
+                if self.active.is_some() {
+                    self.push("Finish or cancel the active Run before opening another Project.");
+                    return Ok(());
+                }
                 let path = parts.next().context("usage: /open <project.yaml>")?;
                 let path = PathBuf::from(path);
-                runner::load_project(&path)?;
-                self.project = path;
-                self.push("project opened");
+                let context = ProjectContext::load(&path)?;
+                let workspace = project_workspace(&path)?;
+                self.application = Arc::new(LocalApplication::with_database(
+                    workspace,
+                    runner::database_path()?,
+                )?);
+                self.push(format!("opened Project {}", context.name));
+                self.project = Some(path);
+                self.project_context = Some(context);
+                Ok(())
+            }
+            "/init" => {
+                self.push("Create a Project with: annotagent init <directory> --skill <skill-id>");
                 Ok(())
             }
             "/history" | "/trace" => {
@@ -230,7 +277,7 @@ impl TuiState {
                 Ok(())
             }
             "/skills" => {
-                self.push("robocup · RoboCup Perception Annotation");
+                self.push("robocup · RoboCup Perception");
                 Ok(())
             }
             "/gui" => {
@@ -243,7 +290,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /run /pause /resume /cancel /retry /history /trace /config /skills /gui /help /quit");
+                self.push("/open /init /run /pause /resume /cancel /retry /history /trace /config /skills /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -258,12 +305,11 @@ impl TuiState {
     }
 }
 
-pub async fn run(project: PathBuf) -> Result<()> {
-    runner::load_project(&project)?;
-    let workspace = project
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .canonicalize()?;
+pub async fn run(project: Option<PathBuf>) -> Result<()> {
+    let workspace = match project.as_deref() {
+        Some(path) => project_workspace(path)?,
+        None => std::env::current_dir()?.canonicalize()?,
+    };
     let application = Arc::new(LocalApplication::with_database(
         workspace,
         runner::database_path()?,
@@ -281,12 +327,20 @@ pub async fn run(project: PathBuf) -> Result<()> {
     result
 }
 
+fn project_workspace(path: &Path) -> Result<PathBuf> {
+    ProjectContext::load(path)?;
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()
+        .with_context(|| format!("cannot access Project workspace for {}", path.display()))
+}
+
 async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    project: PathBuf,
+    project: Option<PathBuf>,
     application: Arc<LocalApplication>,
 ) -> Result<()> {
-    let mut state = TuiState::new(project, application);
+    let mut state = TuiState::new(project, application)?;
     loop {
         state.drain_events();
         state.collect_finished().await;
@@ -355,11 +409,11 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
         .split(area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled(" RoboCup AnnotAgent", theme.title())),
-            Line::from(vec![
-                Span::styled(" AnnotAgent Core", theme.muted()),
-                Span::styled(" · RoboCup Skill", theme.skill()),
-            ]),
+            Line::from(Span::styled(" AnnotAgent", theme.title())),
+            Line::from(Span::styled(
+                " Composable Annotation Workflow Runtime",
+                theme.muted(),
+            )),
         ])
         .style(theme.base()),
         rows[0],
@@ -369,7 +423,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
         frame.render_widget(
             Paragraph::new(format!(
                 "{} · task {} · status {} · {}",
-                state.project.display(),
+                project_summary(state),
                 state.current_task,
                 status_label(state.status),
                 state.usage
@@ -389,7 +443,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
             ])
             .split(rows[1]);
         frame.render_widget(
-            Paragraph::new(state.project.display().to_string())
+            Paragraph::new(project_summary(state))
                 .style(theme.panel())
                 .block(themed_block("Project", theme))
                 .wrap(Wrap { trim: true }),
@@ -453,11 +507,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
 fn draw_tiny(frame: &mut ratatui::Frame<'_>, state: &TuiState, theme: AnnotAgentTheme) {
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled("RoboCup AnnotAgent", theme.title())),
-            Line::from(vec![
-                Span::styled("AnnotAgent Core", theme.muted()),
-                Span::styled(" · RoboCup Skill", theme.skill()),
-            ]),
+            Line::from(Span::styled("AnnotAgent", theme.title())),
+            Line::from(Span::styled(
+                "Composable Annotation Workflow Runtime",
+                theme.muted(),
+            )),
+            Line::from(project_summary(state)),
             Line::from(vec![
                 Span::raw(format!("{} · ", state.current_task)),
                 Span::styled(
@@ -471,10 +526,23 @@ fn draw_tiny(frame: &mut ratatui::Frame<'_>, state: &TuiState, theme: AnnotAgent
             ),
         ])
         .style(theme.panel_muted())
-        .block(themed_block("AnnotAgent Core", theme))
+        .block(themed_block("AnnotAgent", theme))
         .wrap(Wrap { trim: true }),
         frame.area(),
     );
+}
+
+fn project_summary(state: &TuiState) -> String {
+    match (&state.project, &state.project_context) {
+        (Some(path), Some(context)) => format!(
+            "Project: {} · Workflow: {} · Skills: {} · {}",
+            context.name,
+            context.workflow,
+            context.skills,
+            path.display()
+        ),
+        _ => "No project opened · Use /open or /init".to_owned(),
+    }
 }
 
 fn themed_block(title: &str, theme: AnnotAgentTheme) -> Block<'_> {
@@ -527,7 +595,7 @@ mod tests {
     fn normal_and_small_terminal_layouts_render_without_panicking() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
-        let state = TuiState::new(temporary.path().join("project.yaml"), application);
+        let state = TuiState::new(None, application).expect("state");
         for (width, height) in [(120, 32), (80, 20), (40, 8)] {
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -535,6 +603,41 @@ mod tests {
                 .draw(|frame| draw(frame, &state))
                 .expect("draw succeeds");
         }
+    }
+
+    #[test]
+    fn no_project_state_is_generic_and_actionable() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let state = TuiState::new(None, application).expect("state");
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| draw(frame, &state))
+            .expect("draw succeeds");
+        let contents = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(contents.contains("AnnotAgent"));
+        assert!(contents.contains("No project opened"));
+        assert!(!contents.contains("RoboCup"));
+    }
+
+    #[test]
+    fn project_context_names_the_active_skill() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let project =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/robocup/project.yaml");
+        let state = TuiState::new(Some(project), application).expect("state");
+        let summary = project_summary(&state);
+        assert!(summary.contains("Project:"));
+        assert!(summary.contains("Workflow: Configured task graph@v1"));
+        assert!(summary.contains("Skills: RoboCup"));
     }
 
     #[test]

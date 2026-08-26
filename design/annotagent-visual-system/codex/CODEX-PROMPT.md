@@ -1,6 +1,6 @@
 # 将 AnnotAgent Visual System 接入现有仓库
 
-你现在负责把仓库中的 GUI、TUI、品牌资产和文档统一到 **AnnotAgent Core + RoboCup Skill** 视觉系统。
+你现在负责把仓库中的 GUI、TUI、品牌资产和文档统一到 **AnnotAgent Core + 可注册 Skill 扩展** 视觉系统。
 
 这次任务是一次**视觉系统接入与前端一致性改造**，不是重写产品功能。请直接检查仓库并修改代码，不要只给建议或截图。
 
@@ -32,9 +32,10 @@
 产品关系：
 
 ```text
-RoboCup AnnotAgent
-= AnnotAgent Core
-+ RoboCup Skill
+AnnotAgent
+├── Core product shell
+└── registered Skill extensions
+    └── RoboCup Perception (example)
 ```
 
 必须做到：
@@ -88,7 +89,8 @@ docs/VISUAL_SYSTEM_INTEGRATION.md
 将正式资产放到仓库已有约定路径。如果没有约定，使用：
 
 ```text
-web/public/brand/
+web/public/brand/core/
+web/public/brand/skills/robocup/
 ```
 
 至少接入：
@@ -110,7 +112,7 @@ web/public/brand/
 - 不重复存放多份无来源说明的 Logo；
 - 如果现有项目已有 `manifest.webmanifest`，只更新图标引用，不破坏其他字段；
 - 更新 HTML title、meta theme-color、favicon 和必要的 Open Graph metadata；
-- README 标题使用 `RoboCup AnnotAgent`，内部架构仍说明 `AnnotAgent Core`。
+- README 和全局运行时标题使用 `AnnotAgent`；RoboCup lockup 只用于对应 Skill/示例 Project。
 
 ## 六、Token 与主题
 
@@ -230,11 +232,11 @@ design/annotagent-visual-system/tui/annotagent_theme.rs
 更新 TUI 标题为：
 
 ```text
-RoboCup AnnotAgent
-AnnotAgent Core · RoboCup Skill
+AnnotAgent
+Composable Annotation Workflow Runtime
 ```
 
-但内部 crate 和 CLI 仍使用 `annotagent`。
+只有打开启用该 Skill 的 Project 后才显示 RoboCup 上下文；内部 crate 和 CLI 使用 `annotagent`。
 
 ## 九、无障碍与响应式
 

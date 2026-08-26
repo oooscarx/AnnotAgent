@@ -1,6 +1,6 @@
 ---
 name: annotagent-visual-system
-description: Apply or review the AnnotAgent Core and RoboCup AnnotAgent visual system in the repository. Use for logo, branding, design tokens, React GUI theme, Ratatui TUI theme, annotation overlay colors, accessibility, visual QA, or visual-system integration. Do not use it to redesign backend behavior or claim unrelated feature gaps are complete.
+description: Apply or review the AnnotAgent Core visual system and its scoped Skill extensions in the repository. Use for logo, branding, design tokens, React GUI theme, Ratatui TUI theme, annotation overlay colors, accessibility, visual QA, or visual-system integration. Do not use it to redesign backend behavior or claim unrelated feature gaps are complete.
 ---
 
 # AnnotAgent Visual System Skill

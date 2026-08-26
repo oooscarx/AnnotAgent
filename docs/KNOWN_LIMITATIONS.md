@@ -1,16 +1,18 @@
 # Known Limitations
 
-The following are real gaps, not hidden roadmap claims:
+These are real gaps, not roadmap claims:
 
-- Dataset Coordinator enumerates images with bounded concurrency and isolates each image as its own run, but it has no persisted dataset-level checkpoint/auto-resume record, no shared global budget ledger across concurrent image runtimes, and no batch-wide pause/cancel handle. Import deduplicates by hash; coordinator enumeration itself does not re-hash duplicates.
-- The HTTP `POST /api/projects/{id}/runs` starts one image run. Multi-image bounded coordination is exposed by the CLI when `--limit 1` is omitted, not yet as a first-class server batch resource.
-- Folder image import is implemented. AnnotAgent Native, COCO, and LabelMe annotation import are not implemented.
-- The GUI edits existing bbox, keypoint, polyline, polygon and polygon-mask geometry and can append vertices. It does not yet delete individual vertices, resize bbox corners, draw a brand-new annotation from an empty canvas, compare model/refined overlays side-by-side, or provide advanced queue filters.
-- TUI starts and controls a run and shows trace/usage/history summaries. It does not implement every requested command (`/init` and `/export` are CLI-only), panel focus/navigation, or two-step cancel confirmation.
-- Provider failure attempts are bounded and surfaced, but failed HTTP attempts do not yet create the same full `UsageRecord` shape as successful calls when the remote supplies no usage.
-- OpenAI-compatible operation uses Chat Completions with tool calls. The configured capability fields are reported, but JSON-only fallback for providers without tool calling is not implemented.
-- Thumbnail/crop operations are bounded, but there is no durable thumbnail/crop cache across processes.
-- Server CORS is permissive and there is no login; the server is designed for loopback single-user use only.
-- COCO RLE is represented and exported, but there is no general RLE drawing/editing UI; the GUI handles polygon-based masks.
-- The real Qwen-compatible smoke test reached authentication, vision upload, task-scoped tool calling, structured retry, SQLite and review on a user-provided frame. It was cancelled during a slow field-line request, so a complete real-provider six-task DAG was not verified.
-- Dynamic plugins, WASM, MCP, distributed workers, cloud storage, video, training loops, vector search, and a second production Skill are intentionally outside scope.
+- Project schema v1 configures exactly one Skill. The product DTO permits `enabled_skills: []` or multiple entries for forward compatibility, but persistence, project creation, and Runtime do not yet execute zero-Skill or multi-Skill Projects.
+- Runtime derives one compatibility Workflow from Project tasks and the active Skill graph. Multiple Workflow drafts, immutable published snapshots, default-version selection, arbitrary typed mixed graphs, Run-time Workflow selection, LLM suggestion, human graph editing, static draft validation endpoints, dry run, and publish are not implemented.
+- Existing Run history does not persist a first-class Workflow snapshot/version or per-node model binding. API summaries report the compatibility Workflow version and the saved provider/model truthfully.
+- Dataset Coordinator has bounded concurrency but no persisted dataset checkpoint/auto-resume record, shared global budget ledger, or batch-wide pause/cancel handle. Import deduplicates by hash; enumeration does not re-hash duplicates.
+- HTTP starts one image Run. Multi-image coordination is CLI-only when `--limit 1` is omitted.
+- Folder image import exists; AnnotAgent Native, COCO, and LabelMe annotation import do not.
+- The GUI edits existing bbox, keypoint, polyline, polygon, and polygon-mask geometry and can append vertices. It cannot yet delete individual vertices, resize bbox corners, draw from an empty canvas, compare overlays side by side, or apply advanced queue filters.
+- TUI starts and controls a Run and shows trace/usage/history. `/init` provides the real CLI invocation rather than creating files inside the TUI; `/export`, panel focus/navigation, and two-step cancel confirmation remain CLI/manual operations.
+- Failed provider HTTP attempts cannot always record full usage when the remote returns none. JSON-only fallback for compatible providers without tool calling is absent.
+- Thumbnail/crop operations have bounds but no durable cross-process cache.
+- Server CORS is permissive and there is no login; deployment is loopback single-user only.
+- COCO RLE is represented/exported but not generally drawable/editable in the GUI.
+- A real Qwen-compatible smoke test reached authenticated vision/tool/retry/persistence/review behavior but a complete six-task provider run has not been verified.
+- Dynamic plugins, WASM, MCP, distributed workers, cloud storage, video, training loops, vector search, and a second production Skill are outside the current implementation.

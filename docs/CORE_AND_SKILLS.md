@@ -1,42 +1,33 @@
 # Core and Skills
 
-## Boundary
+## Product entities
 
-AnnotAgent Core owns domain-neutral nouns and mechanics:
+- A **Project** owns a Dataset, Annotation Schema, selected Skills, Workflows, default Workflow, model bindings, review settings, and exports.
+- A **Skill** supplies registered domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It owns neither a Dataset nor the app shell.
+- A **Workflow** belongs to a Project or reusable template and connects typed registered nodes. Published versions are intended to be immutable and pinned by Runs.
 
-- typed IDs, checked normalized geometry, annotations, revisions, projects and task DAGs;
-- provider, tool, validator, refiner, review-policy, exporter and Skill traits;
-- the model/tool/validation loop, state control, budgets, events and registries;
-- persistence interfaces and frontend application use cases.
+The current schema supports one configured Skill and one compatibility Workflow. The broader DTO is a migration contract, not a claim that general multi-Skill graph execution already exists.
 
-The RoboCup Skill owns its labels, task graph, prompt resources, correction taxonomy, evidence tools, field/ball/robot validators, pixel refiner, and review policy. Searches for RoboCup label names in `annotagent-core`, `annotagent-runtime`, `annotagent-server`, and the generic GUI source return no matches. The GUI obtains the starter YAML and correction taxonomy from `DomainSkill` through `/api/skills`.
+## Core boundary
 
-## Two extension levels
+AnnotAgent Core owns typed IDs, checked geometry, annotations, revisions, task DAGs, provider/tool/validator/refiner/review/export traits, the bounded model loop, budgets, events, registries, persistence interfaces, and frontend use cases. It contains no production domain labels.
 
-Declarative resources live under `skills/<id>`: the manifest describes identity, resources, task-to-resource routing, and correction taxonomy. A project YAML supplies labels, task kinds, attributes, dependencies, validators/refiners, review thresholds, and export preferences. Schema errors have precise paths and unknown fields are rejected.
+Declarative Skill resources live under `skills/<id>`. A Project YAML supplies labels, task kinds, attributes, dependencies, validator/refiner selections, review thresholds, and exports. Schema errors have precise paths and unknown fields are rejected.
 
-Special algorithms implement object-safe Rust traits:
+Special algorithms implement object-safe Rust traits and are registered explicitly:
 
 ```rust
 registry.register(Arc::new(MySkill::new()?))?;
 ```
 
-`DomainSkill` returns its task templates, DAG, tools, validators, refiners, prompt resources, correction taxonomy, review policy, and optional starter project. `AgentTool::applicable_tasks` keeps domain tools out of unrelated model contexts.
+`DomainSkill` returns task templates, DAG, tools, validators, refiners, prompt resources, taxonomy, review policy, and an optional starter Project. `AgentTool::applicable_tasks` keeps domain tools out of unrelated contexts.
 
-## Proof that Runtime is not RoboCup-specific
+## Visual profiles
 
-`crates/annotagent-runtime/tests/skill_extension.rs` defines `DummySkill`, a validator, resource, review policy, and simple classification workflow entirely in test code. It registers the Skill in `SkillRegistry` and executes the normal Runtime without changing Runtime, Server, or GUI DTOs.
+The canvas only knows generic slots and patterns. A `SkillVisualProfile` maps domain labels into those slots. Multiple profiles are allowed in the frontend contract, and conflicts use Project override → Skill mapping sorted by stable Skill id → schema mapping → stable hash fallback. Array registration order never chooses a color.
 
-Run the proof:
-
-```bash
-cargo test -p annotagent-runtime --test skill_extension
-```
-
-## Resource loading
-
-`ContextManager` starts with Core rules, a one-line Skill summary, project/task/image metadata, allowed task tools, remaining steps, and current usage. It then asks the Skill only for resources relevant to the current task. Corrections and issue summaries are compact context; full trace stays in SQLite.
+Runtime proof remains `crates/annotagent-runtime/tests/skill_extension.rs`, which registers a `DummySkill` and executes normal Runtime without changing Core, Runtime, Server, or canvas code.
 
 ## Why no dynamic plugin loader
 
-Compile-time registration makes trait compatibility, algorithm safety, and classroom setup explicit. A future host could add signed WASM or dynamic components, but this release does not invent a package ecosystem before there is a deployment requirement.
+Compile-time registration makes compatibility and algorithm safety explicit. Signed WASM or dynamic components may be added later, but this release does not claim a package ecosystem.

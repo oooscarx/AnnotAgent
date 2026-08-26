@@ -57,7 +57,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "dashscope",
     label: "Alibaba Cloud · Qwen",
     shortLabel: "DashScope",
-    description: "Best fit for the existing Qwen RoboCup workflow and mainland China access.",
+    description: "Qwen vision models with straightforward mainland China access.",
     endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     apiKeyEnv: "DASHSCOPE_API_KEY",
     docsUrl: "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",

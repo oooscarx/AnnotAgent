@@ -10,9 +10,10 @@
     "reference/annotagent-ai-moodboard.png",
     "reference/robocup-annotagent-ai-moodboard.png"
   ],
-  "products": {
+  "product_hierarchy": {
     "core": "AnnotAgent",
-    "default_skill_product": "RoboCup AnnotAgent"
+    "skill_extensions": ["RoboCup Perception"],
+    "example_application_assets": ["RoboCup AnnotAgent lockup"]
   },
   "font_files_included": false,
   "installer": "codex/install_visual_system.py",

@@ -1,5 +1,6 @@
-import labelMap from "../../design/annotagent-visual-system/brand/robocup/robocup-label-map.json";
 import type { Annotation } from "./types";
+
+export type AnnotationVisualSlot = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export type AnnotationPattern =
   | "solid-box"
@@ -9,24 +10,35 @@ export type AnnotationPattern =
   | "circle-label"
   | "crosshair";
 
-export type AnnotationVisual = {
-  slot: number;
+export interface LabelVisualMapping {
+  slot: AnnotationVisualSlot;
+  pattern?: AnnotationPattern;
+}
+
+export interface SkillVisualProfile {
+  skillId: string;
+  displayName: string;
+  icon?: string;
+  labelVisuals: Record<string, LabelVisualMapping>;
+}
+
+export interface AnnotationVisualContext {
+  projectOverrides?: Record<string, LabelVisualMapping>;
+  skillProfiles?: SkillVisualProfile[];
+  schemaVisuals?: Record<string, LabelVisualMapping>;
+}
+
+export interface AnnotationVisual {
+  slot: AnnotationVisualSlot;
   pattern: AnnotationPattern;
-};
+  source: "project" | "skill" | "schema" | "fallback";
+  sourceId?: string;
+}
 
-type LabelMapEntry = { slot: string; pattern: AnnotationPattern };
-
-const ROBOCUP_LABELS = labelMap.labels as Record<string, LabelMapEntry>;
-
-const slotNumber = (slot: string): number => {
-  const parsed = Number(slot.replace("slot", ""));
-  return parsed >= 1 && parsed <= 8 ? parsed : 1;
-};
-
-const stableSlot = (label: string): number => {
+const stableSlot = (label: string): AnnotationVisualSlot => {
   let value = 0;
   for (const character of label) value = (value * 31 + character.charCodeAt(0)) >>> 0;
-  return (value % 8) + 1;
+  return ((value % 8) + 1) as AnnotationVisualSlot;
 };
 
 const defaultPattern = (annotation: Annotation): AnnotationPattern => {
@@ -43,13 +55,48 @@ const defaultPattern = (annotation: Annotation): AnnotationPattern => {
   }
 };
 
-export function annotationVisual(annotation: Annotation, skillId?: string): AnnotationVisual {
+export function annotationVisual(
+  annotation: Annotation,
+  context: AnnotationVisualContext = {},
+): AnnotationVisual {
   const label = annotation.label ?? annotation.task_id;
-  const mapped = skillId === "robocup" ? ROBOCUP_LABELS[label] : undefined;
+  const project = context.projectOverrides?.[label];
+  if (project) {
+    return {
+      ...project,
+      pattern: project.pattern ?? defaultPattern(annotation),
+      source: "project",
+    };
+  }
+
+  // Skill conflicts are resolved by stable Skill id, never registration or array order.
+  const skillMatch = [...(context.skillProfiles ?? [])]
+    .sort((left, right) => left.skillId.localeCompare(right.skillId))
+    .map((profile) => ({ profile, visual: profile.labelVisuals[label] }))
+    .find((candidate) => candidate.visual);
+  if (skillMatch?.visual) {
+    return {
+      ...skillMatch.visual,
+      pattern: skillMatch.visual.pattern ?? defaultPattern(annotation),
+      source: "skill",
+      sourceId: skillMatch.profile.skillId,
+    };
+  }
+
+  const schema = context.schemaVisuals?.[label];
+  if (schema) {
+    return {
+      ...schema,
+      pattern: schema.pattern ?? defaultPattern(annotation),
+      source: "schema",
+    };
+  }
+
   return {
-    slot: mapped ? slotNumber(mapped.slot) : stableSlot(label),
-    pattern: mapped?.pattern ?? defaultPattern(annotation),
+    slot: stableSlot(label),
+    pattern: defaultPattern(annotation),
+    source: "fallback",
   };
 }
 
-export const annotationColor = (slot: number): string => `var(--aa-annotation-${slot})`;
+export const annotationColor = (slot: AnnotationVisualSlot): string => `var(--aa-annotation-${slot})`;

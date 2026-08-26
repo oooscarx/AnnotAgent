@@ -1,36 +1,61 @@
-# RoboCup AnnotAgent
+# AnnotAgent
 
-<img src="design/annotagent-visual-system/brand/logo/svg/robocup-annotagent-lockup-light.svg" alt="RoboCup AnnotAgent — AnnotAgent Core with the RoboCup Skill" width="560" />
+*Composable annotation workflows for vision data.*
 
-A VLM-powered annotation and quality-control agent for RoboCup robot perception datasets, built on the extensible AnnotAgent Core.
+AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes geometry, registered tools gather bounded image evidence, deterministic validators and refiners check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
 
-RoboCup AnnotAgent turns model proposals into auditable annotations. A vision model proposes typed geometry, registered tools gather bounded image evidence, Rust validators and refiners check it, and a review policy either commits it, retries, or queues it for a human. This is deliberately more than a one-shot “image to JSON” script: every model call, tool call, validation issue, revision, token count, cost, and state transition is persisted.
+## 1. AnnotAgent Core
 
-Generic VLM annotation fails in predictable ways on robot soccer data: white shoes resemble balls, penalty marks resemble small white objects, field lines cross foreground robots, and team color evidence is often local. The bundled `robocup` Skill encodes those failure modes in Rust as well as task-scoped prompt resources.
-
-## Architecture
+Core owns domain-neutral task types, checked geometry, the model/tool/validation loop, budgets, events, registries, persistence contracts, and frontend application use cases. It does not contain domain labels. CLI, TUI, and HTTP all call the same `LocalApplication` service.
 
 ```text
 React Web GUI ─┐
-Ratatui TUI ───┼─> AnnotAgent Application Service
-CLI ───────────┘        │
-                        ├─> Dataset Coordinator
-                        └─> Image Agent
-                              model → tool → validator/refiner
-                                      → retry/review/commit
-                                  │
-              AnnotAgent Core <──┼──> RoboCup Skill
-                                  │
-                          SQLite history + SSE
+Ratatui TUI ───┼─> Application Service ─> Runtime ─> Review/Commit
+CLI ───────────┘             │                │
+                             ├─ Project       ├─ Model
+                             ├─ Workflow      └─ registered nodes
+                             └─ SQLite history
 ```
 
-`annotagent-core` only understands tasks, labels, geometry, attributes, relations, tools, validators, refiners, workflows, events, and usage. RoboCup names and algorithms live in `annotagent-skill-robocup`. The integration test in `crates/annotagent-runtime/tests/skill_extension.rs` registers a `DummySkill` and runs it without modifying Runtime.
+## 2. Project
 
-The same boundary governs presentation: AnnotAgent owns the mark, interface tokens, status language, and generic annotation slots; the RoboCup Skill adds its product lockup, Skill badge, vocabulary, and label-to-slot mapping. Canonical assets and tokens live in `design/annotagent-visual-system/`.
+A Project is one concrete annotation effort. It owns a Dataset and Annotation Schema and selects Skills, Workflow versions, model bindings, review policy, and exports. The current schema supports one configured Skill and one compatibility Workflow derived from its task graph; the product DTO is intentionally broader so Project, Skill, and Workflow are no longer conflated.
 
-## Install
+## 3. Workflow
 
-Requirements: stable Rust (the repository pins a stable toolchain), Node.js 20+ for the Web UI, and npm.
+A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page shows the actual configured task graph, its binding, validation state, and published compatibility version. Arbitrary drafts, immutable published snapshots, version selection, LLM suggestion, editing, dry runs, and publishing are designed but not yet executed by Runtime; disabled controls say so explicitly.
+
+## 4. Model
+
+Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers, persists non-secret configuration in the workspace, and stores keys in the operating-system keychain. CLI environment-variable keys remain supported.
+
+## 5. Skill
+
+A Skill contributes domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It does not own a Dataset or the application shell. Rust implementations are registered through `DomainSkill`; the generic canvas consumes stable `annotation-1` through `annotation-8` slots through a `SkillVisualProfile`.
+
+## 6. Review
+
+Models only submit candidates. Rust validation and review policy determine whether a candidate is committed, retried, or queued. Human edits append revisions instead of overwriting history, and the trace exposes execution events without hidden chain-of-thought.
+
+## 7. Example Application: RoboCup Perception
+
+The bundled `robocup` Skill and `examples/robocup/project.yaml` demonstrate the extension boundary on robot-soccer perception. Domain labels, prompt resources, hard-negative checks, pixel refiners, correction taxonomy, badge, and label colors live in the Skill or example—not in Core or the global product shell.
+
+The deterministic demo needs no GPU or API key:
+
+```bash
+cargo run -p annotagent -- demo robocup
+```
+
+The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
+
+```bash
+cargo test -p annotagent-runtime --test skill_extension
+```
+
+## Install and start
+
+Requirements are stable Rust, Node.js 20+, and npm.
 
 ```bash
 cargo build --workspace --all-features
@@ -38,78 +63,45 @@ npm --prefix web install
 npm --prefix web run build
 ```
 
-No GPU or API key is needed for the deterministic demo.
-
-## Five-minute offline demo
+Start the product shell with an empty workspace:
 
 ```bash
-cargo run -p annotagent -- demo robocup
+cargo run -p annotagent -- serve --workspace ./workspace --open
 ```
 
-The generated image is copyright-safe and contains a green field, white lines, red/blue robots, white shoes, a penalty mark, and a ball. The Mock Provider first proposes a white shoe as a ball; `BallHardNegativeValidator` requests a retry and the corrected proposal is committed. A deliberately offset field line is moved onto the white pixel response by `RoboCupFieldLineRefiner`. Mock token and exact-decimal cost records are written to `.annotagent/history.db`.
-
-Equivalent commands:
+Open the TUI with or without an initial Project:
 
 ```bash
-cargo run -p annotagent -- project validate examples/robocup/project.yaml
+cargo run -p annotagent -- tui
+cargo run -p annotagent -- tui --project examples/robocup/project.yaml
+```
+
+Create and run a Project:
+
+```bash
+cargo run -p annotagent -- init workspace/my-project --skill robocup
 cargo run -p annotagent -- run \
-  --project examples/robocup/project.yaml \
+  --project workspace/my-project/project.yaml \
   --provider mock \
   --limit 1
 ```
 
-Without `--limit`, the CLI enumerates the dataset and applies the project’s `max_parallel_images` bound.
+For a real compatible provider, copy an example configuration, enter the provider and model in Settings or set the configured environment variable, then select that saved binding for the run. Never commit local keys.
 
-## Real VLM
+## Repository guide
 
-Copy the example and set the key only in the configured environment variable:
+- `crates/annotagent-core`: domain-neutral contracts and checked types.
+- `crates/annotagent-runtime`: bounded agent loop and Workflow execution compatibility layer.
+- `crates/annotagent-application`: Project/Workflow/Model DTOs and use cases.
+- `crates/annotagent-server`: local HTTP/SSE boundary.
+- `web`: product shell and review interface.
+- `skills/<id>` and `crates/annotagent-skill-*`: Skill resources and implementations.
+- `examples`: concrete Project examples.
+- `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-```bash
-cp config/qwen3.7-flash.example.toml config/local.toml
-export ANNOTAGENT_API_KEY='replace-me'
-cargo run -p annotagent -- run \
-  --project examples/robocup/project.yaml \
-  --provider openai_compatible \
-  --config config/local.toml \
-  --limit 1
-```
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
-Endpoint, model, default run provider, protocol, timeout, output limit, reasoning mode, capability flags, custom headers, extra request fields, pricing, and budgets are configurable. The Settings page persists non-secret values to `<workspace>/.annotagent/settings.toml`; an API key entered there is write-only and stored in the operating system keychain, never in SQLite, the settings file, API responses, or trace output. Environment-variable keys remain supported by the CLI and as a server fallback.
-
-## TUI and Web GUI
-
-```bash
-cargo run -p annotagent -- tui --project examples/robocup/project.yaml
-```
-
-The TUI starts the same application service, streams model/tool/validation/usage events, and supports pause, resume, cancellation, history inspection, and opening the GUI.
-
-Build the frontend, initialize a workspace project, and start the local server:
-
-```bash
-npm --prefix web run build
-cargo run -p annotagent -- init workspace/robocup-demo --skill robocup
-cargo run -p annotagent -- serve --workspace ./workspace --open
-```
-
-Open `http://127.0.0.1:8787`. The GUI contains Dashboard, Project, Review, Skills, and Settings pages. Its SVG overlay supports zoom/pan and editing bbox, keypoint, polyline, polygon, and polygon-mask geometry. Every saved edit and review decision creates a revision; review decisions can create project-level correction memory.
-
-For a real provider, open Settings once, choose DashScope/Qwen, OpenAI, Google Gemini, or OpenRouter, select a vision model, paste its API key, and save. The catalog fills the compatible endpoint, protocol, and environment fallback automatically; private gateways remain available under `Custom`. These values survive server restarts, and `Start image run` uses the saved default provider automatically. Use `Clear saved key` to remove the workspace credential from the system keychain.
-
-## Data and exports
-
-Internal coordinates are checked normalized values in `[0,1]`. Supported values are classification, bounding box, keypoints, polyline, polygon, instance mask, attributes, and relations. Exports are explicit about incompatible annotations:
-
-```bash
-cargo run -p annotagent -- export \
-  --project examples/robocup/project.yaml \
-  --format coco \
-  --output ./exports/coco
-```
-
-Available exporters: AnnotAgent Native JSON, COCO, YOLO Detection, YOLO Segmentation, and LabelMe. Folder import hashes images and skips duplicates.
-
-## Quality checks
+## Verification
 
 ```bash
 cargo fmt --all --check
@@ -121,20 +113,4 @@ npm --prefix web test -- --run
 npm --prefix web run build
 ```
 
-## Documentation
-
-- `docs/ARCHITECTURE.md` — crate and runtime relationships.
-- `docs/CORE_AND_SKILLS.md` — extension boundary and `DummySkill` proof.
-- `docs/AGENT_LOOP.md` — loop, stopping, control, and context rules.
-- `docs/ANNOTATION_SCHEMA.md` — checked data model and revision semantics.
-- `docs/ROBOCUP_SKILL.md` — domain algorithms and test evidence.
-- `docs/API.md` — CLI and HTTP/SSE surface.
-- `docs/COURSE_REQUIREMENTS.md` — R1–R6 evidence and verification commands.
-- `docs/KNOWN_LIMITATIONS.md` — exact remaining gaps.
-- `docs/VISUAL_SYSTEM_INTEGRATION.md` — visual-system sources, GUI/TUI entry points, boundaries, and verification.
-
-The implementation follows the course [requirements](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/), [quick start](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/quick-start/), and [agent architecture](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/agent-architecture/) guidance.
-
-## Known limits
-
-This release is local-first and single-user. It does not provide dynamic plugins, login, distributed queues, video annotation, a vector database, or a second production Skill. Dataset checkpoint/resume, native/COCO/LabelMe import, richer GUI authoring, and a shared global multi-image budget ledger remain documented gaps; see `docs/KNOWN_LIMITATIONS.md`.
+Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.
