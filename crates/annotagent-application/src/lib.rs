@@ -7,12 +7,13 @@ use std::{
 };
 
 use annotagent_core::{
-    AdditionalUsage, ArtifactKind, BatchBudgetLedger, BatchBudgetLimits, BatchId,
-    BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
-    BatchStatus, BatchUsage, Budget, DomainSkill, ImageId, ModelMessage, ModelRegistry,
-    ModelRequest, ModelRole, NodeRegistry, PricingConfig, ProjectId, ProjectSchema,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent, RunEventKind, RunEventPayload,
-    RunId, RunStatus, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
+    AdditionalUsage, Annotation, AnnotationSource, ArtifactKind, BatchBudgetLedger,
+    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
+    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
+    ImageId, ImportIssue, ImportReport, ImportRequest, ModelMessage, ModelRegistry, ModelRequest,
+    ModelRole, NodeRegistry, PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion,
+    RegistryWorkflowAdvisor, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    SnapshotImage, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
     VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
     VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
     WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorInput, WorkflowConstraints,
@@ -20,6 +21,9 @@ use annotagent_core::{
     WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowSnapshot, WorkflowStaticValidator,
     WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
+};
+use annotagent_export::{
+    CocoImporter, LabelMeImporter, NativeImporter, YoloDetectionImporter, YoloSegmentationImporter,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
 use annotagent_provider::{
@@ -1036,6 +1040,168 @@ impl LocalApplication {
     #[must_use]
     pub fn store(&self) -> Arc<SqliteStore> {
         self.store.clone()
+    }
+
+    pub async fn create_human_annotation(
+        &self,
+        run_id: RunId,
+        mut annotation: Annotation,
+    ) -> Result<Annotation> {
+        let existing = self.store.list_annotations(run_id)?;
+        if !existing.is_empty()
+            && !existing
+                .iter()
+                .any(|item| item.image_id == annotation.image_id)
+        {
+            bail!("new annotation image_id does not belong to this Run");
+        }
+        annotation.source = AnnotationSource::Human;
+        annotation.review_status = annotagent_core::ReviewStatus::NeedsReview;
+        annotation.confidence = None;
+        self.store
+            .commit_annotation(run_id, &annotation)
+            .await
+            .map_err(|error| anyhow!(error))?;
+        Ok(annotation)
+    }
+
+    pub async fn import_project_annotations(
+        &self,
+        project_id: &str,
+        format: &str,
+        source: &Path,
+        label_mapping: BTreeMap<String, String>,
+        dry_run: bool,
+    ) -> Result<ImportReport> {
+        let source = source
+            .canonicalize()
+            .with_context(|| format!("cannot access import source {}", source.display()))?;
+        ensure_within(&self.workspace, &source)?;
+        let project_path = self.project_path(project_id)?;
+        let (schema, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let mut project_runs = self
+            .store
+            .list_runs()?
+            .into_iter()
+            .filter(|run| run.project_name == schema.project.name)
+            .collect::<Vec<_>>();
+        project_runs.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        let mut run_by_image = BTreeMap::new();
+        for run in &project_runs {
+            for annotation in self.store.list_annotations(run.id)? {
+                run_by_image.entry(annotation.image_id).or_insert(run.id);
+            }
+        }
+        let mut batch_binding_by_path = BTreeMap::new();
+        for batch in self
+            .store
+            .list_batches(false)?
+            .into_iter()
+            .filter(|batch| batch.project_id == project_id)
+        {
+            for image in self.store.list_batch_images(batch.id)? {
+                if let Some(run_id) = image.child_run_id {
+                    run_by_image.insert(image.image_id, run_id);
+                    batch_binding_by_path
+                        .insert(PathBuf::from(image.image_path), (image.image_id, run_id));
+                }
+            }
+        }
+        let discovered_paths = self.list_project_images(project_id)?;
+        let single_image_fallback = (discovered_paths.len() == 1 && run_by_image.len() == 1)
+            .then(|| run_by_image.iter().next().map(|(id, run)| (*id, *run)))
+            .flatten();
+        let root = project_path.parent().unwrap_or(&self.workspace);
+        let mut known_images = Vec::new();
+        for path in discovered_paths {
+            let frame = load_image(&path, 40_000_000).map_err(|error| anyhow!(error))?;
+            let binding = batch_binding_by_path
+                .iter()
+                .find(|(batch_path, _)| {
+                    batch_path.as_path() == path
+                        || batch_path
+                            .file_name()
+                            .is_some_and(|name| path.file_name() == Some(name))
+                })
+                .map(|(_, binding)| *binding)
+                .or(single_image_fallback);
+            if let Some((image_id, run_id)) = binding {
+                run_by_image.insert(image_id, run_id);
+            }
+            known_images.push(SnapshotImage {
+                id: binding.map_or_else(ImageId::new, |(image_id, _)| image_id),
+                relative_path: path.strip_prefix(root).unwrap_or(&path).to_path_buf(),
+                metadata: frame.metadata,
+            });
+        }
+        let importer: Box<dyn DatasetImporter> = match format {
+            "native" => Box::new(NativeImporter),
+            "coco" => Box::new(CocoImporter),
+            "labelme" => Box::new(LabelMeImporter),
+            "yolo" | "yolo_detection" => Box::new(YoloDetectionImporter),
+            "yolo_segmentation" => Box::new(YoloSegmentationImporter),
+            other => bail!(
+                "unknown annotation import format {other:?}; choose native, coco, labelme, yolo_detection, or yolo_segmentation"
+            ),
+        };
+        let mut report = importer
+            .import(ImportRequest {
+                project_schema: schema,
+                known_images,
+                source,
+                label_mapping,
+                dry_run,
+            })
+            .await
+            .map_err(|error| anyhow!(error))?;
+        if dry_run {
+            return Ok(report);
+        }
+        let mut persisted = Vec::new();
+        for mut annotation in report.annotations.drain(..) {
+            if self.store.find_annotation(annotation.id)?.is_some() {
+                report.issues.push(ImportIssue {
+                    record: annotation.id.to_string(),
+                    message: "annotation id already exists in workspace history".to_owned(),
+                });
+                continue;
+            }
+            let Some(run_id) = run_by_image.get(&annotation.image_id).copied() else {
+                report.issues.push(ImportIssue {
+                    record: annotation.id.to_string(),
+                    message: "no persisted Run owns this image; run the Project image before importing annotations"
+                        .to_owned(),
+                });
+                continue;
+            };
+            annotation.review_status = annotagent_core::ReviewStatus::NeedsReview;
+            if let Err(error) = self.store.commit_annotation(run_id, &annotation).await {
+                report.issues.push(ImportIssue {
+                    record: annotation.id.to_string(),
+                    message: error,
+                });
+                continue;
+            }
+            persisted.push(annotation);
+        }
+        let persisted_ids = persisted
+            .iter()
+            .map(|annotation| annotation.id)
+            .collect::<BTreeSet<_>>();
+        for revision in report
+            .revisions
+            .iter()
+            .filter(|revision| persisted_ids.contains(&revision.annotation_id))
+        {
+            self.store
+                .record_revision(revision)
+                .await
+                .map_err(|error| anyhow!(error))?;
+        }
+        report.annotations = persisted;
+        report.imported_count = report.annotations.len() as u64;
+        report.skipped_count = report.issues.len() as u64;
+        Ok(report)
     }
 
     #[must_use]

@@ -149,6 +149,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ annotation, reason }),
     }),
+  createAnnotation: (runId: string, annotation: Annotation) =>
+    request<{ annotation: Annotation }>(`/api/runs/${runId}/annotations`, {
+      method: "POST",
+      body: JSON.stringify({ annotation }),
+    }),
   decide: (
     id: string,
     projectId: string,
@@ -178,6 +183,28 @@ export const api = {
     request(`/api/projects/${projectId}/export`, {
       method: "POST",
       body: JSON.stringify({ format }),
+    }),
+  importAnnotations: (
+    projectId: string,
+    format: string,
+    source: string,
+    dryRun: boolean,
+  ) =>
+    request<{
+      format: string;
+      dry_run: boolean;
+      imported_count: number;
+      skipped_count: number;
+      warnings: string[];
+      issues: { record: string; message: string }[];
+    }>(`/api/projects/${projectId}/annotation-import`, {
+      method: "POST",
+      body: JSON.stringify({
+        format,
+        source,
+        dry_run: dryRun,
+        label_mapping: {},
+      }),
     }),
 };
 

@@ -308,6 +308,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(get_workflow_catalog),
         )
         .route("/api/projects/{project_id}/import", post(import_images))
+        .route(
+            "/api/projects/{project_id}/annotation-import",
+            post(import_annotations),
+        )
         .route("/api/projects/{project_id}/images", get(list_images))
         .route(
             "/api/projects/{project_id}/images/{index}/content",
@@ -326,6 +330,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/runs/{run_id}/resume", post(resume_run))
         .route("/api/runs/{run_id}/cancel", post(cancel_run))
         .route("/api/runs/{run_id}/events", get(run_events))
+        .route("/api/runs/{run_id}/annotations", post(create_annotation))
         .route("/api/reviews", get(list_reviews))
         .route("/api/reviews/{review_id}", get(get_review))
         .route("/api/reviews/{review_id}/decision", post(review_decision))
@@ -938,6 +943,35 @@ struct ImportRequest {
     source: PathBuf,
 }
 
+#[derive(Debug, Deserialize)]
+struct AnnotationImportRequest {
+    format: String,
+    source: PathBuf,
+    #[serde(default)]
+    label_mapping: BTreeMap<String, String>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn import_annotations(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<AnnotationImportRequest>,
+) -> ApiResult<Json<Value>> {
+    let report = state
+        .application
+        .import_project_annotations(
+            &project_id,
+            &request.format,
+            &request.source,
+            request.label_mapping,
+            request.dry_run,
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(report)))
+}
+
 async fn import_images(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
@@ -1292,7 +1326,16 @@ async fn run_events(
 
 fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
     let mut reviews = Vec::new();
+    let projects = state
+        .application
+        .list_projects()
+        .map_err(ApiError::internal)?;
     for run in state.application.list_runs().map_err(ApiError::internal)? {
+        let project_id = projects.iter().find_map(|project| {
+            let path = state.application.project_path(&project.id).ok()?;
+            (Some(stable_project_id(path.parent()?)) == run.project_id)
+                .then_some(project.id.as_str())
+        });
         for annotation in state
             .application
             .store()
@@ -1300,8 +1343,13 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
             .map_err(ApiError::internal)?
         {
             if annotation.review_status == ReviewStatus::NeedsReview {
-                reviews
-                    .push(json!({"id": annotation.id, "run_id": run.id, "annotation": annotation}));
+                reviews.push(json!({
+                    "id": annotation.id,
+                    "run_id": run.id,
+                    "project_id": project_id,
+                    "project_name": run.project_name,
+                    "annotation": annotation
+                }));
             }
         }
     }
@@ -1336,6 +1384,24 @@ async fn get_review(
 struct AnnotationPatch {
     annotation: Annotation,
     reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnnotationCreate {
+    annotation: Annotation,
+}
+
+async fn create_annotation(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<RunId>,
+    Json(request): Json<AnnotationCreate>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let annotation = state
+        .application
+        .create_human_annotation(run_id, request.annotation)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!({"annotation": annotation}))))
 }
 
 async fn patch_annotation(
@@ -1504,6 +1570,12 @@ async fn export_dataset(
             metadata: frame.metadata,
         }],
         annotations,
+        revisions: state
+            .application
+            .store()
+            .history(run.id)
+            .map_err(ApiError::internal)?
+            .revisions,
     };
     let output = root.join("exports").join(&request.format);
     let exporter: Box<dyn DatasetExporter> = match request.format.as_str() {
@@ -2093,6 +2165,86 @@ mod tests {
             response_json(request(&service, axum::http::Method::GET, "/api/reviews", None).await)
                 .await;
         let review_id = reviews["reviews"][0]["id"].as_str().expect("review id");
+        let import_directory = temp.path().join("review-demo/import");
+        std::fs::create_dir_all(&import_directory).expect("import directory");
+        let import_file = import_directory.join("labels.json");
+        std::fs::write(
+            &import_file,
+            serde_json::to_vec(&json!({
+                "imagePath": "synthetic-robocup.png",
+                "imageWidth": 640,
+                "imageHeight": 400,
+                "shapes": [{
+                    "label": "ball",
+                    "shape_type": "rectangle",
+                    "points": [[100, 100], [150, 150]]
+                }]
+            }))
+            .expect("LabelMe JSON"),
+        )
+        .expect("LabelMe fixture");
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/review-demo/annotation-import",
+                Some(json!({
+                    "format": "labelme",
+                    "source": import_file,
+                    "dry_run": true
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["imported_count"], json!(1));
+        assert_eq!(preview["dry_run"], json!(true));
+        let imported = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/review-demo/annotation-import",
+                Some(json!({
+                    "format": "labelme",
+                    "source": import_file,
+                    "dry_run": false
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(imported["imported_count"], json!(1));
+        assert_eq!(imported["annotations"][0]["source"], json!("imported"));
+        let reviews_after_import =
+            response_json(request(&service, axum::http::Method::GET, "/api/reviews", None).await)
+                .await;
+        assert_eq!(
+            reviews_after_import["reviews"].as_array().map(Vec::len),
+            reviews["reviews"]
+                .as_array()
+                .map(Vec::len)
+                .map(|count| count + 1)
+        );
+        let mut human_annotation = reviews["reviews"][0]["annotation"].clone();
+        let human_id = uuid::Uuid::new_v4().to_string();
+        human_annotation["id"] = json!(human_id);
+        human_annotation["confidence"] = json!(0.99);
+        let created = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/runs/{run_id}/annotations"),
+                Some(json!({"annotation": human_annotation})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(created["annotation"]["source"], json!("human"));
+        assert_eq!(
+            created["annotation"]["review_status"],
+            json!("needs_review")
+        );
+        assert!(created["annotation"]["confidence"].is_null());
         let reason_code = skill
             .correction_taxonomy()
             .into_iter()

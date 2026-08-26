@@ -534,6 +534,10 @@ function ProjectPage({
   const [images, setImages] = useState<ImageItem[]>([]);
   const [starting, setStarting] = useState(false);
   const [workflowKey, setWorkflowKey] = useState("");
+  const [importSource, setImportSource] = useState("");
+  const [importFormat, setImportFormat] = useState("native");
+  const [importDryRun, setImportDryRun] = useState(true);
+  const [importResult, setImportResult] = useState("");
   useEffect(() => {
     if (project)
       void api
@@ -609,6 +613,22 @@ function ProjectPage({
       .control(activeRun, action)
       .then(onRefresh)
       .catch((error: Error) => onError(error.message));
+  const importAnnotations = () => {
+    if (!importSource.trim()) return onError("Choose a workspace-local annotation file or directory.");
+    setImportResult("Import running…");
+    void api
+      .importAnnotations(project.id, importFormat, importSource, importDryRun)
+      .then((report) => {
+        setImportResult(
+          `${report.dry_run ? "Dry run" : "Imported"}: ${report.imported_count} accepted, ${report.skipped_count} skipped\n${[...report.warnings, ...report.issues.map((issue) => `${issue.record}: ${issue.message}`)].join("\n")}`,
+        );
+        if (!report.dry_run) onRefresh();
+      })
+      .catch((error: Error) => {
+        setImportResult("");
+        onError(error.message);
+      });
+  };
   return (
     <section className="page-stack">
       <div className="toolbar-panel project-heading">
@@ -845,6 +865,28 @@ function ProjectPage({
             }
           />
           <TagGroup title="Export formats" values={project.export_formats} />
+        </Panel>
+        <Panel title="Annotation import" eyebrow="Dry-run first · compatibility report">
+          <label>
+            Format
+            <select value={importFormat} onChange={(event) => setImportFormat(event.target.value)}>
+              <option value="native">AnnotAgent Native</option>
+              <option value="coco">COCO</option>
+              <option value="labelme">LabelMe</option>
+              <option value="yolo_detection">YOLO detection</option>
+              <option value="yolo_segmentation">YOLO segmentation</option>
+            </select>
+          </label>
+          <label>
+            Workspace-local file or directory
+            <input value={importSource} onChange={(event) => setImportSource(event.target.value)} placeholder="/workspace/project/import/annotations.json" />
+          </label>
+          <label className="checkbox-line">
+            <input type="checkbox" checked={importDryRun} onChange={(event) => setImportDryRun(event.target.checked)} />
+            Dry run without persistence
+          </label>
+          <button onClick={importAnnotations}>{importDryRun ? "Preview import" : "Import to Review"}</button>
+          {importResult && <pre className="import-report" aria-live="polite">{importResult}</pre>}
         </Panel>
       </div>
       <Panel title="Dataset images" eyebrow={`${images.length} visible`}>
@@ -1816,18 +1858,38 @@ function ReviewPage({
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<Annotation>();
+  const [past, setPast] = useState<Annotation[]>([]);
+  const [future, setFuture] = useState<Annotation[]>([]);
+  const [isNew, setIsNew] = useState(false);
+  const [compareMode, setCompareMode] = useState<"after" | "before" | "split">("after");
+  const [attributesText, setAttributesText] = useState("{}");
   const [reason, setReason] = useState("");
   const [reasonOptions, setReasonOptions] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
+  const visibleReviews = project
+    ? reviews.filter(
+        (review) =>
+          review.project_id === project.id ||
+          (!review.project_id && review.project_name === project.name),
+      )
+    : reviews;
   const selected =
-    reviews.find((review) => review.id === selectedId) ?? reviews[0];
+    visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
   const refresh = () =>
     api
       .reviews()
       .then((value) => {
         setReviews(value.reviews);
-        if (!selectedId && value.reviews[0]) setSelectedId(value.reviews[0].id);
+        const first = project
+          ? value.reviews.find(
+              (review) =>
+                review.project_id === project.id ||
+                (!review.project_id && review.project_name === project.name),
+            )
+          : value.reviews[0];
+        if (!value.reviews.some((review) => review.id === selectedId) && first)
+          setSelectedId(first.id);
       })
       .catch((error: Error) => onError(error.message));
   useEffect(() => {
@@ -1842,7 +1904,7 @@ function ReviewPage({
           skills.find((skill) => ids.includes(skill.id))?.correction_taxonomy ??
           [];
         setReasonOptions(options);
-        setReason(options[0] || "");
+        setReason(options[0] || "manual_edit");
       })
       .catch((error: Error) => onError(error.message));
   }, [project?.id]);
@@ -1854,13 +1916,108 @@ function ReviewPage({
         .catch((error: Error) => onError(error.message));
     else setImages([]);
   }, [project?.id]);
-  useEffect(() => setDraft(selected?.annotation), [selected?.id]);
-  const save = () =>
-    draft &&
-    api
-      .revise(draft, reason)
-      .then(refresh)
+  useEffect(() => {
+    setDraft(selected?.annotation);
+    setAttributesText(JSON.stringify(selected?.annotation.attributes ?? {}, null, 2));
+    setPast([]);
+    setFuture([]);
+    setIsNew(false);
+  }, [selected?.id]);
+  const beginEdit = () => {
+    if (!draft) return;
+    setPast((items) => [...items, structuredClone(draft)]);
+    setFuture([]);
+  };
+  const edit = (next: Annotation) => {
+    beginEdit();
+    setDraft(next);
+  };
+  const undo = () => {
+    const previous = past.at(-1);
+    if (!previous || !draft) return;
+    setFuture((items) => [structuredClone(draft), ...items]);
+    setDraft(previous);
+    setIsNew(previous.id !== selected?.annotation.id);
+    setAttributesText(JSON.stringify(previous.attributes, null, 2));
+    setPast((items) => items.slice(0, -1));
+  };
+  const redo = () => {
+    const next = future[0];
+    if (!next || !draft) return;
+    setPast((items) => [...items, structuredClone(draft)]);
+    setDraft(next);
+    setIsNew(next.id !== selected?.annotation.id);
+    setAttributesText(JSON.stringify(next.attributes, null, 2));
+    setFuture((items) => items.slice(1));
+  };
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  }, [draft, past, future]);
+  const save = () => {
+    if (!draft || !selected) return;
+    let attributes: Record<string, unknown>;
+    try {
+      attributes = JSON.parse(attributesText) as Record<string, unknown>;
+    } catch {
+      return onError("Attributes must be a valid JSON object.");
+    }
+    if (!attributes || Array.isArray(attributes) || typeof attributes !== "object")
+      return onError("Attributes must be a JSON object.");
+    const annotation = { ...draft, attributes };
+    const operation = isNew
+      ? api.createAnnotation(selected.run_id, annotation)
+      : api.revise(annotation, reason);
+    return operation
+      .then(() => {
+        if (isNew) setSelectedId(annotation.id);
+        setIsNew(false);
+        setPast([]);
+        setFuture([]);
+        return refresh();
+      })
       .catch((error: Error) => onError(error.message));
+  };
+  const createShape = (kind: "bounding_box" | "keypoints" | "polyline" | "polygon") => {
+    if (!selected) return onError("Select a review item before creating an annotation.");
+    const task = project?.annotation_schema.find((candidate) => candidate.kind === kind);
+    if (!task)
+      return onError(`This Project has no ${kind.replace("_", " ")} task.`);
+    const label = task.labels[0];
+    if (!label) return onError(`Task ${task.id} has no label configured.`);
+    const value: Annotation["value"] =
+      kind === "bounding_box"
+        ? { kind, rect: [0.35, 0.35, 0.3, 0.3] }
+        : kind === "keypoints"
+          ? { kind, points: [{ name: "point", point: [0.5, 0.5], visible: true }] }
+          : kind === "polyline"
+            ? { kind, points: [[0.35, 0.5], [0.65, 0.5]] }
+            : { kind, rings: [[[0.35, 0.35], [0.65, 0.35], [0.5, 0.65]]] };
+    const annotation: Annotation = {
+      ...structuredClone(selected.annotation),
+      id: crypto.randomUUID(),
+      task_id: task.id,
+      label,
+      value,
+      attributes: {},
+      confidence: undefined,
+      source: "human",
+      review_status: "needs_review",
+      provenance: {},
+      created_at: new Date().toISOString(),
+    };
+    if (draft) setPast((items) => [...items, structuredClone(draft)]);
+    setFuture([]);
+    setDraft(annotation);
+    setAttributesText("{}");
+    setIsNew(true);
+  };
   const decide = (decision: "accept" | "reject" | "delete") => {
     if (!selected || !project)
       return onError(
@@ -1881,10 +2038,10 @@ function ReviewPage({
       <aside className="review-queue panel">
         <span className="eyebrow">Human attention</span>
         <h2>
-          Review queue <b>{reviews.length}</b>
+          Review queue <b>{visibleReviews.length}</b>
         </h2>
         <div className="queue-items" aria-label="Annotations requiring review">
-          {reviews.map((review) => (
+          {visibleReviews.map((review) => (
             <button
               key={review.id}
               aria-pressed={selected?.id === review.id}
@@ -1906,7 +2063,7 @@ function ReviewPage({
             </button>
           ))}
         </div>
-        {reviews.length === 0 && (
+        {visibleReviews.length === 0 && (
           <Empty
             title="Queue is clear"
             detail="Low confidence or conflicting evidence will route candidates here."
@@ -1914,14 +2071,58 @@ function ReviewPage({
         )}
       </aside>
       <div className="review-center">
-        <AnnotationCanvas
-          imageUrl={images[0]?.url}
-          annotations={draft ? [draft] : []}
-          selectedId={draft?.id}
-          visualContext={visualContext}
-          onSelect={setSelectedId}
-          onChange={setDraft}
-        />
+        <div className="review-edit-toolbar" aria-label="Annotation editing controls">
+          <button onClick={undo} disabled={!past.length} aria-label="Undo annotation edit">Undo</button>
+          <button onClick={redo} disabled={!future.length} aria-label="Redo annotation edit">Redo</button>
+          <button
+            onClick={() => createShape("bounding_box")}
+            disabled={!project?.annotation_schema.some((task) => task.kind === "bounding_box")}
+          >New box</button>
+          <button
+            onClick={() => createShape("keypoints")}
+            disabled={!project?.annotation_schema.some((task) => task.kind === "keypoints")}
+          >New keypoint</button>
+          <button
+            onClick={() => createShape("polyline")}
+            disabled={!project?.annotation_schema.some((task) => task.kind === "polyline")}
+          >New polyline</button>
+          <button
+            onClick={() => createShape("polygon")}
+            disabled={!project?.annotation_schema.some((task) => task.kind === "polygon")}
+          >New polygon</button>
+          <select
+            aria-label="Before and after comparison"
+            value={compareMode}
+            onChange={(event) => setCompareMode(event.target.value as typeof compareMode)}
+          >
+            <option value="after">After</option>
+            <option value="before">Before</option>
+            <option value="split">Before / after</option>
+          </select>
+        </div>
+        <div className={compareMode === "split" ? "review-canvas-compare" : undefined}>
+          {(compareMode === "before" || compareMode === "split") && (
+            <div><small>Before</small><AnnotationCanvas
+              imageUrl={images[0]?.url}
+              annotations={selected ? [selected.annotation] : []}
+              selectedId={selected?.annotation.id}
+              visualContext={visualContext}
+              onSelect={() => undefined}
+              onChange={() => undefined}
+            /></div>
+          )}
+          {(compareMode === "after" || compareMode === "split") && (
+            <div><small>After</small><AnnotationCanvas
+              imageUrl={images[0]?.url}
+              annotations={draft ? [draft] : []}
+              selectedId={draft?.id}
+              visualContext={visualContext}
+              onSelect={() => undefined}
+              onEditStart={beginEdit}
+              onChange={setDraft}
+            /></div>
+          )}
+        </div>
         <Trace
           events={
             selected
@@ -1940,7 +2141,7 @@ function ReviewPage({
               <input
                 value={draft.label ?? ""}
                 onChange={(event) =>
-                  setDraft({ ...draft, label: event.target.value })
+                  edit({ ...draft, label: event.target.value })
                 }
               />
             </label>
@@ -1960,15 +2161,32 @@ function ReviewPage({
               </span>
             </div>
             <label>
+              Attributes (JSON)
+              <textarea
+                aria-label="Annotation attributes JSON"
+                value={attributesText}
+                onChange={(event) => setAttributesText(event.target.value)}
+              />
+            </label>
+            <label>
               Correction reason
-              <select
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              >
-                {reasonOptions.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
+              {reasonOptions.length ? (
+                <select
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                >
+                  {reasonOptions.map((value) => (
+                    <option key={value}>{value}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  aria-label="Correction reason"
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  placeholder="manual_edit"
+                />
+              )}
             </label>
             <label>
               Reviewer note
@@ -1978,7 +2196,7 @@ function ReviewPage({
                 placeholder="What changed, and why?"
               />
             </label>
-            <button onClick={save}>Save geometry revision</button>
+            <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
             <div className="decision-row">
               <button className="primary" onClick={() => decide("accept")}>
                 Accept

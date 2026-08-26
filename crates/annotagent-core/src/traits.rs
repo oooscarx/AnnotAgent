@@ -327,6 +327,8 @@ pub struct ProjectSnapshot {
     pub schema: ProjectSchema,
     pub images: Vec<SnapshotImage>,
     pub annotations: Vec<Annotation>,
+    #[serde(default)]
+    pub revisions: Vec<crate::AnnotationRevision>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,6 +365,40 @@ pub trait DatasetExporter: Send + Sync {
     fn format_id(&self) -> &str;
     fn compatibility(&self, project: &ProjectSnapshot) -> ExportCompatibility;
     async fn export(&self, request: ExportRequest) -> CoreResult<ExportReport>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportRequest {
+    pub project_schema: ProjectSchema,
+    pub known_images: Vec<SnapshotImage>,
+    pub source: PathBuf,
+    pub label_mapping: BTreeMap<String, String>,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportIssue {
+    pub record: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportReport {
+    pub format: String,
+    pub dry_run: bool,
+    pub imported_count: u64,
+    pub skipped_count: u64,
+    pub annotations: Vec<Annotation>,
+    #[serde(default)]
+    pub revisions: Vec<crate::AnnotationRevision>,
+    pub warnings: Vec<String>,
+    pub issues: Vec<ImportIssue>,
+}
+
+#[async_trait]
+pub trait DatasetImporter: Send + Sync {
+    fn format_id(&self) -> &str;
+    async fn import(&self, request: ImportRequest) -> CoreResult<ImportReport>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

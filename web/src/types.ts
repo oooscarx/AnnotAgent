@@ -330,7 +330,14 @@ export type AnnotationValue =
     }
   | { kind: "polyline"; points: Point[] }
   | { kind: "polygon"; rings: Point[][] }
-  | { kind: "instance_mask"; mask: { kind: "polygon"; rings: Point[][] } };
+  | {
+      kind: "semantic_mask" | "instance_mask";
+      mask:
+        | { encoding: "polygon"; rings: Point[][] }
+        | { encoding: "coco_rle"; width: number; height: number; counts: string };
+    }
+  | { kind: "attributes"; values: Record<string, unknown> }
+  | { kind: "relations"; relations: unknown[] };
 
 export interface Annotation {
   id: string;
@@ -349,6 +356,8 @@ export interface Annotation {
 export interface ReviewItem {
   id: string;
   run_id: string;
+  project_id?: string;
+  project_name: string;
   annotation: Annotation;
 }
 

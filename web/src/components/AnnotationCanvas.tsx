@@ -10,6 +10,7 @@ interface Props {
   visualContext?: AnnotationVisualContext;
   onSelect: (id: string) => void;
   onChange: (annotation: Annotation) => void;
+  onEditStart?: () => void;
 }
 
 const WIDTH = 1000;
@@ -24,6 +25,7 @@ export function AnnotationCanvas({
   visualContext,
   onSelect,
   onChange,
+  onEditStart,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -31,6 +33,12 @@ export function AnnotationCanvas({
   const [drag, setDrag] = useState<
     | { type: "vertex"; id: string; ring: number; index: number }
     | { type: "bbox"; id: string; start: Point; original: [number, number, number, number] }
+    | {
+        type: "bbox_resize";
+        id: string;
+        corner: "nw" | "ne" | "sw" | "se";
+        original: [number, number, number, number];
+      }
     | { type: "pan"; start: Point; original: Point }
   >();
 
@@ -53,7 +61,7 @@ export function AnnotationCanvas({
     if (value.kind === "polyline") value.points[index] = point;
     if (value.kind === "polygon") value.rings[ring][index] = point;
     if (value.kind === "keypoints") value.points[index].point = point;
-    if (value.kind === "instance_mask" && value.mask.kind === "polygon") {
+    if ((value.kind === "instance_mask" || value.kind === "semantic_mask") && value.mask.encoding === "polygon") {
       value.mask.rings[ring][index] = point;
     }
     onChange({ ...annotation, value });
@@ -79,6 +87,26 @@ export function AnnotationCanvas({
         ];
         onChange({ ...annotation, value: { kind: "bounding_box", rect } });
       }
+    } else if (drag.type === "bbox_resize") {
+      const annotation = annotations.find((item) => item.id === drag.id);
+      if (annotation && annotation.value.kind === "bounding_box") {
+        const [x, y, originalWidth, originalHeight] = drag.original;
+        const opposite: Point = [
+          drag.corner.includes("w") ? x + originalWidth : x,
+          drag.corner.includes("n") ? y + originalHeight : y,
+        ];
+        const width = Math.max(0.002, Math.abs(point[0] - opposite[0]));
+        const height = Math.max(0.002, Math.abs(point[1] - opposite[1]));
+        const left = Math.min(Math.min(point[0], opposite[0]), 1 - width);
+        const top = Math.min(Math.min(point[1], opposite[1]), 1 - height);
+        const rect: [number, number, number, number] = [
+          left,
+          top,
+          width,
+          height,
+        ];
+        onChange({ ...annotation, value: { kind: "bounding_box", rect } });
+      }
     } else {
       setPan([
         drag.original[0] + (point[0] - drag.start[0]) * WIDTH,
@@ -89,14 +117,33 @@ export function AnnotationCanvas({
 
   const addVertex = (event: React.MouseEvent<SVGSVGElement>) => {
     if (!selected || event.detail !== 2) return;
+    onEditStart?.();
     const point = localPoint(event as unknown as React.PointerEvent<SVGSVGElement>);
     const value = structuredClone(selected.value);
     if (value.kind === "polyline") value.points.push(point);
     if (value.kind === "polygon") value.rings[0]?.push(point);
-    if (value.kind === "instance_mask" && value.mask.kind === "polygon") {
+    if ((value.kind === "instance_mask" || value.kind === "semantic_mask") && value.mask.encoding === "polygon") {
       value.mask.rings[0]?.push(point);
     }
     onChange({ ...selected, value });
+  };
+
+  const deleteVertex = (annotation: Annotation, ring: number, index: number) => {
+    const value = structuredClone(annotation.value);
+    if (value.kind === "polyline" && value.points.length > 2) value.points.splice(index, 1);
+    else if (value.kind === "polygon" && value.rings[ring]?.length > 3)
+      value.rings[ring].splice(index, 1);
+    else if (value.kind === "keypoints" && value.points.length > 1)
+      value.points.splice(index, 1);
+    else if (
+      (value.kind === "instance_mask" || value.kind === "semantic_mask") &&
+      value.mask.encoding === "polygon" &&
+      value.mask.rings[ring]?.length > 3
+    )
+      value.mask.rings[ring].splice(index, 1);
+    else return;
+    onEditStart?.();
+    onChange({ ...annotation, value });
   };
 
   return (
@@ -161,12 +208,15 @@ export function AnnotationCanvas({
               onVertex={(ring, index, event) => {
                 event.stopPropagation();
                 onSelect(annotation.id);
+                onEditStart?.();
                 setDrag({ type: "vertex", id: annotation.id, ring, index });
               }}
+              onDeleteVertex={(ring, index) => deleteVertex(annotation, ring, index)}
               onBbox={(event) => {
                 if (annotation.value.kind !== "bounding_box") return;
                 event.stopPropagation();
                 onSelect(annotation.id);
+                onEditStart?.();
                 setDrag({
                   type: "bbox",
                   id: annotation.id,
@@ -174,11 +224,23 @@ export function AnnotationCanvas({
                   original: annotation.value.rect,
                 });
               }}
+              onBboxResize={(corner, event) => {
+                if (annotation.value.kind !== "bounding_box") return;
+                event.stopPropagation();
+                onSelect(annotation.id);
+                onEditStart?.();
+                setDrag({
+                  type: "bbox_resize",
+                  id: annotation.id,
+                  corner,
+                  original: annotation.value.rect,
+                });
+              }}
             />
           ))}
         </g>
       </svg>
-      <p className="canvas-hint">Drag shapes and vertices · double-click to add a line/polygon vertex · wheel to zoom</p>
+      <p className="canvas-hint">Drag boxes, corners, keypoints, and vertices · double-click to add · Delete removes a selected vertex</p>
     </div>
   );
 }
@@ -189,14 +251,21 @@ function AnnotationShape({
   selected,
   onSelect,
   onVertex,
+  onDeleteVertex,
   onBbox,
+  onBboxResize,
 }: {
   annotation: Annotation;
   visual: ReturnType<typeof annotationVisual>;
   selected: boolean;
   onSelect: () => void;
   onVertex: (ring: number, index: number, event: React.PointerEvent) => void;
+  onDeleteVertex: (ring: number, index: number) => void;
   onBbox: (event: React.PointerEvent) => void;
+  onBboxResize: (
+    corner: "nw" | "ne" | "sw" | "se",
+    event: React.PointerEvent,
+  ) => void;
 }) {
   const color = annotationColor(visual.slot);
   const strokeWidth = selected ? 4 : 2.5;
@@ -214,7 +283,16 @@ function AnnotationShape({
         stroke={color}
         strokeWidth={3}
         className="annotation-control"
+        role="button"
+        tabIndex={selected ? 0 : -1}
+        aria-label={`Vertex ${index + 1}; drag to move, Delete to remove`}
         onPointerDown={(event) => onVertex(ring, index, event)}
+        onKeyDown={(event) => {
+          if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            onDeleteVertex(ring, index);
+          }
+        }}
       />
     ));
 
@@ -236,6 +314,27 @@ function AnnotationShape({
           onPointerDown={onBbox}
         />
         <ShapeLabel x={x * WIDTH} y={y * HEIGHT} text={label} color={color} />
+        {selected &&
+          ([
+            ["nw", x, y],
+            ["ne", x + width, y],
+            ["sw", x, y + height],
+            ["se", x + width, y + height],
+          ] as const).map(([corner, cx, cy]) => (
+            <circle
+              key={corner}
+              cx={cx * WIDTH}
+              cy={cy * HEIGHT}
+              r={9}
+              fill="var(--aa-bg)"
+              stroke={color}
+              strokeWidth={3}
+              role="button"
+              tabIndex={0}
+              aria-label={`Resize bounding box from ${corner} corner`}
+              onPointerDown={(event) => onBboxResize(corner, event)}
+            />
+          ))}
       </g>
     );
   }
@@ -250,7 +349,7 @@ function AnnotationShape({
   }
   const rings = annotation.value.kind === "polygon"
     ? annotation.value.rings
-    : annotation.value.kind === "instance_mask" && annotation.value.mask.kind === "polygon"
+    : (annotation.value.kind === "instance_mask" || annotation.value.kind === "semantic_mask") && annotation.value.mask.encoding === "polygon"
       ? annotation.value.mask.rings
       : undefined;
   if (rings) {

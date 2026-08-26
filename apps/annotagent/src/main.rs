@@ -46,6 +46,18 @@ enum Command {
         #[arg(long)]
         images: PathBuf,
     },
+    ImportAnnotations {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        format: String,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long = "map", value_name = "SOURCE=TARGET")]
+        label_mapping: Vec<String>,
+    },
     Run(RunArgs),
     Tui {
         #[arg(long)]
@@ -150,6 +162,13 @@ async fn main() -> Result<()> {
             command: ProjectCommand::Validate { project },
         } => validate_project(&project),
         Command::Import { project, images } => import_images(&project, &images),
+        Command::ImportAnnotations {
+            project,
+            format,
+            source,
+            dry_run,
+            label_mapping,
+        } => import_annotations(&project, &format, &source, dry_run, &label_mapping).await,
         Command::Run(arguments) => run_command(&arguments).await,
         Command::Tui { project } => tui::run(project).await,
         Command::Serve {
@@ -180,6 +199,42 @@ async fn main() -> Result<()> {
         Command::Doctor => doctor(),
         Command::Demo { name } => demo(&name).await,
     }
+}
+
+async fn import_annotations(
+    project_path: &Path,
+    format: &str,
+    source: &Path,
+    dry_run: bool,
+    mappings: &[String],
+) -> Result<()> {
+    let project_path = project_path.canonicalize()?;
+    let project_directory = project_path
+        .parent()
+        .context("project path has no parent directory")?;
+    let workspace = project_directory
+        .parent()
+        .context("project directory has no workspace parent")?;
+    let project_id = project_directory
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .context("project directory name is not valid UTF-8")?;
+    let mut label_mapping = std::collections::BTreeMap::new();
+    for mapping in mappings {
+        let (source, target) = mapping.split_once('=').with_context(|| {
+            format!("invalid label mapping {mapping:?}; expected SOURCE=TARGET")
+        })?;
+        if source.is_empty() || target.is_empty() {
+            bail!("invalid label mapping {mapping:?}; labels cannot be empty");
+        }
+        label_mapping.insert(source.to_owned(), target.to_owned());
+    }
+    let application = LocalApplication::new(workspace)?;
+    let report = application
+        .import_project_annotations(project_id, format, source, label_mapping, dry_run)
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 fn evaluate_command(
@@ -494,6 +549,7 @@ async fn export_command(project_path: &Path, format: &str, output: &Path) -> Res
             metadata: frame.metadata,
         }],
         annotations,
+        revisions: store.history(run.id)?.revisions,
     };
     let exporter: Arc<dyn DatasetExporter> = match format {
         "native" => Arc::new(NativeExporter),
