@@ -28,6 +28,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed in `33ab172`; acceptance evidence recorded.
 5. **M4 — Model Registry and mixed backends**
    - Complete registry metadata, deterministic CV, versioned HTTP worker protocol, JSON-only VLM fallback, health, and failure behavior.
+   - Status: completed in `b41f55d`; acceptance evidence recorded.
 6. **M5 — Persistent Dataset Coordinator**
    - Add transactional global budget, image/node checkpoints, leases, restart recovery, and 100-image acceptance.
 7. **M6 — Advisor and Workflow Editor**

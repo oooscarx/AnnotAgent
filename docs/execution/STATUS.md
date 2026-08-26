@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 05:25 CST
+Last updated: 2026-08-27 05:41 CST
 
 ## Current milestone
 
-Milestone 4 — Model Registry and mixed vision backends.
+Milestone 5 — Persistent Dataset Coordinator.
 
 ## Completed
 
@@ -31,35 +31,41 @@ Milestone 4 — Model Registry and mixed vision backends.
 - Added serializable suspension checkpoints and HumanReview approval/resume without rerunning completed nodes.
 - Added deterministic Artifact caching keyed by node/model/input/config/Skill snapshot material, with zero incremental cache-hit usage/cost.
 - Added replayable per-node traces containing attempts, cache evidence, route, exact input/output Artifacts, structured errors, timing, tokens, and cost.
+- Completed the Model Registry with version, capability, input/output, pricing, health, limit, endpoint/path, and secret-reference metadata.
+- Added real mock, OpenAI-compatible, HTTP JSON, and deterministic pixel-CV backends behind typed Artifact contracts.
+- Added the versioned `/health`, `/v1/capabilities`, and `/v1/infer` worker protocol with bounded inline images, timeout/cancellation metadata, identity checks, usage, warnings, timings, and structured errors.
+- Added a reference Python worker that is explicitly a fixture without weights and performs real Ultralytics detection only when a local model path is configured.
+- Added strict JSON-only action schemas and promotion into registered tool calls, plus actual/estimated/unknown usage handling and secret redaction.
+- Exposed model health on the Models page and proved incompatible capabilities block Workflow publication.
 
 ## In progress
 
-- Expanding Model Registry metadata and execution adapters for Milestone 4.
+- Designing durable batch/checkpoint storage and transactional budget reservation for Milestone 5.
 
 ## Next
 
-1. Add complete model/version/input/output/cost/health metadata and capability resolution.
-2. Add deterministic CV and versioned HTTP worker health/capabilities/inference contracts.
-3. Add JSON-only VLM fallback parsing and mixed-backend failure isolation tests.
+1. Persist batch, per-image, per-node, checkpoint, lease, and event-sequence state.
+2. Add transactional global budget reservation and release across concurrent workers.
+3. Prove pause, server restart, resume, cancel, failed-image retry, and no duplicate commits with 100 synthetic images.
 
 ## Current release gaps
 
 - Published Drafts are persisted and immutable, but the main Run path still records and executes an honest compatibility snapshot rather than an explicitly selected published DAG.
 - The generic DAG executor is implemented, but the product Start flow does not yet expose explicit published-version selection (scheduled for the Editor/run integration milestone).
-- Dataset coordination has in-process pause/resume but no durable per-node checkpoint, active worker lease, or restart resume.
+- Dataset coordination has in-process pause/resume but no durable per-node checkpoint, active worker lease, transactional global budget, or restart resume.
 - Workflow Dry Run is static validation, not sample-image sandbox execution.
 - Workflow Editor cannot yet add/delete nodes or edges, clone versions, or archive drafts.
-- Registry metadata, deterministic CV backend, HTTP health/capabilities protocol, and JSON-only Provider fallback are incomplete.
 - Review lacks the full geometry editing and undo/redo gate.
 - Data import is image ingestion/history import, not Native/COCO/LabelMe annotation import.
 - Generic and RoboCup offline demo commands required by the release do not exist yet.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-3 acceptance run passed 85 Rust tests and 13 Web tests with all build/static checks at exit 0.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-4 acceptance run passed 91 Rust tests and 13 Web tests with all build/static checks at exit 0.
 
 ## Recent commit
 
+- `b41f55d feat(models): complete mixed vision backend registry`
 - `33ab172 feat(runtime): execute immutable published DAG snapshots`
 - `2c05a83 test(runtime): enforce built-in commit safety`
 - `684ce6f feat(workflow): add versioned typed workflow contracts`

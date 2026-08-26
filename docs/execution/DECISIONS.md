@@ -55,3 +55,15 @@ A DAG checkpoint owns node states, outputs, selected routes, activated fallbacks
 ## D-012 — Commit and cache semantics are Runtime invariants
 
 ImageInput, HumanReview, CandidateMerge, and Commit are built-ins; registering an operation with the same string cannot replace their safety behavior. Commit accepts only Valid Artifacts. Cache hits reuse immutable deterministic output, retain provenance, and add zero tokens/cost to the resumed execution.
+
+## D-013 — Worker capability claims and real inference are distinct
+
+The v1 HTTP contract is shared by detector-, prompted-segmentation-, and semantic-segmentation-class workers, but a worker may claim only capabilities backed by its configured model. The reference process reports degraded fixture health and `weights_unavailable` without weights; it reports a real model identity only after successfully loading a local model.
+
+Rejected: returning plausible fixture geometry while labelling it as YOLO, SAM, PIDNet, or real local inference.
+
+## D-014 — Registry secrets are references and health is observable state
+
+Persisted model descriptors may contain only `env:` or `keychain:` secret references. Runtime adapters can hold transient credentials, but structured redaction and sanitized errors prevent those values from entering product traces. Health is a typed status with detail and check time and is exposed through the application/server DTO to the Models page.
+
+Rejected: persisting provider keys in model configuration or inferring `healthy` merely because an external endpoint was configured.

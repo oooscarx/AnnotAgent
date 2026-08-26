@@ -37,7 +37,7 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Strongly typed Workflow ports/edges | PASS | Workflow v2 defines generic node kinds, typed ports/edges/policies/resources, precise static checks, immutable published snapshots, and migration evidence. |
 | Published snapshot DAG execution | PASS | Generic runtime tests execute an immutable published snapshot with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, and replayable I/O trace. Product version-selection UI remains M6 scope. |
 | Checkpoint/restart resume/global budget | INCOMPLETE | No 100-image restart-resume gate. |
-| Mixed model backends | INCOMPLETE | Mock, OpenAI-compatible, and HTTP infer adapters exist; deterministic CV, worker discovery endpoints, JSON-only fallback, and health UI remain. |
+| Mixed model backends | PASS | Complete registry metadata, mock/OpenAI-compatible/HTTP JSON/deterministic CV adapters, worker discovery protocol, strict JSON-only fallback, structured errors, secret references, and GUI health are tested. Live weights remain conditional. |
 | Workflow Advisor/editor | INCOMPLETE | Suggest/save/static dry-run/publish work; node/edge lifecycle, sample-image Dry Run, clone/archive/version selection remain. |
 | RoboCup hybrid release example | INCOMPLETE | Domain algorithms and an example foundation exist; required templates/evaluation CLI/complete generic DAG execution do not. |
 | Review geometry editing | INCOMPLETE | Existing revision UI is not the full bbox/keypoint/polyline/polygon editor with undo/redo and before/after. |
@@ -128,3 +128,31 @@ Gate evidence from `crates/annotagent-runtime/tests/published_dag.rs`:
 9. Safe Commit: built-in Commit cannot be overridden by a registered runner and rejects Artifacts that are neither Validated nor Human-reviewed.
 
 Milestone 3 status: `PASS`.
+
+## Milestone 4 — Model Registry and mixed vision backends
+
+Implementation commit: `b41f55d feat(models): complete mixed vision backend registry`
+
+`./scripts/acceptance.sh` was run after the implementation:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Rust fmt + clippy | 0 | All workspace targets/features pass formatting and `-D warnings`. |
+| Rust test | 0 | 91 unit/integration tests passed; 0 failed. |
+| Rust build | 0 | All workspace crates built. |
+| Web typecheck/test/build | 0 | Typecheck passed; 7 files/13 tests passed; production build passed. |
+| Doctor | 0 | Database, migrations, workspace, example, Web build, and offline/mock checks pass. |
+| Secret scan | 0-equivalent | `rg` found no supplied-key fingerprint in tracked/untracked repository sources; exit 1 with empty output means no match. |
+| Reference worker syntax | 0 | Python AST parsing succeeds without importing optional model dependencies or creating bytecode. |
+
+Gate evidence:
+
+1. Registry completeness and publication safety: descriptors carry display/model/version, backend, capabilities, inputs/outputs, endpoint/path, pricing, health, limits, and secret reference; `model_capability_mismatch_blocks_publish` rejects an incompatible VLM binding.
+2. Shared worker protocol: the HTTP fixture serves `/health`, `/v1/capabilities`, and `/v1/infer`; discovery advertises detector, SAM-class prompted segmentation, and semantic-segmentation capabilities through the same v1 contract.
+3. Typed response parsing: `http_json_backend_uses_the_shared_wire_schema` parses and validates all nine Artifact shapes, enforces image/task scope, protocol version, and expected model identity.
+4. Failure semantics: `worker_error_preserves_execution_identity_and_retry` proves model, node, task, elapsed time, retry index, worker, and structured error code survive retry exhaustion. M3 fallback tests prove declared fallback activation after an unavailable runner exhausts its bounded attempts.
+5. Real/offline honesty: `deterministic_cv_executes_real_pixel_algorithm` executes an actual image-pixel detector; `examples/http_vision_worker.py` runs real Ultralytics detection only with configured local weights and otherwise returns `weights_unavailable` while identifying itself as a fixture.
+6. Provider degradation: tests cover native tool calls, strict JSON Schema, registered-action promotion from JSON-only responses, actual/estimated/unknown usage, timeout/retry/cancellation paths, and secret/image redaction.
+7. Secret boundary and health UI: plaintext registry secrets are rejected; persisted provider settings keep the API key only in the credential store; source secret scan is empty; `/api/models` and the Models page expose health status and detail.
+
+Milestone 4 status: `PASS`.
