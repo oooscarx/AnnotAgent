@@ -99,3 +99,17 @@ note. Selection is auditable without falsely claiming that the generic graph con
 
 Rejected: replacing the actual compatibility snapshot with the selected Draft merely to make the
 UI appear fully integrated.
+
+## D-019 — Domain templates are Skill-owned and evaluation requires labelled truth
+
+Core defines only the typed `WorkflowTemplate` contract. Enabled Skills contribute concrete
+templates, and the application refuses a template ID that does not belong to the Project's enabled
+Skills. RoboCup specialist templates preserve model geometry as Artifacts; VLM nodes emit semantic
+verification or attributes and cannot silently replace detector coordinates.
+
+Accuracy evaluation accepts a separate schema-v1 ground-truth document only when it explicitly
+declares `labeled: true`. Operational telemetry can describe unlabeled data, but accuracy values and
+quality-gate claims cannot be inferred from it.
+
+Rejected: global RoboCup template IDs in Core, arbitrary template selection across Projects, or
+plausible-looking accuracy reports derived from predictions without human-labelled truth.

@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 06:45 CST
+Last updated: 2026-08-27 07:06 CST
 
 ## Current milestone
 
-Milestone 7 — RoboCup hybrid Skill.
+Milestone 8 — Review, editing, import, and round trips.
 
 ## Completed
 
@@ -50,30 +50,36 @@ Milestone 7 — RoboCup hybrid Skill.
 - Replaced compatibility-only Project Workflow lists with real published versions and added explicit version selection to image Runs and honest history summaries.
 - Passed the full HTTP Workflow Designer journey and an in-app browser journey covering invalid port paths, repair, one-image Dry Run, publish immutability, clone editability, version selection, and history attribution.
 - Added `ANNOTAGENT_DISABLE_KEYCHAIN=1` for headless CI/browser testing; production continues to use the system keychain by default.
+- Added three RoboCup-owned typed Workflow templates: `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`, exposed only for Projects that enable the Skill.
+- Kept specialist geometry in typed Artifacts; hybrid VLM nodes consume bbox evidence read-only and emit classification or attributes instead of rewritten coordinates.
+- Extended hybrid execution evidence with aggregate model-call/compute/latency usage and proved both low-risk Commit and RoboCup white-shoe review paths.
+- Added a ground-truth-only evaluation CLI with bbox/mask/keypoint/polyline/classification/attribute and operational metrics, explicit thresholds, and synthetic fixtures.
+- Proved field-region mask IoU 0.75 passes the configured 0.70 gate, field-line refinement improves its coarse candidate, white-shoe candidates cannot auto-commit, and absent penalty marks are `SucceededEmpty`.
 
 ## In progress
 
-- Building the three RoboCup hybrid Workflow templates and evaluation path for Milestone 7.
+- Building the Milestone 8 review editing and annotation import/round-trip gates.
 
 ## Next
 
-1. Add high-accuracy, balanced, and fast RoboCup templates through generic registered nodes.
-2. Execute the mixed VLM/detector/segmenter/refiner/validator graph with fixture evidence and conditional real weights.
-3. Add the RoboCup evaluation CLI and aggregate precision/recall/review/cost/latency report.
+1. Add complete bbox/keypoint/polyline/polygon editing with undo/redo and correction reasons.
+2. Implement Native, COCO, LabelMe, and feasible YOLO import with compatibility reports and dry-run.
+3. Prove Native and representable COCO/LabelMe round trips without silent field loss.
 
 ## Current release gaps
 
-- Product Run selection and history identify an immutable Workflow Version, but the image executor still records and executes the compatibility Skill graph rather than interpreting that selected generic DAG. Milestone 7 must close the execution wiring before claiming hybrid product execution.
+- Product Run selection and history identify an immutable Workflow Version, but the image executor still records and executes the compatibility Skill graph rather than interpreting that selected generic DAG. M7 proves the shared hybrid executor and domain Artifact chain directly; product published-DAG execution remains a release gap and is not claimed.
 - Review lacks the full geometry editing and undo/redo gate.
 - Data import is image ingestion/history import, not Native/COCO/LabelMe annotation import.
 - Generic and RoboCup offline demo commands required by the release do not exist yet.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-6 acceptance script passes 100 Rust tests, 13 Web tests, all-target/all-feature Clippy, workspace/Web builds, doctor, and the 28-table SQLite migration check.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-7 acceptance script passes 104 Rust tests, 13 Web tests, all-target/all-feature Clippy, workspace/Web builds, doctor, and the 28-table SQLite migration check.
 
 ## Recent commit
 
+- `08d3958 feat(robocup): complete hybrid skill and evaluation`
 - `364c3ee feat(workflow): complete advisor and editor lifecycle`
 - `92a5c5b feat(batch): persist dataset coordination and recovery`
 - `b41f55d feat(models): complete mixed vision backend registry`

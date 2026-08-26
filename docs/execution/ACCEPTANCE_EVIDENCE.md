@@ -214,3 +214,27 @@ Gate evidence:
 9. Real Qwen Advisor execution is not claimed because no supported live credential was supplied during this milestone; it remains `LIVE-CONDITIONAL` in `BLOCKERS.md`.
 
 Milestone 6 status: `PASS` offline; live Qwen advice remains conditional.
+
+## Milestone 7 — RoboCup hybrid Skill
+
+Implementation commit: `08d3958 feat(robocup): complete hybrid skill and evaluation`
+
+Acceptance commands:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| `./scripts/acceptance.sh` | 0 | Formatting, all-target/all-feature Clippy, 104 Rust tests, workspace build, 7-file/13-test Web suite, production Web build, doctor, 28 SQLite tables, and migrations all pass. |
+| `annotagent evaluate` synthetic fixture | 0 | The report contains every requested accuracy/operational metric and field-region mask IoU 0.75 passes the configured 0.70 threshold. |
+| Secret scan | 0-equivalent | Supplied-key fingerprints are absent from tracked and untracked repository sources. |
+
+Gate evidence:
+
+1. `generic_project_and_workflow_need_no_robocup_skill` proves a zero-Skill Project has no RoboCup output or Workflow templates. The RoboCup application and HTTP journeys expose exactly the three Skill-owned templates and instantiate `accurate-hybrid` with the Project's enabled Skill version.
+2. `robocup_owns_three_semantically_bounded_workflow_templates` proves the exact `vlm-bootstrap`, `detector-first`, and `accurate-hybrid` IDs, required review/Commit path, deterministic line refiner, and read-only bbox-to-classification VLM contract.
+3. The synthetic evaluation fixture reports bbox IoU/precision/recall, mask IoU, keypoint distance, polyline point-to-line distance, classification/attribute accuracy, review/failure rate, cost, latency, and model calls. `labeled: false` is rejected rather than assigned fabricated accuracy.
+4. The field-region mask score is 0.75 and passes `--minimum-field-region-iou 0.7`; the existing pixel fixture proves the refined line is closer to the white line than its coarse candidate.
+5. RoboCup algorithm/runtime gates prove a white-shoe candidate returns bounded Retry then HumanReview rather than AutoAccept, and an absent penalty mark persists `SucceededEmpty` while the Run completes.
+6. `robocup_hybrid_artifacts_usage_trace_and_hard_negative_review_are_real` executes detector Artifacts → semantic-only VLM output → actual RoboCup hard-negative validation → review → blocked Commit. It asserts three Artifacts, five trace nodes, two model calls, the exact `possible_white_shoe` issue, review routing, and no committed high-risk Artifact. The companion low-risk hybrid test commits validated detector/segmenter Artifacts automatically.
+7. Real Qwen and external detector/segmenter smoke are `LIVE-CONDITIONAL`: no credential or configured weights were read from conversation history, and fixture backends are not represented as real inference.
+
+Milestone 7 status: `PASS` offline; live Qwen and configured external-model smoke remain conditional.

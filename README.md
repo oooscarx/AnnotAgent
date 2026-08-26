@@ -53,6 +53,20 @@ The Runtime extension test also registers an independent `DummySkill` without ch
 cargo test -p annotagent-runtime --test skill_extension
 ```
 
+RoboCup exposes three Workflow starters in the Workflow Designer: `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`. The latter keeps specialist geometry as typed Artifacts and uses the VLM only for verification and attributes.
+
+Run the ground-truth-backed synthetic evaluation (no key or external weights required):
+
+```bash
+cargo run -p annotagent -- evaluate \
+  --ground-truth examples/robocup/evaluation/ground-truth.synthetic.json \
+  --predictions examples/robocup/evaluation/predictions.synthetic.json \
+  --bbox-iou-threshold 0.5 \
+  --minimum-field-region-iou 0.7
+```
+
+Unlabelled real datasets are rejected as accuracy inputs; their run telemetry remains available separately.
+
 ## Install and start
 
 Requirements are stable Rust, Node.js 20+, and npm.

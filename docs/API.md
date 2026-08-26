@@ -16,6 +16,7 @@ annotagent history show <run-id>
 annotagent history export <run-id> --output <file>
 annotagent history import <file>
 annotagent export --project <project.yaml> --format <native|coco|yolo|yolo_segmentation|labelme> --output <directory>
+annotagent evaluate --ground-truth <labels.json> --predictions <outputs.json> [--bbox-iou-threshold 0.5] [--minimum-field-region-iou 0.7] [--output report.json]
 annotagent doctor
 annotagent demo robocup
 ```
@@ -27,12 +28,12 @@ All paths are relative to the local Axum server.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health` | Service/workspace/database status |
-| GET | `/api/skills`, `/api/skills/{id}` | Skill boundary, tools, validators, resources, template |
+| GET | `/api/skills`, `/api/skills/{id}` | Skill boundary, tools, validators, resources, Project template, and Workflow templates |
 | GET/POST | `/api/projects` | Dashboard list or validated project creation |
 | GET | `/api/projects/{id}` | Project summary |
 | GET | `/api/projects/{id}/workflow-catalog` | Registry-bounded Advisor/editor context and data profile |
 | GET | `/api/workflows` | Published Workflow Versions for all Projects |
-| GET/POST | `/api/workflow-drafts` | List or create blank/template Drafts |
+| GET/POST | `/api/workflow-drafts` | List or create blank/generic/Skill-template Drafts; `template_id` must belong to an enabled Skill |
 | POST | `/api/workflow-drafts/suggest` | Mock or constrained workspace-LLM Advisor suggestion |
 | PATCH | `/api/workflow-drafts/{id}` | Persist an editable Draft |
 | POST | `/api/workflow-drafts/{id}/dry-run` | Validate and execute up to ten selected images in an isolated sandbox |
@@ -66,6 +67,8 @@ All paths are relative to the local Axum server.
 | GET | `/api/events?run_id=...` | Live SSE stream |
 
 Errors are JSON objects with an HTTP status and a concrete message. User paths are canonicalized against the workspace before reads.
+
+`annotagent evaluate` reads two separate schema-v1 JSON documents. The ground-truth document must explicitly set `labeled: true`; otherwise the command refuses to calculate accuracy. Reports include bbox IoU/precision/recall, mask IoU, keypoint distance, polyline point-to-line distance, classification/attribute accuracy, review/failure rate, cost, latency, model calls, missing/extra image IDs, and configured quality-gate results.
 
 ## Product DTO compatibility
 

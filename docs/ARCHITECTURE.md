@@ -43,7 +43,8 @@ completed commits.
 
 The Workflow Advisor receives a bounded `WorkflowAdvisorInput`: Project Schema, enabled Skills,
 registered nodes/models/Validators/Refiners/resources, operator constraints, and aggregate image
-profile. The offline Advisor is deterministic. The optional workspace-LLM Advisor has exactly one
+profile. Enabled Skills may also contribute project-independent typed Workflow templates; Core
+only owns the template contract and never contains their domain labels. The offline Advisor is deterministic. The optional workspace-LLM Advisor has exactly one
 strict submission action and may only adjust registered model bindings and review gates on a safe
 base Draft; it has no Shell, URL, code-execution, or arbitrary-tool surface. Every output is saved
 as a Draft and is revalidated against the same registries before persistence.
@@ -57,6 +58,8 @@ legacy Skill graph currently executed, keeping product attribution honest until 
 image path is replaced by the generic DAG executor.
 
 The implemented hybrid model boundary is described in [Hybrid vision execution](HYBRID_VISION.md). Auxiliary detectors and segmenters supply typed Artifacts; they do not bypass Runtime validation, provenance, review, or commit.
+
+The RoboCup Skill owns `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`. In the specialist templates, geometry is emitted by detector/segmenter/deterministic nodes. VLM nodes consume geometry read-only and emit classification or attributes. The shared hybrid executor aggregates Artifact output, trace, model-call/compute/latency usage, Validator issues, review routing, and safe Commit decisions.
 
 ## State and persistence
 
