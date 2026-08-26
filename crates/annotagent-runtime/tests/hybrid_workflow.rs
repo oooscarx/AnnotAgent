@@ -1,16 +1,20 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRole, ArtifactValidationState, ImageId,
-    LabelId, ModelRegistry, NodeRegistry, NormalizedRect, ProjectSchema, RegistryWorkflowAdvisor,
-    RunId, VisionArtifact, VisionArtifactValue, VisionCapability, VisionModelDescriptor,
+    Annotation, AnnotationId, AnnotationProvenance, AnnotationSource, AnnotationValidator,
+    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRole, ArtifactValidationState,
+    ImageFrame, ImageId, LabelId, ModelImage, ModelRegistry, NodeRegistry, NormalizedRect,
+    ProjectSchema, RegistryWorkflowAdvisor, ReviewStatus, RunId, TaskId, ValidationContext,
+    VisionArtifact, VisionArtifactValue, VisionCapability, VisionModelDescriptor,
     VisionNodeDescriptor, WorkflowAdvisor, WorkflowConstraints, all_artifact_kinds,
 };
+use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_provider::MockVisionBackend;
 use annotagent_runtime::{
     HybridExecutionRequest, HybridNodeAction, HybridWorkflowExecutor, HybridWorkflowNode,
     HybridWorkflowPlan, VisionArtifactValidator,
 };
+use annotagent_skill_robocup::BallHardNegativeValidator;
 use tokio_util::sync::CancellationToken;
 
 fn artifact(value: VisionArtifactValue, source: &str) -> VisionArtifact {
@@ -206,6 +210,7 @@ async fn generic_hybrid_detector_segmenter_validator_review_gate_and_commit() {
     assert!(!result.needs_review);
     assert_eq!(result.committed.len(), 2);
     assert_eq!(result.trace.len(), 5);
+    assert_eq!(result.usage.model_calls, 2);
 }
 
 #[test]
@@ -273,4 +278,241 @@ export: {formats: [native]}
     ] {
         assert!(!serialized.to_ascii_lowercase().contains(forbidden));
     }
+}
+
+struct RoboCupBallArtifactValidator {
+    project: ProjectSchema,
+    image: ImageFrame,
+}
+
+impl VisionArtifactValidator for RoboCupBallArtifactValidator {
+    fn id(&self) -> &str {
+        "robocup_ball_hard_negative"
+    }
+
+    fn validate(&self, artifacts: &[VisionArtifact]) -> Vec<String> {
+        let annotations = artifacts
+            .iter()
+            .map(artifact_annotation)
+            .collect::<Vec<_>>();
+        let mut issues = Vec::new();
+        for candidate in annotations.iter().filter(|annotation| {
+            annotation
+                .label
+                .as_ref()
+                .is_some_and(|label| label.as_str() == "ball")
+        }) {
+            issues.extend(
+                BallHardNegativeValidator::default()
+                    .validate(&ValidationContext {
+                        project: &self.project,
+                        image: Some(&self.image),
+                        candidate,
+                        related_annotations: &annotations,
+                        correction_risk: 0.0,
+                    })
+                    .expect("RoboCup artifact validation")
+                    .into_iter()
+                    .map(|issue| issue.code),
+            );
+        }
+        issues
+    }
+}
+
+fn artifact_annotation(artifact: &VisionArtifact) -> Annotation {
+    Annotation {
+        id: AnnotationId::new(),
+        image_id: artifact.image_id,
+        task_id: artifact
+            .task_id
+            .clone()
+            .unwrap_or_else(|| TaskId::from("objects")),
+        label: artifact.label.clone(),
+        value: artifact.value.as_annotation_value(),
+        attributes: BTreeMap::new(),
+        confidence: artifact.confidence,
+        source: AnnotationSource::Model,
+        review_status: ReviewStatus::Draft,
+        provenance: AnnotationProvenance::default(),
+        created_at: artifact.created_at,
+    }
+}
+
+#[tokio::test]
+async fn robocup_hybrid_artifacts_usage_trace_and_hard_negative_review_are_real() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let image_path = temporary.path().join("synthetic.png");
+    generate_synthetic_robocup(&image_path).expect("synthetic RoboCup image");
+    let image = load_image(&image_path, 1_000_000).expect("image");
+    let image_id = ImageId::new();
+    let ball = VisionArtifact {
+        image_id,
+        task_id: Some(TaskId::from("objects")),
+        label: Some(LabelId::from("ball")),
+        ..artifact(
+            VisionArtifactValue::BoundingBox {
+                rect: NormalizedRect::new(0.218, 0.615, 0.04, 0.03).expect("shoe box"),
+            },
+            "mock_detector",
+        )
+    };
+    let robot = VisionArtifact {
+        image_id,
+        task_id: Some(TaskId::from("objects")),
+        label: Some(LabelId::from("robot")),
+        ..artifact(
+            VisionArtifactValue::BoundingBox {
+                rect: NormalizedRect::new(0.225, 0.445, 0.07, 0.2).expect("robot box"),
+            },
+            "mock_detector",
+        )
+    };
+    let semantics = VisionArtifact {
+        image_id,
+        task_id: Some(TaskId::from("objects")),
+        label: Some(LabelId::from("possible_ball")),
+        ..artifact(
+            VisionArtifactValue::Classification {
+                labels: vec![LabelId::from("possible_white_object")],
+            },
+            "mock_vlm_semantics",
+        )
+    };
+    let mut models = ModelRegistry::new();
+    models
+        .register_backend(Arc::new(MockVisionBackend::new(
+            "detector-backend",
+            vec![VisionCapability::ObjectDetection],
+            vec![ball, robot],
+        )))
+        .expect("detector backend");
+    models
+        .register_backend(Arc::new(MockVisionBackend::new(
+            "vlm-backend",
+            vec![VisionCapability::VisionLanguage],
+            vec![semantics],
+        )))
+        .expect("VLM backend");
+    for (id, backend_id, capability) in [
+        (
+            "detector",
+            "detector-backend",
+            VisionCapability::ObjectDetection,
+        ),
+        ("vlm", "vlm-backend", VisionCapability::VisionLanguage),
+    ] {
+        models
+            .register_model(VisionModelDescriptor {
+                id: id.to_owned(),
+                backend_id: backend_id.to_owned(),
+                capabilities: vec![capability],
+                ..VisionModelDescriptor::default()
+            })
+            .expect("model");
+    }
+    let mut nodes = NodeRegistry::new();
+    for descriptor in [
+        node(
+            "object_detection",
+            Some(VisionCapability::ObjectDetection),
+            vec![ArtifactKind::BoundingBox],
+        ),
+        node(
+            "vision_language",
+            Some(VisionCapability::VisionLanguage),
+            vec![ArtifactKind::Classification],
+        ),
+        node("static_validator", None, all_artifact_kinds().to_vec()),
+        node("review_gate", None, all_artifact_kinds().to_vec()),
+        node("commit", None, all_artifact_kinds().to_vec()),
+    ] {
+        nodes.register(descriptor).expect("node");
+    }
+    let plan = HybridWorkflowPlan {
+        id: "robocup-artifact-chain".to_owned(),
+        nodes: vec![
+            HybridWorkflowNode {
+                id: "detect".to_owned(),
+                node_type: "object_detection".to_owned(),
+                depends_on: Vec::new(),
+                action: HybridNodeAction::Model {
+                    model_id: "detector".to_owned(),
+                },
+                parameters: BTreeMap::new(),
+            },
+            HybridWorkflowNode {
+                id: "semantic_verify".to_owned(),
+                node_type: "vision_language".to_owned(),
+                depends_on: vec!["detect".to_owned()],
+                action: HybridNodeAction::Model {
+                    model_id: "vlm".to_owned(),
+                },
+                parameters: BTreeMap::from([(
+                    "geometry_policy".to_owned(),
+                    serde_json::json!("read_only"),
+                )]),
+            },
+            HybridWorkflowNode {
+                id: "validate".to_owned(),
+                node_type: "static_validator".to_owned(),
+                depends_on: vec!["detect".to_owned(), "semantic_verify".to_owned()],
+                action: HybridNodeAction::StaticValidator {
+                    validator_id: "robocup_ball_hard_negative".to_owned(),
+                },
+                parameters: BTreeMap::new(),
+            },
+            HybridWorkflowNode {
+                id: "review".to_owned(),
+                node_type: "review_gate".to_owned(),
+                depends_on: vec!["validate".to_owned()],
+                action: HybridNodeAction::ReviewGate,
+                parameters: BTreeMap::new(),
+            },
+            HybridWorkflowNode {
+                id: "commit".to_owned(),
+                node_type: "commit".to_owned(),
+                depends_on: vec!["review".to_owned()],
+                action: HybridNodeAction::Commit,
+                parameters: BTreeMap::new(),
+            },
+        ],
+    };
+    let mut executor = HybridWorkflowExecutor::new(&models, &nodes);
+    executor
+        .register_validator(Arc::new(RoboCupBallArtifactValidator {
+            project: ProjectSchema::from_yaml(include_str!(
+                "../../../examples/robocup/project.yaml"
+            ))
+            .expect("project"),
+            image: image.clone(),
+        }))
+        .expect("validator");
+    let result = executor
+        .execute(
+            &plan,
+            HybridExecutionRequest {
+                run_id: RunId::new(),
+                image_id,
+                task_id: TaskId::from("objects"),
+                image: Some(ModelImage {
+                    id: "synthetic".to_owned(),
+                    mime_type: image.metadata.mime_type.clone(),
+                    data_base64: String::new(),
+                }),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("hybrid execution");
+    assert_eq!(result.usage.model_calls, 2);
+    assert_eq!(result.artifacts.len(), 3);
+    assert_eq!(result.trace.len(), 5);
+    assert!(
+        result
+            .validation_issues
+            .contains(&"possible_white_shoe".to_owned())
+    );
+    assert!(result.needs_review);
+    assert!(result.committed.is_empty());
 }

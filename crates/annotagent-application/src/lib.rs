@@ -388,6 +388,18 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             vec![ArtifactKind::Keypoints],
             false,
         ),
+        (
+            "deterministic_cv",
+            None,
+            vec![ArtifactKind::Polygon, ArtifactKind::Polyline],
+            true,
+        ),
+        (
+            "field_line_refiner",
+            None,
+            vec![ArtifactKind::Polyline],
+            true,
+        ),
         ("static_validator", None, artifact_kinds.clone(), true),
         ("review_gate", None, artifact_kinds.clone(), true),
         ("commit", None, artifact_kinds, true),
@@ -1284,6 +1296,10 @@ impl LocalApplication {
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
             resource_ids: extensions.resources.into_iter().collect(),
+            workflow_templates: project_skills
+                .iter()
+                .flat_map(|skill| skill.workflow_templates())
+                .collect(),
             constraints,
             data_profile: WorkflowDataProfile {
                 image_count: images.len(),
@@ -1300,11 +1316,33 @@ impl LocalApplication {
         settings: &Settings,
         from_template: bool,
     ) -> Result<WorkflowDraft> {
+        self.create_workflow_draft_with_template(project_id, settings, from_template, None)
+    }
+
+    pub fn create_workflow_draft_with_template(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        from_template: bool,
+        template_id: Option<&str>,
+    ) -> Result<WorkflowDraft> {
         let project_path = self.project_path(project_id)?;
         let (project, project_skills) =
             load_project_schema_with_registry(&project_path, &self.skills)?;
         let now = chrono::Utc::now();
-        let draft = if from_template {
+        let draft = if let Some(template_id) = template_id {
+            let available = project_skills
+                .iter()
+                .flat_map(|skill| skill.workflow_templates())
+                .collect::<Vec<_>>();
+            let template = available
+                .iter()
+                .find(|template| template.id == template_id)
+                .ok_or_else(|| {
+                    anyhow!("workflow template {template_id:?} is not provided by an enabled Skill")
+                })?;
+            template.instantiate(project_id, project.project.enabled_skill_versions(), now)
+        } else if from_template {
             let (nodes, models) = workflow_catalog(settings)?;
             let mut draft = RegistryWorkflowAdvisor
                 .suggest_workflow(
@@ -2714,6 +2752,10 @@ export:
         assert!(project.skill_id.is_empty());
 
         let settings = load_settings(None).expect("settings");
+        let catalog = application
+            .workflow_advisor_input("generic", &settings, WorkflowConstraints::default())
+            .expect("generic catalog");
+        assert!(catalog.workflow_templates.is_empty());
         let first = application
             .suggest_workflow("generic", &settings, &WorkflowConstraints::default())
             .expect("first workflow");
@@ -2771,6 +2813,21 @@ export:
                 .any(|node| { node.id == "field_line" && node.depends_on == ["field_region"] })
         );
         assert!(summary.model_bindings.is_empty());
+        let settings = load_settings(None).expect("settings");
+        let catalog = application
+            .workflow_advisor_input("robocup-demo", &settings, WorkflowConstraints::default())
+            .expect("RoboCup catalog");
+        assert_eq!(catalog.workflow_templates.len(), 3);
+        let draft = application
+            .create_workflow_draft_with_template(
+                "robocup-demo",
+                &settings,
+                false,
+                Some("accurate-hybrid"),
+            )
+            .expect("hybrid draft");
+        assert_eq!(draft.name, "Accurate hybrid");
+        assert_eq!(draft.enabled_skills.get("robocup"), Some(&"1".to_owned()));
     }
 
     #[test]

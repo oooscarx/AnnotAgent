@@ -182,6 +182,47 @@ pub struct WorkflowDraft {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A domain extension's project-independent starting graph. Applications instantiate the
+/// template as a new mutable draft and attach the selected project's immutable Skill versions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub nodes: Vec<WorkflowDraftNode>,
+    #[serde(default)]
+    pub edges: Vec<WorkflowEdge>,
+    #[serde(default)]
+    pub resource_versions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub allow_unvalidated_commit: bool,
+}
+
+impl WorkflowTemplate {
+    #[must_use]
+    pub fn instantiate(
+        &self,
+        project_id: impl Into<String>,
+        enabled_skills: BTreeMap<String, String>,
+        now: DateTime<Utc>,
+    ) -> WorkflowDraft {
+        WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project_id.into(),
+            name: self.name.clone(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: self.nodes.clone(),
+            edges: self.edges.clone(),
+            enabled_skills,
+            resource_versions: self.resource_versions.clone(),
+            allow_unvalidated_commit: self.allow_unvalidated_commit,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 const fn default_workflow_schema_version() -> u32 {
     1
 }
@@ -243,6 +284,8 @@ pub struct WorkflowAdvisorInput {
     pub validator_ids: Vec<String>,
     pub refiner_ids: Vec<String>,
     pub resource_ids: Vec<String>,
+    #[serde(default)]
+    pub workflow_templates: Vec<WorkflowTemplate>,
     pub constraints: WorkflowConstraints,
     pub data_profile: WorkflowDataProfile,
 }

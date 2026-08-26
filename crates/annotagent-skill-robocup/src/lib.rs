@@ -1,10 +1,12 @@
 //! Production `RoboCup` perception skill for `AnnotAgent`.
 
 mod ball;
+mod evaluation;
 mod field;
 mod policy;
 mod robot;
 mod tools;
+mod workflows;
 
 use std::sync::Arc;
 
@@ -15,10 +17,12 @@ use annotagent_core::{
 };
 
 pub use ball::*;
+pub use evaluation::*;
 pub use field::*;
 pub use policy::*;
 pub use robot::*;
 pub use tools::*;
+pub use workflows::workflow_templates as robocup_workflow_templates;
 
 pub struct RoboCupSkill {
     manifest: SkillManifest,
@@ -143,6 +147,10 @@ impl DomainSkill for RoboCupSkill {
 
     fn review_policy(&self) -> Arc<dyn ReviewPolicy> {
         Arc::new(RoboCupReviewPolicy)
+    }
+
+    fn workflow_templates(&self) -> Vec<annotagent_core::WorkflowTemplate> {
+        workflows::workflow_templates()
     }
 
     fn project_template(&self) -> Option<&str> {

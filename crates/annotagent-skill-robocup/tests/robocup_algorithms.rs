@@ -2,14 +2,16 @@ use std::collections::BTreeMap;
 
 use annotagent_core::{
     AgentTool, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner, AnnotationSource,
-    AnnotationValidator, AnnotationValue, AttributeValue, ImageFrame, ImageId, Keypoint, LabelId,
-    NormalizedPoint, NormalizedRect, ProjectSchema, RefinementContext, ReviewContext,
-    ReviewDecision, ReviewPolicy, ReviewStatus, RunId, TaskId, ToolContext, ValidationContext,
+    AnnotationValidator, AnnotationValue, AttributeValue, DomainSkill, ImageFrame, ImageId,
+    Keypoint, LabelId, NormalizedPoint, NormalizedRect, ProjectSchema, RefinementContext,
+    ReviewContext, ReviewDecision, ReviewPolicy, ReviewStatus, RunId, TaskId, ToolContext,
+    ValidationContext,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_skill_robocup::{
-    BallHardNegativeValidator, FieldContainmentValidator, RoboCupFieldLineRefiner,
-    RoboCupReviewPolicy, RobotAttributeValidator, TeamColorEvidenceTool,
+    BallHardNegativeValidator, EvaluationGroundTruth, EvaluationPredictions, EvaluationThresholds,
+    FieldContainmentValidator, RoboCupFieldLineRefiner, RoboCupReviewPolicy, RoboCupSkill,
+    RobotAttributeValidator, TeamColorEvidenceTool, evaluate, evaluate_with_thresholds,
 };
 use chrono::Utc;
 use serde_json::json;
@@ -137,6 +139,26 @@ fn white_shoe_and_penalty_mark_are_structured_ball_risks() {
     assert!(codes.contains(&"possible_white_shoe"));
     assert!(codes.contains(&"possible_penalty_mark"));
     assert!(codes.contains(&"frequent_ball_correction"));
+    let decision = RoboCupReviewPolicy.decide(&ReviewContext {
+        annotation: &candidate,
+        issues: &issues,
+        refiner_confidence: None,
+        correction_risk: 0.3,
+        evidence_conflict: true,
+        retry_count: 0,
+        max_retries: 2,
+    });
+    assert!(matches!(decision, ReviewDecision::Retry { .. }));
+    let exhausted = RoboCupReviewPolicy.decide(&ReviewContext {
+        annotation: &candidate,
+        issues: &issues,
+        refiner_confidence: None,
+        correction_risk: 0.3,
+        evidence_conflict: true,
+        retry_count: 2,
+        max_retries: 2,
+    });
+    assert!(matches!(exhausted, ReviewDecision::HumanReview { .. }));
 }
 
 fn candidate_bbox_center(annotation: &Annotation) -> NormalizedPoint {
@@ -262,4 +284,95 @@ fn required_robot_attributes_and_memory_change_review_decision() {
         max_retries: 2,
     });
     assert!(matches!(decision, ReviewDecision::HumanReview { .. }));
+}
+
+#[test]
+fn robocup_owns_three_semantically_bounded_workflow_templates() {
+    let templates = RoboCupSkill::new()
+        .expect("RoboCup Skill")
+        .workflow_templates();
+    assert_eq!(
+        templates
+            .iter()
+            .map(|template| template.id.as_str())
+            .collect::<Vec<_>>(),
+        ["vlm-bootstrap", "detector-first", "accurate-hybrid"]
+    );
+    for template in &templates {
+        assert!(template.nodes.iter().any(|node| node.id == "review"));
+        assert!(template.nodes.iter().any(|node| node.id == "commit"));
+    }
+    let hybrid = templates
+        .iter()
+        .find(|template| template.id == "accurate-hybrid")
+        .expect("accurate hybrid");
+    let verification = hybrid
+        .nodes
+        .iter()
+        .find(|node| node.id == "vlm_verification")
+        .expect("semantic verification node");
+    assert_eq!(
+        verification.inputs[0].artifact_type,
+        annotagent_core::ArtifactKind::BoundingBox
+    );
+    assert_eq!(
+        verification.outputs[0].artifact_type,
+        annotagent_core::ArtifactKind::Classification
+    );
+    assert_eq!(
+        verification.parameters["geometry_policy"],
+        "read_only; output semantic verification only"
+    );
+    assert!(hybrid.nodes.iter().any(|node| {
+        node.id == "field_line_refiner" && node.refiners == ["robocup_field_line_refiner"]
+    }));
+}
+
+#[test]
+fn synthetic_evaluation_reports_accuracy_and_operational_metrics() {
+    let truth: EvaluationGroundTruth = serde_json::from_str(include_str!(
+        "../../../examples/robocup/evaluation/ground-truth.synthetic.json"
+    ))
+    .expect("ground truth fixture");
+    let predictions: EvaluationPredictions = serde_json::from_str(include_str!(
+        "../../../examples/robocup/evaluation/predictions.synthetic.json"
+    ))
+    .expect("prediction fixture");
+    let report = evaluate(&truth, &predictions, 0.5).expect("evaluation");
+    assert_eq!(report.bbox.true_positive, 2);
+    assert_eq!(report.bbox.false_positive, 1);
+    assert_eq!(report.bbox.false_negative, 1);
+    assert_eq!(report.mask_iou.value, Some(0.75));
+    assert_eq!(report.classification_accuracy.value, Some(0.5));
+    assert_eq!(report.attribute_accuracy.value, Some(0.5));
+    assert_eq!(report.review_rate.value, Some(0.5));
+    assert_eq!(report.failure_rate.value, Some(0.5));
+    assert_eq!(report.cost_per_image.value, Some(0.01));
+    assert_eq!(report.latency_ms_per_image.value, Some(50.0));
+    assert_eq!(report.model_calls_per_image.value, Some(1.0));
+    assert!(report.missing_prediction_images.is_empty());
+    let gated = evaluate_with_thresholds(
+        &truth,
+        &predictions,
+        EvaluationThresholds {
+            bbox_iou: 0.5,
+            minimum_field_region_mask_iou: Some(0.7),
+        },
+    )
+    .expect("gated evaluation");
+    assert_eq!(gated.quality_gates.field_region_mask_iou_passed, Some(true));
+}
+
+#[test]
+fn unlabelled_data_cannot_claim_accuracy() {
+    let mut truth: EvaluationGroundTruth = serde_json::from_str(include_str!(
+        "../../../examples/robocup/evaluation/ground-truth.synthetic.json"
+    ))
+    .expect("ground truth fixture");
+    truth.labeled = false;
+    let predictions: EvaluationPredictions = serde_json::from_str(include_str!(
+        "../../../examples/robocup/evaluation/predictions.synthetic.json"
+    ))
+    .expect("prediction fixture");
+    assert!(evaluate(&truth, &predictions, 0.5).is_err());
 }

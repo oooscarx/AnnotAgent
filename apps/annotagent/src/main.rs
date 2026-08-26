@@ -75,6 +75,18 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    Evaluate {
+        #[arg(long)]
+        ground_truth: PathBuf,
+        #[arg(long)]
+        predictions: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long, default_value_t = 0.5)]
+        bbox_iou_threshold: f64,
+        #[arg(long)]
+        minimum_field_region_iou: Option<f64>,
+    },
     Doctor,
     Demo {
         name: String,
@@ -152,9 +164,59 @@ async fn main() -> Result<()> {
             format,
             output,
         } => export_command(&project, &format, &output).await,
+        Command::Evaluate {
+            ground_truth,
+            predictions,
+            output,
+            bbox_iou_threshold,
+            minimum_field_region_iou,
+        } => evaluate_command(
+            &ground_truth,
+            &predictions,
+            output.as_deref(),
+            bbox_iou_threshold,
+            minimum_field_region_iou,
+        ),
         Command::Doctor => doctor(),
         Command::Demo { name } => demo(&name).await,
     }
+}
+
+fn evaluate_command(
+    ground_truth_path: &Path,
+    predictions_path: &Path,
+    output: Option<&Path>,
+    bbox_iou_threshold: f64,
+    minimum_field_region_iou: Option<f64>,
+) -> Result<()> {
+    let ground_truth: annotagent_skill_robocup::EvaluationGroundTruth = serde_json::from_slice(
+        &std::fs::read(ground_truth_path)
+            .with_context(|| format!("cannot read {}", ground_truth_path.display()))?,
+    )
+    .with_context(|| format!("invalid ground truth {}", ground_truth_path.display()))?;
+    let predictions: annotagent_skill_robocup::EvaluationPredictions = serde_json::from_slice(
+        &std::fs::read(predictions_path)
+            .with_context(|| format!("cannot read {}", predictions_path.display()))?,
+    )
+    .with_context(|| format!("invalid predictions {}", predictions_path.display()))?;
+    let report = annotagent_skill_robocup::evaluate_with_thresholds(
+        &ground_truth,
+        &predictions,
+        annotagent_skill_robocup::EvaluationThresholds {
+            bbox_iou: bbox_iou_threshold,
+            minimum_field_region_mask_iou: minimum_field_region_iou,
+        },
+    )
+    .map_err(|error| anyhow::anyhow!(error))?;
+    let json = serde_json::to_string_pretty(&report)?;
+    if let Some(path) = output {
+        std::fs::write(path, format!("{json}\n"))
+            .with_context(|| format!("cannot write {}", path.display()))?;
+        println!("wrote evaluation report to {}", path.display());
+    } else {
+        println!("{json}");
+    }
+    Ok(())
 }
 
 fn init_project(directory: &Path, skill: &str) -> Result<()> {

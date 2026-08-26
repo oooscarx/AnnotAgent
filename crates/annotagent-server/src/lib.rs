@@ -390,6 +390,7 @@ struct SkillDetail {
     refiners: Vec<String>,
     correction_taxonomy: Vec<String>,
     resources: Vec<String>,
+    workflow_templates: Vec<Value>,
     project_template: Option<String>,
 }
 
@@ -430,6 +431,18 @@ fn skill_detail(skill: &dyn annotagent_core::DomainSkill) -> SkillDetail {
             .iter()
             .chain(manifest.task_resources.values().flatten())
             .cloned()
+            .collect(),
+        workflow_templates: skill
+            .workflow_templates()
+            .into_iter()
+            .map(|template| {
+                json!({
+                    "id": template.id,
+                    "name": template.name,
+                    "description": template.description,
+                    "node_count": template.nodes.len(),
+                })
+            })
             .collect(),
         project_template: skill.project_template().map(str::to_owned),
     }
@@ -691,6 +704,7 @@ struct CreateWorkflowDraftRequest {
     project_id: String,
     #[serde(default)]
     from_template: bool,
+    template_id: Option<String>,
 }
 
 async fn create_workflow_draft(
@@ -700,7 +714,12 @@ async fn create_workflow_draft(
     let settings = state.settings.read().await.clone();
     let draft = state
         .application
-        .create_workflow_draft(&request.project_id, &settings, request.from_template)
+        .create_workflow_draft_with_template(
+            &request.project_id,
+            &settings,
+            request.from_template,
+            request.template_id.as_deref(),
+        )
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(json!(draft))))
 }
@@ -1777,6 +1796,25 @@ mod tests {
                 .is_some_and(|items| !items.is_empty())
         );
         assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
+        assert_eq!(
+            catalog["workflow_templates"].as_array().map(Vec::len),
+            Some(3)
+        );
+        let hybrid_draft = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/workflow-drafts",
+                Some(json!({
+                    "project_id": "workflow-ui",
+                    "template_id": "accurate-hybrid"
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(hybrid_draft["name"], json!("Accurate hybrid"));
+        assert_eq!(hybrid_draft["enabled_skills"]["robocup"], json!("1"));
 
         let suggestion = response_json(
             request(

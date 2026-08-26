@@ -76,12 +76,17 @@ export const api = {
     ),
   workflowCatalog: (projectId: string) =>
     request<WorkflowCatalog>(`/api/projects/${projectId}/workflow-catalog`),
-  createWorkflowDraft: (projectId: string, fromTemplate = false) =>
+  createWorkflowDraft: (
+    projectId: string,
+    fromTemplate = false,
+    templateId?: string,
+  ) =>
     request<WorkflowDraft>("/api/workflow-drafts", {
       method: "POST",
       body: JSON.stringify({
         project_id: projectId,
         from_template: fromTemplate,
+        ...(templateId ? { template_id: templateId } : {}),
       }),
     }),
   suggestWorkflow: (projectId: string, advisor: "mock" | "llm" = "mock") =>

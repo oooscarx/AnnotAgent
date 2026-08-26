@@ -176,7 +176,9 @@ name = "annotagent-runtime"
 version = "0.1.0"
 dependencies = [
  "annotagent-core",
+ "annotagent-image-tools",
  "annotagent-provider",
+ "annotagent-skill-robocup",
  "async-trait",
  "chrono",
  "futures",

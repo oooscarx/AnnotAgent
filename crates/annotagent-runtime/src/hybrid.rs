@@ -55,6 +55,14 @@ pub struct HybridExecutionResult {
     pub validation_issues: Vec<String>,
     pub needs_review: bool,
     pub trace: Vec<String>,
+    pub usage: HybridExecutionUsage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HybridExecutionUsage {
+    pub model_calls: u64,
+    pub compute_milliseconds: u64,
+    pub latency_milliseconds: u64,
 }
 
 pub struct HybridWorkflowExecutor<'a> {
@@ -153,6 +161,11 @@ impl<'a> HybridWorkflowExecutor<'a> {
                             cancellation.clone(),
                         )
                         .await?;
+                    result.usage.model_calls += 1;
+                    result.usage.compute_milliseconds +=
+                        response.usage.compute_milliseconds.unwrap_or_default();
+                    result.usage.latency_milliseconds +=
+                        response.timings.total_ms.unwrap_or_default();
                     result.artifacts.extend(response.artifacts.clone());
                     response.artifacts
                 }

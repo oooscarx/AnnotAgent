@@ -913,6 +913,7 @@ function WorkflowsPage({
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
+  const [templateId, setTemplateId] = useState("");
   const [busy, setBusy] = useState(false);
   const refreshDrafts = () =>
     api
@@ -946,9 +947,15 @@ function WorkflowsPage({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
-  const create = (fromTemplate: boolean) =>
+  const create = (fromTemplate: boolean, selectedTemplate?: string) =>
     activeProjectId
-      ? finish(api.createWorkflowDraft(activeProjectId, fromTemplate))
+      ? finish(
+          api.createWorkflowDraft(
+            activeProjectId,
+            fromTemplate,
+            selectedTemplate,
+          ),
+        )
       : onError("Select a Project before creating a Workflow.");
   const suggest = () =>
     activeProjectId
@@ -1079,7 +1086,8 @@ function WorkflowsPage({
           <h2>Workflow Designer</h2>
           <p>
             Drafts only reference registered resources. Dry Run executes sample
-            images in an isolated sandbox without creating annotations.
+            images in an isolated sandbox without creating annotations. Skill
+            templates appear only when the active Project enables that Skill.
           </p>
         </div>
         <div className="button-row">
@@ -1089,8 +1097,20 @@ function WorkflowsPage({
           >
             New Draft
           </button>
+          <select
+            aria-label="Workflow template"
+            value={templateId}
+            onChange={(event) => setTemplateId(event.target.value)}
+          >
+            <option value="">Generic project template</option>
+            {(catalog?.workflow_templates ?? []).map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
           <button
-            onClick={() => create(true)}
+            onClick={() => create(true, templateId || undefined)}
             disabled={busy || !activeProjectId}
           >
             From Template

@@ -216,6 +216,11 @@ pub trait DomainSkill: Send + Sync {
     fn correction_taxonomy(&self) -> Vec<CorrectionKind>;
     fn review_policy(&self) -> Arc<dyn ReviewPolicy>;
 
+    /// Optional typed workflow starters owned by this domain extension.
+    fn workflow_templates(&self) -> Vec<crate::WorkflowTemplate> {
+        Vec::new()
+    }
+
     /// Optional starter project supplied by the domain extension, never by Core or the GUI.
     fn project_template(&self) -> Option<&str> {
         None

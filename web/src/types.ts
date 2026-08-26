@@ -297,6 +297,13 @@ export interface WorkflowCatalog {
   validator_ids: string[];
   refiner_ids: string[];
   resource_ids: string[];
+  workflow_templates: {
+    id: string;
+    name: string;
+    description: string;
+    nodes: WorkflowDraftNode[];
+    edges: NonNullable<WorkflowDraft["edges"]>;
+  }[];
   constraints: Record<string, unknown>;
   data_profile: {
     image_count: number;
@@ -366,5 +373,11 @@ export interface SkillDetail {
   refiners: string[];
   correction_taxonomy: string[];
   resources: string[];
+  workflow_templates: {
+    id: string;
+    name: string;
+    description: string;
+    node_count: number;
+  }[];
   project_template?: string;
 }

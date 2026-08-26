@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "dataset_name": "robocup-synthetic-predictions",
+  "images": [
+    {
+      "id": "synthetic-1",
+      "boxes": [
+        {"id": "ball-1", "label": "ball", "rect": [0.1, 0.1, 0.2, 0.2]},
+        {"id": "robot-1", "label": "robot", "rect": [0.52, 0.2, 0.2, 0.4]},
+        {"id": "false-ball", "label": "ball", "rect": [0.8, 0.8, 0.05, 0.05]}
+      ],
+      "masks": [{"id": "field", "width": 2, "height": 2, "pixels": [true, false, false, false]}],
+      "keypoints": [{"id": "penalty", "points": [[0.51, 0.5]]}],
+      "polylines": [{"id": "line", "points": [[0.0, 0.55], [1.0, 0.55]]}],
+      "classifications": {"scene_type": "normal_field"},
+      "attributes": {"robot-1": {"team_color": "red", "state": "fallen"}},
+      "review_required": true,
+      "failed": false,
+      "cost": 0.02,
+      "latency_ms": 100,
+      "model_calls": 2
+    },
+    {
+      "id": "synthetic-2",
+      "masks": [{"id": "field", "width": 2, "height": 2, "pixels": [true, false, false, false]}],
+      "review_required": false,
+      "failed": true,
+      "cost": 0.0,
+      "latency_ms": 0,
+      "model_calls": 0
+    }
+  ]
+}

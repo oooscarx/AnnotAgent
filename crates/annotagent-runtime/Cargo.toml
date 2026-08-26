@@ -20,7 +20,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-provider = { path = "../annotagent-provider" }
+annotagent-skill-robocup = { path = "../annotagent-skill-robocup" }
 chrono.workspace = true
 tempfile = "3"
 uuid.workspace = true
