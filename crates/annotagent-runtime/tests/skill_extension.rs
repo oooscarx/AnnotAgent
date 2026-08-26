@@ -153,6 +153,7 @@ async fn external_skill_registers_and_executes_without_runtime_changes() {
         project_root: temporary.path().to_path_buf(),
         run_id: annotagent_core::RunId::new(),
         image_id: None,
+        image: None,
         task_id: Some(TaskId::from("mood")),
         cancellation: CancellationToken::new(),
     };

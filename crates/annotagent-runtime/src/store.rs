@@ -1,5 +1,6 @@
 use annotagent_core::{
-    Annotation, RunEvent, RunId, RunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, LabelId, ProjectId, RunEvent, RunId, RunStatus, TaskId,
+    ToolCallId, ToolResult, UsageRecord, ValidationIssue,
 };
 use async_trait::async_trait;
 
@@ -30,6 +31,14 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), String>;
     async fn commit_annotation(&self, run_id: RunId, annotation: &Annotation)
     -> Result<(), String>;
+    async fn record_revision(&self, revision: &AnnotationRevision) -> Result<(), String>;
+    async fn correction_risk(
+        &self,
+        project_id: ProjectId,
+        skill_id: &str,
+        task_id: &TaskId,
+        label: Option<&LabelId>,
+    ) -> Result<f32, String>;
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +142,20 @@ impl RuntimeStore for MemoryRuntimeStore {
             .lock()
             .map_err(|_| "annotation store lock poisoned".to_owned())?
             .push(annotation.clone());
+        Ok(())
+    }
+
+    async fn correction_risk(
+        &self,
+        _project_id: ProjectId,
+        _skill_id: &str,
+        _task_id: &TaskId,
+        _label: Option<&LabelId>,
+    ) -> Result<f32, String> {
+        Ok(0.0)
+    }
+
+    async fn record_revision(&self, _revision: &AnnotationRevision) -> Result<(), String> {
         Ok(())
     }
 }

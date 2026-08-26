@@ -1,8 +1,10 @@
 [workspace]
 members = [
     "crates/annotagent-core",
+    "crates/annotagent-image-tools",
     "crates/annotagent-provider",
     "crates/annotagent-runtime",
+    "crates/annotagent-skill-robocup",
     "crates/annotagent-storage",
 ]
 resolver = "2"
@@ -16,8 +18,10 @@ rust-version = "1.85"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.38", features = ["bundled", "chrono", "uuid"] }
 rust_decimal = { version = "1", features = ["serde"] }
@@ -25,6 +29,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 serde_yaml = "0.9"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
@@ -38,6 +43,8 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
 struct_excessive_bools = "allow"
 too_many_lines = "allow"
 future_not_send = "allow"

@@ -1,0 +1,70 @@
+version: 1
+project:
+  name: RoboCup Demo
+  skill: robocup
+  skill_version: "1"
+  language: zh-CN
+dataset:
+  root: images
+  include:
+    - "**/*.jpg"
+    - "**/*.jpeg"
+    - "**/*.png"
+  recursive: true
+runtime:
+  max_parallel_images: 2
+  max_agent_steps_per_image: 10
+  max_retries_per_task: 3
+  auto_resume: true
+tasks:
+  - id: scene_type
+    kind: classification
+    labels: [normal_field, partial_field, off_field, unusable]
+    multi_label: false
+  - id: field_region
+    kind: polygon
+    labels: [field]
+    required: true
+  - id: field_line
+    kind: polyline
+    labels: [white_field_line]
+    depends_on: [field_region]
+    validators: [field_containment, white_line_appearance, polyline_continuity]
+    refiners: [robocup_field_line_refiner]
+  - id: penalty_mark
+    kind: keypoints
+    labels: [penalty_mark]
+    depends_on: [field_region]
+    validators: [field_containment]
+  - id: objects
+    kind: bounding_box
+    labels: [ball, robot, person]
+    depends_on: [field_region]
+    validators: [field_containment, ball_hard_negative]
+  - id: robot_attributes
+    kind: attributes
+    labels: [robot]
+    target_task: objects
+    target_labels: [robot]
+    depends_on: [objects]
+    validators: [robot_attribute_rules]
+    attributes:
+      team_color:
+        type: enum
+        required: true
+        values: [red, blue, unknown]
+      state:
+        type: enum
+        required: true
+        values: [standing, fallen, goalkeeper, unavailable, unknown]
+review:
+  auto_accept_confidence: 0.92
+  force_review_below: 0.72
+  force_review_on_warning_codes:
+    - possible_white_shoe
+    - possible_penalty_mark
+    - weak_pixel_support
+    - team_color_conflict
+export:
+  formats: [native, coco, yolo, labelme]
+

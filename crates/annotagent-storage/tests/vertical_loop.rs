@@ -229,6 +229,7 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
     let result = runtime
         .run_image(ImageRunRequest {
             run_id,
+            project_id: annotagent_core::ProjectId::new(),
             project_root: PathBuf::from("."),
             project: Arc::new(project()),
             image_id: ImageId::new(),

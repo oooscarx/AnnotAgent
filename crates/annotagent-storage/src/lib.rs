@@ -3,7 +3,8 @@
 use std::{path::Path, sync::Mutex};
 
 use annotagent_core::{
-    Annotation, RunEvent, RunId, RunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, CorrectionRecord, LabelId, ProjectId, RunEvent, RunId,
+    RunStatus, TaskId, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -95,6 +96,25 @@ impl SqliteStore {
         })
     }
 
+    pub fn list_revisions(
+        &self,
+        annotation_id: annotagent_core::AnnotationId,
+    ) -> Result<Vec<AnnotationRevision>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT revision_json FROM annotation_revisions
+                 WHERE annotation_id = ?1 ORDER BY created_at",
+            )?;
+            statement
+                .query_map([annotation_id.to_string()], |row| row.get::<_, String>(0))?
+                .map(|row| {
+                    let json = row?;
+                    serde_json::from_str(&json).map_err(StorageError::from)
+                })
+                .collect()
+        })
+    }
+
     pub fn run_status(&self, run_id: RunId) -> Result<RunStatus, StorageError> {
         self.with_connection(|connection| {
             let status = connection
@@ -106,6 +126,29 @@ impl SqliteStore {
                 .optional()?
                 .ok_or(StorageError::RunNotFound(run_id))?;
             serde_json::from_value(serde_json::Value::String(status)).map_err(StorageError::from)
+        })
+    }
+
+    pub fn save_correction(&self, record: &CorrectionRecord) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO correction_records
+                 (id, project_id, skill_id, task_id, predicted_label, corrected_label,
+                  reason_code, record_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    record.id.to_string(),
+                    record.project_id.to_string(),
+                    record.skill_id,
+                    record.task_id.as_str(),
+                    record.predicted_label.as_ref().map(LabelId::as_str),
+                    record.corrected_label.as_ref().map(LabelId::as_str),
+                    record.reason_code,
+                    serde_json::to_string(record)?,
+                    record.created_at.to_rfc3339()
+                ],
+            )?;
+            Ok(())
         })
     }
 
@@ -344,6 +387,54 @@ impl RuntimeStore for SqliteStore {
                 )?;
             }
             transaction.commit()?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn correction_risk(
+        &self,
+        project_id: ProjectId,
+        skill_id: &str,
+        task_id: &TaskId,
+        label: Option<&LabelId>,
+    ) -> Result<f32, String> {
+        self.with_connection(|connection| {
+            let count: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM (
+                    SELECT id FROM correction_records
+                    WHERE project_id = ?1 AND skill_id = ?2 AND task_id = ?3
+                      AND (?4 IS NULL OR predicted_label = ?4)
+                    ORDER BY created_at DESC LIMIT 20
+                 )",
+                params![
+                    project_id.to_string(),
+                    skill_id,
+                    task_id.as_str(),
+                    label.map(LabelId::as_str)
+                ],
+                |row| row.get(0),
+            )?;
+            let bounded = u16::try_from(count.clamp(0, 20)).unwrap_or(20);
+            Ok(f32::from(bounded) / 20.0)
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn record_revision(&self, revision: &AnnotationRevision) -> Result<(), String> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO annotation_revisions
+                 (revision_id, annotation_id, parent_revision_id, revision_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    revision.revision_id.to_string(),
+                    revision.annotation_id.to_string(),
+                    revision.parent_revision_id.map(|id| id.to_string()),
+                    serde_json::to_string(revision)?,
+                    revision.created_at.to_rfc3339()
+                ],
+            )?;
             Ok(())
         })
         .map_err(|error| error.to_string())

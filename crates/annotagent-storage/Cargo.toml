@@ -19,9 +19,12 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-provider = { path = "../annotagent-provider" }
+annotagent-skill-robocup = { path = "../annotagent-skill-robocup" }
 tempfile = "3"
 tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

@@ -1,13 +1,13 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 
 use annotagent_core::{
-    AdditionalUsage, AgentTool, Annotation, AnnotationId, AnnotationProvenance, AnnotationSource,
-    AnnotationValue, Budget, CoreError, DomainSkill, ImageFrame, ImageId, IssueSeverity, LabelId,
-    ModelImage, ModelMessage, ModelRequest, ModelRole, PricingConfig, ProjectSchema,
-    RefinementContext, ReviewDecision, ReviewStatus, RunEvent, RunEventKind, RunEventPayload,
-    RunId, RunStatus, SuggestedAction, TaskConfig, TaskKind, ToolContext, ToolDefinition,
-    ToolResult, UsageRecord, UsageTotals, ValidationContext, ValidationEvidence, ValidationIssue,
-    VisionModelProvider,
+    AdditionalUsage, AgentTool, Annotation, AnnotationId, AnnotationProvenance, AnnotationRevision,
+    AnnotationRevisionId, AnnotationSource, AnnotationValue, Budget, CoreError, DomainSkill,
+    ImageFrame, ImageId, IssueSeverity, LabelId, ModelImage, ModelMessage, ModelRequest, ModelRole,
+    PricingConfig, ProjectSchema, RefinementContext, ReviewDecision, ReviewStatus, RevisionActor,
+    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, SuggestedAction, TaskConfig,
+    TaskKind, ToolContext, ToolDefinition, ToolResult, UsageRecord, UsageTotals, ValidationContext,
+    ValidationEvidence, ValidationIssue, VisionModelProvider,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -63,6 +63,7 @@ impl Default for AgentLoopConfig {
 
 pub struct ImageRunRequest {
     pub run_id: RunId,
+    pub project_id: annotagent_core::ProjectId,
     pub project_root: PathBuf,
     pub project: Arc<ProjectSchema>,
     pub image_id: ImageId,
@@ -447,6 +448,7 @@ impl AgentRuntime {
                     project_root: request.project_root.clone(),
                     run_id: request.run_id,
                     image_id: Some(request.image_id),
+                    image: Some(request.image.clone()),
                     task_id: Some(task.id.clone()),
                     cancellation: self.control.cancellation_token(),
                 };
@@ -496,10 +498,23 @@ impl AgentRuntime {
                             let decision = self
                                 .process_candidates(request, task, related, candidates, retries)
                                 .await?;
+                            let issue_summary = decision
+                                .issues
+                                .iter()
+                                .map(|issue| format!("{}: {}", issue.code, issue.message))
+                                .collect::<Vec<_>>()
+                                .join("; ");
                             outcome.issues.extend(decision.issues);
                             outcome.committed.extend(decision.committed);
                             outcome.review_queue.extend(decision.review_queue);
                             if decision.retry {
+                                messages.push(ModelMessage {
+                                    role: ModelRole::User,
+                                    content: format!(
+                                        "Deterministic validator issues require correction: {issue_summary}"
+                                    ),
+                                    tool_call_id: None,
+                                });
                                 retry_requested = true;
                                 retries += 1;
                             } else {
@@ -570,7 +585,19 @@ impl AgentRuntime {
         let validators = self.skill.validators();
         let refiners = self.skill.refiners();
         let mut output = CandidateDecision::default();
+        let peer_candidates = candidates.clone();
         for mut candidate in candidates {
+            let correction_risk = self
+                .store
+                .correction_risk(
+                    request.project_id,
+                    self.skill.id(),
+                    &task.id,
+                    candidate.label.as_ref(),
+                )
+                .await
+                .map_err(RuntimeError::Store)?;
+            let mut refiner_confidence = None;
             for refiner_id in &task.refiners {
                 let refiner = refiners
                     .iter()
@@ -578,6 +605,19 @@ impl AgentRuntime {
                     .ok_or_else(|| {
                         RuntimeError::Skill(format!("unknown refiner {refiner_id:?}"))
                     })?;
+                self.publish(
+                    RunEvent::new(
+                        request.run_id,
+                        RunEventKind::RefinementStarted,
+                        RunEventPayload::Annotation {
+                            annotation_ids: vec![candidate.id],
+                            summary: format!("running refiner {refiner_id}"),
+                        },
+                    )
+                    .scoped(Some(request.image_id), Some(task.id.clone())),
+                )
+                .await?;
+                let before = candidate.snapshot();
                 let result = refiner
                     .refine(&RefinementContext {
                         project: &request.project,
@@ -588,8 +628,43 @@ impl AgentRuntime {
                     .map_err(|error| RuntimeError::Skill(error.to_string()))?;
                 candidate = result.annotation;
                 candidate.source = AnnotationSource::ModelAndTool;
+                refiner_confidence = Some(result.confidence);
+                self.store
+                    .record_revision(&AnnotationRevision {
+                        revision_id: AnnotationRevisionId::new(),
+                        annotation_id: candidate.id,
+                        parent_revision_id: None,
+                        before: Some(before),
+                        after: Some(candidate.snapshot()),
+                        actor: RevisionActor::Runtime,
+                        reason: Some(format!("deterministic refiner {refiner_id}")),
+                        created_at: Utc::now(),
+                    })
+                    .await
+                    .map_err(RuntimeError::Store)?;
+                self.publish(
+                    RunEvent::new(
+                        request.run_id,
+                        RunEventKind::RefinementCompleted,
+                        RunEventPayload::Annotation {
+                            annotation_ids: vec![candidate.id],
+                            summary: result.summary,
+                        },
+                    )
+                    .scoped(Some(request.image_id), Some(task.id.clone())),
+                )
+                .await?;
                 output.issues.extend(result.issues);
             }
+            let validation_related: Vec<Annotation> = related
+                .iter()
+                .chain(
+                    peer_candidates
+                        .iter()
+                        .filter(|peer| peer.id != candidate.id),
+                )
+                .cloned()
+                .collect();
             let mut issues = Vec::new();
             for validator_id in &task.validators {
                 let validator = validators
@@ -604,8 +679,8 @@ impl AgentRuntime {
                             project: &request.project,
                             image: Some(&request.image),
                             candidate: &candidate,
-                            related_annotations: related,
-                            correction_risk: 0.0,
+                            related_annotations: &validation_related,
+                            correction_risk,
                         })
                         .map_err(|error| RuntimeError::Skill(error.to_string()))?,
                 );
@@ -634,8 +709,8 @@ impl AgentRuntime {
                 .decide(&annotagent_core::ReviewContext {
                     annotation: &candidate,
                     issues: &issues,
-                    refiner_confidence: None,
-                    correction_risk: 0.0,
+                    refiner_confidence,
+                    correction_risk,
                     evidence_conflict: false,
                     retry_count: retries,
                     max_retries: self.config.max_retries_per_task,

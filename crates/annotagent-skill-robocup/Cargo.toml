@@ -1,0 +1,23 @@
+[package]
+name = "annotagent-skill-robocup"
+description = "RoboCup-specific workflow, validators, refiners, tools, and review policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+annotagent-image-tools = { path = "../annotagent-image-tools" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+tempfile = "3"
+tokio.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

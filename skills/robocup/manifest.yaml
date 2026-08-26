@@ -1,0 +1,29 @@
+version: 1
+id: robocup
+display_name: RoboCup Perception Annotation
+description: RoboCup robot soccer perception dataset annotation and deterministic quality control
+rust_implementation: annotagent-skill-robocup
+summary_resources:
+  - SKILL.md
+task_resources:
+  field_region:
+    - tasks/field-region.md
+  field_line:
+    - tasks/field-line.md
+  objects:
+    - tasks/ball.md
+    - tasks/robot.md
+  penalty_mark:
+    - tasks/penalty-mark.md
+correction_taxonomy:
+  - white_shoe_as_ball
+  - penalty_mark_as_ball
+  - field_line_on_robot
+  - field_line_outside_field
+  - wrong_team_color
+  - wrong_robot_state
+  - missed_object
+  - duplicate_object
+  - inaccurate_geometry
+  - other
+

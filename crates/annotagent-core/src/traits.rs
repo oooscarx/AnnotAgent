@@ -27,6 +27,7 @@ pub struct ToolContext {
     pub project_root: PathBuf,
     pub run_id: RunId,
     pub image_id: Option<ImageId>,
+    pub image: Option<Arc<ImageFrame>>,
     pub task_id: Option<TaskId>,
     pub cancellation: CancellationToken,
 }

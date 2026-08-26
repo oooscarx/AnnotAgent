@@ -1,0 +1,23 @@
+steps:
+  - expect_task: objects
+    response:
+      type: tool_call
+      name: submit_annotation_candidates
+      arguments:
+        annotations:
+          - label: ball
+            value:
+              kind: bounding_box
+              rect: [0.21, 0.61, 0.04, 0.03]
+            attributes: {}
+            confidence: 0.94
+    usage: { input_tokens: 220, output_tokens: 55 }
+  - expect_task: objects
+    expect_message_contains: possible_white_shoe
+    response:
+      type: tool_call
+      name: submit_annotation_candidates
+      arguments:
+        annotations: []
+    usage: { input_tokens: 260, output_tokens: 30 }
+
