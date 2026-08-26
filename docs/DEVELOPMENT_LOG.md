@@ -19,6 +19,7 @@ This file records work and commands actually performed in the implementation ses
 7. Hardened real-provider behavior after live evidence: task-scoped tools, normalized coordinate schemas, dynamic label enum, malformed candidate feedback, dependency failure handling, one evidence-call limit, safe cancellation and secret redaction.
 8. Added HTTP integration coverage, docs, CI, demo script, and final acceptance checks.
 9. Added product-style settings persistence: non-secret values are atomically stored per workspace, provider keys use the native system credential store, and GUI runs inherit the saved default provider.
+10. Integrated AnnotAgent Visual System 1.0 across formal Web/PWA assets, canonical tokens, responsive GUI pages, generic annotation slots, accessible state language, and a shared truecolor/ANSI-256 Ratatui theme while preserving application behavior.
 
 ## Problems found and fixed
 

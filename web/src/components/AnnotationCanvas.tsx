@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState } from "react";
+import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { Annotation, Point } from "../types";
 
 interface Props {
   imageUrl?: string;
   annotations: Annotation[];
   selectedId?: string;
+  skillId?: string;
   onSelect: (id: string) => void;
   onChange: (annotation: Annotation) => void;
 }
@@ -18,6 +20,7 @@ export function AnnotationCanvas({
   imageUrl,
   annotations,
   selectedId,
+  skillId,
   onSelect,
   onChange,
 }: Props) {
@@ -96,17 +99,26 @@ export function AnnotationCanvas({
   };
 
   return (
-    <div className="canvas-shell">
+    <div className="canvas-shell aa-dark">
       <div className="canvas-tools">
-        <span>SVG overlay</span>
-        <button onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))}>−</button>
+        <span>Annotation workspace</span>
+        <button aria-label="Zoom out" title="Zoom out" onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))}>−</button>
         <strong>{Math.round(zoom * 100)}%</strong>
-        <button onClick={() => setZoom((value) => Math.min(4, value + 0.2))}>+</button>
-        <button onClick={() => { setZoom(1); setPan([0, 0]); }}>Reset</button>
+        <button aria-label="Zoom in" title="Zoom in" onClick={() => setZoom((value) => Math.min(4, value + 0.2))}>+</button>
+        <button aria-label="Reset canvas view" title="Reset canvas view" onClick={() => { setZoom(1); setPan([0, 0]); }}>Reset</button>
       </div>
+      <ul className="canvas-annotation-list" aria-label="Annotations on canvas">
+        {annotations.map((annotation) => {
+          const visual = annotationVisual(annotation, skillId);
+          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {Math.round((annotation.confidence ?? 0) * 100)}%</small></span></button></li>;
+        })}
+        {annotations.length === 0 && <li className="canvas-annotation-empty">No annotations selected</li>}
+      </ul>
       <svg
         ref={svgRef}
         className="annotation-canvas"
+        role="img"
+        aria-label={`${annotations.length} annotations over the active image`}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         onDoubleClick={addVertex}
         onPointerMove={onPointerMove}
@@ -122,12 +134,19 @@ export function AnnotationCanvas({
           setZoom((value) => Math.max(0.5, Math.min(4, value - event.deltaY * 0.001)));
         }}
       >
+        <defs>
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((slot) => (
+            <pattern key={slot} id={`aa-diagonal-${slot}`} width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="12" stroke={annotationColor(slot)} strokeWidth="4" />
+            </pattern>
+          ))}
+        </defs>
         <g transform={`translate(${pan[0]} ${pan[1]}) scale(${zoom})`}>
-          <rect width={WIDTH} height={HEIGHT} fill="#07100d" />
+          <rect width={WIDTH} height={HEIGHT} fill="var(--aa-bg)" />
           {imageUrl ? (
             <image href={imageUrl} width={WIDTH} height={HEIGHT} preserveAspectRatio="xMidYMid meet" />
           ) : (
-            <text x="500" y="325" textAnchor="middle" fill="#8ca299" fontSize="22">
+            <text x="500" y="325" textAnchor="middle" fill="var(--aa-text-muted)" fontSize="22">
               Select an image or review item
             </text>
           )}
@@ -135,6 +154,7 @@ export function AnnotationCanvas({
             <AnnotationShape
               key={annotation.id}
               annotation={annotation}
+              visual={annotationVisual(annotation, skillId)}
               selected={annotation.id === selectedId}
               onSelect={() => onSelect(annotation.id)}
               onVertex={(ring, index, event) => {
@@ -164,19 +184,23 @@ export function AnnotationCanvas({
 
 function AnnotationShape({
   annotation,
+  visual,
   selected,
   onSelect,
   onVertex,
   onBbox,
 }: {
   annotation: Annotation;
+  visual: ReturnType<typeof annotationVisual>;
   selected: boolean;
   onSelect: () => void;
   onVertex: (ring: number, index: number, event: React.PointerEvent) => void;
   onBbox: (event: React.PointerEvent) => void;
 }) {
-  const color = selected ? "#f7c65a" : "#60e9ac";
-  const strokeWidth = selected ? 4 : 2;
+  const color = annotationColor(visual.slot);
+  const strokeWidth = selected ? 4 : 2.5;
+  const strokeDasharray = !selected && visual.pattern === "dashed-box" ? "12 8" : undefined;
+  const fill = visual.pattern === "diagonal-fill" ? `url(#aa-diagonal-${visual.slot})` : color;
   const label = `${annotation.label ?? annotation.task_id} ${annotation.confidence ? `${Math.round(annotation.confidence * 100)}%` : ""}`;
   const vertices = (points: Point[], ring = 0) =>
     points.map(([x, y], index) => (
@@ -184,10 +208,11 @@ function AnnotationShape({
         key={`${ring}-${index}`}
         cx={x * WIDTH}
         cy={y * HEIGHT}
-        r={selected ? 7 : 4}
-        fill="#07100d"
+        r={selected ? 8 : 6}
+        fill="var(--aa-bg)"
         stroke={color}
         strokeWidth={3}
+        className="annotation-control"
         onPointerDown={(event) => onVertex(ring, index, event)}
       />
     ));
@@ -195,15 +220,18 @@ function AnnotationShape({
   if (annotation.value.kind === "bounding_box") {
     const [x, y, width, height] = annotation.value.rect;
     return (
-      <g onClick={onSelect}>
+      <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
         <rect
           x={x * WIDTH}
           y={y * HEIGHT}
           width={width * WIDTH}
           height={height * HEIGHT}
-          fill={selected ? "rgba(247,198,90,.12)" : "rgba(96,233,172,.08)"}
+          fill={fill}
+          fillOpacity={selected ? 0.18 : 0.09}
           stroke={color}
           strokeWidth={strokeWidth}
+          strokeDasharray={strokeDasharray}
+          className="aa-annotation-shape"
           onPointerDown={onBbox}
         />
         <ShapeLabel x={x * WIDTH} y={y * HEIGHT} text={label} color={color} />
@@ -212,8 +240,8 @@ function AnnotationShape({
   }
   if (annotation.value.kind === "polyline") {
     return (
-      <g onClick={onSelect}>
-        <polyline points={pointText(annotation.value.points)} fill="none" stroke={color} strokeWidth={strokeWidth} />
+      <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
+        <polyline points={pointText(annotation.value.points)} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={strokeDasharray} className="aa-annotation-shape" />
         {vertices(annotation.value.points)}
         <ShapeLabel x={annotation.value.points[0][0] * WIDTH} y={annotation.value.points[0][1] * HEIGHT} text={label} color={color} />
       </g>
@@ -226,10 +254,10 @@ function AnnotationShape({
       : undefined;
   if (rings) {
     return (
-      <g onClick={onSelect}>
+      <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
         {rings.map((ring, ringIndex) => (
           <g key={ringIndex}>
-            <polygon points={pointText(ring)} fill="rgba(96,233,172,.12)" stroke={color} strokeWidth={strokeWidth} />
+            <polygon points={pointText(ring)} fill={fill} fillOpacity={selected ? 0.2 : 0.1} stroke={color} strokeWidth={strokeWidth} strokeDasharray={strokeDasharray} className="aa-annotation-shape" />
             {vertices(ring, ringIndex)}
           </g>
         ))}
@@ -239,10 +267,10 @@ function AnnotationShape({
   }
   if (annotation.value.kind === "keypoints") {
     return (
-      <g onClick={onSelect}>
+      <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
         {annotation.value.points.map((keypoint, index) => (
           <g key={keypoint.name}>
-            <circle cx={keypoint.point[0] * WIDTH} cy={keypoint.point[1] * HEIGHT} r={9} fill={color} onPointerDown={(event) => onVertex(0, index, event)} />
+            <circle cx={keypoint.point[0] * WIDTH} cy={keypoint.point[1] * HEIGHT} r={selected ? 10 : 7} fill={color} className="aa-annotation-shape" onPointerDown={(event) => onVertex(0, index, event)} />
             <ShapeLabel x={keypoint.point[0] * WIDTH} y={keypoint.point[1] * HEIGHT} text={keypoint.name} color={color} />
           </g>
         ))}
@@ -255,8 +283,8 @@ function AnnotationShape({
 function ShapeLabel({ x, y, text, color }: { x: number; y: number; text: string; color: string }) {
   return (
     <g transform={`translate(${x} ${Math.max(16, y - 8)})`}>
-      <rect x="0" y="-18" width={Math.max(90, text.length * 8)} height="22" fill="#07100d" />
-      <text x="6" y="-3" fill={color} fontSize="14" fontWeight="700">{text}</text>
+      <rect x="0" y="-20" rx="4" width={Math.max(90, text.length * 8)} height="24" fill="var(--aa-surface)" fillOpacity=".94" />
+      <text className="aa-annotation-label" x="6" y="-4" fill={color} fontSize="14" fontWeight="700">{text}</text>
     </g>
   );
 }

@@ -1,5 +1,7 @@
 # RoboCup AnnotAgent
 
+<img src="design/annotagent-visual-system/brand/logo/svg/robocup-annotagent-lockup-light.svg" alt="RoboCup AnnotAgent — AnnotAgent Core with the RoboCup Skill" width="560" />
+
 A VLM-powered annotation and quality-control agent for RoboCup robot perception datasets, built on the extensible AnnotAgent Core.
 
 RoboCup AnnotAgent turns model proposals into auditable annotations. A vision model proposes typed geometry, registered tools gather bounded image evidence, Rust validators and refiners check it, and a review policy either commits it, retries, or queues it for a human. This is deliberately more than a one-shot “image to JSON” script: every model call, tool call, validation issue, revision, token count, cost, and state transition is persisted.
@@ -23,6 +25,8 @@ CLI ───────────┘        │
 ```
 
 `annotagent-core` only understands tasks, labels, geometry, attributes, relations, tools, validators, refiners, workflows, events, and usage. RoboCup names and algorithms live in `annotagent-skill-robocup`. The integration test in `crates/annotagent-runtime/tests/skill_extension.rs` registers a `DummySkill` and runs it without modifying Runtime.
+
+The same boundary governs presentation: AnnotAgent owns the mark, interface tokens, status language, and generic annotation slots; the RoboCup Skill adds its product lockup, Skill badge, vocabulary, and label-to-slot mapping. Canonical assets and tokens live in `design/annotagent-visual-system/`.
 
 ## Install
 
@@ -127,6 +131,7 @@ npm --prefix web run build
 - `docs/API.md` — CLI and HTTP/SSE surface.
 - `docs/COURSE_REQUIREMENTS.md` — R1–R6 evidence and verification commands.
 - `docs/KNOWN_LIMITATIONS.md` — exact remaining gaps.
+- `docs/VISUAL_SYSTEM_INTEGRATION.md` — visual-system sources, GUI/TUI entry points, boundaries, and verification.
 
 The implementation follows the course [requirements](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/), [quick start](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/quick-start/), and [agent architecture](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/agent-architecture/) guidance.
 

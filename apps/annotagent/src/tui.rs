@@ -12,13 +12,16 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use tokio::sync::broadcast;
 
 use crate::runner;
+
+mod theme;
+
+use theme::{AnnotAgentTheme, StatusTone};
 
 struct ActiveRun {
     run_id: annotagent_core::RunId,
@@ -332,69 +335,213 @@ async fn event_loop(
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
+    let theme = AnnotAgentTheme::detect();
+    let area = frame.area();
+    frame.render_widget(Block::default().style(theme.base()), area);
+    if area.width < 48 || area.height < 12 {
+        draw_tiny(frame, state, theme);
+        return;
+    }
+
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(2),
             Constraint::Length(4),
             Constraint::Min(8),
-            Constraint::Length(4),
+            Constraint::Length(3),
             Constraint::Length(1),
         ])
-        .split(frame.area());
-    let header = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
-            Constraint::Percentage(25),
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(" RoboCup AnnotAgent", theme.title())),
+            Line::from(vec![
+                Span::styled(" AnnotAgent Core", theme.muted()),
+                Span::styled(" · RoboCup Skill", theme.skill()),
+            ]),
         ])
-        .split(rows[0]);
-    frame.render_widget(
-        Paragraph::new(state.project.display().to_string())
-            .block(Block::default().borders(Borders::ALL).title("Project"))
+        .style(theme.base()),
+        rows[0],
+    );
+
+    if area.width < 90 {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{} · task {} · status {} · {}",
+                state.project.display(),
+                state.current_task,
+                status_label(state.status),
+                state.usage
+            ))
+            .style(theme.panel())
+            .block(themed_block("Workspace", theme))
             .wrap(Wrap { trim: true }),
-        header[0],
-    );
-    frame.render_widget(
-        Paragraph::new(format!("task {} · {:?}", state.current_task, state.status))
-            .block(Block::default().borders(Borders::ALL).title("Current")),
-        header[1],
-    );
-    frame.render_widget(
-        Paragraph::new(state.usage.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Usage / Budget"),
-        ),
-        header[2],
-    );
-    let visible = usize::from(rows[1].height.saturating_sub(2));
+            rows[1],
+        );
+    } else {
+        let header = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(35),
+                Constraint::Percentage(40),
+                Constraint::Percentage(25),
+            ])
+            .split(rows[1]);
+        frame.render_widget(
+            Paragraph::new(state.project.display().to_string())
+                .style(theme.panel())
+                .block(themed_block("Project", theme))
+                .wrap(Wrap { trim: true }),
+            header[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw(format!("task {} · ", state.current_task)),
+                Span::styled(
+                    status_label(state.status),
+                    theme.status(status_tone(state.status)),
+                ),
+            ]))
+            .style(theme.panel())
+            .block(themed_block("Current", theme)),
+            header[1],
+        );
+        frame.render_widget(
+            Paragraph::new(state.usage.as_str())
+                .style(theme.panel())
+                .block(themed_block("Usage / Budget", theme)),
+            header[2],
+        );
+    }
+
+    let visible = usize::from(rows[2].height.saturating_sub(2));
     let trace = state
         .trace
         .iter()
         .rev()
         .take(visible)
         .rev()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(|entry| trace_line(entry, theme))
+        .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(trace)
-            .block(Block::default().borders(Borders::ALL).title("Agent Trace"))
+            .style(theme.panel())
+            .block(themed_block(
+                "Agent Trace · visible execution events",
+                theme,
+            ))
             .wrap(Wrap { trim: false }),
-        rows[1],
-    );
-    frame.render_widget(
-        Paragraph::new(format!("> {}", state.input))
-            .style(Style::default().fg(Color::Cyan))
-            .block(Block::default().borders(Borders::ALL).title("Command")),
         rows[2],
     );
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" run · Space pause/resume · c cancel · g GUI · q quit · /help"),
-        ])),
+        Paragraph::new(format!("> {}", state.input))
+            .style(theme.command())
+            .block(themed_block("Command", theme)),
         rows[3],
     );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" r ", theme.selected()),
+            Span::raw(" run · Space pause/resume · c cancel · g GUI · q quit · /help"),
+        ]))
+        .style(theme.base()),
+        rows[4],
+    );
+}
+
+fn draw_tiny(frame: &mut ratatui::Frame<'_>, state: &TuiState, theme: AnnotAgentTheme) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled("RoboCup AnnotAgent", theme.title())),
+            Line::from(vec![
+                Span::styled("AnnotAgent Core", theme.muted()),
+                Span::styled(" · RoboCup Skill", theme.skill()),
+            ]),
+            Line::from(vec![
+                Span::raw(format!("{} · ", state.current_task)),
+                Span::styled(
+                    status_label(state.status),
+                    theme.status(status_tone(state.status)),
+                ),
+            ]),
+            Line::styled(
+                "r run · Space pause/resume · c cancel · q quit",
+                theme.muted(),
+            ),
+        ])
+        .style(theme.panel_muted())
+        .block(themed_block("AnnotAgent Core", theme))
+        .wrap(Wrap { trim: true }),
+        frame.area(),
+    );
+}
+
+fn themed_block(title: &str, theme: AnnotAgentTheme) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border())
+        .title(Span::styled(title, theme.title()))
+}
+
+fn status_label(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Pending => "Draft",
+        RunStatus::Running => "Running",
+        RunStatus::Paused => "Paused",
+        RunStatus::AwaitingReview => "Needs review",
+        RunStatus::Completed => "Auto accepted",
+        RunStatus::Cancelled => "Rejected",
+        RunStatus::BudgetExceeded | RunStatus::Failed => "Failed",
+    }
+}
+
+fn status_tone(status: RunStatus) -> StatusTone {
+    match status {
+        RunStatus::Pending => StatusTone::Neutral,
+        RunStatus::Running | RunStatus::Paused => StatusTone::Running,
+        RunStatus::Completed => StatusTone::Success,
+        RunStatus::AwaitingReview => StatusTone::Warning,
+        RunStatus::Cancelled | RunStatus::BudgetExceeded | RunStatus::Failed => StatusTone::Danger,
+    }
+}
+
+fn trace_line(entry: &str, theme: AnnotAgentTheme) -> Line<'_> {
+    let tone = if entry.starts_with("tool ") || entry.starts_with("validation:") {
+        StatusTone::Info
+    } else if entry.contains("failed") || entry.contains("error") {
+        StatusTone::Danger
+    } else {
+        StatusTone::Neutral
+    };
+    Line::styled(entry, theme.status(tone))
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    use super::*;
+
+    #[test]
+    fn normal_and_small_terminal_layouts_render_without_panicking() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let state = TuiState::new(temporary.path().join("project.yaml"), application);
+        for (width, height) in [(120, 32), (80, 20), (40, 8)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| draw(frame, &state))
+                .expect("draw succeeds");
+        }
+    }
+
+    #[test]
+    fn status_labels_are_not_color_only() {
+        assert_eq!(status_label(RunStatus::Pending), "Draft");
+        assert_eq!(status_label(RunStatus::AwaitingReview), "Needs review");
+        assert_eq!(status_label(RunStatus::Completed), "Auto accepted");
+        assert_eq!(status_label(RunStatus::Failed), "Failed");
+    }
 }

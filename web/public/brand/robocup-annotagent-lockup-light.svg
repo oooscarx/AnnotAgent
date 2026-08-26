@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="136" viewBox="0 0 700 136" role="img">
+    <title>RoboCup AnnotAgent product lockup</title>
+    <defs>
+      <linearGradient id="aaGradient" x1="24" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#00B3A4"/>
+        <stop offset="0.48" stop-color="#2563EB"/>
+        <stop offset="1" stop-color="#7C3AED"/>
+      </linearGradient>
+    </defs>
+    <g transform="translate(4 4)">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M33 14H22a8 8 0 0 0-8 8v11" stroke="#0D1117" stroke-width="7"/>
+        <path d="M95 14h11a8 8 0 0 1 8 8v11" stroke="#0D1117" stroke-width="7"/>
+        <path d="M14 95v11a8 8 0 0 0 8 8h11" stroke="#00B3A4" stroke-width="7"/>
+        <path d="M114 95v11a8 8 0 0 1-8 8H95" stroke="#7C3AED" stroke-width="7"/>
+      </g>
+      <path fill="url(#aaGradient)" fill-rule="evenodd" d="M36 99 59.5 31.5C61.2 26.6 64.6 24 69.8 24h5.1c5.1 0 8.6 2.7 10.3 7.5L109 99H86.4l-6.7-20.3H54.4L47.9 99H36Zm25.1-41.1h12.2l-6-18.1-6.2 18.1Z"/>
+      <path d="M55.3 77.8h23.6" stroke="rgba(255,255,255,.72)" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <text x="155" y="47" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="23" font-weight="700" letter-spacing="1.6" fill="#0D1117">ROBOCUP</text>
+    <text x="153" y="96" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="57" font-weight="750" letter-spacing="-2.2"><tspan fill="#0D1117">Annot</tspan><tspan fill="#00B3A4">Agent</tspan></text>
+    <g transform="translate(600 34)">
+      <circle cx="32" cy="32" r="27" fill="#07111F"/>
+      <circle cx="32" cy="32" r="18" fill="#FFFFFF" stroke="#00B3A4" stroke-width="2"/>
+      <path d="m32 21 6.5 4.7-2.5 7.6h-8l-2.5-7.6L32 21Z" fill="#07111F"/>
+      <path d="M25.5 25.7 19.8 23M38.5 25.7l5.7-2.7M28 33.3l-4.8 6.5M36 33.3l4.8 6.5M32 21v-6" stroke="#07111F" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <text x="155" y="123" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="500" fill="#64748B">VLM-assisted annotation and quality control for robot soccer perception</text>
+    </svg>

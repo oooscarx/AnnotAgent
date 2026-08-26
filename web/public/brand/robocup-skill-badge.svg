@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img"><title>RoboCup skill badge</title>
+      <circle cx="32" cy="32" r="27" fill="#07111F"/>
+      <circle cx="32" cy="32" r="18" fill="#FFFFFF" stroke="#00B3A4" stroke-width="2"/>
+      <path d="m32 21 6.5 4.7-2.5 7.6h-8l-2.5-7.6L32 21Z" fill="#07111F"/>
+      <path d="M25.5 25.7 19.8 23M38.5 25.7l5.7-2.7M28 33.3l-4.8 6.5M36 33.3l4.8 6.5M32 21v-6" stroke="#07111F" stroke-width="2" stroke-linecap="round"/>
+    </svg>

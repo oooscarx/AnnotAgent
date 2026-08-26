@@ -24,6 +24,10 @@ SQLite was chosen for local durability, transactions, easy classroom setup, and 
 
 CLI/TUI and HTTP use `LocalApplication`; neither duplicates the Agent Loop. React only renders DTOs and sends review/control requests. The server owns validation, state transitions, correction records, export, and settings validation.
 
+## Visual system
+
+AnnotAgent Core owns the shared mark, tokens, generic component language, semantic statuses, and `annotation-1` through `annotation-8` display slots. RoboCup remains a visual extension expressed by the product lockup, Skill badge, and the packaged label-to-slot/pattern mapping. The generic SVG editor does not contain RoboCup label names, and color never replaces visible label, shape, line style, or status text. Canonical sources live in `design/annotagent-visual-system/`; Vite runtime assets under `web/public/brand/` are delivery copies.
+
 ## Assumptions
 
 - A configured workspace is the local security boundary.

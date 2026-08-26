@@ -44,38 +44,41 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="#dashboard" onClick={() => setPage("dashboard")}>
-          <span className="brand-mark">RA</span>
-          <span><strong>RoboCup</strong><small>AnnotAgent</small></span>
+      <a className="skip-link" href="#main-content">Skip to workspace</a>
+      <aside className="sidebar aa-dark">
+        <a className="brand" href="#dashboard" aria-label="RoboCup AnnotAgent dashboard" onClick={() => setPage("dashboard")}>
+          <img className="brand-lockup" src="/brand/robocup-annotagent-lockup-dark.svg" alt="RoboCup AnnotAgent" />
+          <img className="brand-mark-compact" src="/brand/annotagent-mark-dark-surface.svg" alt="" aria-hidden="true" />
         </a>
-        <nav>
-          <Nav icon="⌂" active={page === "dashboard"} onClick={() => setPage("dashboard")}>Dashboard</Nav>
-          <Nav icon="◫" active={page === "project"} onClick={() => setPage("project")}>Project</Nav>
-          <Nav icon="✓" active={page === "review"} onClick={() => setPage("review")}>Review</Nav>
-          <Nav icon="◇" active={page === "skills"} onClick={() => setPage("skills")}>Skills</Nav>
-          <Nav icon="⚙" active={page === "settings"} onClick={() => setPage("settings")}>Settings</Nav>
+        <nav aria-label="Primary navigation">
+          <Nav icon="history" active={page === "dashboard"} onClick={() => setPage("dashboard")}>Dashboard</Nav>
+          <Nav icon="bbox" active={page === "project"} onClick={() => setPage("project")}>Project</Nav>
+          <Nav icon="review" active={page === "review"} onClick={() => setPage("review")}>Review</Nav>
+          <Nav icon="tool-call" active={page === "skills"} onClick={() => setPage("skills")}>Skills</Nav>
+          <Nav icon="settings" active={page === "settings"} onClick={() => setPage("settings")}>Settings</Nav>
         </nav>
         <div className="sidebar-foot">
-          <span className="live-dot" /> SSE connected
+          <span className="live-dot" aria-hidden="true" /> SSE connected
           <small>{events.at(-1)?.kind.replaceAll("_", " ") ?? "waiting for events"}</small>
         </div>
       </aside>
-      <main>
+      <main id="main-content">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Perception workspace</span>
+            <span className="eyebrow">AnnotAgent Core · Perception workspace</span>
             <h1>{page === "dashboard" ? "Operations overview" : page[0].toUpperCase() + page.slice(1)}</h1>
           </div>
           <div className="project-switch">
-            <span>Active project</span>
-            <select value={projectId} onChange={(event) => selectProject(event.target.value)}>
+            {selectedProject?.skill_id === "robocup" && <span className="skill-badge"><img src="/brand/robocup-skill-badge.svg" alt="" aria-hidden="true" />RoboCup Skill</span>}
+            <span aria-hidden="true">Active project</span>
+            <label className="sr-only" htmlFor="active-project">Active project</label>
+            <select id="active-project" value={projectId} onChange={(event) => selectProject(event.target.value)}>
               <option value="">No project</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
             </select>
           </div>
         </header>
-        {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")}>Dismiss</button></div>}
+        {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError("")}>Dismiss</button></div>}
         {page === "dashboard" && <Dashboard projects={projects} runs={runs} onSelect={selectProject} onRefresh={refresh} onError={setError} />}
         {page === "project" && <ProjectPage project={selectedProject} events={events} onError={setError} />}
         {page === "review" && <ReviewPage projectId={projectId} projects={projects} events={events} onError={setError} />}
@@ -87,7 +90,7 @@ export function App() {
 }
 
 function Nav({ icon, active, onClick, children }: { icon: string; active: boolean; onClick: () => void; children: string }) {
-  return <button className={active ? "active" : ""} onClick={onClick}><span>{icon}</span>{children}</button>;
+  return <button className={active ? "active" : ""} aria-current={active ? "page" : undefined} onClick={onClick}><img src={`/brand/icons/${icon}.svg`} alt="" aria-hidden="true" />{children}</button>;
 }
 
 function Dashboard({
@@ -108,9 +111,9 @@ function Dashboard({
   const reviews = runs.filter((run) => run.status === "awaiting_review").length;
   return (
     <section className="page-stack">
-      <div className="hero-panel">
+      <div className="hero-panel aa-dark">
         <div>
-          <span className="kicker">LOCAL-FIRST ANNOTATION CONTROL PLANE</span>
+          <span className="kicker">ANNOTAGENT CORE + ROBOCUP SKILL</span>
           <h2>Turn model proposals into<br /><em>defensible ground truth.</em></h2>
           <p>One auditable path from image evidence through tools, deterministic checks, pixel refinement, and human correction.</p>
         </div>
@@ -176,18 +179,18 @@ function ProjectPage({ project, events, onError }: { project?: ProjectSummary; e
     <section className="page-stack">
       <div className="toolbar-panel">
         <div><span className="eyebrow">{project.skill_id} skill</span><h2>{project.name}</h2><p>{project.image_count} images · deterministic quality gates enabled</p></div>
-        <div className="button-row">
+        <div className="button-row" aria-label="Run controls">
           <button className="primary" onClick={start}>Start image run</button>
-          <button onClick={() => control("pause")}>Pause</button>
-          <button onClick={() => control("resume")}>Resume</button>
-          <button className="danger" onClick={() => control("cancel")}>Cancel</button>
+          <button disabled={!activeRun} onClick={() => control("pause")}><img src="/brand/icons/pause.svg" alt="" aria-hidden="true" />Pause</button>
+          <button disabled={!activeRun} onClick={() => control("resume")}><img src="/brand/icons/resume.svg" alt="" aria-hidden="true" />Resume</button>
+          <button className="danger" disabled={!activeRun} onClick={() => control("cancel")}><img src="/brand/icons/cancel.svg" alt="" aria-hidden="true" />Cancel</button>
         </div>
       </div>
       <div className="filters">
         {["all", "unprocessed", "auto accepted", "needs review", "confirmed", "failed"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>)}
       </div>
-      {activeRun && <div className="run-progress">
-        <div><span className="live-dot" /><strong>Run {activeRun.slice(0, 8)}</strong><small>{lastTask ?? "starting"} · {runEvents.at(-1)?.kind.replaceAll("_", " ") ?? "queued"}</small></div>
+      {activeRun && <div className="run-progress aa-dark" aria-live="polite">
+        <div><span className="live-dot" aria-hidden="true" /><strong>Run {activeRun.slice(0, 8)}</strong><small>{lastTask ?? "starting"} · {runEvents.at(-1)?.kind.replaceAll("_", " ") ?? "queued"}</small></div>
         <div className="progress-track"><i style={{ width: `${Math.min(100, runEvents.length * 3)}%` }} /></div>
         <pre>{usage ? JSON.stringify(usage.payload.data, null, 2) : "usage pending"}</pre>
       </div>}
@@ -207,6 +210,7 @@ function ReviewPage({ projectId, projects, events, onError }: { projectId: strin
   const [reasonOptions, setReasonOptions] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
+  const skillId = projects.find((project) => project.id === projectId)?.skill_id;
   const selected = reviews.find((review) => review.id === selectedId) ?? reviews[0];
   const refresh = () => api.reviews().then((value) => { setReviews(value.reviews); if (!selectedId && value.reviews[0]) setSelectedId(value.reviews[0].id); }).catch((error: Error) => onError(error.message));
   useEffect(() => {
@@ -230,14 +234,14 @@ function ReviewPage({ projectId, projects, events, onError }: { projectId: strin
   return (
     <section className="review-layout">
       <aside className="review-queue panel"><span className="eyebrow">Human attention</span><h2>Review queue <b>{reviews.length}</b></h2>
-        <div className="queue-items">{reviews.map((review) => <button key={review.id} className={selected?.id === review.id ? "active" : ""} onClick={() => setSelectedId(review.id)}><span>{review.annotation.label?.slice(0, 2).toUpperCase() ?? "?"}</span><span><strong>{review.annotation.label ?? review.annotation.task_id}</strong><small>{review.annotation.task_id} · {Math.round((review.annotation.confidence ?? 0) * 100)}%</small></span></button>)}</div>
+        <div className="queue-items" aria-label="Annotations requiring review">{reviews.map((review) => <button key={review.id} aria-pressed={selected?.id === review.id} className={selected?.id === review.id ? "active" : ""} onClick={() => setSelectedId(review.id)}><span aria-hidden="true">{review.annotation.label?.slice(0, 2).toUpperCase() ?? "?"}</span><span><strong>{review.annotation.label ?? review.annotation.task_id}</strong><small>{review.annotation.task_id} · {Math.round((review.annotation.confidence ?? 0) * 100)}%</small></span></button>)}</div>
         {reviews.length === 0 && <Empty title="Queue is clear" detail="Low confidence or conflicting evidence will route candidates here." />}
       </aside>
       <div className="review-center">
-        <AnnotationCanvas imageUrl={images[0]?.url} annotations={draft ? [draft] : []} selectedId={draft?.id} onSelect={setSelectedId} onChange={setDraft} />
+        <AnnotationCanvas imageUrl={images[0]?.url} annotations={draft ? [draft] : []} selectedId={draft?.id} skillId={skillId} onSelect={setSelectedId} onChange={setDraft} />
         <Trace events={selected ? events.filter((event) => event.run_id === selected.run_id) : events.slice(-12)} />
       </div>
-      <aside className="inspector panel"><span className="eyebrow">Annotation evidence</span><h2>{draft?.label ?? "No selection"}</h2>
+      <aside className="inspector panel"><span className="eyebrow">Validator evidence</span><h2>{draft?.label ?? "No selection"}</h2>
         {draft && <>
           <label>Label<input value={draft.label ?? ""} onChange={(event) => setDraft({ ...draft, label: event.target.value })} /></label>
           <div className="fact-grid"><span>Confidence<strong>{Math.round((draft.confidence ?? 0) * 100)}%</strong></span><span>Source<strong>{draft.source}</strong></span><span>Task<strong>{draft.task_id}</strong></span><span>Status<strong>{draft.review_status}</strong></span></div>
@@ -253,7 +257,8 @@ function ReviewPage({ projectId, projects, events, onError }: { projectId: strin
 }
 
 function Trace({ events }: { events: RunEvent[] }) {
-  return <div className="trace-panel panel"><div><span className="eyebrow">No hidden chain-of-thought</span><h3>Agent trace</h3></div><div className="trace-strip">{events.slice(-10).map((event) => <article key={event.event_id}><span>{event.kind.includes("model") ? "M" : event.kind.includes("tool") ? "T" : event.kind.includes("validation") ? "V" : "·"}</span><div><strong>{event.kind.replaceAll("_", " ")}</strong><small>{event.task_id ?? "run"} · {new Date(event.occurred_at).toLocaleTimeString()}</small></div></article>)}</div></div>;
+  const icon = (kind: string) => kind.includes("model") ? "model-call" : kind.includes("tool") ? "tool-call" : kind.includes("validation") ? "validate" : kind.includes("review") ? "review" : "agent-trace";
+  return <div className="trace-panel panel"><div><span className="eyebrow">Visible execution events</span><h3>Agent trace</h3><small>No hidden chain-of-thought</small></div><div className="trace-strip" aria-label="Agent trace events">{events.slice(-10).map((event) => <article key={event.event_id}><span><img src={`/brand/icons/${icon(event.kind)}.svg`} alt="" aria-hidden="true" /></span><div><strong>{event.kind.replaceAll("_", " ")}</strong><small>{event.task_id ?? "run"} · {new Date(event.occurred_at).toLocaleTimeString()}</small></div></article>)}</div></div>;
 }
 
 function SkillsPage({ onError }: { onError: (value: string) => void }) {
@@ -292,7 +297,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
       .catch((error: Error) => onError(error.message))
       .finally(() => setSaving(false));
   };
-  return <section className="settings-grid"><Panel title="Vision model provider" eyebrow="Saved workspace default"><div className="form-grid"><label>Default run provider<select value={settings.default_provider ?? "mock"} onChange={(event) => setSettings({ ...settings, default_provider: event.target.value })}><option value="mock">Mock (offline test)</option><option value="openai_compatible">OpenAI-compatible</option></select></label><label>Endpoint<input value={provider.endpoint ?? ""} onChange={(event) => setProvider("endpoint", event.target.value)} /></label><label>Model<input value={provider.model ?? ""} onChange={(event) => setProvider("model", event.target.value)} /></label><label>API key environment<input value={provider.api_key_env ?? ""} onChange={(event) => setProvider("api_key_env", event.target.value)} /></label><label>Protocol<select value={provider.protocol ?? "chat_completions"} onChange={(event) => setProvider("protocol", event.target.value)}><option value="chat_completions">Chat Completions</option></select></label><label>Temperature<input type="number" step="0.05" value={provider.temperature ?? 0.1} onChange={(event) => setProvider("temperature", Number(event.target.value))} /></label><label>Timeout seconds<input type="number" value={provider.request_timeout_seconds ?? 120} onChange={(event) => setProvider("request_timeout_seconds", Number(event.target.value))} /></label></div><label>Saved API key<input type="password" autoComplete="new-password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.api_key_persisted ? "Stored in the system keychain" : "Paste once to save in the system keychain"} /></label><div className="button-row"><button onClick={clearKey} disabled={saving || !settings.api_key_persisted}>Clear saved key</button><small>{settings.api_key_persisted ? "Keychain protected · never returned by the API" : "Environment variable fallback remains available"}</small></div>{settings.credential_store_error && <div className="error-banner"><span>System keychain unavailable: {String(settings.credential_store_error)}</span></div>}</Panel><Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting"><div className="json-settings"><div><h3>Pricing</h3>{Object.entries(pricing).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, pricing: { ...pricing, [name]: event.target.value } })} /></label>)}</div><div><h3>Budget</h3>{Object.entries(budget).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, budget: { ...budget, [name]: name === "max_cost" ? event.target.value : Number(event.target.value) } })} /></label>)}</div></div></Panel><div className="settings-save"><span>{message || (settings.settings_persisted ? `Saved at ${settings.settings_path}` : "Save once to keep these settings across restarts.")}</span><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save settings"}</button></div></section>;
+  return <section className="settings-grid"><Panel title="Vision model provider" eyebrow="Saved workspace default"><div className="form-grid"><label>Default run provider<select value={settings.default_provider ?? "mock"} onChange={(event) => setSettings({ ...settings, default_provider: event.target.value })}><option value="mock">Mock (offline test)</option><option value="openai_compatible">OpenAI-compatible</option></select></label><label>Endpoint<input value={provider.endpoint ?? ""} onChange={(event) => setProvider("endpoint", event.target.value)} /></label><label>Model<input value={provider.model ?? ""} onChange={(event) => setProvider("model", event.target.value)} /></label><label>API key environment<input value={provider.api_key_env ?? ""} onChange={(event) => setProvider("api_key_env", event.target.value)} /></label><label>Protocol<select value={provider.protocol ?? "chat_completions"} onChange={(event) => setProvider("protocol", event.target.value)}><option value="chat_completions">Chat Completions</option></select></label><label>Temperature<input type="number" step="0.05" value={provider.temperature ?? 0.1} onChange={(event) => setProvider("temperature", Number(event.target.value))} /></label><label>Timeout seconds<input type="number" value={provider.request_timeout_seconds ?? 120} onChange={(event) => setProvider("request_timeout_seconds", Number(event.target.value))} /></label></div><label>Saved API key<input type="password" autoComplete="new-password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.api_key_persisted ? "Stored in the system keychain" : "Paste once to save in the system keychain"} /></label><div className="button-row"><button onClick={clearKey} disabled={saving || !settings.api_key_persisted}>Clear saved key</button><small>{settings.api_key_persisted ? "Keychain protected · never returned by the API" : "Environment variable fallback remains available"}</small></div>{settings.credential_store_error && <div className="error-banner" role="alert"><span>System keychain unavailable: {String(settings.credential_store_error)}</span></div>}</Panel><Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting"><div className="json-settings"><div><h3>Pricing</h3>{Object.entries(pricing).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, pricing: { ...pricing, [name]: event.target.value } })} /></label>)}</div><div><h3>Budget</h3>{Object.entries(budget).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, budget: { ...budget, [name]: name === "max_cost" ? event.target.value : Number(event.target.value) } })} /></label>)}</div></div></Panel><div className="settings-save" aria-live="polite"><span>{message || (settings.settings_persisted ? `Saved at ${settings.settings_path}` : "Save once to keep these settings across restarts.")}</span><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save settings"}</button></div></section>;
 }
 
 function CreateProject({ onClose, onCreated, onError }: { onClose: () => void; onCreated: () => void; onError: (value: string) => void }) {
@@ -308,6 +313,20 @@ function CreateProject({ onClose, onCreated, onError }: { onClose: () => void; o
 
 function Panel({ title, eyebrow, children }: { title: string; eyebrow: string; children: React.ReactNode }) { return <section className="panel"><span className="eyebrow">{eyebrow}</span><h2>{title}</h2>{children}</section>; }
 function Metric({ label, value, detail, accent, live }: { label: string; value: string | number; detail: string; accent?: boolean; live?: boolean }) { return <article className={`metric ${accent ? "accent" : ""}`}><span>{label}{live && <i className="live-dot" />}</span><strong>{value}</strong><small>{detail}</small></article>; }
-function Status({ status }: { status: string }) { return <span className={`status status-${status}`}>{status.replaceAll("_", " ")}</span>; }
-function Empty({ title, detail }: { title: string; detail: string }) { return <div className="empty"><span>◎</span><strong>{title}</strong><small>{detail}</small></div>; }
+function Status({ status }: { status: string }) {
+  const normalized = status.replaceAll(" ", "_").toLowerCase();
+  const presentation = normalized === "completed" || normalized === "confirmed" || normalized === "auto_accepted"
+    ? { tone: "auto-accepted", label: "Auto accepted" }
+    : normalized === "awaiting_review" || normalized === "needs_review"
+      ? { tone: "needs-review", label: "Needs review" }
+      : normalized === "cancelled" || normalized === "rejected"
+        ? { tone: "rejected", label: "Rejected" }
+        : normalized === "failed" || normalized === "budget_exceeded"
+          ? { tone: "failed", label: "Failed" }
+          : normalized === "running" || normalized === "paused"
+            ? { tone: "running", label: normalized === "paused" ? "Paused" : "Running" }
+            : { tone: "draft", label: "Draft" };
+  return <span className={`status status-${presentation.tone}`}>{presentation.label}</span>;
+}
+function Empty({ title, detail }: { title: string; detail: string }) { return <div className="empty" role="status"><img src="/brand/annotagent-mark.svg" alt="" aria-hidden="true" /><strong>{title}</strong><small>{detail}</small></div>; }
 function TagGroup({ title, values }: { title: string; values: string[] }) { return <div><h3>{title}</h3><div className="tags">{values.map((value) => <span key={value}>{value}</span>)}</div></div>; }
