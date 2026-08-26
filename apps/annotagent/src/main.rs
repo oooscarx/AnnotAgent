@@ -1,0 +1,485 @@
+mod runner;
+mod tui;
+
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use annotagent_core::{DatasetExporter, DomainSkill, ProjectSnapshot, SnapshotImage};
+use annotagent_export::{
+    CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
+};
+use annotagent_skill_robocup::RoboCupSkill;
+use annotagent_storage::{HistoryDocument, SqliteStore};
+use anyhow::{Context, Result, bail};
+use clap::{Args, Parser, Subcommand};
+use tracing_subscriber::EnvFilter;
+use walkdir::WalkDir;
+
+#[derive(Parser)]
+#[command(name = "annotagent", version, about = "RoboCup AnnotAgent")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Init {
+        project_directory: PathBuf,
+        #[arg(long, default_value = "robocup")]
+        skill: String,
+    },
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    Import {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        images: PathBuf,
+    },
+    Run(RunArgs),
+    Tui {
+        #[arg(long)]
+        project: PathBuf,
+    },
+    Serve {
+        #[arg(long, default_value = "./workspace")]
+        workspace: PathBuf,
+        #[arg(long)]
+        open: bool,
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+    },
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
+    History {
+        #[command(subcommand)]
+        command: HistoryCommand,
+    },
+    Export {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        format: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Doctor,
+    Demo {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+struct RunArgs {
+    #[arg(long)]
+    project: PathBuf,
+    #[arg(long, default_value = "mock")]
+    provider: String,
+    #[arg(long)]
+    config: Option<PathBuf>,
+    #[arg(long)]
+    limit: Option<usize>,
+}
+
+#[derive(Subcommand)]
+enum ProjectCommand {
+    Validate { project: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommand {
+    List,
+    Show { skill_id: String },
+}
+
+#[derive(Subcommand)]
+enum HistoryCommand {
+    List,
+    Show {
+        run_id: annotagent_core::RunId,
+    },
+    Export {
+        run_id: annotagent_core::RunId,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Import {
+        file: PathBuf,
+    },
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .with_target(false)
+        .init();
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Init {
+            project_directory,
+            skill,
+        } => init_project(&project_directory, &skill),
+        Command::Project {
+            command: ProjectCommand::Validate { project },
+        } => validate_project(&project),
+        Command::Import { project, images } => import_images(&project, &images),
+        Command::Run(arguments) => run_command(&arguments).await,
+        Command::Tui { project } => tui::run(project).await,
+        Command::Serve {
+            workspace,
+            open,
+            port,
+        } => serve_command(&workspace, port, open),
+        Command::Skills { command } => skills_command(command),
+        Command::History { command } => history_command(command),
+        Command::Export {
+            project,
+            format,
+            output,
+        } => export_command(&project, &format, &output).await,
+        Command::Doctor => doctor(),
+        Command::Demo { name } => demo(&name).await,
+    }
+}
+
+fn init_project(directory: &Path, skill: &str) -> Result<()> {
+    if skill != "robocup" {
+        bail!("only the production robocup skill is bundled in this release");
+    }
+    std::fs::create_dir_all(directory.join("images"))
+        .with_context(|| format!("cannot create {}", directory.display()))?;
+    let project_file = directory.join("project.yaml");
+    if project_file.exists() {
+        bail!(
+            "{} already exists; refusing to overwrite it",
+            project_file.display()
+        );
+    }
+    std::fs::write(
+        &project_file,
+        include_str!("../../../examples/robocup/project.yaml"),
+    )?;
+    annotagent_image_tools::generate_synthetic_robocup(&directory.join("images/demo.png"))
+        .map_err(|error| anyhow::anyhow!(error))?;
+    println!(
+        "created RoboCup AnnotAgent project at {}",
+        directory.display()
+    );
+    println!(
+        "next: annotagent project validate {}",
+        project_file.display()
+    );
+    Ok(())
+}
+
+fn validate_project(path: &Path) -> Result<()> {
+    let (project, skill) = runner::load_project(path)?;
+    println!(
+        "valid: schema v{}, project {:?}, skill {} v{}, {} tasks",
+        project.version,
+        project.project.name,
+        skill.id(),
+        project.project.skill_version,
+        project.tasks.len()
+    );
+    Ok(())
+}
+
+fn import_images(project_path: &Path, images: &Path) -> Result<()> {
+    let (project, _) = runner::load_project(project_path)?;
+    let project_root = project_path.parent().unwrap_or_else(|| Path::new("."));
+    let destination = project_root.join(project.dataset.root);
+    std::fs::create_dir_all(&destination)?;
+    let canonical_source = images
+        .canonicalize()
+        .with_context(|| format!("cannot access {}", images.display()))?;
+    let mut imported = 0_u64;
+    let mut duplicates = 0_u64;
+    let mut known_hashes = std::collections::BTreeSet::new();
+    for existing in WalkDir::new(&destination)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(walkdir::DirEntry::into_path)
+        .filter(|path| runner::is_supported_image(path))
+    {
+        if let Ok(bytes) = std::fs::read(existing) {
+            known_hashes.insert(annotagent_image_tools::sha256(&bytes));
+        }
+    }
+    for source in WalkDir::new(&canonical_source)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(walkdir::DirEntry::into_path)
+        .filter(|path| runner::is_supported_image(path))
+    {
+        let bytes = std::fs::read(&source)?;
+        if !known_hashes.insert(annotagent_image_tools::sha256(&bytes)) {
+            duplicates += 1;
+            continue;
+        }
+        let file_name = source
+            .file_name()
+            .context("source image has no file name")?;
+        let mut target = destination.join(file_name);
+        if target.exists() {
+            target = destination.join(format!(
+                "{}-{}",
+                uuid::Uuid::new_v4(),
+                file_name.to_string_lossy()
+            ));
+        }
+        std::fs::copy(&source, &target)?;
+        imported += 1;
+    }
+    println!("imported {imported} image(s); skipped {duplicates} duplicate(s)");
+    Ok(())
+}
+
+async fn run_command(arguments: &RunArgs) -> Result<()> {
+    if arguments.limit.is_some_and(|limit| limit == 0) {
+        bail!("--limit must be greater than zero");
+    }
+    let prepared = runner::prepare_run(
+        &arguments.project,
+        &arguments.provider,
+        arguments.config.as_deref(),
+    )?;
+    println!(
+        "run {}: image {}",
+        prepared.request.run_id,
+        prepared.image_path.display()
+    );
+    let result = prepared.runtime.run_image(prepared.request).await?;
+    println!(
+        "status={:?} committed={} review={} issues={} tokens={}/{} requests={} cost={}",
+        result.status,
+        result.committed.len(),
+        result.review_queue.len(),
+        result.issues.len(),
+        result.usage.input_tokens,
+        result.usage.output_tokens,
+        result.usage.requests,
+        result.usage.cost
+    );
+    for issue in result.issues {
+        println!("issue {}: {}", issue.code, issue.message);
+    }
+    Ok(())
+}
+
+fn skills_command(command: SkillsCommand) -> Result<()> {
+    let skill = RoboCupSkill::new().map_err(|error| anyhow::anyhow!(error))?;
+    match command {
+        SkillsCommand::List => println!(
+            "{}\t{}\t{}",
+            annotagent_core::DomainSkill::id(&skill),
+            skill.manifest().display_name,
+            skill.manifest().description
+        ),
+        SkillsCommand::Show { skill_id } => {
+            if skill_id != annotagent_core::DomainSkill::id(&skill) {
+                bail!("unknown skill {skill_id:?}; installed skill: robocup");
+            }
+            println!("{}", serde_json::to_string_pretty(skill.manifest())?);
+            println!(
+                "tools: {}",
+                skill
+                    .tool_factories()
+                    .iter()
+                    .map(|tool| tool.definition().name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "validators: {}",
+                skill
+                    .validators()
+                    .iter()
+                    .map(|validator| validator.id())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "refiners: {}",
+                skill
+                    .refiners()
+                    .iter()
+                    .map(|refiner| refiner.id())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+fn history_command(command: HistoryCommand) -> Result<()> {
+    let database = runner::database_path()?;
+    let store = SqliteStore::open(&database)
+        .with_context(|| format!("cannot open history database {}", database.display()))?;
+    match command {
+        HistoryCommand::List => {
+            for run in store.list_runs()? {
+                println!(
+                    "{}\t{:?}\t{}\t{}\t{}",
+                    run.id, run.status, run.project_name, run.skill_id, run.updated_at
+                );
+            }
+        }
+        HistoryCommand::Show { run_id } => {
+            println!("{}", serde_json::to_string_pretty(&store.history(run_id)?)?);
+        }
+        HistoryCommand::Export { run_id, output } => {
+            store.export_history(run_id, &output)?;
+            println!("exported run {run_id} to {}", output.display());
+        }
+        HistoryCommand::Import { file } => {
+            let document: HistoryDocument = serde_json::from_slice(&std::fs::read(&file)?)?;
+            let report = store.import_history(document)?;
+            println!(
+                "imported run {} (ids_remapped={})",
+                report.run_id, report.ids_remapped
+            );
+            for warning in report.warnings {
+                println!("warning: {warning}");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn export_command(project_path: &Path, format: &str, output: &Path) -> Result<()> {
+    let (project, _) = runner::load_project(project_path)?;
+    let database = runner::database_path()?;
+    let store = SqliteStore::open(&database)?;
+    let run = store
+        .list_runs()?
+        .into_iter()
+        .find(|run| run.project_name == project.project.name)
+        .context("no completed run for this project; run annotation first")?;
+    let annotations = store.list_annotations(run.id)?;
+    let first = annotations
+        .first()
+        .context("latest run has no annotations")?;
+    let project_root = project_path.parent().unwrap_or_else(|| Path::new("."));
+    let image_path = WalkDir::new(project_root.join(&project.dataset.root))
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(walkdir::DirEntry::into_path)
+        .find(|path| runner::is_supported_image(path))
+        .context("project has no image file")?;
+    let frame = annotagent_image_tools::load_image(&image_path, 40_000_000)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let relative_path = image_path
+        .strip_prefix(project_root)
+        .unwrap_or(&image_path)
+        .to_path_buf();
+    let snapshot = ProjectSnapshot {
+        schema: project,
+        images: vec![SnapshotImage {
+            id: first.image_id,
+            relative_path,
+            metadata: frame.metadata,
+        }],
+        annotations,
+    };
+    let exporter: Arc<dyn DatasetExporter> = match format {
+        "native" => Arc::new(NativeExporter),
+        "coco" => Arc::new(CocoExporter),
+        "yolo" | "yolo_detection" => Arc::new(YoloDetectionExporter),
+        "yolo_segmentation" => Arc::new(YoloSegmentationExporter),
+        "labelme" => Arc::new(LabelMeExporter),
+        other => bail!(
+            "unknown export format {other:?}; choose native, coco, yolo, yolo_segmentation, or labelme"
+        ),
+    };
+    let report = exporter
+        .export(annotagent_core::ExportRequest {
+            project: snapshot,
+            output: output.to_path_buf(),
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn doctor() -> Result<()> {
+    let settings = runner::load_settings(None)?;
+    let database = runner::database_path()?;
+    if let Some(parent) = database.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let store = SqliteStore::open(&database)?;
+    let skill = RoboCupSkill::new().map_err(|error| anyhow::anyhow!(error))?;
+    let project = Path::new("examples/robocup/project.yaml");
+    let project_status = if project.exists() {
+        runner::load_project(project)
+            .map(|_| "ok")
+            .unwrap_or("invalid")
+    } else {
+        "missing"
+    };
+    println!("config: ok (model={})", settings.provider.model);
+    println!(
+        "workspace: writable ({})",
+        std::env::current_dir()?.display()
+    );
+    println!("SQLite: ok ({} tables)", store.schema_tables()?.len());
+    println!("migrations: ok");
+    println!(
+        "skill: {} ({})",
+        skill.manifest().id,
+        skill.manifest().display_name
+    );
+    println!(
+        "provider key env {}: {}",
+        settings.provider.api_key_env,
+        if std::env::var_os(&settings.provider.api_key_env).is_some() {
+            "set"
+        } else {
+            "not set (mock mode remains available)"
+        }
+    );
+    println!("example project: {project_status}");
+    println!(
+        "web build: {}",
+        if Path::new("web/dist/index.html").exists() {
+            "present"
+        } else {
+            "missing (run npm --prefix web run build)"
+        }
+    );
+    Ok(())
+}
+
+async fn demo(name: &str) -> Result<()> {
+    if name != "robocup" {
+        bail!("unknown demo {name:?}; available demo: robocup");
+    }
+    println!("RoboCup AnnotAgent offline demo (deterministic Mock Provider)");
+    run_command(&RunArgs {
+        project: PathBuf::from("examples/robocup/project.yaml"),
+        provider: "mock".to_owned(),
+        config: None,
+        limit: Some(1),
+    })
+    .await
+}
+
+fn serve_command(_workspace: &Path, _port: u16, _open: bool) -> Result<()> {
+    bail!("web server support is not available in this build")
+}

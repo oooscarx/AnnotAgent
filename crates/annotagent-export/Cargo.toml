@@ -1,0 +1,21 @@
+[package]
+name = "annotagent-export"
+description = "Native, COCO, YOLO, and LabelMe exporters for AnnotAgent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+tempfile = "3"
+tokio.workspace = true
+
+[lints]
+workspace = true

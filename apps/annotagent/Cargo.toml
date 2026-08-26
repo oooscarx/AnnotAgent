@@ -1,0 +1,38 @@
+[package]
+name = "annotagent"
+description = "RoboCup AnnotAgent CLI, TUI, and server composition root"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "annotagent"
+path = "src/main.rs"
+
+[dependencies]
+annotagent-core = { path = "../../crates/annotagent-core" }
+annotagent-export = { path = "../../crates/annotagent-export" }
+annotagent-image-tools = { path = "../../crates/annotagent-image-tools" }
+annotagent-provider = { path = "../../crates/annotagent-provider" }
+annotagent-runtime = { path = "../../crates/annotagent-runtime" }
+annotagent-skill-robocup = { path = "../../crates/annotagent-skill-robocup" }
+annotagent-storage = { path = "../../crates/annotagent-storage" }
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+webbrowser.workspace = true
+
+[lints]
+workspace = true
+

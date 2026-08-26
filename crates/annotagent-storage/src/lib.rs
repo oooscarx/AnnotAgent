@@ -1,16 +1,17 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
-use std::{path::Path, sync::Mutex};
+use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
-    Annotation, AnnotationRevision, CorrectionRecord, LabelId, ProjectId, RunEvent, RunId,
-    RunStatus, TaskId, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, AnnotationValue, CorrectionRecord, LabelId, ProjectId,
+    RunEvent, RunId, RunStatus, TaskId, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
+use uuid::Uuid;
 
 const INITIAL_MIGRATION: &str = include_str!("../../../migrations/0001_initial.sql");
 
@@ -24,6 +25,52 @@ pub enum StorageError {
     Poisoned,
     #[error("run {0} was not found")]
     RunNotFound(RunId),
+    #[error("unsupported history schema version {0}")]
+    UnsupportedHistoryVersion(u32),
+    #[error("invalid stored enum value: {0}")]
+    InvalidEnum(String),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryRun {
+    pub id: RunId,
+    pub project_name: String,
+    pub skill_id: String,
+    pub provider: String,
+    pub model: String,
+    pub status: RunStatus,
+    pub project_schema_json: String,
+    pub terminal_reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryToolCall {
+    pub call_id: ToolCallId,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub result: Option<ToolResult>,
+    pub error: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryDocument {
+    pub schema_version: u32,
+    pub run: HistoryRun,
+    pub events: Vec<RunEvent>,
+    pub annotations: Vec<Annotation>,
+    pub revisions: Vec<AnnotationRevision>,
+    pub usage: Vec<UsageRecord>,
+    pub tool_calls: Vec<HistoryToolCall>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryImportReport {
+    pub run_id: RunId,
+    pub ids_remapped: bool,
+    pub warnings: Vec<String>,
 }
 
 pub struct SqliteStore {
@@ -129,6 +176,261 @@ impl SqliteStore {
         })
     }
 
+    pub fn list_runs(&self) -> Result<Vec<HistoryRun>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, project_name, skill_id, provider, model, status,
+                        project_schema_json, terminal_reason, created_at, updated_at
+                 FROM runs ORDER BY created_at DESC",
+            )?;
+            statement
+                .query_map([], history_run_from_row)?
+                .map(|row| row.map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    pub fn history(&self, run_id: RunId) -> Result<HistoryDocument, StorageError> {
+        self.with_connection(|connection| {
+            let run = connection
+                .query_row(
+                    "SELECT id, project_name, skill_id, provider, model, status,
+                            project_schema_json, terminal_reason, created_at, updated_at
+                     FROM runs WHERE id = ?1",
+                    [run_id.to_string()],
+                    history_run_from_row,
+                )
+                .optional()?
+                .ok_or(StorageError::RunNotFound(run_id))?;
+            let events = query_json_rows::<RunEvent>(
+                connection,
+                "SELECT event_json FROM run_events WHERE run_id = ?1 ORDER BY sequence",
+                run_id,
+            )?;
+            let annotations = query_json_rows::<Annotation>(
+                connection,
+                "SELECT annotation_json FROM annotations WHERE run_id = ?1 ORDER BY created_at",
+                run_id,
+            )?;
+            let revisions = query_json_rows::<AnnotationRevision>(
+                connection,
+                "SELECT r.revision_json FROM annotation_revisions r
+                 JOIN annotations a ON a.id = r.annotation_id
+                 WHERE a.run_id = ?1 ORDER BY r.created_at",
+                run_id,
+            )?;
+            let usage = query_json_rows::<UsageRecord>(
+                connection,
+                "SELECT usage_json FROM usage_records WHERE run_id = ?1 ORDER BY id",
+                run_id,
+            )?;
+            let mut statement = connection.prepare(
+                "SELECT call_id, name, arguments_json, result_json, error, created_at
+                 FROM tool_calls WHERE run_id = ?1 ORDER BY created_at",
+            )?;
+            let tool_calls = statement
+                .query_map([run_id.to_string()], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?
+                .map(|row| {
+                    let (call_id, name, arguments, result, error, created_at) = row?;
+                    Ok(HistoryToolCall {
+                        call_id: ToolCallId::new(call_id),
+                        name,
+                        arguments: sanitize_trace_value(&serde_json::from_str(&arguments)?),
+                        result: result
+                            .map(|value| serde_json::from_str(&value))
+                            .transpose()?,
+                        error,
+                        created_at,
+                    })
+                })
+                .collect::<Result<Vec<_>, StorageError>>()?;
+            Ok(HistoryDocument {
+                schema_version: annotagent_core::HISTORY_SCHEMA_VERSION,
+                run,
+                events,
+                annotations,
+                revisions,
+                usage,
+                tool_calls,
+            })
+        })
+    }
+
+    pub fn export_history(&self, run_id: RunId, path: &Path) -> Result<(), StorageError> {
+        let bytes = serde_json::to_vec_pretty(&self.history(run_id)?)?;
+        std::fs::write(path, bytes)
+            .map_err(|error| StorageError::Serialization(serde_json::Error::io(error)))
+    }
+
+    pub fn import_history(
+        &self,
+        mut document: HistoryDocument,
+    ) -> Result<HistoryImportReport, StorageError> {
+        if document.schema_version != annotagent_core::HISTORY_SCHEMA_VERSION {
+            return Err(StorageError::UnsupportedHistoryVersion(
+                document.schema_version,
+            ));
+        }
+        self.with_connection(|connection| {
+            let original_run_id = document.run.id;
+            let exists: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?1)",
+                [original_run_id.to_string()],
+                |row| row.get(0),
+            )?;
+            let target_run_id = if exists { RunId::new() } else { original_run_id };
+            let ids_remapped = target_run_id != original_run_id;
+            document.run.id = target_run_id;
+            let mut annotation_ids = BTreeMap::new();
+            if ids_remapped {
+                for annotation in &mut document.annotations {
+                    let replacement = annotagent_core::AnnotationId::new();
+                    annotation_ids.insert(annotation.id, replacement);
+                    annotation.id = replacement;
+                }
+                for annotation in &mut document.annotations {
+                    if let AnnotationValue::Relation { source, target, .. } = &mut annotation.value {
+                        if let Some(replacement) = annotation_ids.get(source) {
+                            *source = *replacement;
+                        }
+                        if let Some(replacement) = annotation_ids.get(target) {
+                            *target = *replacement;
+                        }
+                    }
+                }
+                let mut revision_ids = BTreeMap::new();
+                for revision in &mut document.revisions {
+                    let replacement = annotagent_core::AnnotationRevisionId::new();
+                    revision_ids.insert(revision.revision_id, replacement);
+                    revision.revision_id = replacement;
+                    if let Some(annotation_id) = annotation_ids.get(&revision.annotation_id) {
+                        revision.annotation_id = *annotation_id;
+                    }
+                }
+                for revision in &mut document.revisions {
+                    if let Some(parent) = revision.parent_revision_id
+                        && let Some(replacement) = revision_ids.get(&parent)
+                    {
+                        revision.parent_revision_id = Some(*replacement);
+                    }
+                }
+            }
+            for event in &mut document.events {
+                event.run_id = target_run_id;
+                if ids_remapped {
+                    event.event_id = annotagent_core::EventId::new();
+                }
+            }
+            let transaction = connection.unchecked_transaction()?;
+            insert_history_run(&transaction, &document.run)?;
+            for event in &document.events {
+                transaction.execute(
+                    "INSERT INTO run_events
+                     (event_id, run_id, event_kind, event_json, occurred_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        event.event_id.to_string(),
+                        target_run_id.to_string(),
+                        enum_string(event.kind)?,
+                        serde_json::to_string(event)?,
+                        event.occurred_at.to_rfc3339()
+                    ],
+                )?;
+            }
+            for annotation in &document.annotations {
+                transaction.execute(
+                    "INSERT INTO annotations
+                     (id, run_id, image_id, task_id, label, review_status, annotation_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        annotation.id.to_string(),
+                        target_run_id.to_string(),
+                        annotation.image_id.to_string(),
+                        annotation.task_id.as_str(),
+                        annotation.label.as_ref().map(LabelId::as_str),
+                        enum_string(annotation.review_status)?,
+                        serde_json::to_string(annotation)?,
+                        annotation.created_at.to_rfc3339()
+                    ],
+                )?;
+            }
+            for revision in &document.revisions {
+                transaction.execute(
+                    "INSERT INTO annotation_revisions
+                     (revision_id, annotation_id, parent_revision_id, revision_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        revision.revision_id.to_string(),
+                        revision.annotation_id.to_string(),
+                        revision.parent_revision_id.map(|id| id.to_string()),
+                        serde_json::to_string(revision)?,
+                        revision.created_at.to_rfc3339()
+                    ],
+                )?;
+            }
+            for usage in &document.usage {
+                transaction.execute(
+                    "INSERT INTO usage_records
+                     (run_id, usage_json, input_tokens, output_tokens, total_tokens, cost, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        target_run_id.to_string(),
+                        serde_json::to_string(usage)?,
+                        usage.tokens.input_tokens.map(sqlite_u64),
+                        usage.tokens.output_tokens.map(sqlite_u64),
+                        usage.tokens.total_tokens.map(sqlite_u64),
+                        usage.cost.total.to_string(),
+                        usage.completed_at.to_rfc3339()
+                    ],
+                )?;
+            }
+            for call in &document.tool_calls {
+                let call_id = if ids_remapped {
+                    ToolCallId::new(format!("imported-{}", Uuid::new_v4()))
+                } else {
+                    call.call_id.clone()
+                };
+                transaction.execute(
+                    "INSERT INTO tool_calls
+                     (call_id, run_id, name, arguments_json, result_json, error, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        call_id.as_str(),
+                        target_run_id.to_string(),
+                        call.name,
+                        serde_json::to_string(&sanitize_trace_value(&call.arguments))?,
+                        call.result.as_ref().map(serde_json::to_string).transpose()?,
+                        call.error,
+                        call.created_at
+                    ],
+                )?;
+            }
+            transaction.commit()?;
+            let warnings = if document.annotations.is_empty() {
+                Vec::new()
+            } else {
+                vec![
+                    "history import preserves image IDs and hashes but does not restore missing image files"
+                        .to_owned(),
+                ]
+            };
+            Ok(HistoryImportReport {
+                run_id: target_run_id,
+                ids_remapped,
+                warnings,
+            })
+        })
+    }
+
     pub fn save_correction(&self, record: &CorrectionRecord) -> Result<(), StorageError> {
         self.with_connection(|connection| {
             connection.execute(
@@ -163,6 +465,110 @@ impl SqliteStore {
 
 fn json<T: serde::Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(|error| error.to_string())
+}
+
+fn history_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRun> {
+    let id = row.get::<_, String>(0)?.parse().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let status_text = row.get::<_, String>(5)?;
+    let status =
+        serde_json::from_value(serde_json::Value::String(status_text)).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    Ok(HistoryRun {
+        id,
+        project_name: row.get(1)?,
+        skill_id: row.get(2)?,
+        provider: row.get(3)?,
+        model: row.get(4)?,
+        status,
+        project_schema_json: row.get(6)?,
+        terminal_reason: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn query_json_rows<T: serde::de::DeserializeOwned>(
+    connection: &Connection,
+    sql: &str,
+    run_id: RunId,
+) -> Result<Vec<T>, StorageError> {
+    let mut statement = connection.prepare(sql)?;
+    statement
+        .query_map([run_id.to_string()], |row| row.get::<_, String>(0))?
+        .map(|row| Ok(serde_json::from_str(&row?)?))
+        .collect()
+}
+
+fn enum_string<T: serde::Serialize>(value: T) -> Result<String, StorageError> {
+    serde_json::to_value(value)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| StorageError::InvalidEnum("enum did not serialize as a string".to_owned()))
+}
+
+fn insert_history_run(
+    transaction: &rusqlite::Transaction<'_>,
+    run: &HistoryRun,
+) -> Result<(), StorageError> {
+    transaction.execute(
+        "INSERT INTO runs
+         (id, project_name, skill_id, provider, model, status, project_schema_json,
+          terminal_reason, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            run.id.to_string(),
+            run.project_name,
+            run.skill_id,
+            run.provider,
+            run.model,
+            enum_string(run.status)?,
+            run.project_schema_json,
+            run.terminal_reason,
+            run.created_at,
+            run.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+fn sanitize_trace_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| {
+                    let lower = key.to_ascii_lowercase();
+                    if lower.contains("authorization")
+                        || lower.contains("api_key")
+                        || lower.contains("secret")
+                    {
+                        (
+                            key.clone(),
+                            serde_json::Value::String("[REDACTED]".to_owned()),
+                        )
+                    } else if lower.contains("base64") || lower == "data_url" {
+                        (
+                            key.clone(),
+                            serde_json::Value::String("[BINARY OMITTED]".to_owned()),
+                        )
+                    } else {
+                        (key.clone(), sanitize_trace_value(value))
+                    }
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(sanitize_trace_value).collect())
+        }
+        _ => value.clone(),
+    }
 }
 
 #[async_trait]

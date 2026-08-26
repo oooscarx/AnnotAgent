@@ -260,4 +260,36 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
         store.run_status(run_id).expect("run status"),
         annotagent_core::RunStatus::Completed
     );
+
+    let history = store.history(run_id).expect("versioned history");
+    assert_eq!(
+        history.schema_version,
+        annotagent_core::HISTORY_SCHEMA_VERSION
+    );
+    assert_eq!(history.annotations.len(), 1);
+    assert_eq!(history.usage.len(), 1);
+    assert_eq!(history.tool_calls.len(), 1);
+    let history_directory = tempfile::tempdir().expect("history directory");
+    let history_path = history_directory.path().join("run.json");
+    store
+        .export_history(run_id, &history_path)
+        .expect("history export");
+    let serialized = std::fs::read_to_string(&history_path).expect("history file");
+    assert!(!serialized.contains("Authorization"));
+    assert!(!serialized.contains("data:image"));
+
+    let imported = store
+        .import_history(history)
+        .expect("history import with ID collision");
+    assert!(imported.ids_remapped);
+    assert_ne!(imported.run_id, run_id);
+    assert_eq!(
+        store
+            .history(imported.run_id)
+            .expect("imported history")
+            .annotations
+            .len(),
+        1
+    );
+    assert!(!imported.warnings.is_empty());
 }

@@ -262,7 +262,15 @@ pub struct CorrectionRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSnapshot {
     pub schema: ProjectSchema,
+    pub images: Vec<SnapshotImage>,
     pub annotations: Vec<Annotation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotImage {
+    pub id: ImageId,
+    pub relative_path: PathBuf,
+    pub metadata: crate::ImageMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

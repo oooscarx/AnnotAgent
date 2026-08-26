@@ -1,6 +1,8 @@
 [workspace]
 members = [
+    "apps/annotagent",
     "crates/annotagent-core",
+    "crates/annotagent-export",
     "crates/annotagent-image-tools",
     "crates/annotagent-provider",
     "crates/annotagent-runtime",
@@ -20,8 +22,11 @@ anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = "0.29"
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.38", features = ["bundled", "chrono", "uuid"] }
 rust_decimal = { version = "1", features = ["serde"] }
@@ -33,8 +38,12 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
+toml = "0.9"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
+webbrowser = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

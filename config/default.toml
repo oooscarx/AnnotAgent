@@ -1,0 +1,31 @@
+[provider]
+endpoint = "https://example.invalid/v1"
+api_key_env = "ANNOTAGENT_API_KEY"
+model = "vision-model"
+protocol = "chat_completions"
+request_timeout_seconds = 120
+max_output_tokens = 4096
+temperature = 0.1
+reasoning_mode = "medium"
+supports_tool_calls = true
+supports_json_schema = true
+custom_headers = {}
+extra_request_fields = {}
+max_retries = 2
+
+[pricing]
+currency = "USD"
+input_per_million_tokens = "1.0"
+output_per_million_tokens = "4.0"
+per_image = "0"
+per_request = "0"
+per_credit = "0"
+
+[budget]
+max_input_tokens = 200000
+max_output_tokens = 50000
+max_total_tokens = 250000
+max_cost = "2.0"
+max_requests = 500
+max_images = 1000
+
