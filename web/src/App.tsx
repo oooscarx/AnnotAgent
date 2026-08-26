@@ -1,0 +1,294 @@
+import { useEffect, useState } from "react";
+import { api, subscribeEvents } from "./api";
+import { AnnotationCanvas } from "./components/AnnotationCanvas";
+import type {
+  Annotation,
+  HistoryRun,
+  ImageItem,
+  ProjectSummary,
+  ReviewItem,
+  RunEvent,
+  SkillDetail,
+} from "./types";
+
+type Page = "dashboard" | "project" | "review" | "skills" | "settings";
+
+export function App() {
+  const [page, setPage] = useState<Page>("dashboard");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [runs, setRuns] = useState<HistoryRun[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [events, setEvents] = useState<RunEvent[]>([]);
+  const [error, setError] = useState("");
+
+  const refresh = () =>
+    api.dashboard().then((data) => {
+      setProjects(data.projects);
+      setRuns(data.runs);
+      if (!projectId && data.projects[0]) setProjectId(data.projects[0].id);
+    }).catch((reason: Error) => setError(reason.message));
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+  useEffect(() => subscribeEvents((event) => {
+    setEvents((previous) => [...previous.slice(-149), event]);
+    if (["run_completed", "review_requested", "run_failed"].includes(event.kind)) refresh();
+  }), []);
+
+  const selectProject = (id: string) => {
+    setProjectId(id);
+    setPage("project");
+  };
+  const selectedProject = projects.find((project) => project.id === projectId);
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <a className="brand" href="#dashboard" onClick={() => setPage("dashboard")}>
+          <span className="brand-mark">RA</span>
+          <span><strong>RoboCup</strong><small>AnnotAgent</small></span>
+        </a>
+        <nav>
+          <Nav icon="⌂" active={page === "dashboard"} onClick={() => setPage("dashboard")}>Dashboard</Nav>
+          <Nav icon="◫" active={page === "project"} onClick={() => setPage("project")}>Project</Nav>
+          <Nav icon="✓" active={page === "review"} onClick={() => setPage("review")}>Review</Nav>
+          <Nav icon="◇" active={page === "skills"} onClick={() => setPage("skills")}>Skills</Nav>
+          <Nav icon="⚙" active={page === "settings"} onClick={() => setPage("settings")}>Settings</Nav>
+        </nav>
+        <div className="sidebar-foot">
+          <span className="live-dot" /> SSE connected
+          <small>{events.at(-1)?.kind.replaceAll("_", " ") ?? "waiting for events"}</small>
+        </div>
+      </aside>
+      <main>
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">Perception workspace</span>
+            <h1>{page === "dashboard" ? "Operations overview" : page[0].toUpperCase() + page.slice(1)}</h1>
+          </div>
+          <div className="project-switch">
+            <span>Active project</span>
+            <select value={projectId} onChange={(event) => selectProject(event.target.value)}>
+              <option value="">No project</option>
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </div>
+        </header>
+        {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")}>Dismiss</button></div>}
+        {page === "dashboard" && <Dashboard projects={projects} runs={runs} onSelect={selectProject} onRefresh={refresh} onError={setError} />}
+        {page === "project" && <ProjectPage project={selectedProject} events={events} onError={setError} />}
+        {page === "review" && <ReviewPage projectId={projectId} projects={projects} events={events} onError={setError} />}
+        {page === "skills" && <SkillsPage onError={setError} />}
+        {page === "settings" && <SettingsPage onError={setError} />}
+      </main>
+    </div>
+  );
+}
+
+function Nav({ icon, active, onClick, children }: { icon: string; active: boolean; onClick: () => void; children: string }) {
+  return <button className={active ? "active" : ""} onClick={onClick}><span>{icon}</span>{children}</button>;
+}
+
+function Dashboard({
+  projects,
+  runs,
+  onSelect,
+  onRefresh,
+  onError,
+}: {
+  projects: ProjectSummary[];
+  runs: HistoryRun[];
+  onSelect: (id: string) => void;
+  onRefresh: () => void;
+  onError: (value: string) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const completed = runs.filter((run) => run.status === "completed").length;
+  const reviews = runs.filter((run) => run.status === "awaiting_review").length;
+  return (
+    <section className="page-stack">
+      <div className="hero-panel">
+        <div>
+          <span className="kicker">LOCAL-FIRST ANNOTATION CONTROL PLANE</span>
+          <h2>Turn model proposals into<br /><em>defensible ground truth.</em></h2>
+          <p>One auditable path from image evidence through tools, deterministic checks, pixel refinement, and human correction.</p>
+        </div>
+        <div className="hero-actions">
+          <button className="primary" onClick={() => setCreating(true)}>New project</button>
+          <button onClick={onRefresh}>Refresh state</button>
+        </div>
+      </div>
+      <div className="metrics-grid">
+        <Metric label="Projects" value={projects.length} detail={`${projects.reduce((sum, project) => sum + project.image_count, 0)} images registered`} />
+        <Metric label="Runs completed" value={completed} detail={`${runs.length} total executions`} />
+        <Metric label="Awaiting review" value={reviews} detail="Human attention queue" accent={reviews > 0} />
+        <Metric label="Runtime link" value="LIVE" detail="SSE · SQLite · Axum" live />
+      </div>
+      <div className="split-grid">
+        <Panel title="Projects" eyebrow="Workspace inventory">
+          <div className="table-list">
+            {projects.length === 0 && <Empty title="No projects yet" detail="Create one with validated project YAML." />}
+            {projects.map((project) => (
+              <button className="project-row" key={project.id} onClick={() => onSelect(project.id)}>
+                <span className="project-avatar">{project.name.slice(0, 2).toUpperCase()}</span>
+                <span><strong>{project.name}</strong><small>{project.skill_id} · {project.image_count} images</small></span>
+                <Status status={project.recent_run?.status ?? "pending"} />
+                <b>→</b>
+              </button>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Recent runs" eyebrow="Auditable history">
+          <div className="run-list">
+            {runs.slice(0, 6).map((run) => (
+              <div key={run.id}>
+                <span className="event-rail" />
+                <span><strong>{run.project_name}</strong><small>{new Date(run.created_at).toLocaleString()} · {run.model}</small></span>
+                <Status status={run.status} />
+              </div>
+            ))}
+            {runs.length === 0 && <Empty title="No runs recorded" detail="A Mock run will appear here immediately." />}
+          </div>
+        </Panel>
+      </div>
+      {creating && <CreateProject onClose={() => setCreating(false)} onCreated={() => { setCreating(false); onRefresh(); }} onError={onError} />}
+    </section>
+  );
+}
+
+function ProjectPage({ project, events, onError }: { project?: ProjectSummary; events: RunEvent[]; onError: (value: string) => void }) {
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [activeRun, setActiveRun] = useState("");
+  const [filter, setFilter] = useState("all");
+  useEffect(() => {
+    if (project) api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
+  }, [project?.id]);
+  const runEvents = events.filter((event) => event.run_id === activeRun);
+  const usage = [...runEvents].reverse().find((event) => event.kind === "usage_updated");
+  const lastTask = [...runEvents].reverse().find((event) => event.task_id)?.task_id;
+  const latestState = [...runEvents].reverse().find((event) => event.payload.type === "state");
+  const visibleStatus = (latestState?.payload.data.to as string | undefined) ?? (activeRun ? "running" : "pending");
+  if (!project) return <Empty title="Select a project" detail="Choose a workspace project from the switcher." />;
+  const start = () => api.startRun(project.id).then((run) => setActiveRun(run.run_id)).catch((error: Error) => onError(error.message));
+  const control = (action: "pause" | "resume" | "cancel") => activeRun && api.control(activeRun, action).catch((error: Error) => onError(error.message));
+  return (
+    <section className="page-stack">
+      <div className="toolbar-panel">
+        <div><span className="eyebrow">{project.skill_id} skill</span><h2>{project.name}</h2><p>{project.image_count} images · deterministic quality gates enabled</p></div>
+        <div className="button-row">
+          <button className="primary" onClick={start}>Start batch</button>
+          <button onClick={() => control("pause")}>Pause</button>
+          <button onClick={() => control("resume")}>Resume</button>
+          <button className="danger" onClick={() => control("cancel")}>Cancel</button>
+        </div>
+      </div>
+      <div className="filters">
+        {["all", "unprocessed", "auto accepted", "needs review", "confirmed", "failed"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>)}
+      </div>
+      {activeRun && <div className="run-progress">
+        <div><span className="live-dot" /><strong>Run {activeRun.slice(0, 8)}</strong><small>{lastTask ?? "starting"} · {runEvents.at(-1)?.kind.replaceAll("_", " ") ?? "queued"}</small></div>
+        <div className="progress-track"><i style={{ width: `${Math.min(100, runEvents.length * 3)}%` }} /></div>
+        <pre>{usage ? JSON.stringify(usage.payload.data, null, 2) : "usage pending"}</pre>
+      </div>}
+      <div className="image-grid">
+        {images.map((image) => <article key={image.index}><img src={image.url} alt={image.name} /><div><span><strong>{image.name}</strong><small>Image {image.index + 1}</small></span><Status status={visibleStatus} /></div></article>)}
+        {images.length === 0 && <Empty title="No images" detail="Import images with the CLI or controlled workspace import API." />}
+      </div>
+    </section>
+  );
+}
+
+function ReviewPage({ projectId, projects, events, onError }: { projectId: string; projects: ProjectSummary[]; events: RunEvent[]; onError: (value: string) => void }) {
+  const [reviews, setReviews] = useState<ReviewItem[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [draft, setDraft] = useState<Annotation>();
+  const [reason, setReason] = useState("");
+  const [reasonOptions, setReasonOptions] = useState<string[]>([]);
+  const [note, setNote] = useState("");
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const selected = reviews.find((review) => review.id === selectedId) ?? reviews[0];
+  const refresh = () => api.reviews().then((value) => { setReviews(value.reviews); if (!selectedId && value.reviews[0]) setSelectedId(value.reviews[0].id); }).catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    void refresh();
+    void api.skills().then((skills) => {
+      const options = skills.find((skill) => skill.id === projects.find((project) => project.id === projectId)?.skill_id)?.correction_taxonomy
+        ?? skills[0]?.correction_taxonomy
+        ?? [];
+      setReasonOptions(options);
+      setReason((current) => current || options[0] || "");
+    }).catch((error: Error) => onError(error.message));
+  }, []);
+  useEffect(() => { if (projectId) api.images(projectId).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message)); }, [projectId]);
+  useEffect(() => setDraft(selected?.annotation), [selected?.id]);
+  const save = () => draft && api.revise(draft, reason).then(refresh).catch((error: Error) => onError(error.message));
+  const decide = (decision: "accept" | "reject" | "delete") => {
+    const effectiveProject = projectId || projects[0]?.id;
+    if (!selected || !effectiveProject) return onError("Select a project before recording a review decision.");
+    api.decide(selected.id, effectiveProject, decision, reason, note).then(refresh).catch((error: Error) => onError(error.message));
+  };
+  return (
+    <section className="review-layout">
+      <aside className="review-queue panel"><span className="eyebrow">Human attention</span><h2>Review queue <b>{reviews.length}</b></h2>
+        <div className="queue-items">{reviews.map((review) => <button key={review.id} className={selected?.id === review.id ? "active" : ""} onClick={() => setSelectedId(review.id)}><span>{review.annotation.label?.slice(0, 2).toUpperCase() ?? "?"}</span><span><strong>{review.annotation.label ?? review.annotation.task_id}</strong><small>{review.annotation.task_id} · {Math.round((review.annotation.confidence ?? 0) * 100)}%</small></span></button>)}</div>
+        {reviews.length === 0 && <Empty title="Queue is clear" detail="Low confidence or conflicting evidence will route candidates here." />}
+      </aside>
+      <div className="review-center">
+        <AnnotationCanvas imageUrl={images[0]?.url} annotations={draft ? [draft] : []} selectedId={draft?.id} onSelect={setSelectedId} onChange={setDraft} />
+        <Trace events={selected ? events.filter((event) => event.run_id === selected.run_id) : events.slice(-12)} />
+      </div>
+      <aside className="inspector panel"><span className="eyebrow">Annotation evidence</span><h2>{draft?.label ?? "No selection"}</h2>
+        {draft && <>
+          <label>Label<input value={draft.label ?? ""} onChange={(event) => setDraft({ ...draft, label: event.target.value })} /></label>
+          <div className="fact-grid"><span>Confidence<strong>{Math.round((draft.confidence ?? 0) * 100)}%</strong></span><span>Source<strong>{draft.source}</strong></span><span>Task<strong>{draft.task_id}</strong></span><span>Status<strong>{draft.review_status}</strong></span></div>
+          <label>Correction reason<select value={reason} onChange={(event) => setReason(event.target.value)}>{reasonOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label>Reviewer note<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What changed, and why?" /></label>
+          <button onClick={save}>Save geometry revision</button>
+          <div className="decision-row"><button className="primary" onClick={() => decide("accept")}>Accept</button><button onClick={() => decide("reject")}>Reject</button><button className="danger" onClick={() => decide("delete")}>Delete</button></div>
+          <button className="text-button" onClick={() => api.revisions(draft.id).then((value) => alert(JSON.stringify(value.revisions, null, 2)))}>View revision history →</button>
+        </>}
+      </aside>
+    </section>
+  );
+}
+
+function Trace({ events }: { events: RunEvent[] }) {
+  return <div className="trace-panel panel"><div><span className="eyebrow">No hidden chain-of-thought</span><h3>Agent trace</h3></div><div className="trace-strip">{events.slice(-10).map((event) => <article key={event.event_id}><span>{event.kind.includes("model") ? "M" : event.kind.includes("tool") ? "T" : event.kind.includes("validation") ? "V" : "·"}</span><div><strong>{event.kind.replaceAll("_", " ")}</strong><small>{event.task_id ?? "run"} · {new Date(event.occurred_at).toLocaleTimeString()}</small></div></article>)}</div></div>;
+}
+
+function SkillsPage({ onError }: { onError: (value: string) => void }) {
+  const [skills, setSkills] = useState<SkillDetail[]>([]);
+  useEffect(() => { api.skills().then(setSkills).catch((error: Error) => onError(error.message)); }, []);
+  return <section className="page-stack"><div className="boundary-note"><span>CORE</span><i>DomainSkill trait boundary</i><span>SKILL</span></div>{skills.map((skill) => <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={skill.id}><p className="lede">{skill.description}</p><div className="skill-columns"><TagGroup title="Task DAG" values={skill.tasks.map((task) => task.id)} /><TagGroup title="Registered tools" values={skill.tools} /><TagGroup title="Validators" values={skill.validators} /><TagGroup title="Refiners" values={skill.refiners} /><TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} /><TagGroup title="On-demand resources" values={skill.resources} /></div></Panel>)}</section>;
+}
+
+function SettingsPage({ onError }: { onError: (value: string) => void }) {
+  const [settings, setSettings] = useState<Record<string, any>>();
+  const [key, setKey] = useState("");
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { api.settings().then(setSettings).catch((error: Error) => onError(error.message)); }, []);
+  if (!settings) return <Empty title="Loading settings" detail="Reading process-safe provider metadata." />;
+  const provider = settings.provider ?? {};
+  const pricing = settings.pricing ?? {};
+  const budget = settings.budget ?? {};
+  const setProvider = (field: string, value: string | number) => setSettings({ ...settings, provider: { ...provider, [field]: value } });
+  const save = () => api.saveSettings({ ...settings, temporary_api_key: key || undefined }).then((value) => { setSettings(value); setKey(""); setSaved(true); }).catch((error: Error) => onError(error.message));
+  return <section className="settings-grid"><Panel title="Vision model provider" eyebrow="OpenAI-compatible"><div className="form-grid"><label>Endpoint<input value={provider.endpoint ?? ""} onChange={(event) => setProvider("endpoint", event.target.value)} /></label><label>Model<input value={provider.model ?? ""} onChange={(event) => setProvider("model", event.target.value)} /></label><label>API key environment<input value={provider.api_key_env ?? ""} onChange={(event) => setProvider("api_key_env", event.target.value)} /></label><label>Protocol<select value={provider.protocol ?? "chat_completions"} onChange={(event) => setProvider("protocol", event.target.value)}><option value="chat_completions">Chat Completions</option></select></label><label>Temperature<input type="number" step="0.05" value={provider.temperature ?? 0.1} onChange={(event) => setProvider("temperature", Number(event.target.value))} /></label><label>Timeout seconds<input type="number" value={provider.request_timeout_seconds ?? 120} onChange={(event) => setProvider("request_timeout_seconds", Number(event.target.value))} /></label></div><label>Temporary API key<input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.temporary_api_key_configured ? "Configured for this process" : "Never written to SQLite or trace"} /></label></Panel><Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting"><div className="json-settings"><div><h3>Pricing</h3>{Object.entries(pricing).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, pricing: { ...pricing, [name]: event.target.value } })} /></label>)}</div><div><h3>Budget</h3>{Object.entries(budget).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, budget: { ...budget, [name]: name === "max_cost" ? event.target.value : Number(event.target.value) } })} /></label>)}</div></div></Panel><div className="settings-save"><span>{saved ? "Saved in the current service process." : "Secrets remain process-only."}</span><button className="primary" onClick={save}>Save settings</button></div></section>;
+}
+
+function CreateProject({ onClose, onCreated, onError }: { onClose: () => void; onCreated: () => void; onError: (value: string) => void }) {
+  const [id, setId] = useState("robocup-demo");
+  const [yaml, setYaml] = useState("");
+  useEffect(() => {
+    void api.skills()
+      .then((skills) => setYaml(skills[0]?.project_template ?? ""))
+      .catch((error: Error) => onError(error.message));
+  }, []);
+  return <div className="modal-backdrop"><div className="modal"><span className="eyebrow">Validated project schema</span><h2>Create project</h2><label>Workspace ID<input value={id} onChange={(event) => setId(event.target.value)} /></label><label>project.yaml<textarea className="yaml-editor" value={yaml} onChange={(event) => setYaml(event.target.value)} /></label><div className="button-row"><button onClick={onClose}>Cancel</button><button className="primary" onClick={() => api.createProject(id, yaml).then(onCreated).catch((error: Error) => onError(error.message))}>Validate & create</button></div></div></div>;
+}
+
+function Panel({ title, eyebrow, children }: { title: string; eyebrow: string; children: React.ReactNode }) { return <section className="panel"><span className="eyebrow">{eyebrow}</span><h2>{title}</h2>{children}</section>; }
+function Metric({ label, value, detail, accent, live }: { label: string; value: string | number; detail: string; accent?: boolean; live?: boolean }) { return <article className={`metric ${accent ? "accent" : ""}`}><span>{label}{live && <i className="live-dot" />}</span><strong>{value}</strong><small>{detail}</small></article>; }
+function Status({ status }: { status: string }) { return <span className={`status status-${status}`}>{status.replaceAll("_", " ")}</span>; }
+function Empty({ title, detail }: { title: string; detail: string }) { return <div className="empty"><span>◎</span><strong>{title}</strong><small>{detail}</small></div>; }
+function TagGroup({ title, values }: { title: string; values: string[] }) { return <div><h3>{title}</h3><div className="tags">{values.map((value) => <span key={value}>{value}</span>)}</div></div>; }
