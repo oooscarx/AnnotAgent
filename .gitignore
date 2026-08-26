@@ -1,0 +1,10 @@
+/target/
+/web/node_modules/
+/web/dist/
+/.env
+/workspace/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+
