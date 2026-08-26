@@ -4,15 +4,15 @@
 
 The repository started as an empty directory on 2026-08-26. There was no existing source code or Git history to preserve. The implementation follows the course recommendation: land a working vertical slice first, then deepen the RoboCup-specific behavior and interfaces.
 
-## Stages
+## Delivered stages
 
-1. Define the Rust workspace, checked geometry and annotation models, project schema, extension traits, registries, and a `DummySkill` integration test.
-2. Run one image and one task through a real model/tool/validation/commit loop with a deterministic mock provider, persisted events, and usage.
-3. Add the RoboCup task DAG, field containment, field-line pixel refinement, ball hard-negative detection, team-color evidence, and correction-memory influence.
-4. Add durable history, revision records, budgets, run state transitions, pause/resume/cancel, and export formats.
-5. Add the CLI and a compact Ratatui interface backed by the same application service.
-6. Add the Axum API, SSE event stream, and React/TypeScript review GUI.
-7. Generate an offline synthetic demo, update the design documentation, and execute every applicable acceptance command.
+1. Defined the Rust workspace, checked geometry and annotation models, project schema, extension traits, registries, and a `DummySkill` integration test.
+2. Ran the first vertical model/tool/validation/commit loop with deterministic Mock, persisted events, SQLite and usage.
+3. Added the RoboCup DAG, field containment, field-line pixel refinement, ball hard negatives, team-color evidence, correction-memory influence, and two vertical integration tests.
+4. Added durable history/revisions, budgets, state control, history round-trip and five explicit dataset export formats.
+5. Added the CLI and Ratatui interface over a shared application service.
+6. Added the Axum API, live SSE, process-only temporary provider key, and React/TypeScript review GUI.
+7. Added bounded multi-image CLI coordination, an offline two-case demo, course documentation, HTTP vertical tests, real-provider smoke evidence, and full acceptance checks.
 
 ## Architectural decisions
 
@@ -27,4 +27,3 @@ The repository started as an empty directory on 2026-08-26. There was no existin
 - The remote URL is configured exactly as requested (`git@github.com/AnnotAgent.git`). Git accepts it as a remote string; GitHub may still require an owner-qualified path before pushing.
 - The mock provider is the default for tests and classroom demos so no API key, GPU, or external service is needed.
 - A workspace directory is a trust boundary. External images are copied into it through controlled import rather than served from arbitrary paths.
-

@@ -1,28 +1,74 @@
 # Course Requirements Matrix
 
-This is the initial traceability matrix. File links and exact verification commands are updated as implementation stages land.
+This matrix maps the course [requirements](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/), [quick start](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/quick-start/), and [architecture guidance](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/agent-architecture/) to concrete code and commands.
 
 ## R1 — Rust core logic
 
-Planned evidence: domain-neutral data model and contracts in `annotagent-core`; orchestration and state transitions in `annotagent-runtime`; deterministic RoboCup algorithms in `annotagent-skill-robocup`; SQLite repositories and Axum application service in Rust.
+Evidence:
 
-## R2 — User interface
+- checked domain model and extension contracts: `crates/annotagent-core/src`;
+- real model/tool/validator/refiner loop and state control: `crates/annotagent-runtime/src`;
+- deterministic RoboCup algorithms: `crates/annotagent-skill-robocup/src`;
+- SQLite transactions and repositories: `crates/annotagent-storage/src/lib.rs`;
+- shared application service and Axum routes: `crates/annotagent-application`, `crates/annotagent-server`.
 
-Planned evidence: a Ratatui TUI and a React/Vite Web GUI, both invoking the same Rust application service and displaying results and trace events.
+Verify:
+
+```bash
+cargo test -p annotagent-core
+cargo test -p annotagent-runtime --test skill_extension
+cargo test -p annotagent-storage --test vertical_loop
+```
+
+## R2 — TUI and Web GUI
+
+Ratatui/crossterm TUI is in `apps/annotagent/src/tui.rs`. React/TypeScript/Vite pages and SVG editor are in `web/src`. Both call the same `LocalApplication` behavior; React does not implement validation or state decisions.
+
+```bash
+cargo run -p annotagent -- tui --project examples/robocup/project.yaml
+npm --prefix web run build
+cargo run -p annotagent -- serve --workspace ./workspace
+```
 
 ## R3 — Configurable model
 
-Planned evidence: configurable endpoint, API-key environment variable, model, context/output limits, reasoning mode, timeout, capability flags, and pricing. Secrets are never persisted.
+`OpenAiCompatibleConfig`, `config/default.toml`, `config/qwen3.7-flash.example.toml`, and the Settings page cover endpoint, environment key name, process-only key, model, protocol, output/context control, reasoning mode, temperature, timeout, capabilities, headers, extra fields, pricing, and budgets.
+
+```bash
+cargo run -p annotagent -- doctor
+cargo run -p annotagent -- run --project <project.yaml> \
+  --provider openai_compatible --config <safe-config.toml> --limit 1
+```
 
 ## R4 — Live progress and interruption
 
-Planned evidence: versioned event bus shared by TUI and SSE, plus centrally enforced pause, resume, and cancellation.
+Versioned `RunEvent`, Runtime `EventBus`, application broadcast, and `/api/events` SSE carry task/model/tool/refinement/retry/usage/state progress. `RunControl` centrally enforces pause/resume/cancel and provider cancellation.
+
+```bash
+cargo test -p annotagent-runtime control
+cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_works_over_http
+```
+
+Manual: start the TUI or GUI, begin a run, use pause/resume/cancel, and inspect persisted `/api/runs/{id}/events`.
 
 ## R5 — Context and history
 
-Planned evidence: SQLite run/event/tool/model-call history, annotation revisions, task-focused context construction, and versioned history import/export.
+`ContextManager` loads current task resources, usage and allowed tools without hidden reasoning. SQLite persists run schema snapshot, events, calls, issues, annotations, revisions, review queue, corrections and usage. History JSON is versioned, redacted, conflict-remapped, and warns about missing images.
 
-## R6 — Usage and pricing
+```bash
+cargo run -p annotagent -- history list
+cargo run -p annotagent -- history show <run-id>
+cargo run -p annotagent -- history export <run-id> --output run.json
+cargo run -p annotagent -- history import run.json
+cargo test -p annotagent-storage
+```
 
-Planned evidence: per-call input/output tokens and additional usage, exact decimal cost, aggregate budgets, automatic stop, and TUI/GUI presentation.
+## R6 — Usage, cost, and budgets
 
+Every completed external/Mock call stores input/output/total token source, image/request counts, duration, request ID, retry count, exact-decimal cost breakdown and aggregate totals. Budget checks stop new calls with `BudgetExceeded`; TUI and GUI render live usage/cost.
+
+```bash
+cargo test -p annotagent-core usage
+cargo test -p annotagent-storage budget
+cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_works_over_http
+```
