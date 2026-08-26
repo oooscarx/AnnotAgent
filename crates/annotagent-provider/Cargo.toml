@@ -1,6 +1,6 @@
 [package]
-name = "annotagent-runtime"
-description = "Agent loop and extension registries for AnnotAgent"
+name = "annotagent-provider"
+description = "Mock and OpenAI-compatible vision providers for AnnotAgent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,18 +9,15 @@ rust-version.workspace = true
 [dependencies]
 annotagent-core = { path = "../annotagent-core" }
 async-trait.workspace = true
-chrono.workspace = true
-rust_decimal.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
+serde_yaml.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-
-[dev-dependencies]
-chrono.workspace = true
-tempfile = "3"
+tracing.workspace = true
 uuid.workspace = true
 
 [lints]
 workspace = true
+

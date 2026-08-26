@@ -1,6 +1,6 @@
 [package]
-name = "annotagent-runtime"
-description = "Agent loop and extension registries for AnnotAgent"
+name = "annotagent-storage"
+description = "SQLite persistence and auditable history for AnnotAgent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,19 +8,20 @@ rust-version.workspace = true
 
 [dependencies]
 annotagent-core = { path = "../annotagent-core" }
+annotagent-runtime = { path = "../annotagent-runtime" }
 async-trait.workspace = true
 chrono.workspace = true
+rusqlite.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
+annotagent-provider = { path = "../annotagent-provider" }
 tempfile = "3"
-uuid.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
