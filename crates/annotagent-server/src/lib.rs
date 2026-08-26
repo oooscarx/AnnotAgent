@@ -756,7 +756,10 @@ async fn events(
 
 #[cfg(test)]
 mod tests {
+    use annotagent_core::RunStatus;
     use axum::body::to_bytes;
+    use futures::StreamExt;
+    use serde_json::json;
     use tower::ServiceExt;
 
     use super::*;
@@ -794,5 +797,181 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
         ));
+    }
+
+    #[tokio::test]
+    async fn project_sse_review_revision_and_budget_flow_works_over_http() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let state = ServerState::new(application.clone()).expect("state");
+        let service = router(state.clone(), None);
+        let skill = application
+            .skills()
+            .get("robocup")
+            .expect("registered test skill");
+        let project_yaml = skill
+            .project_template()
+            .expect("project template")
+            .replace("max_retries_per_task: 3", "max_retries_per_task: 0");
+        let response = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects",
+            Some(json!({"id": "review-demo", "yaml": project_yaml})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
+        assert_eq!(sse.status(), StatusCode::OK);
+        let mut event_stream = sse.into_body().into_data_stream();
+
+        let started = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/review-demo/runs",
+                Some(json!({"provider": "mock"})),
+            )
+            .await,
+        )
+        .await;
+        let run_id = started["run_id"].as_str().expect("run id");
+        let first_event = tokio::time::timeout(Duration::from_secs(2), event_stream.next())
+            .await
+            .expect("SSE timeout")
+            .expect("SSE item")
+            .expect("SSE body");
+        assert!(String::from_utf8_lossy(&first_event).contains("run_"));
+
+        wait_for_status(&application, run_id, RunStatus::AwaitingReview).await;
+        let run_response = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/runs/{run_id}"),
+            None,
+        )
+        .await;
+        assert_eq!(run_response.status(), StatusCode::OK);
+        let events = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/events"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            events["events"]
+                .as_array()
+                .is_some_and(|events| !events.is_empty())
+        );
+
+        let reviews =
+            response_json(request(&service, axum::http::Method::GET, "/api/reviews", None).await)
+                .await;
+        let review_id = reviews["reviews"][0]["id"].as_str().expect("review id");
+        let reason_code = skill
+            .correction_taxonomy()
+            .into_iter()
+            .next()
+            .expect("correction taxonomy")
+            .code;
+        let decision = request(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/reviews/{review_id}/decision"),
+            Some(json!({
+                "project_id": "review-demo",
+                "decision": "reject",
+                "reason_code": reason_code,
+                "note": "deterministic server test"
+            })),
+        )
+        .await;
+        assert_eq!(decision.status(), StatusCode::OK);
+        let revisions = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/annotations/{review_id}/revisions"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(1));
+
+        let mut settings =
+            response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)
+                .await;
+        settings["budget"]["max_requests"] = json!(0);
+        let settings_response = request(
+            &service,
+            axum::http::Method::PUT,
+            "/api/settings",
+            Some(settings),
+        )
+        .await;
+        assert_eq!(settings_response.status(), StatusCode::OK);
+        let budget_run = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/review-demo/runs",
+                Some(json!({"provider": "mock"})),
+            )
+            .await,
+        )
+        .await;
+        wait_for_status(
+            &application,
+            budget_run["run_id"].as_str().expect("budget run id"),
+            RunStatus::BudgetExceeded,
+        )
+        .await;
+    }
+
+    async fn request(
+        service: &Router,
+        method: axum::http::Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> Response {
+        let request = axum::http::Request::builder().method(method).uri(uri);
+        let request = if let Some(value) = body {
+            request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(value.to_string()))
+        } else {
+            request.body(Body::empty())
+        }
+        .expect("request");
+        service.clone().oneshot(request).await.expect("response")
+    }
+
+    async fn response_json(response: Response) -> Value {
+        let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .expect("response body");
+        serde_json::from_slice(&bytes).expect("JSON response")
+    }
+
+    async fn wait_for_status(application: &LocalApplication, run_id: &str, expected: RunStatus) {
+        let run_id: RunId = run_id.parse().expect("valid run id");
+        for _ in 0..100 {
+            if application
+                .list_runs()
+                .expect("runs")
+                .into_iter()
+                .any(|run| run.id == run_id && run.status == expected)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("run {run_id} did not reach {expected:?}");
     }
 }
