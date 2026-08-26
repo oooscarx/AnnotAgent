@@ -31,6 +31,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed in `b41f55d`; acceptance evidence recorded.
 6. **M5 — Persistent Dataset Coordinator**
    - Add transactional global budget, image/node checkpoints, leases, restart recovery, and 100-image acceptance.
+   - Status: completed in `92a5c5b`; acceptance evidence recorded.
 7. **M6 — Advisor and Workflow Editor**
    - Complete constrained advisor, all persisted editing actions, sample-image Dry Run, compare, clone, archive, and explicit Run version selection.
 8. **M7 — RoboCup hybrid Skill**

@@ -36,7 +36,7 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Run/Task state semantics | PASS | Empty, partial, duplicate start, active restore, stale reconciliation, distinct review suspension, and structured timeout/provider/task visibility are tested. |
 | Strongly typed Workflow ports/edges | PASS | Workflow v2 defines generic node kinds, typed ports/edges/policies/resources, precise static checks, immutable published snapshots, and migration evidence. |
 | Published snapshot DAG execution | PASS | Generic runtime tests execute an immutable published snapshot with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, and replayable I/O trace. Product version-selection UI remains M6 scope. |
-| Checkpoint/restart resume/global budget | INCOMPLETE | No 100-image restart-resume gate. |
+| Checkpoint/restart resume/global budget | PASS | SQLite v3 batches persist full checkpoints, leases, exact consumed/reserved budgets, and monotonic events; the concurrency-4 100-image pause/restart/resume gate completes with no duplicate child Run. |
 | Mixed model backends | PASS | Complete registry metadata, mock/OpenAI-compatible/HTTP JSON/deterministic CV adapters, worker discovery protocol, strict JSON-only fallback, structured errors, secret references, and GUI health are tested. Live weights remain conditional. |
 | Workflow Advisor/editor | INCOMPLETE | Suggest/save/static dry-run/publish work; node/edge lifecycle, sample-image Dry Run, clone/archive/version selection remain. |
 | RoboCup hybrid release example | INCOMPLETE | Domain algorithms and an example foundation exist; required templates/evaluation CLI/complete generic DAG execution do not. |
@@ -156,3 +156,33 @@ Gate evidence:
 7. Secret boundary and health UI: plaintext registry secrets are rejected; persisted provider settings keep the API key only in the credential store; source secret scan is empty; `/api/models` and the Models page expose health status and detail.
 
 Milestone 4 status: `PASS`.
+
+## Milestone 5 — Persistent Dataset Coordinator
+
+Implementation commit: `92a5c5b feat(batch): persist dataset coordination and recovery`
+
+`./scripts/acceptance.sh` was run after the implementation:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Rust fmt + clippy | 0 | All workspace targets/features pass formatting and `-D warnings`. |
+| Rust test | 0 | 98 unit/integration tests passed; 0 failed. |
+| Rust build | 0 | All workspace crates built. |
+| Web typecheck/test/build | 0 | Typecheck passed; 7 files/13 tests passed; production build passed. |
+| Doctor | 0 | SQLite reports 28 tables and migrations v1–v3; workspace, example, Web build, and offline/mock checks pass. |
+| Secret scan | 0-equivalent | Supplied-key fingerprints are absent from repository sources (empty `rg` result). |
+
+Gate evidence:
+
+1. The application gate generates 100 synthetic images, configures concurrency 4, observes intermediate progress, pauses, destroys the original application/server owner, opens a new application against the same SQLite file, and resumes to `Completed`.
+2. Exactly 100 child Runs exist after resume. The test asserts all 100 Batch image IDs are completed, no remaining image exists, and no completed image executed twice.
+3. The final exact-decimal Batch ledger has no reservations; input/output tokens, request count, and cost equal the sum of all persisted child Run usage records, and processed image count is 100.
+4. Checkpoints include frozen Workflow version/snapshot, Project snapshot, remaining/completed images, per-node states, Artifact references, retry counters, review suspensions, budget ledger, child Run references, and event sequence.
+5. `concurrent_reservations_cannot_oversell_global_budget` releases two threads simultaneously against one SQLite transaction boundary and proves exactly one reservation succeeds while the other atomically produces `BudgetExceeded`.
+6. `startup_requeues_orphaned_image_and_checkpoint_survives_reopen` proves a new process owner recovers an orphaned lease, releases stale reservations, and resumes the unfinished image while preserving the final checkpoint.
+7. `failed_image_retry_preserves_usage_and_does_not_repeat_completed_work` proves explicit failed-image retry, cumulative usage, attempt count, and rejection of later claims after completion.
+8. `cancellation_prevents_new_image_nodes_from_starting` proves Cancel changes every unfinished image to Cancelled and no `image_started` event can appear after the monotonic cancellation event.
+9. The Batch HTTP test covers list/detail/progress/pause/cancel, Project `active_batch` recovery data, and 409 mutual exclusion for duplicate Batch or single Run starts. The React Project page renders the persisted Batch status and completed/total image progress.
+10. No test sets an absolute runtime threshold; the full 100-image gate completed without an uncaught panic.
+
+Milestone 5 status: `PASS`.

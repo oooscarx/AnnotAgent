@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 05:41 CST
+Last updated: 2026-08-27 06:11 CST
 
 ## Current milestone
 
-Milestone 5 — Persistent Dataset Coordinator.
+Milestone 6 — Advisor and Workflow Editor.
 
 ## Completed
 
@@ -37,22 +37,28 @@ Milestone 5 — Persistent Dataset Coordinator.
 - Added a reference Python worker that is explicitly a fixture without weights and performs real Ultralytics detection only when a local model path is configured.
 - Added strict JSON-only action schemas and promotion into registered tool calls, plus actual/estimated/unknown usage handling and secret redaction.
 - Exposed model health on the Models page and proved incompatible capabilities block Workflow publication.
+- Added independent durable Batch identities with SQLite v3 batch, image, and monotonic event tables.
+- Added configurable multi-image concurrency, renewable worker leases, startup orphan recovery, and explicit failed-image retry.
+- Added atomic global budget reservations with exact-decimal consumed/reserved ledgers for tokens, requests, images, cost, and optional wall-clock deadlines.
+- Persisted Workflow/Project snapshots, per-image and per-node status, Artifact references, retry counters, review suspensions, child Run references, and event position in recoverable checkpoints.
+- Added persistent pause/resume/cancel semantics; cancelled batches cannot claim or start later nodes and completed images are never repeated.
+- Added Batch HTTP APIs, progress summaries, active Batch state on Project pages, and mutual exclusion between Batch and single-image Run starts.
+- Passed the generated 100-image concurrency-4 pause → server restart → resume gate with exactly 100 child Runs and matching history/budget totals.
 
 ## In progress
 
-- Designing durable batch/checkpoint storage and transactional budget reservation for Milestone 5.
+- Completing constrained Advisor output and the persisted Workflow editing lifecycle for Milestone 6.
 
 ## Next
 
-1. Persist batch, per-image, per-node, checkpoint, lease, and event-sequence state.
-2. Add transactional global budget reservation and release across concurrent workers.
-3. Prove pause, server restart, resume, cancel, failed-image retry, and no duplicate commits with 100 synthetic images.
+1. Constrain LLM Advisor suggestions to the Workflow schema and validate every binding.
+2. Add all node/edge editing actions, clone/archive/version lifecycle, and explicit Run version selection.
+3. Execute sample-image Dry Runs and compare candidate Workflow versions with persisted evidence.
 
 ## Current release gaps
 
 - Published Drafts are persisted and immutable, but the main Run path still records and executes an honest compatibility snapshot rather than an explicitly selected published DAG.
 - The generic DAG executor is implemented, but the product Start flow does not yet expose explicit published-version selection (scheduled for the Editor/run integration milestone).
-- Dataset coordination has in-process pause/resume but no durable per-node checkpoint, active worker lease, transactional global budget, or restart resume.
 - Workflow Dry Run is static validation, not sample-image sandbox execution.
 - Workflow Editor cannot yet add/delete nodes or edges, clone versions, or archive drafts.
 - Review lacks the full geometry editing and undo/redo gate.
@@ -61,10 +67,11 @@ Milestone 5 — Persistent Dataset Coordinator.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-4 acceptance run passed 91 Rust tests and 13 Web tests with all build/static checks at exit 0.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-5 acceptance run passed 98 Rust tests and 13 Web tests with all build/static checks at exit 0.
 
 ## Recent commit
 
+- `92a5c5b feat(batch): persist dataset coordination and recovery`
 - `b41f55d feat(models): complete mixed vision backend registry`
 - `33ab172 feat(runtime): execute immutable published DAG snapshots`
 - `2c05a83 test(runtime): enforce built-in commit safety`

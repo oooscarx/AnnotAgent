@@ -67,3 +67,15 @@ Rejected: returning plausible fixture geometry while labelling it as YOLO, SAM, 
 Persisted model descriptors may contain only `env:` or `keychain:` secret references. Runtime adapters can hold transient credentials, but structured redaction and sanitized errors prevent those values from entering product traces. Health is a typed status with detail and check time and is exposed through the application/server DTO to the Models page.
 
 Rejected: persisting provider keys in model configuration or inferring `healthy` merely because an external endpoint was configured.
+
+## D-015 — Batch and child Run identities remain separate
+
+A Dataset batch owns queue order, global budget, worker lease, progress events, and recovery checkpoint under a `BatchId`. Every image execution retains its own `RunId` and full audit history. A completed Batch image is never reclaimed; a failed image returns to Pending only through an explicit retry transition.
+
+Rejected: treating a list of unrelated process-local image Runs as a durable batch or using one Run ID for all image histories.
+
+## D-016 — Budget reservation precedes concurrent work
+
+The Batch ledger distinguishes exact consumed and reserved usage. Claiming an image, checking the combined ledger against token/request/image/cost/deadline limits, and recording its reservation occur in one SQLite transaction. Completion releases the reservation and adds actual usage atomically. Worker ownership is a renewable lease; a new server owner recovers orphaned leases and requeues unfinished work.
+
+Rejected: checking a shared counter before a request without reserving capacity, which lets concurrent workers oversell the same remaining budget.
