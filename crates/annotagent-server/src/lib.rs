@@ -24,7 +24,7 @@ use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
 };
 use annotagent_storage::HistoryRun;
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use axum::{
     Json, Router,
     body::Body,
@@ -59,7 +59,11 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn new(application: Arc<LocalApplication>) -> anyhow::Result<Self> {
-        Self::with_secret_store(application, Arc::new(SystemSecretStore))
+        if std::env::var("ANNOTAGENT_DISABLE_KEYCHAIN").as_deref() == Ok("1") {
+            Self::with_secret_store(application, Arc::new(DisabledSecretStore))
+        } else {
+            Self::with_secret_store(application, Arc::new(SystemSecretStore))
+        }
     }
 
     fn with_secret_store(
@@ -111,6 +115,22 @@ trait SecretStore: Send + Sync {
 }
 
 struct SystemSecretStore;
+
+struct DisabledSecretStore;
+
+impl SecretStore for DisabledSecretStore {
+    fn load(&self, _account: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn save(&self, _account: &str, _secret: &str) -> anyhow::Result<()> {
+        bail!("system keychain is disabled; use the configured API-key environment variable")
+    }
+
+    fn delete(&self, _account: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 impl SystemSecretStore {
     fn entry(account: &str) -> anyhow::Result<keyring::Entry> {
@@ -254,7 +274,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/skills/{skill_id}", get(get_skill))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/workflows", get(list_workflows))
-        .route("/api/workflow-drafts", get(list_workflow_drafts))
+        .route(
+            "/api/workflow-drafts",
+            get(list_workflow_drafts).post(create_workflow_draft),
+        )
         .route("/api/workflow-drafts/suggest", post(suggest_workflow))
         .route(
             "/api/workflow-drafts/{draft_id}",
@@ -268,9 +291,22 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflow-drafts/{draft_id}/publish",
             post(publish_workflow),
         )
+        .route(
+            "/api/workflow-drafts/{draft_id}/archive",
+            post(archive_workflow_draft),
+        )
+        .route(
+            "/api/workflows/{workflow_id}/versions/{version}/clone",
+            post(clone_workflow_version),
+        )
+        .route("/api/workflows/compare", post(compare_workflow_versions))
         .route("/api/models", get(list_models))
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
+        .route(
+            "/api/projects/{project_id}/workflow-catalog",
+            get(get_workflow_catalog),
+        )
         .route("/api/projects/{project_id}/import", post(import_images))
         .route("/api/projects/{project_id}/images", get(list_images))
         .route(
@@ -457,11 +493,15 @@ async fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>>
         project.model_bindings = vec![binding.clone()];
         for workflow in &mut project.available_workflow_versions {
             for node in &mut workflow.nodes {
-                node.model_binding = Some(binding.id.clone());
+                if node.model_binding.is_some() {
+                    node.model_binding = Some(binding.id.clone());
+                }
             }
         }
         for node in &mut project.active_workflow.nodes {
-            node.model_binding = Some(binding.id.clone());
+            if node.model_binding.is_some() {
+                node.model_binding = Some(binding.id.clone());
+            }
         }
     }
     Ok(projects)
@@ -489,9 +529,33 @@ struct RunSummary {
 
 fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let project = serde_json::from_str::<ProjectSchema>(&run.project_schema_json).ok();
-    let workflow_version = project
+    let workflow_snapshot = run
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok());
+    let explicitly_selected = workflow_snapshot
         .as_ref()
-        .map_or_else(|| "legacy".to_owned(), |schema| schema.version.to_string());
+        .is_some_and(|snapshot| !snapshot["selected_workflow"].is_null());
+    let workflow_name = if explicitly_selected {
+        workflow_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.pointer("/selected_workflow/snapshot/draft/name"))
+            .and_then(Value::as_str)
+            .unwrap_or("Published workflow")
+            .to_owned()
+    } else {
+        "Configured task graph".to_owned()
+    };
+    let workflow_version = if explicitly_selected {
+        workflow_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot["selected_workflow"]["version"].as_u64())
+            .map_or_else(|| "unknown".to_owned(), |version| version.to_string())
+    } else {
+        project
+            .as_ref()
+            .map_or_else(|| "legacy".to_owned(), |schema| schema.version.to_string())
+    };
     let skill_version = project.as_ref().map_or_else(
         || "unknown".to_owned(),
         |schema| schema.project.skill_version.clone(),
@@ -510,7 +574,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     Ok(RunSummary {
         id: run.id,
         project_name: run.project_name,
-        workflow_name: "Configured task graph".to_owned(),
+        workflow_name,
         workflow_version,
         skill_versions: vec![format!("{}@{}", run.skill_id, skill_version)],
         model_bindings: vec![ModelBinding {
@@ -623,10 +687,35 @@ async fn list_workflow_drafts(
 }
 
 #[derive(Debug, Deserialize)]
-struct SuggestWorkflowRequest {
+struct CreateWorkflowDraftRequest {
     project_id: String,
     #[serde(default)]
+    from_template: bool,
+}
+
+async fn create_workflow_draft(
+    State(state): State<ServerState>,
+    Json(request): Json<CreateWorkflowDraftRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let settings = state.settings.read().await.clone();
+    let draft = state
+        .application
+        .create_workflow_draft(&request.project_id, &settings, request.from_template)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(draft))))
+}
+
+#[derive(Debug, Deserialize)]
+struct SuggestWorkflowRequest {
+    project_id: String,
+    #[serde(default = "default_workflow_advisor")]
+    advisor: String,
+    #[serde(default)]
     constraints: WorkflowConstraints,
+}
+
+fn default_workflow_advisor() -> String {
+    "mock".to_owned()
 }
 
 async fn suggest_workflow(
@@ -634,10 +723,27 @@ async fn suggest_workflow(
     Json(request): Json<SuggestWorkflowRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let settings = state.settings.read().await.clone();
-    let suggestion = state
-        .application
-        .suggest_workflow(&request.project_id, &settings, &request.constraints)
-        .map_err(ApiError::bad_request)?;
+    let suggestion = match request.advisor.as_str() {
+        "mock" => state
+            .application
+            .suggest_workflow(&request.project_id, &settings, &request.constraints)
+            .map_err(ApiError::bad_request)?,
+        "llm" => state
+            .application
+            .suggest_workflow_live(
+                &request.project_id,
+                &settings,
+                state.api_key.read().await.clone(),
+                &request.constraints,
+            )
+            .await
+            .map_err(ApiError::bad_request)?,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown Workflow Advisor {other:?}; choose mock or llm"
+            )));
+        }
+    };
     Ok((StatusCode::CREATED, Json(json!(suggestion))))
 }
 
@@ -661,13 +767,22 @@ async fn save_workflow_draft(
 async fn dry_run_workflow(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
+    payload: Option<Json<DryRunWorkflowRequest>>,
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
+    let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
     let report = state
         .application
-        .dry_run_workflow(&draft_id, &settings)
+        .dry_run_workflow_samples(&draft_id, &settings, &image_indices)
+        .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(report)))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct DryRunWorkflowRequest {
+    #[serde(default)]
+    image_indices: Vec<usize>,
 }
 
 async fn publish_workflow(
@@ -680,6 +795,52 @@ async fn publish_workflow(
         .publish_workflow(&draft_id, &settings)
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(version)))
+}
+
+async fn archive_workflow_draft(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let draft = state
+        .application
+        .archive_workflow_draft(&draft_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(draft)))
+}
+
+async fn clone_workflow_version(
+    State(state): State<ServerState>,
+    AxumPath((workflow_id, version)): AxumPath<(String, u32)>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let draft = state
+        .application
+        .clone_workflow_version(&workflow_id, version)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(draft))))
+}
+
+#[derive(Debug, Deserialize)]
+struct CompareWorkflowVersionsRequest {
+    left_workflow_id: String,
+    left_version: u32,
+    right_workflow_id: String,
+    right_version: u32,
+}
+
+async fn compare_workflow_versions(
+    State(state): State<ServerState>,
+    Json(request): Json<CompareWorkflowVersionsRequest>,
+) -> ApiResult<Json<Value>> {
+    let comparison = state
+        .application
+        .compare_workflow_versions(
+            &request.left_workflow_id,
+            request.left_version,
+            &request.right_workflow_id,
+            request.right_version,
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(comparison)))
 }
 
 async fn list_models(State(state): State<ServerState>) -> Json<Value> {
@@ -727,14 +888,30 @@ async fn get_project(
     };
     project.model_bindings = vec![binding.clone()];
     for node in &mut project.active_workflow.nodes {
-        node.model_binding = Some(binding.id.clone());
-    }
-    for workflow in &mut project.available_workflow_versions {
-        for node in &mut workflow.nodes {
+        if node.model_binding.is_some() {
             node.model_binding = Some(binding.id.clone());
         }
     }
+    for workflow in &mut project.available_workflow_versions {
+        for node in &mut workflow.nodes {
+            if node.model_binding.is_some() {
+                node.model_binding = Some(binding.id.clone());
+            }
+        }
+    }
     Ok(Json(json!(project)))
+}
+
+async fn get_workflow_catalog(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let settings = state.settings.read().await.clone();
+    let input = state
+        .application
+        .workflow_advisor_input(&project_id, &settings, WorkflowConstraints::default())
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(input)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -800,6 +977,8 @@ async fn image_content(
 struct StartRunRequest {
     provider: Option<String>,
     idempotency_key: Option<String>,
+    workflow_id: Option<String>,
+    version: Option<u32>,
 }
 
 async fn start_run(
@@ -825,11 +1004,14 @@ async fn start_run(
         StartRunRequest {
             provider: None,
             idempotency_key: None,
+            workflow_id: None,
+            version: None,
         },
         |Json(value)| value,
     );
     let provider = request
         .provider
+        .clone()
         .unwrap_or_else(|| settings.default_provider.clone());
     let idempotency_key = headers
         .get("idempotency-key")
@@ -846,14 +1028,21 @@ async fn start_run(
     }
     validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
     let api_key = state.api_key.read().await.clone();
+    if request.workflow_id.is_some() != request.version.is_some() {
+        return Err(ApiError::bad_request(
+            "workflow_id and version must be selected together",
+        ));
+    }
+    let selected_workflow = request.workflow_id.as_deref().zip(request.version);
     let started = state
         .application
-        .start_run_path_with_settings_idempotent(
+        .start_run_path_with_settings_idempotent_workflow(
             &project_path,
             &provider,
             settings,
             api_key,
             idempotency_key.as_deref(),
+            selected_workflow,
         )
         .map_err(|error| {
             if let Some(conflict) = error.downcast_ref::<ActiveRunExists>() {
@@ -1546,6 +1735,209 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
         ));
+    }
+
+    #[tokio::test]
+    async fn workflow_designer_http_journey_validates_dry_runs_publishes_and_clones() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(application.clone(), Arc::new(MemorySecretStore::default())),
+            None,
+        );
+        let skill = application.skills().get("robocup").expect("skill");
+        let project_yaml = skill.project_template().expect("template");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects",
+                Some(json!({"id": "workflow-ui", "yaml": project_yaml})),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+        generate_synthetic_robocup(&temp.path().join("workflow-ui/images/sample.png"))
+            .expect("sample image");
+
+        let catalog = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/workflow-ui/workflow-catalog",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            catalog["node_catalog"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
+
+        let suggestion = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/workflow-drafts/suggest",
+                Some(json!({"project_id": "workflow-ui", "constraints": {"require_review_gate": true}})),
+            )
+            .await,
+        )
+        .await;
+        let mut draft = suggestion["draft"].clone();
+        let draft_id = draft["id"].as_str().expect("draft id").to_owned();
+        let node_index = draft["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .position(|node| {
+                node["inputs"]
+                    .as_array()
+                    .is_some_and(|ports| !ports.is_empty())
+            })
+            .expect("typed input node");
+        let original_type = draft["nodes"][node_index]["inputs"][0]["artifact_type"].clone();
+        draft["nodes"][node_index]["inputs"][0]["artifact_type"] = json!("relations");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::PATCH,
+                &format!("/api/workflow-drafts/{draft_id}"),
+                Some(draft.clone()),
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        let invalid = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/dry-run"),
+                Some(json!({"image_indices": [0]})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(invalid["validation"]["valid"], json!(false));
+        assert!(
+            invalid["validation"]["issues"]
+                .as_array()
+                .is_some_and(|issues| {
+                    issues
+                        .iter()
+                        .any(|issue| issue["code"] == "artifact_type_mismatch")
+                })
+        );
+
+        draft["nodes"][node_index]["inputs"][0]["artifact_type"] = original_type;
+        let saved = response_json(
+            request(
+                &service,
+                axum::http::Method::PATCH,
+                &format!("/api/workflow-drafts/{draft_id}"),
+                Some(draft),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["status"], json!("editing"));
+        let dry_run = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/dry-run"),
+                Some(json!({"image_indices": [0]})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(dry_run["validation"]["valid"], json!(true));
+        assert_eq!(dry_run["sandbox"], json!(true));
+        assert_eq!(dry_run["samples"][0]["image_name"], json!("sample.png"));
+
+        let published = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/publish"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        let workflow_id = published["workflow_id"].as_str().expect("workflow id");
+        let version = published["version"].as_u64().expect("version");
+        let project = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/workflow-ui",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            project["active_workflow"]["workflow_id"],
+            json!(workflow_id)
+        );
+        assert_eq!(
+            project["active_workflow"]["version"],
+            json!(version.to_string())
+        );
+
+        let clone = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflows/{workflow_id}/versions/{version}/clone"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(clone["status"], json!("editing"));
+        assert_ne!(clone["id"], json!(draft_id));
+
+        let started = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/workflow-ui/runs",
+                Some(json!({
+                    "provider": "mock",
+                    "workflow_id": workflow_id,
+                    "version": version
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert!(started["run_id"].as_str().is_some());
+        let mut run = Value::Null;
+        for _ in 0..100 {
+            let runs =
+                response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
+                    .await;
+            run = runs["runs"]
+                .as_array()
+                .and_then(|runs| runs.first())
+                .cloned()
+                .unwrap_or(Value::Null);
+            if run["status"].as_str().is_some_and(|status| {
+                !matches!(status, "pending" | "running" | "paused" | "awaiting_review")
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(run["workflow_name"], published["draft"]["name"]);
+        assert_eq!(run["workflow_version"], json!(version.to_string()));
     }
 
     #[tokio::test]

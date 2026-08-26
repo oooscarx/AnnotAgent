@@ -10,7 +10,9 @@ import type {
   RunEvent,
   SkillDetail,
   WorkflowDraft,
-  WorkflowValidationReport,
+  WorkflowCatalog,
+  WorkflowDryRunReport,
+  WorkflowVersionComparison,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -19,11 +21,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", ...init?.headers },
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string; active_run_id?: string; status?: string };
-    const active = body.code === "active_run_exists"
-      ? `Project already has active Run ${body.active_run_id ?? "unknown"} (${body.status ?? "active"}).`
-      : undefined;
-    throw new Error(active ?? body.error ?? `${response.status} ${response.statusText}`);
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      active_run_id?: string;
+      status?: string;
+    };
+    const active =
+      body.code === "active_run_exists"
+        ? `Project already has active Run ${body.active_run_id ?? "unknown"} (${body.status ?? "active"}).`
+        : undefined;
+    throw new Error(
+      active ?? body.error ?? `${response.status} ${response.statusText}`,
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -38,26 +48,94 @@ export const api = {
     }),
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
-  startRun: (projectId: string, provider?: string, idempotencyKey = crypto.randomUUID()) =>
-    request<{ run_id: string; image_path: string; status: string; idempotent: boolean }>(
-      `/api/projects/${projectId}/runs`,
-      {
-        method: "POST",
-        headers: { "idempotency-key": idempotencyKey },
-        body: JSON.stringify(provider ? { provider } : {}),
-      },
-    ),
+  startRun: (
+    projectId: string,
+    provider?: string,
+    idempotencyKey = crypto.randomUUID(),
+    workflow?: { workflow_id: string; version: number },
+  ) =>
+    request<{
+      run_id: string;
+      image_path: string;
+      status: string;
+      idempotent: boolean;
+    }>(`/api/projects/${projectId}/runs`, {
+      method: "POST",
+      headers: { "idempotency-key": idempotencyKey },
+      body: JSON.stringify({ ...(provider ? { provider } : {}), ...workflow }),
+    }),
   control: (runId: string, action: "pause" | "resume" | "cancel") =>
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),
   runEvents: (runId: string) =>
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
   runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
-  workflowDrafts: (projectId?: string) => request<{ drafts: WorkflowDraft[] }>(`/api/workflow-drafts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
-  suggestWorkflow: (projectId: string) => request<{ draft: WorkflowDraft; rationale: string[]; warnings: string[]; alternatives: string[]; unresolved_model_bindings: string[] }>("/api/workflow-drafts/suggest", { method: "POST", body: JSON.stringify({ project_id: projectId, constraints: { require_review_gate: true } }) }),
-  saveWorkflowDraft: (draft: WorkflowDraft) => request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, { method: "PATCH", body: JSON.stringify(draft) }),
-  dryRunWorkflow: (draftId: string) => request<WorkflowValidationReport>(`/api/workflow-drafts/${draftId}/dry-run`, { method: "POST" }),
-  publishWorkflow: (draftId: string) => request<{ workflow_id: string; version: number }>(`/api/workflow-drafts/${draftId}/publish`, { method: "POST" }),
+  workflowDrafts: (projectId?: string) =>
+    request<{ drafts: WorkflowDraft[] }>(
+      `/api/workflow-drafts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
+  workflowCatalog: (projectId: string) =>
+    request<WorkflowCatalog>(`/api/projects/${projectId}/workflow-catalog`),
+  createWorkflowDraft: (projectId: string, fromTemplate = false) =>
+    request<WorkflowDraft>("/api/workflow-drafts", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: projectId,
+        from_template: fromTemplate,
+      }),
+    }),
+  suggestWorkflow: (projectId: string, advisor: "mock" | "llm" = "mock") =>
+    request<{
+      draft: WorkflowDraft;
+      rationale: string[];
+      warnings: string[];
+      alternatives: string[];
+      unresolved_model_bindings: string[];
+    }>("/api/workflow-drafts/suggest", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: projectId,
+        advisor,
+        constraints: { require_review_gate: true },
+      }),
+    }),
+  saveWorkflowDraft: (draft: WorkflowDraft) =>
+    request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(draft),
+    }),
+  dryRunWorkflow: (draftId: string, imageIndices: number[] = []) =>
+    request<WorkflowDryRunReport>(`/api/workflow-drafts/${draftId}/dry-run`, {
+      method: "POST",
+      body: JSON.stringify({ image_indices: imageIndices }),
+    }),
+  publishWorkflow: (draftId: string) =>
+    request<{ workflow_id: string; version: number }>(
+      `/api/workflow-drafts/${draftId}/publish`,
+      { method: "POST" },
+    ),
+  archiveWorkflowDraft: (draftId: string) =>
+    request<WorkflowDraft>(`/api/workflow-drafts/${draftId}/archive`, {
+      method: "POST",
+    }),
+  cloneWorkflowVersion: (workflowId: string, version: number) =>
+    request<WorkflowDraft>(
+      `/api/workflows/${workflowId}/versions/${version}/clone`,
+      { method: "POST" },
+    ),
+  compareWorkflowVersions: (
+    left: { workflow_id: string; version: number },
+    right: { workflow_id: string; version: number },
+  ) =>
+    request<WorkflowVersionComparison>("/api/workflows/compare", {
+      method: "POST",
+      body: JSON.stringify({
+        left_workflow_id: left.workflow_id,
+        left_version: left.version,
+        right_workflow_id: right.workflow_id,
+        right_version: right.version,
+      }),
+    }),
   models: () => request<{ models: ModelBinding[] }>("/api/models"),
   reviews: () => request<{ reviews: ReviewItem[] }>("/api/reviews"),
   review: (id: string) => request<ReviewItem>(`/api/reviews/${id}`),
@@ -98,7 +176,10 @@ export const api = {
     }),
 };
 
-export function subscribeEvents(onEvent: (event: RunEvent) => void, onReconnect: () => void): () => void {
+export function subscribeEvents(
+  onEvent: (event: RunEvent) => void,
+  onReconnect: () => void,
+): () => void {
   const source = new EventSource("/api/events");
   const kinds = [
     "run_created",

@@ -23,6 +23,7 @@ pub enum WorkflowDraftStatus {
     Editing,
     Validated,
     Published,
+    Archived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -215,6 +216,74 @@ pub struct WorkflowConstraints {
     #[serde(default)]
     pub require_review_gate: bool,
     pub max_nodes: Option<usize>,
+    pub max_cost_per_image: Option<String>,
+    pub max_latency_ms: Option<u64>,
+    pub minimum_accuracy: Option<f64>,
+}
+
+/// Bounded dataset facts exposed to an Advisor. Paths, image bytes, and arbitrary URLs are
+/// deliberately excluded from the contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WorkflowDataProfile {
+    pub image_count: usize,
+    pub sample_width: Option<u32>,
+    pub sample_height: Option<u32>,
+    #[serde(default)]
+    pub mime_types: BTreeSet<String>,
+}
+
+/// Complete registry-bound context supplied to either a deterministic or LLM Advisor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowAdvisorInput {
+    pub project_id: String,
+    pub project_schema: ProjectSchema,
+    pub enabled_skills: Vec<String>,
+    pub node_catalog: Vec<crate::VisionNodeDescriptor>,
+    pub model_registry: Vec<VisionModelDescriptor>,
+    pub validator_ids: Vec<String>,
+    pub refiner_ids: Vec<String>,
+    pub resource_ids: Vec<String>,
+    pub constraints: WorkflowConstraints,
+    pub data_profile: WorkflowDataProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowDryRunNodeResult {
+    pub node_id: String,
+    pub status: String,
+    pub output_types: Vec<ArtifactType>,
+    pub latency_ms: u64,
+    pub estimated_cost: String,
+    pub issues: Vec<WorkflowValidationIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowDryRunSampleResult {
+    pub image_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub nodes: Vec<WorkflowDryRunNodeResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowDryRunReport {
+    pub sandbox: bool,
+    pub validation: WorkflowValidationReport,
+    pub samples: Vec<WorkflowDryRunSampleResult>,
+    pub total_latency_ms: u64,
+    pub estimated_cost: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowVersionComparison {
+    pub left_workflow_id: String,
+    pub left_version: u32,
+    pub right_workflow_id: String,
+    pub right_version: u32,
+    pub added_nodes: Vec<String>,
+    pub removed_nodes: Vec<String>,
+    pub changed_nodes: Vec<String>,
+    pub same_content: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -621,6 +690,16 @@ impl WorkflowStaticValidator {
             .enumerate()
             .map(|(index, node)| (node.id.as_str(), index))
             .collect::<BTreeMap<_, _>>();
+
+        for resource_id in draft.resource_versions.keys() {
+            if !extensions.resources.contains(resource_id) {
+                issues.push(issue(
+                    "unknown_skill_resource",
+                    &format!("resource_versions.{resource_id}"),
+                    &format!("Skill resource {resource_id:?} is not registered"),
+                ));
+            }
+        }
 
         for (index, node) in draft.nodes.iter().enumerate() {
             let path = format!("nodes[{index}]");

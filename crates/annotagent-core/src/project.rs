@@ -353,6 +353,7 @@ pub struct ExportConfig {
 pub struct ValidationCatalog {
     pub validators: BTreeSet<String>,
     pub refiners: BTreeSet<String>,
+    pub resources: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

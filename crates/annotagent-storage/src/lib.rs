@@ -700,6 +700,28 @@ impl SqliteStore {
         })
     }
 
+    pub fn get_published_workflow_version(
+        &self,
+        workflow_id: &str,
+        version: u32,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.with_connection(|connection| {
+            let json = connection
+                .query_row(
+                    "SELECT version_json FROM workflow_versions WHERE workflow_id = ?1 AND version = ?2",
+                    params![workflow_id, version],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!(
+                        "published workflow {workflow_id:?} version {version} was not found"
+                    ))
+                })?;
+            serde_json::from_str(&json).map_err(StorageError::from)
+        })
+    }
+
     pub fn history(&self, run_id: RunId) -> Result<HistoryDocument, StorageError> {
         self.with_connection(|connection| {
             let run = connection

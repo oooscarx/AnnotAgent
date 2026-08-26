@@ -111,8 +111,18 @@ export interface ProjectSummary {
     event_sequence: number;
     max_concurrency: number;
     budget_ledger: {
-      consumed: { image_count: number; request_count: number; total_tokens: number; cost: string };
-      reserved: { image_count: number; request_count: number; total_tokens: number; cost: string };
+      consumed: {
+        image_count: number;
+        request_count: number;
+        total_tokens: number;
+        cost: string;
+      };
+      reserved: {
+        image_count: number;
+        request_count: number;
+        total_tokens: number;
+        cost: string;
+      };
     };
   };
   active_batch_progress?: {
@@ -160,7 +170,19 @@ export interface ProjectWorkflow {
 export interface WorkflowDraftNode {
   id: string;
   node_type: string;
-  kind?: "image_input" | "transform" | "vision_model" | "vision_language_model" | "deterministic_tool" | "candidate_merge" | "validator" | "refiner" | "gate" | "human_review" | "commit" | "export";
+  kind?:
+    | "image_input"
+    | "transform"
+    | "vision_model"
+    | "vision_language_model"
+    | "deterministic_tool"
+    | "candidate_merge"
+    | "validator"
+    | "refiner"
+    | "gate"
+    | "human_review"
+    | "commit"
+    | "export";
   depends_on: string[];
   inputs?: WorkflowNodePort[];
   outputs?: WorkflowNodePort[];
@@ -173,14 +195,31 @@ export interface WorkflowDraftNode {
   review_gate: boolean;
   parameters: Record<string, unknown>;
   retry_policy?: { max_attempts: number };
-  fallback_policy?: { target_node?: string; on_timeout: boolean; on_error: boolean };
+  fallback_policy?: {
+    target_node?: string;
+    on_timeout: boolean;
+    on_error: boolean;
+  };
   gate?: { required: boolean; allow_manual_override: boolean };
-  resources?: { timeout_seconds?: number; max_memory_mb?: number; accelerator?: string };
+  resources?: {
+    timeout_seconds?: number;
+    max_memory_mb?: number;
+    accelerator?: string;
+  };
 }
 
 export interface WorkflowNodePort {
   id: string;
-  artifact_type: "classification" | "bounding_box" | "keypoints" | "polyline" | "polygon" | "semantic_mask" | "instance_mask" | "attributes" | "relations";
+  artifact_type:
+    | "classification"
+    | "bounding_box"
+    | "keypoints"
+    | "polyline"
+    | "polygon"
+    | "semantic_mask"
+    | "instance_mask"
+    | "attributes"
+    | "relations";
   required: boolean;
   multiple: boolean;
 }
@@ -198,7 +237,7 @@ export interface WorkflowDraft {
   id: string;
   project_id: string;
   name: string;
-  status: "suggested" | "editing" | "validated" | "published";
+  status: "suggested" | "editing" | "validated" | "published" | "archived";
   nodes: WorkflowDraftNode[];
   edges?: WorkflowEdge[];
   enabled_skills?: Record<string, string>;
@@ -214,6 +253,59 @@ export interface WorkflowValidationReport {
   execution_order: string[];
 }
 
+export interface WorkflowDryRunReport {
+  sandbox: boolean;
+  validation: WorkflowValidationReport;
+  samples: {
+    image_name: string;
+    width: number;
+    height: number;
+    nodes: {
+      node_id: string;
+      status: string;
+      output_types: string[];
+      latency_ms: number;
+      estimated_cost: string;
+      issues: WorkflowValidationReport["issues"];
+    }[];
+  }[];
+  total_latency_ms: number;
+  estimated_cost: string;
+}
+
+export interface WorkflowVersionComparison {
+  left_workflow_id: string;
+  left_version: number;
+  right_workflow_id: string;
+  right_version: number;
+  added_nodes: string[];
+  removed_nodes: string[];
+  changed_nodes: string[];
+  same_content: boolean;
+}
+
+export interface WorkflowCatalog {
+  project_id: string;
+  project_schema: unknown;
+  enabled_skills: string[];
+  node_catalog: { id: string; display_name: string; produces: string[] }[];
+  model_registry: {
+    id: string;
+    display_name: string;
+    capabilities: string[];
+  }[];
+  validator_ids: string[];
+  refiner_ids: string[];
+  resource_ids: string[];
+  constraints: Record<string, unknown>;
+  data_profile: {
+    image_count: number;
+    sample_width?: number;
+    sample_height?: number;
+    mime_types: string[];
+  };
+}
+
 export interface ImageItem {
   index: number;
   name: string;
@@ -225,7 +317,10 @@ export type Point = [number, number];
 export type AnnotationValue =
   | { kind: "classification"; labels: string[] }
   | { kind: "bounding_box"; rect: [number, number, number, number] }
-  | { kind: "keypoints"; points: { name: string; point: Point; visible: boolean }[] }
+  | {
+      kind: "keypoints";
+      points: { name: string; point: Point; visible: boolean }[];
+    }
   | { kind: "polyline"; points: Point[] }
   | { kind: "polygon"; rings: Point[][] }
   | { kind: "instance_mask"; mask: { kind: "polygon"; rings: Point[][] } };

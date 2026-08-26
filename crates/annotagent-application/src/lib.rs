@@ -9,13 +9,17 @@ use std::{
 use annotagent_core::{
     AdditionalUsage, ArtifactKind, BatchBudgetLedger, BatchBudgetLimits, BatchId,
     BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
-    BatchStatus, BatchUsage, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry,
-    PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
-    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, TaskRunStatus, TokenUsage,
-    UsageSource, VisionCapability, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    BatchStatus, BatchUsage, Budget, DomainSkill, ImageId, ModelMessage, ModelRegistry,
+    ModelRequest, ModelRole, NodeRegistry, PricingConfig, ProjectId, ProjectSchema,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent, RunEventKind, RunEventPayload,
+    RunId, RunStatus, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
+    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
     VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
-    WorkflowAdvisor, WorkflowConstraints, WorkflowDraft, WorkflowDraftStatus, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationReport, all_artifact_kinds,
+    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowSnapshot, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
 use annotagent_provider::{
@@ -44,6 +48,29 @@ pub struct Settings {
     pub provider: OpenAiCompatibleConfig,
     pub pricing: PricingConfig,
     pub budget: Budget,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveWorkflowAdvice {
+    name: String,
+    #[serde(default)]
+    model_bindings: Vec<LiveWorkflowBinding>,
+    #[serde(default)]
+    review_gate_node_ids: Vec<String>,
+    #[serde(default)]
+    rationale: Vec<String>,
+    #[serde(default)]
+    unresolved_model_bindings: Vec<String>,
+    #[serde(default)]
+    warnings: Vec<String>,
+    #[serde(default)]
+    alternatives: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveWorkflowBinding {
+    node_id: String,
+    model_id: String,
 }
 
 fn default_provider_kind() -> String {
@@ -226,6 +253,40 @@ fn compatibility_workflow(
             "project tasks + registered Skill graphs".to_owned()
         },
         nodes,
+    }
+}
+
+fn published_workflow_summary(
+    version: &PublishedWorkflowVersion,
+    is_default: bool,
+) -> WorkflowVersion {
+    WorkflowVersion {
+        workflow_id: version.workflow_id.clone(),
+        name: version.draft.name.clone(),
+        version: version.version.to_string(),
+        status: WorkflowStatus::Published,
+        validation_status: "valid".to_owned(),
+        is_default,
+        source: format!("published draft {}", version.source_draft_id),
+        nodes: version
+            .draft
+            .nodes
+            .iter()
+            .map(|node| WorkflowNodeSummary {
+                id: node.id.clone(),
+                node_type: node.node_type.clone(),
+                depends_on: node.depends_on.clone(),
+                model_binding: node.model_binding.clone(),
+                validators: node.validators.clone(),
+                refiners: node.refiners.clone(),
+                human_review_gate: node.review_gate || node.gate.required,
+                fallback: node
+                    .fallback_policy
+                    .target_node
+                    .clone()
+                    .or_else(|| node.fallback.clone()),
+            })
+            .collect(),
     }
 }
 
@@ -667,6 +728,7 @@ impl<'a> DatasetCoordinator<'a> {
                 &self.application.skills,
                 Some(&image_path),
                 Some(image.image_id),
+                None,
             );
             let prepared = match prepared {
                 Ok(prepared) => prepared,
@@ -1066,16 +1128,36 @@ impl LocalApplication {
                 )
             })
             .cloned();
-        let workflow = compatibility_workflow(&project, &project_skills);
-        let workflow_summary = WorkflowSummary {
-            id: workflow.workflow_id.clone(),
-            name: workflow.name.clone(),
-            current_version: workflow.version.clone(),
-            status: workflow.status,
-            validation_status: workflow.validation_status.clone(),
-            is_default: workflow.is_default,
-            node_count: workflow.nodes.len(),
-        };
+        let compatibility = compatibility_workflow(&project, &project_skills);
+        let published = self
+            .store
+            .list_published_workflow_versions(Some(project_id))?;
+        let mut available_workflow_versions = published
+            .iter()
+            .enumerate()
+            .map(|(index, version)| {
+                published_workflow_summary(version, index + 1 == published.len())
+            })
+            .collect::<Vec<_>>();
+        if available_workflow_versions.is_empty() {
+            available_workflow_versions.push(compatibility.clone());
+        }
+        let active_workflow = available_workflow_versions
+            .last()
+            .cloned()
+            .unwrap_or_else(|| compatibility.clone());
+        let workflows = available_workflow_versions
+            .iter()
+            .map(|workflow| WorkflowSummary {
+                id: workflow.workflow_id.clone(),
+                name: workflow.name.clone(),
+                current_version: workflow.version.clone(),
+                status: workflow.status,
+                validation_status: workflow.validation_status.clone(),
+                is_default: workflow.is_default,
+                node_count: workflow.nodes.len(),
+            })
+            .collect();
         let model_bindings = active_run
             .as_ref()
             .or(last_run.as_ref())
@@ -1129,9 +1211,9 @@ impl LocalApplication {
                         .unwrap_or_else(|| skill.manifest().version.to_string()),
                 })
                 .collect(),
-            workflows: vec![workflow_summary],
-            active_workflow: workflow.clone(),
-            available_workflow_versions: vec![workflow],
+            workflows,
+            active_workflow,
+            available_workflow_versions,
             model_bindings,
             export_formats: project.export.formats.clone(),
             skill_id: project
@@ -1168,6 +1250,101 @@ impl LocalApplication {
         Ok(self.store.list_workflow_drafts(project_id)?)
     }
 
+    pub fn workflow_advisor_input(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: WorkflowConstraints,
+    ) -> Result<WorkflowAdvisorInput> {
+        let project_path = self.project_path(project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        let enabled_skills = project_skills
+            .iter()
+            .map(|skill| skill.id().to_owned())
+            .collect::<Vec<_>>();
+        let extensions = self.skills.validation_catalog_for(&enabled_skills)?;
+        let images = self.list_project_images(project_id)?;
+        let sample = images
+            .first()
+            .map(|path| load_image(path, 40_000_000))
+            .transpose()
+            .map_err(|error| anyhow!(error))?;
+        let mut mime_types = BTreeSet::new();
+        if let Some(image) = sample.as_ref() {
+            mime_types.insert(image.metadata.mime_type.clone());
+        }
+        Ok(WorkflowAdvisorInput {
+            project_id: project_id.to_owned(),
+            project_schema: project,
+            enabled_skills,
+            node_catalog: nodes.nodes(),
+            model_registry: models.models(),
+            validator_ids: extensions.validators.into_iter().collect(),
+            refiner_ids: extensions.refiners.into_iter().collect(),
+            resource_ids: extensions.resources.into_iter().collect(),
+            constraints,
+            data_profile: WorkflowDataProfile {
+                image_count: images.len(),
+                sample_width: sample.as_ref().map(|image| image.metadata.width),
+                sample_height: sample.as_ref().map(|image| image.metadata.height),
+                mime_types,
+            },
+        })
+    }
+
+    pub fn create_workflow_draft(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        from_template: bool,
+    ) -> Result<WorkflowDraft> {
+        let project_path = self.project_path(project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let now = chrono::Utc::now();
+        let draft = if from_template {
+            let (nodes, models) = workflow_catalog(settings)?;
+            let mut draft = RegistryWorkflowAdvisor
+                .suggest_workflow(
+                    project_id,
+                    &project,
+                    &project_skills
+                        .iter()
+                        .map(|skill| skill.id().to_owned())
+                        .collect::<Vec<_>>(),
+                    &nodes,
+                    &models,
+                    &WorkflowConstraints::default(),
+                )
+                .draft;
+            draft.id = uuid::Uuid::new_v4().to_string();
+            draft.name = format!("{} template workflow", project.project.name);
+            draft.status = WorkflowDraftStatus::Editing;
+            draft.created_at = now;
+            draft.updated_at = now;
+            draft
+        } else {
+            WorkflowDraft {
+                schema_version: WORKFLOW_SCHEMA_VERSION,
+                id: uuid::Uuid::new_v4().to_string(),
+                project_id: project_id.to_owned(),
+                name: format!("{} workflow", project.project.name),
+                status: WorkflowDraftStatus::Editing,
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                enabled_skills: project.project.enabled_skill_versions(),
+                resource_versions: BTreeMap::new(),
+                allow_unvalidated_commit: false,
+                created_at: now,
+                updated_at: now,
+            }
+        };
+        self.store.save_workflow_draft(&draft)?;
+        Ok(draft)
+    }
+
     pub fn suggest_workflow(
         &self,
         project_id: &str,
@@ -1193,15 +1370,221 @@ impl LocalApplication {
         Ok(suggestion)
     }
 
+    pub async fn suggest_workflow_live(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        temporary_api_key: Option<String>,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        let input = self.workflow_advisor_input(project_id, settings, constraints.clone())?;
+        let mut suggestion = self.suggest_workflow_preview(project_id, settings, constraints)?;
+        let node_ids = suggestion
+            .draft
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        let model_ids = input
+            .model_registry
+            .iter()
+            .map(|model| model.id.clone())
+            .collect::<Vec<_>>();
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            settings.provider.clone(),
+            temporary_api_key,
+        )
+        .map_err(|error| anyhow!(error))?;
+        let response = provider
+            .complete(
+                ModelRequest {
+                    model: settings.provider.model.clone(),
+                    task_id: "workflow_advisor".into(),
+                    messages: vec![
+                        ModelMessage {
+                            role: ModelRole::System,
+                            content: "You are the AnnotAgent Workflow Advisor. Return only the registered submit_workflow_advice action. Never emit code, shell commands, URLs, or unknown resource IDs. The result is always a Draft and is never executed automatically.".to_owned(),
+                            tool_call_id: None,
+                            tool_calls: Vec::new(),
+                        },
+                        ModelMessage {
+                            role: ModelRole::User,
+                            content: serde_json::to_string(&json!({
+                                "advisor_input": input,
+                                "safe_base_draft": &suggestion.draft,
+                            }))?,
+                            tool_call_id: None,
+                            tool_calls: Vec::new(),
+                        },
+                    ],
+                    images: Vec::new(),
+                    tools: vec![ToolDefinition {
+                        name: "submit_workflow_advice".to_owned(),
+                        description: "Adjust only registered model bindings and review gates on the supplied safe base Draft.".to_owned(),
+                        parameters: json!({
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["name", "model_bindings", "review_gate_node_ids", "rationale", "unresolved_model_bindings", "warnings", "alternatives"],
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1, "maxLength": 160},
+                                "model_bindings": {
+                                    "type": "array",
+                                    "uniqueItems": true,
+                                    "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["node_id", "model_id"],
+                                        "properties": {
+                                            "node_id": {"type": "string", "enum": node_ids.clone()},
+                                            "model_id": {"type": "string", "enum": model_ids.clone()}
+                                        }
+                                    }
+                                },
+                                "review_gate_node_ids": {"type": "array", "items": {"type": "string", "enum": node_ids.clone()}, "uniqueItems": true},
+                                "rationale": {"type": "array", "items": {"type": "string"}},
+                                "unresolved_model_bindings": {"type": "array", "items": {"type": "string", "enum": node_ids.clone()}, "uniqueItems": true},
+                                "warnings": {"type": "array", "items": {"type": "string"}},
+                                "alternatives": {"type": "array", "items": {"type": "string"}}
+                            }
+                        }),
+                        read_only: true,
+                    }],
+                    max_output_tokens: settings.provider.max_output_tokens,
+                    temperature: 0.0,
+                    extra: BTreeMap::new(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| anyhow!(error))?;
+        let call = response
+            .tool_calls
+            .into_iter()
+            .find(|call| call.name == "submit_workflow_advice")
+            .ok_or_else(|| anyhow!("Workflow Advisor did not submit a constrained Draft"))?;
+        let advice: LiveWorkflowAdvice = serde_json::from_value(call.arguments)?;
+        let known_nodes = node_ids.into_iter().collect::<BTreeSet<_>>();
+        let known_models = model_ids.into_iter().collect::<BTreeSet<_>>();
+        for binding in &advice.model_bindings {
+            if !known_nodes.contains(&binding.node_id) || !known_models.contains(&binding.model_id)
+            {
+                bail!("Workflow Advisor referenced an unregistered node or model");
+            }
+        }
+        if advice
+            .review_gate_node_ids
+            .iter()
+            .any(|node_id| !known_nodes.contains(node_id))
+        {
+            bail!("Workflow Advisor referenced an unregistered review-gate node");
+        }
+        suggestion.draft.id = uuid::Uuid::new_v4().to_string();
+        suggestion.draft.name = advice.name;
+        suggestion.draft.status = WorkflowDraftStatus::Suggested;
+        suggestion.draft.created_at = chrono::Utc::now();
+        suggestion.draft.updated_at = suggestion.draft.created_at;
+        for node in &mut suggestion.draft.nodes {
+            if let Some(binding) = advice
+                .model_bindings
+                .iter()
+                .find(|binding| binding.node_id == node.id)
+            {
+                node.model_binding = Some(binding.model_id.clone());
+            }
+            if advice.review_gate_node_ids.contains(&node.id) {
+                node.review_gate = true;
+                node.gate.required = true;
+            }
+        }
+        suggestion.rationale = advice.rationale;
+        suggestion.unresolved_model_bindings = advice.unresolved_model_bindings;
+        suggestion.warnings = advice.warnings;
+        suggestion.alternatives = advice.alternatives;
+
+        let (nodes, models) = workflow_catalog(settings)?;
+        let enabled_skills = suggestion
+            .draft
+            .enabled_skills
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let extension_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
+        let extensions = self.skills.validation_catalog_for(&extension_ids)?;
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &suggestion.draft,
+            &nodes,
+            &models,
+            &extensions,
+            &enabled_skills,
+            false,
+        );
+        if !report.valid {
+            bail!("Workflow Advisor output failed registry validation");
+        }
+        self.store.save_workflow_draft(&suggestion.draft)?;
+        Ok(suggestion)
+    }
+
+    fn suggest_workflow_preview(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        let project_path = self.project_path(project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        Ok(RegistryWorkflowAdvisor.suggest_workflow(
+            project_id,
+            &project,
+            &project_skills
+                .iter()
+                .map(|skill| skill.id().to_owned())
+                .collect::<Vec<_>>(),
+            &nodes,
+            &models,
+            constraints,
+        ))
+    }
+
     pub fn save_workflow_draft(&self, mut draft: WorkflowDraft) -> Result<WorkflowDraft> {
         self.project_path(&draft.project_id)?;
         if let Ok(existing) = self.store.get_workflow_draft(&draft.id)
-            && existing.status == WorkflowDraftStatus::Published
+            && matches!(
+                existing.status,
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+            )
         {
-            bail!("published workflow drafts are immutable; create a new draft");
+            bail!("published or archived workflow drafts are immutable; clone it to a new draft");
         }
         draft.status = WorkflowDraftStatus::Editing;
         draft.updated_at = chrono::Utc::now();
+        self.store.save_workflow_draft(&draft)?;
+        Ok(draft)
+    }
+
+    pub fn archive_workflow_draft(&self, draft_id: &str) -> Result<WorkflowDraft> {
+        let mut draft = self.store.get_workflow_draft(draft_id)?;
+        self.project_path(&draft.project_id)?;
+        draft.status = WorkflowDraftStatus::Archived;
+        draft.updated_at = chrono::Utc::now();
+        self.store.save_workflow_draft(&draft)?;
+        Ok(draft)
+    }
+
+    pub fn clone_workflow_version(&self, workflow_id: &str, version: u32) -> Result<WorkflowDraft> {
+        let published = self
+            .store
+            .get_published_workflow_version(workflow_id, version)?;
+        self.project_path(&published.project_id)?;
+        let now = chrono::Utc::now();
+        let mut draft = published.draft;
+        draft.id = uuid::Uuid::new_v4().to_string();
+        draft.name = format!("{} (from v{version})", draft.name);
+        draft.status = WorkflowDraftStatus::Editing;
+        draft.created_at = now;
+        draft.updated_at = now;
         self.store.save_workflow_draft(&draft)?;
         Ok(draft)
     }
@@ -1228,7 +1611,12 @@ impl LocalApplication {
             &enabled_skills,
             false,
         );
-        if report.valid && draft.status != WorkflowDraftStatus::Published {
+        if report.valid
+            && !matches!(
+                draft.status,
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+            )
+        {
             let mut validated = draft;
             validated.status = WorkflowDraftStatus::Validated;
             validated.updated_at = chrono::Utc::now();
@@ -1237,12 +1625,212 @@ impl LocalApplication {
         Ok(report)
     }
 
+    pub async fn dry_run_workflow_samples(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+    ) -> Result<WorkflowDryRunReport> {
+        let started = std::time::Instant::now();
+        let mut validation = self.dry_run_workflow(draft_id, settings)?;
+        let draft = self.store.get_workflow_draft(draft_id)?;
+        let images = self.list_project_images(&draft.project_id)?;
+        let selected = if image_indices.is_empty() {
+            (0..images.len().min(3)).collect::<Vec<_>>()
+        } else {
+            image_indices.iter().copied().take(10).collect::<Vec<_>>()
+        };
+        let (nodes, models) = workflow_catalog(settings)?;
+        let mut samples = Vec::new();
+        if validation.valid {
+            for index in selected {
+                let path = images
+                    .get(index)
+                    .ok_or_else(|| anyhow!("image index {index} was not found"))?;
+                let image = load_image(path, 40_000_000).map_err(|error| anyhow!(error))?;
+                let model_image = to_model_image("workflow-dry-run", &image, 1280)
+                    .map_err(|error| anyhow!(error))?;
+                let sandbox_run_id = RunId::new();
+                let sandbox_image_id = ImageId::new();
+                let mut node_results = Vec::new();
+                for node_id in &validation.execution_order {
+                    let Some(draft_node) = draft.nodes.iter().find(|node| &node.id == node_id)
+                    else {
+                        continue;
+                    };
+                    let node_started = std::time::Instant::now();
+                    let mut node_issues = Vec::new();
+                    let status = if let Some(model_id) = draft_node.model_binding.as_deref() {
+                        let (model, backend) =
+                            models.resolve(model_id).map_err(|error| anyhow!(error))?;
+                        let operation = nodes
+                            .get(&draft_node.node_type)
+                            .and_then(|descriptor| descriptor.required_capabilities.first())
+                            .copied()
+                            .unwrap_or(VisionCapability::VisionLanguage);
+                        let response = backend
+                            .infer(
+                                VisionInferenceRequest {
+                                    protocol_version:
+                                        annotagent_core::VISION_WORKER_PROTOCOL_VERSION,
+                                    request_id: uuid::Uuid::new_v4().to_string(),
+                                    operation,
+                                    run_id: sandbox_run_id,
+                                    image_id: sandbox_image_id,
+                                    task_id: draft_node.id.clone().into(),
+                                    node_id: draft_node.id.clone(),
+                                    model_id: model.id.clone(),
+                                    image: Some(model_image.clone()),
+                                    input_artifacts: Vec::new(),
+                                    prompt: None,
+                                    parameters: draft_node.parameters.clone(),
+                                    timeout_ms: draft_node
+                                        .resources
+                                        .timeout_seconds
+                                        .map(|seconds| seconds.saturating_mul(1_000)),
+                                    cancellation_requested: false,
+                                },
+                                CancellationToken::new(),
+                            )
+                            .await
+                            .map_err(|error| anyhow!(error))?;
+                        if let Some(error) = response.error {
+                            node_issues.push(WorkflowValidationIssue {
+                                code: error.code,
+                                path: format!("nodes.{node_id}"),
+                                message: error.message,
+                                blocking: true,
+                            });
+                            "failed_in_sandbox"
+                        } else {
+                            "completed_in_sandbox"
+                        }
+                    } else {
+                        "completed_in_sandbox"
+                    };
+                    let output_types = if draft_node.outputs.is_empty() {
+                        nodes
+                            .get(&draft_node.node_type)
+                            .map(|descriptor| descriptor.produces.clone())
+                            .unwrap_or_default()
+                    } else {
+                        draft_node
+                            .outputs
+                            .iter()
+                            .map(|port| port.artifact_type)
+                            .collect()
+                    };
+                    node_results.push(WorkflowDryRunNodeResult {
+                        node_id: node_id.clone(),
+                        status: status.to_owned(),
+                        output_types,
+                        latency_ms: node_started
+                            .elapsed()
+                            .as_millis()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                        estimated_cost: "0".to_owned(),
+                        issues: node_issues,
+                    });
+                }
+                samples.push(WorkflowDryRunSampleResult {
+                    image_name: path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("image")
+                        .to_owned(),
+                    width: image.metadata.width,
+                    height: image.metadata.height,
+                    nodes: node_results,
+                });
+            }
+        }
+        let execution_issues = samples
+            .iter()
+            .flat_map(|sample| sample.nodes.iter())
+            .flat_map(|node| node.issues.iter().cloned())
+            .collect::<Vec<_>>();
+        if !execution_issues.is_empty() {
+            validation.valid = false;
+            validation.issues.extend(execution_issues);
+        }
+        Ok(WorkflowDryRunReport {
+            sandbox: true,
+            validation,
+            samples,
+            total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            estimated_cost: "0".to_owned(),
+        })
+    }
+
+    pub fn compare_workflow_versions(
+        &self,
+        left_workflow_id: &str,
+        left_version: u32,
+        right_workflow_id: &str,
+        right_version: u32,
+    ) -> Result<WorkflowVersionComparison> {
+        let left = self
+            .store
+            .get_published_workflow_version(left_workflow_id, left_version)?;
+        let right = self
+            .store
+            .get_published_workflow_version(right_workflow_id, right_version)?;
+        if left.project_id != right.project_id {
+            bail!("workflow versions from different projects cannot be compared");
+        }
+        let left_nodes = left
+            .draft
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node))
+            .collect::<BTreeMap<_, _>>();
+        let right_nodes = right
+            .draft
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node))
+            .collect::<BTreeMap<_, _>>();
+        Ok(WorkflowVersionComparison {
+            left_workflow_id: left.workflow_id,
+            left_version: left.version,
+            right_workflow_id: right.workflow_id,
+            right_version: right.version,
+            added_nodes: right_nodes
+                .keys()
+                .filter(|id| !left_nodes.contains_key(*id))
+                .cloned()
+                .collect(),
+            removed_nodes: left_nodes
+                .keys()
+                .filter(|id| !right_nodes.contains_key(*id))
+                .cloned()
+                .collect(),
+            changed_nodes: right_nodes
+                .iter()
+                .filter(|(id, node)| {
+                    left_nodes
+                        .get(*id)
+                        .is_some_and(|left_node| *left_node != **node)
+                })
+                .map(|(id, _)| id.clone())
+                .collect(),
+            same_content: left.content_hash == right.content_hash,
+        })
+    }
+
     pub fn publish_workflow(
         &self,
         draft_id: &str,
         settings: &Settings,
     ) -> Result<PublishedWorkflowVersion> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
+        if matches!(
+            draft.status,
+            WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+        ) {
+            bail!("published or archived workflow drafts are immutable; clone it to a new draft");
+        }
         let report = self.dry_run_workflow(draft_id, settings)?;
         if !report.valid {
             bail!("workflow has blocking static validation issues");
@@ -1368,6 +1956,7 @@ impl LocalApplication {
             &self.skills,
             None,
             None,
+            None,
         )?;
         self.start_prepared(prepared, true, None)
     }
@@ -1394,6 +1983,56 @@ impl LocalApplication {
             &self.skills,
             None,
             None,
+            None,
+        )?;
+        self.start_prepared(prepared, true, idempotency_key)
+    }
+
+    pub fn start_run_path_with_settings_idempotent_workflow(
+        &self,
+        project_path: &Path,
+        provider: &str,
+        settings: Settings,
+        temporary_api_key: Option<String>,
+        idempotency_key: Option<&str>,
+        workflow: Option<(&str, u32)>,
+    ) -> Result<StartedRun> {
+        let canonical = project_path
+            .canonicalize()
+            .with_context(|| format!("cannot access {}", project_path.display()))?;
+        ensure_within(&self.workspace, &canonical)?;
+        self.ensure_no_active_batch(&canonical)?;
+        let workflow_snapshot = workflow
+            .map(|(workflow_id, version)| {
+                let published = self
+                    .store
+                    .get_published_workflow_version(workflow_id, version)?;
+                let project_id = canonical
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                if published.project_id != project_id {
+                    bail!("selected Workflow Version belongs to a different Project");
+                }
+                Ok(serde_json::to_string(&json!({
+                    "workflow_id": published.workflow_id,
+                    "version": published.version,
+                    "content_hash": published.content_hash,
+                    "snapshot": published.snapshot,
+                }))?)
+            })
+            .transpose()?;
+        let prepared = prepare_run_with_settings(
+            &canonical,
+            provider,
+            settings,
+            temporary_api_key,
+            self.store.clone(),
+            &self.skills,
+            None,
+            None,
+            workflow_snapshot,
         )?;
         self.start_prepared(prepared, true, idempotency_key)
     }
@@ -1419,6 +2058,7 @@ impl LocalApplication {
             self.store.clone(),
             &self.skills,
             Some(&image_path),
+            None,
             None,
         )?;
         self.start_prepared(prepared, false, None)
@@ -1707,6 +2347,7 @@ fn prepare_run_with(
         skills,
         None,
         None,
+        None,
     )
 }
 
@@ -1720,6 +2361,7 @@ fn prepare_run_with_settings(
     skills: &SkillRegistry,
     image_override: Option<&Path>,
     image_id_override: Option<ImageId>,
+    workflow_snapshot_override: Option<String>,
 ) -> Result<PreparedRun> {
     let (project, skill) = load_project_with_registry(project_path, skills)?;
     let image_path = image_override.map_or_else(
@@ -1744,7 +2386,7 @@ fn prepare_run_with_settings(
     };
     // Milestone 2 still executes the compatibility agent loop. Record that exact immutable graph
     // rather than falsely attributing execution to a published DAG (the DAG executor arrives in M3).
-    let workflow_snapshot_json = Some(serde_json::to_string(&serde_json::json!({
+    let mut compatibility_snapshot = serde_json::json!({
         "schema_version": 1,
         "engine": "legacy_agent_runtime",
         "workflow": skill.workflow(),
@@ -1754,7 +2396,14 @@ fn prepare_run_with_settings(
             "provider": provider.name(),
             "model": &settings.provider.model,
         }
-    }))?);
+    });
+    if let Some(selected_workflow) = workflow_snapshot_override {
+        compatibility_snapshot["selected_workflow"] = serde_json::from_str(&selected_workflow)?;
+        compatibility_snapshot["execution_note"] = json!(
+            "the immutable Workflow Version was selected and audited; this compatibility Run still executes the registered Skill task graph"
+        );
+    }
+    let workflow_snapshot_json = Some(serde_json::to_string(&compatibility_snapshot)?);
     let runtime = Arc::new(
         AgentRuntime::new(
             skill,
@@ -2269,6 +2918,136 @@ export:
                 .to_string()
                 .contains("immutable")
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_alpha_editor_journey_is_persistent_and_version_explicit() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "workflow-alpha",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let image_path = temporary.path().join("workflow-alpha/images/sample.png");
+        generate_synthetic_robocup(&image_path).expect("sample image");
+        let settings = load_settings(None).expect("settings");
+
+        let blank = application
+            .create_workflow_draft("workflow-alpha", &settings, false)
+            .expect("blank draft");
+        assert!(blank.nodes.is_empty());
+        let mut draft = application
+            .suggest_workflow(
+                "workflow-alpha",
+                &settings,
+                &WorkflowConstraints {
+                    require_review_gate: true,
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect("mock Advisor draft")
+            .draft;
+        let target_index = draft
+            .nodes
+            .iter()
+            .position(|node| !node.inputs.is_empty())
+            .expect("typed input node");
+        let original_type = draft.nodes[target_index].inputs[0].artifact_type;
+        draft.nodes[target_index].inputs[0].artifact_type = ArtifactKind::Relations;
+        let draft = application
+            .save_workflow_draft(draft)
+            .expect("invalid edit is persisted as a Draft");
+        let invalid = application
+            .dry_run_workflow(&draft.id, &settings)
+            .expect("precise validation report");
+        assert!(invalid.issues.iter().any(|issue| {
+            issue.code == "artifact_type_mismatch"
+                && issue
+                    .path
+                    .contains(&format!("nodes[{target_index}].inputs"))
+        }));
+
+        let mut fixed = draft;
+        fixed.nodes[target_index].inputs[0].artifact_type = original_type;
+        let fixed = application.save_workflow_draft(fixed).expect("fixed Draft");
+        let dry_run = application
+            .dry_run_workflow_samples(&fixed.id, &settings, &[0])
+            .await
+            .expect("sample Dry Run");
+        assert!(dry_run.sandbox);
+        assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
+        assert_eq!(dry_run.samples.len(), 1);
+        assert_eq!(dry_run.samples[0].image_name, "sample.png");
+        assert_eq!(dry_run.samples[0].nodes.len(), fixed.nodes.len());
+
+        let published = application
+            .publish_workflow(&fixed.id, &settings)
+            .expect("published version");
+        let frozen = published.draft.clone();
+        let mut attempted_mutation = frozen.clone();
+        attempted_mutation.name = "mutated".to_owned();
+        assert!(application.save_workflow_draft(attempted_mutation).is_err());
+        assert_eq!(
+            application
+                .store
+                .get_published_workflow_version(&published.workflow_id, published.version)
+                .expect("immutable version")
+                .draft,
+            frozen
+        );
+
+        let mut cloned = application
+            .clone_workflow_version(&published.workflow_id, published.version)
+            .expect("editable clone");
+        assert_eq!(cloned.status, WorkflowDraftStatus::Editing);
+        cloned.name.push_str(" revised");
+        let cloned = application
+            .save_workflow_draft(cloned)
+            .expect("clone remains editable");
+        let revised = application
+            .publish_workflow(&cloned.id, &settings)
+            .expect("revised version");
+        let comparison = application
+            .compare_workflow_versions(
+                &published.workflow_id,
+                published.version,
+                &revised.workflow_id,
+                revised.version,
+            )
+            .expect("version comparison");
+        assert!(
+            !comparison.same_content,
+            "the published name is versioned content"
+        );
+        assert!(comparison.changed_nodes.is_empty());
+
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("workflow-alpha/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("workflow-alpha-explicit-version"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("explicit Workflow Version Run");
+        application
+            .wait_run(started.run_id)
+            .await
+            .expect("completed Run");
+        let history = application.store.history(started.run_id).expect("history");
+        let snapshot = history.run.workflow_snapshot_json.expect("snapshot");
+        assert!(snapshot.contains(&published.workflow_id));
+        assert!(snapshot.contains("selected_workflow"));
+        assert!(snapshot.contains("legacy_agent_runtime"));
+
+        let archived = application
+            .archive_workflow_draft(&blank.id)
+            .expect("archived Draft");
+        assert_eq!(archived.status, WorkflowDraftStatus::Archived);
+        assert!(application.save_workflow_draft(archived).is_err());
     }
 
     #[tokio::test]

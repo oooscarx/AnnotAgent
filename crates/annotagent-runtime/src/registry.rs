@@ -116,6 +116,14 @@ impl SkillRegistry {
                     .into_iter()
                     .map(|refiner| refiner.id().to_owned()),
             );
+            catalog.resources.extend(
+                skill
+                    .manifest()
+                    .summary_resources
+                    .iter()
+                    .chain(skill.manifest().task_resources.values().flatten())
+                    .cloned(),
+            );
         }
         catalog
     }
@@ -146,6 +154,20 @@ impl SkillRegistry {
                         refiner.id().to_owned()
                     }
                 }));
+            catalog.resources.extend(
+                skill
+                    .manifest()
+                    .summary_resources
+                    .iter()
+                    .chain(skill.manifest().task_resources.values().flatten())
+                    .map(|resource| {
+                        if use_namespace {
+                            format!("{skill_id}.{resource}")
+                        } else {
+                            resource.clone()
+                        }
+                    }),
+            );
         }
         Ok(catalog)
     }
