@@ -42,6 +42,11 @@ pub struct ToolResult {
 pub trait AgentTool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
 
+    /// Empty means the tool is generic; otherwise it is only exposed for these task ids.
+    fn applicable_tasks(&self) -> Vec<TaskId> {
+        Vec::new()
+    }
+
     async fn execute(
         &self,
         context: &ToolContext,
@@ -164,6 +169,11 @@ pub trait DomainSkill: Send + Sync {
     fn prompt_resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>>;
     fn correction_taxonomy(&self) -> Vec<CorrectionKind>;
     fn review_policy(&self) -> Arc<dyn ReviewPolicy>;
+
+    /// Optional starter project supplied by the domain extension, never by Core or the GUI.
+    fn project_template(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

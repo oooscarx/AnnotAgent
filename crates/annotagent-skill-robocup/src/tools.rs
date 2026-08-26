@@ -13,6 +13,10 @@ pub struct RoboCupFieldLineTool;
 
 #[async_trait]
 impl AgentTool for RoboCupFieldLineTool {
+    fn applicable_tasks(&self) -> Vec<annotagent_core::TaskId> {
+        vec![annotagent_core::TaskId::from("field_line")]
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "refine_robocup_field_line".to_owned(),
@@ -21,7 +25,12 @@ impl AgentTool for RoboCupFieldLineTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "points": {"type": "array", "items": {"type": "array"}}
+                    "points": {
+                        "type": "array",
+                        "description": "Coarse polyline of normalized [x,y] pairs; never pixel coordinates",
+                        "minItems": 2,
+                        "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number", "minimum": 0, "maximum": 1}}
+                    }
                 },
                 "required": ["points"],
                 "additionalProperties": false
@@ -57,6 +66,10 @@ pub struct BallEvidenceTool;
 
 #[async_trait]
 impl AgentTool for BallEvidenceTool {
+    fn applicable_tasks(&self) -> Vec<annotagent_core::TaskId> {
+        vec![annotagent_core::TaskId::from("objects")]
+    }
+
     fn definition(&self) -> ToolDefinition {
         bbox_tool_definition(
             "evaluate_ball_hard_negative",
@@ -91,6 +104,10 @@ pub struct TeamColorEvidenceTool;
 
 #[async_trait]
 impl AgentTool for TeamColorEvidenceTool {
+    fn applicable_tasks(&self) -> Vec<annotagent_core::TaskId> {
+        vec![annotagent_core::TaskId::from("robot_attributes")]
+    }
+
     fn definition(&self) -> ToolDefinition {
         bbox_tool_definition(
             "evaluate_robot_team_color",
@@ -136,7 +153,13 @@ fn bbox_tool_definition(name: &str, description: &str) -> ToolDefinition {
         parameters: json!({
             "type": "object",
             "properties": {
-                "bbox": {"type": "array", "items": {"type": "number"}}
+                "bbox": {
+                    "type": "array",
+                    "description": "Normalized [x,y,width,height], never [x1,y1,x2,y2] and never pixels; x+width<=1, y+height<=1",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "items": {"type": "number", "minimum": 0, "maximum": 1}
+                }
             },
             "required": ["bbox"],
             "additionalProperties": false

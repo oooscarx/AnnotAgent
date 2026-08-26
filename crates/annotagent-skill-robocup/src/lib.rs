@@ -144,6 +144,10 @@ impl DomainSkill for RoboCupSkill {
     fn review_policy(&self) -> Arc<dyn ReviewPolicy> {
         Arc::new(RoboCupReviewPolicy)
     }
+
+    fn project_template(&self) -> Option<&str> {
+        Some(include_str!("../../../examples/robocup/project.yaml"))
+    }
 }
 
 fn node(id: &str, dependencies: &[&str]) -> TaskNode {

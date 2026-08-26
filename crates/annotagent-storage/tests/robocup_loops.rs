@@ -5,7 +5,9 @@ use annotagent_core::{
     PricingConfig, ProjectId, ProjectSchema, RunEventKind, RunId, RunStatus, TaskId,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
-use annotagent_provider::{MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider};
+use annotagent_provider::{
+    MockResponseSpec, MockScript, MockStep, MockToolCall, MockUsage, MockVisionProvider,
+};
 use annotagent_runtime::{AgentLoopConfig, AgentRuntime, ImageRunRequest, RuntimeStore};
 use annotagent_skill_robocup::RoboCupSkill;
 use annotagent_storage::SqliteStore;
@@ -241,4 +243,75 @@ async fn coarse_field_line_is_refined_validated_committed_and_revisioned() {
         .collect();
     assert!(event_kinds.contains(&RunEventKind::RefinementStarted));
     assert!(event_kinds.contains(&RunEventKind::RefinementCompleted));
+}
+
+#[tokio::test]
+async fn multiple_refinement_calls_are_limited_before_final_submission() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("field_line".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCalls {
+                    calls: vec![
+                        MockToolCall {
+                            name: "refine_robocup_field_line".to_owned(),
+                            arguments: json!({"points": [[0.08, 0.47], [0.92, 0.47]]}),
+                        },
+                        MockToolCall {
+                            name: "refine_robocup_field_line".to_owned(),
+                            arguments: json!({"points": [[0.1, 0.45], [0.9, 0.45]]}),
+                        },
+                        MockToolCall {
+                            name: "refine_robocup_field_line".to_owned(),
+                            arguments: json!({"points": [[0.1, 0.55], [0.9, 0.55]]}),
+                        },
+                    ],
+                    content: None,
+                },
+                usage: MockUsage {
+                    input_tokens: 120,
+                    output_tokens: 80,
+                },
+            },
+            MockStep {
+                expect_task: Some("field_line".to_owned()),
+                expect_message_contains: Some("submit the final candidate now".to_owned()),
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "white_field_line",
+                        "value": {"kind": "polyline", "points": [[0.08, 0.47], [0.92, 0.47]]},
+                        "attributes": {}, "confidence": 0.96
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 140,
+                    output_tokens: 30,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let (temporary, image) = fixture();
+    let result = runtime(provider, store)
+        .run_image(ImageRunRequest {
+            run_id: RunId::new(),
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project_for("field_line")),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("limited field-line loop");
+    assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(result.committed.len(), 1);
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == "tool_call_budget_exceeded")
+    );
 }

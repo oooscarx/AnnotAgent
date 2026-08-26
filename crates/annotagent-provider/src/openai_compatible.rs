@@ -62,15 +62,27 @@ const fn default_retries() -> u32 {
 pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleConfig,
     client: Client,
+    temporary_api_key: Option<String>,
 }
 
 impl OpenAiCompatibleProvider {
     pub fn new(config: OpenAiCompatibleConfig) -> CoreResult<Self> {
+        Self::new_with_api_key(config, None)
+    }
+
+    pub fn new_with_api_key(
+        config: OpenAiCompatibleConfig,
+        temporary_api_key: Option<String>,
+    ) -> CoreResult<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .build()
             .map_err(|error| CoreError::Provider(format!("cannot build HTTP client: {error}")))?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            temporary_api_key,
+        })
     }
 
     #[must_use]
@@ -185,12 +197,17 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
     ) -> CoreResult<ModelResponse> {
         request.model.clone_from(&self.config.model);
         request.max_output_tokens = request.max_output_tokens.min(self.config.max_output_tokens);
-        let key = std::env::var(&self.config.api_key_env).map_err(|_| {
-            CoreError::Provider(format!(
-                "API key environment variable {:?} is not set",
-                self.config.api_key_env
-            ))
-        })?;
+        let key = self.temporary_api_key.clone().map_or_else(
+            || {
+                std::env::var(&self.config.api_key_env).map_err(|_| {
+                    CoreError::Provider(format!(
+                        "API key environment variable {:?} is not set",
+                        self.config.api_key_env
+                    ))
+                })
+            },
+            Ok,
+        )?;
         let body = self.request_body(&request);
         for attempt in 0..=self.config.max_retries {
             let mut builder = self

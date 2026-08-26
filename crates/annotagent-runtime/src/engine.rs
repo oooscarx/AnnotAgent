@@ -152,6 +152,21 @@ impl AgentRuntime {
         &self,
         request: ImageRunRequest,
     ) -> Result<ImageRunResult, RuntimeError> {
+        let mut tools = ToolRegistry::new();
+        for tool in generic_tools() {
+            tools
+                .register(tool)
+                .map_err(|error| RuntimeError::Tool(error.to_string()))?;
+        }
+        for tool in self.skill.tool_factories() {
+            tools
+                .register(tool)
+                .map_err(|error| RuntimeError::Tool(error.to_string()))?;
+        }
+        let workflow_graph = self.skill.workflow();
+        let workflow = workflow_graph
+            .topological_order()
+            .map_err(RuntimeError::Workflow)?;
         let run = RunRecord {
             id: request.run_id,
             project_name: request.project.project.name.clone(),
@@ -195,26 +210,10 @@ impl AgentRuntime {
         ))
         .await?;
 
-        let mut tools = ToolRegistry::new();
-        for tool in generic_tools() {
-            tools
-                .register(tool)
-                .map_err(|error| RuntimeError::Tool(error.to_string()))?;
-        }
-        for tool in self.skill.tool_factories() {
-            tools
-                .register(tool)
-                .map_err(|error| RuntimeError::Tool(error.to_string()))?;
-        }
-
-        let workflow = self
-            .skill
-            .workflow()
-            .topological_order()
-            .map_err(RuntimeError::Workflow)?;
         let mut committed = Vec::new();
         let mut review_queue = Vec::new();
         let mut all_issues = Vec::new();
+        let mut failed_tasks = std::collections::BTreeSet::new();
         for task_id in workflow {
             if self.control.cancellation_token().is_cancelled() {
                 break;
@@ -222,7 +221,40 @@ impl AgentRuntime {
             let Some(task) = request.project.tasks.iter().find(|task| task.id == task_id) else {
                 continue;
             };
-            let outcome = self.run_task(&request, task, &committed, &tools).await?;
+            let dependencies = workflow_graph
+                .nodes
+                .iter()
+                .find(|node| node.id == task_id)
+                .map_or(&[][..], |node| node.depends_on.as_slice());
+            if let Some(dependency) = dependencies
+                .iter()
+                .find(|dependency| failed_tasks.contains(*dependency))
+            {
+                all_issues.push(runtime_issue(
+                    "dependency_failed",
+                    &format!(
+                        "task {} was skipped because dependency {} did not produce a candidate",
+                        task.id, dependency
+                    ),
+                ));
+                failed_tasks.insert(task.id.clone());
+                continue;
+            }
+            let outcome = match self.run_task(&request, task, &committed, &tools).await {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    self.finish_run_with_reason(
+                        request.run_id,
+                        RunStatus::Failed,
+                        &format!("runtime error: {error}"),
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
+            if outcome.committed.is_empty() && outcome.review_queue.is_empty() {
+                failed_tasks.insert(task.id.clone());
+            }
             committed.extend(outcome.committed);
             review_queue.extend(outcome.review_queue);
             all_issues.extend(outcome.issues);
@@ -235,6 +267,7 @@ impl AgentRuntime {
         {
             RunStatus::BudgetExceeded => RunStatus::BudgetExceeded,
             RunStatus::Cancelled => RunStatus::Cancelled,
+            _ if !failed_tasks.is_empty() => RunStatus::Failed,
             _ if !review_queue.is_empty() => RunStatus::AwaitingReview,
             _ => RunStatus::Completed,
         };
@@ -269,7 +302,17 @@ impl AgentRuntime {
             .scoped(Some(request.image_id), Some(task.id.clone())),
         )
         .await?;
-        let definitions = tools.definitions();
+        let mut definitions = tools.definitions_for_task(&task.id);
+        if !task.labels.is_empty()
+            && let Some(submit) = definitions
+                .iter_mut()
+                .find(|definition| definition.name == "submit_annotation_candidates")
+            && let Some(label_schema) = submit
+                .parameters
+                .pointer_mut("/properties/annotations/items/properties/label")
+        {
+            label_schema["enum"] = serde_json::json!(task.labels);
+        }
         let initial_usage = self.usage.lock().await.clone();
         let mut messages = ContextManager::build(
             self.skill.as_ref(),
@@ -286,6 +329,7 @@ impl AgentRuntime {
         let mut previous_signature = None;
         let mut repeated = 0_u32;
         let mut outcome = TaskOutcome::default();
+        let mut evidence_calls = 0_u32;
         for step in 0..self.config.max_steps_per_image {
             self.control
                 .wait_until_runnable()
@@ -317,12 +361,21 @@ impl AgentRuntime {
                 .scoped(Some(request.image_id), Some(task.id.clone())),
             )
             .await?;
+            let available_definitions = if evidence_calls == 0 {
+                definitions.clone()
+            } else {
+                definitions
+                    .iter()
+                    .filter(|definition| is_terminal_tool(&definition.name))
+                    .cloned()
+                    .collect()
+            };
             let model_request = ModelRequest {
                 model: self.config.model.clone(),
                 task_id: task.id.clone(),
                 messages: messages.clone(),
                 images: request.model_image.clone().into_iter().collect(),
-                tools: definitions.clone(),
+                tools: available_definitions,
                 max_output_tokens: self.config.max_output_tokens,
                 temperature: self.config.temperature,
                 extra: BTreeMap::new(),
@@ -415,7 +468,7 @@ impl AgentRuntime {
             }
 
             let mut retry_requested = false;
-            for call in response.tool_calls {
+            'tool_calls: for call in response.tool_calls {
                 let signature = normalized_tool_signature(&call.name, &call.arguments);
                 if previous_signature.as_ref() == Some(&signature) {
                     repeated += 1;
@@ -429,6 +482,55 @@ impl AgentRuntime {
                         "model repeated the same normalized tool call three times",
                     ));
                     return Ok(outcome);
+                }
+                if !is_terminal_tool(&call.name) && evidence_calls >= 1 {
+                    let message = "runtime skipped the tool call because this task already used its one evidence/refinement call";
+                    self.store
+                        .record_tool_call(
+                            request.run_id,
+                            &call.id,
+                            &call.name,
+                            &call.arguments,
+                            None,
+                            Some(message),
+                        )
+                        .await
+                        .map_err(RuntimeError::Store)?;
+                    messages.push(ModelMessage {
+                        role: ModelRole::Tool,
+                        content: format!(
+                            "{message}; submit the final candidate now with submit_annotation_candidates"
+                        ),
+                        tool_call_id: Some(call.id.clone()),
+                    });
+                    self.publish(
+                        RunEvent::new(
+                            request.run_id,
+                            RunEventKind::ToolCallCompleted,
+                            RunEventPayload::Tool {
+                                call_id: call.id,
+                                name: call.name,
+                                summary: message.to_owned(),
+                                success: false,
+                            },
+                        )
+                        .scoped(Some(request.image_id), Some(task.id.clone())),
+                    )
+                    .await?;
+                    if !outcome
+                        .issues
+                        .iter()
+                        .any(|issue| issue.code == "tool_call_budget_exceeded")
+                    {
+                        outcome.issues.push(runtime_issue(
+                            "tool_call_budget_exceeded",
+                            "model requested more than one evidence/refinement call for a task",
+                        ));
+                    }
+                    continue;
+                }
+                if !is_terminal_tool(&call.name) {
+                    evidence_calls += 1;
                 }
                 self.publish(
                     RunEvent::new(
@@ -488,13 +590,31 @@ impl AgentRuntime {
                             tool_call_id: Some(call.id.clone()),
                         });
                         if call.name == "submit_annotation_candidates" {
-                            let candidates = parse_candidates(
+                            let candidates = match parse_candidates(
                                 &call.arguments,
                                 request.image_id,
                                 task,
                                 self.provider.name(),
                                 &self.config.model,
-                            )?;
+                            ) {
+                                Ok(candidates) => candidates,
+                                Err(error) => {
+                                    let message = error.to_string();
+                                    outcome
+                                        .issues
+                                        .push(runtime_issue("invalid_candidate", &message));
+                                    messages.push(ModelMessage {
+                                        role: ModelRole::User,
+                                        content: format!(
+                                            "Candidate rejected before validation: {message}. Correct the label/value shape and submit again."
+                                        ),
+                                        tool_call_id: None,
+                                    });
+                                    retry_requested = true;
+                                    retries += 1;
+                                    break 'tool_calls;
+                                }
+                            };
                             let decision = self
                                 .process_candidates(request, task, related, candidates, retries)
                                 .await?;
@@ -517,9 +637,9 @@ impl AgentRuntime {
                                 });
                                 retry_requested = true;
                                 retries += 1;
-                            } else {
-                                return Ok(outcome);
+                                break 'tool_calls;
                             }
+                            return Ok(outcome);
                         } else if call.name == "request_human_review" {
                             outcome.issues.push(runtime_issue(
                                 "model_requested_review",
@@ -543,11 +663,33 @@ impl AgentRuntime {
                             )
                             .await
                             .map_err(RuntimeError::Store)?;
+                        self.publish(
+                            RunEvent::new(
+                                request.run_id,
+                                RunEventKind::ToolCallCompleted,
+                                RunEventPayload::Tool {
+                                    call_id: call.id.clone(),
+                                    name: call.name.clone(),
+                                    summary: message.clone(),
+                                    success: false,
+                                },
+                            )
+                            .scoped(Some(request.image_id), Some(task.id.clone())),
+                        )
+                        .await?;
                         messages.push(ModelMessage {
                             role: ModelRole::Tool,
                             content: format!("tool rejected: {message}"),
                             tool_call_id: Some(call.id),
                         });
+                        if call.name == "submit_annotation_candidates" {
+                            outcome
+                                .issues
+                                .push(runtime_issue("invalid_candidate", &message));
+                            retry_requested = true;
+                            retries += 1;
+                            break 'tool_calls;
+                        }
                     }
                 }
             }
@@ -929,11 +1071,18 @@ fn runtime_issue(code: &str, message: &str) -> ValidationIssue {
     }
 }
 
+fn is_terminal_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "submit_annotation_candidates" | "finish_task" | "request_human_review"
+    )
+}
+
 fn generic_tools() -> Vec<Arc<dyn AgentTool>> {
     vec![
         Arc::new(EchoTool::new(
             "submit_annotation_candidates",
-            "Submit typed annotation candidates for runtime validation",
+            "Submit the final typed candidates for the CURRENT task. Geometry coordinates must be normalized to [0,1]. Bounding boxes use rect=[x,y,width,height], never [x1,y1,x2,y2].",
             json!({
                 "type": "object",
                 "properties": {

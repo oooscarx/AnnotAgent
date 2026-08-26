@@ -247,7 +247,11 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
         .await
         .expect("vertical loop completes");
 
-    assert_eq!(result.status, annotagent_core::RunStatus::Completed);
+    assert_eq!(
+        result.status,
+        annotagent_core::RunStatus::Completed,
+        "{result:?}"
+    );
     assert_eq!(result.committed.len(), 1);
     assert_eq!(result.usage.input_tokens, 100);
     assert_eq!(result.usage.output_tokens, 25);
@@ -292,4 +296,102 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
         1
     );
     assert!(!imported.warnings.is_empty());
+}
+
+#[tokio::test]
+async fn malformed_model_candidate_is_fed_back_and_retried_instead_of_crashing_run() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "objects",
+                        "value": {"kind": "bounding_box", "rect": [0.2, 0.3, 0.2, 0.1]},
+                        "attributes": {},
+                        "confidence": 0.95
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 25,
+                },
+            },
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: Some("Candidate rejected before validation".to_owned()),
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "target",
+                        "value": {"kind": "bounding_box", "rect": [0.2, 0.3, 0.2, 0.1]},
+                        "attributes": {},
+                        "confidence": 0.95
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 25,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite store"));
+    let runtime = AgentRuntime::new(
+        Arc::new(BboxSkill::new()),
+        provider,
+        store.clone(),
+        PricingConfig::default(),
+        Budget {
+            max_requests: Some(10),
+            ..Budget::default()
+        },
+        AgentLoopConfig {
+            max_steps_per_image: 3,
+            ..AgentLoopConfig::default()
+        },
+    );
+    let run_id = annotagent_core::RunId::new();
+    let result = runtime
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: annotagent_core::ProjectId::new(),
+            project_root: PathBuf::from("."),
+            project: Arc::new(project()),
+            image_id: ImageId::new(),
+            image: Arc::new(ImageFrame {
+                metadata: ImageMetadata {
+                    width: 1,
+                    height: 1,
+                    mime_type: "image/png".to_owned(),
+                    sha256: "retry-fixture".to_owned(),
+                },
+                rgb: vec![0, 128, 0],
+            }),
+            model_image: None,
+        })
+        .await
+        .expect("runtime retries malformed candidate");
+
+    assert_eq!(
+        result.status,
+        annotagent_core::RunStatus::Completed,
+        "{result:?}"
+    );
+    assert_eq!(result.committed.len(), 1);
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == "invalid_candidate")
+    );
+    assert!(
+        store
+            .list_events(run_id)
+            .expect("events")
+            .iter()
+            .any(|event| event.kind == annotagent_core::RunEventKind::RetryScheduled)
+    );
 }

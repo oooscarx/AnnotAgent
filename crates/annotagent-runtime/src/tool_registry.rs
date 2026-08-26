@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use annotagent_core::{AgentTool, ToolContext, ToolResult};
+use annotagent_core::{AgentTool, TaskId, ToolContext, ToolResult};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -40,6 +40,18 @@ impl ToolRegistry {
     #[must_use]
     pub fn definitions(&self) -> Vec<annotagent_core::ToolDefinition> {
         self.tools.values().map(|tool| tool.definition()).collect()
+    }
+
+    #[must_use]
+    pub fn definitions_for_task(&self, task_id: &TaskId) -> Vec<annotagent_core::ToolDefinition> {
+        self.tools
+            .values()
+            .filter(|tool| {
+                let applicable = tool.applicable_tasks();
+                applicable.is_empty() || applicable.contains(task_id)
+            })
+            .map(|tool| tool.definition())
+            .collect()
     }
 
     pub async fn execute(
@@ -127,6 +139,24 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<(), Tool
             message: "value is not in the allowed enum".to_owned(),
         });
     }
+    if let Some(number) = value.as_f64() {
+        if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64)
+            && number < minimum
+        {
+            return Err(ToolRegistryError::InvalidArguments {
+                path: path.to_owned(),
+                message: format!("must be at least {minimum}"),
+            });
+        }
+        if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64)
+            && number > maximum
+        {
+            return Err(ToolRegistryError::InvalidArguments {
+                path: path.to_owned(),
+                message: format!("must be at most {maximum}"),
+            });
+        }
+    }
     if let (Some(object), Some(properties)) = (
         value.as_object(),
         schema.get("properties").and_then(Value::as_object),
@@ -158,6 +188,22 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<(), Tool
         }
     }
     if let (Some(items), Some(item_schema)) = (value.as_array(), schema.get("items")) {
+        if let Some(minimum) = schema.get("minItems").and_then(Value::as_u64)
+            && items.len() < usize::try_from(minimum).unwrap_or(usize::MAX)
+        {
+            return Err(ToolRegistryError::InvalidArguments {
+                path: path.to_owned(),
+                message: format!("must contain at least {minimum} items"),
+            });
+        }
+        if let Some(maximum) = schema.get("maxItems").and_then(Value::as_u64)
+            && items.len() > usize::try_from(maximum).unwrap_or(usize::MAX)
+        {
+            return Err(ToolRegistryError::InvalidArguments {
+                path: path.to_owned(),
+                message: format!("must contain at most {maximum} items"),
+            });
+        }
         for (index, item) in items.iter().enumerate() {
             validate_schema(item, item_schema, &format!("{path}[{index}]"))?;
         }
@@ -188,5 +234,18 @@ mod tests {
         )
         .expect_err("missing id");
         assert!(error.to_string().contains("$.id"));
+    }
+
+    #[test]
+    fn schema_enforces_array_length_and_numeric_range() {
+        let schema = json!({
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"type": "number", "minimum": 0, "maximum": 1}
+        });
+        assert!(validate_schema(&json!([0.2]), &schema, "$").is_err());
+        assert!(validate_schema(&json!([0.2, 1.2]), &schema, "$").is_err());
+        assert!(validate_schema(&json!([0.2, 0.8]), &schema, "$").is_ok());
     }
 }
