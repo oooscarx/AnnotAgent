@@ -7,7 +7,7 @@ use annotagent_core::{
     ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage, ProjectId,
     PublishedWorkflowVersion, RelationEndpoint, RevisionActor, RunEvent, RunEventPayload, RunId,
     RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
+    VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -45,6 +45,8 @@ pub struct HistoryRun {
     pub model: String,
     pub status: RunStatus,
     pub project_schema_json: String,
+    #[serde(default)]
+    pub workflow_snapshot_json: Option<String>,
     pub terminal_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -174,6 +176,24 @@ impl SqliteStore {
                 )?;
                 transaction.commit()?;
             }
+            let has_workflow_snapshot = {
+                let mut statement = connection.prepare("PRAGMA table_info(runs)")?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|name| name == "workflow_snapshot_json")
+            };
+            if !has_workflow_snapshot {
+                connection.execute(
+                    "ALTER TABLE runs ADD COLUMN workflow_snapshot_json TEXT",
+                    [],
+                )?;
+            }
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (2, ?1, ?2)",
+                params!["immutable_workflow_run_snapshot", Utc::now().to_rfc3339()],
+            )?;
             Ok(())
         })
     }
@@ -372,7 +392,7 @@ impl SqliteStore {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, project_id, project_name, skill_id, provider, model, status,
-                        project_schema_json, terminal_reason, created_at, updated_at
+                        project_schema_json, workflow_snapshot_json, terminal_reason, created_at, updated_at
                  FROM runs ORDER BY created_at DESC",
             )?;
             statement
@@ -584,6 +604,7 @@ impl SqliteStore {
         &self,
         draft: &WorkflowDraft,
         content_hash: String,
+        snapshot: WorkflowSnapshot,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
@@ -602,6 +623,7 @@ impl SqliteStore {
                 source_draft_id: draft.id.clone(),
                 content_hash,
                 draft: published_draft.clone(),
+                snapshot,
                 published_at: Utc::now(),
             };
             transaction.execute(
@@ -630,12 +652,45 @@ impl SqliteStore {
         })
     }
 
+    pub fn list_published_workflow_versions(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<PublishedWorkflowVersion>, StorageError> {
+        self.with_connection(|connection| {
+            let (sql, parameter) = project_id.map_or(
+                (
+                    "SELECT version_json FROM workflow_versions ORDER BY project_id, workflow_id, version",
+                    None,
+                ),
+                |project_id| {
+                    (
+                        "SELECT version_json FROM workflow_versions WHERE project_id = ?1 ORDER BY workflow_id, version",
+                        Some(project_id),
+                    )
+                },
+            );
+            let mut statement = connection.prepare(sql)?;
+            let rows = if let Some(project_id) = parameter {
+                statement
+                    .query_map([project_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
+        })
+    }
+
     pub fn history(&self, run_id: RunId) -> Result<HistoryDocument, StorageError> {
         self.with_connection(|connection| {
             let run = connection
                 .query_row(
                     "SELECT id, project_id, project_name, skill_id, provider, model, status,
-                            project_schema_json, terminal_reason, created_at, updated_at
+                            project_schema_json, workflow_snapshot_json, terminal_reason, created_at, updated_at
                      FROM runs WHERE id = ?1",
                     [run_id.to_string()],
                     history_run_from_row,
@@ -1161,9 +1216,10 @@ fn history_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRun>
         model: row.get(5)?,
         status,
         project_schema_json: row.get(7)?,
-        terminal_reason: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        workflow_snapshot_json: row.get(8)?,
+        terminal_reason: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -1203,8 +1259,8 @@ fn insert_history_run(
     transaction.execute(
         "INSERT INTO runs
          (id, project_id, project_name, skill_id, provider, model, status, project_schema_json,
-          terminal_reason, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+          workflow_snapshot_json, terminal_reason, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             run.id.to_string(),
             run.project_id.map(|id| id.to_string()),
@@ -1214,6 +1270,7 @@ fn insert_history_run(
             run.model,
             enum_string(run.status)?,
             run.project_schema_json,
+            run.workflow_snapshot_json,
             run.terminal_reason,
             run.created_at,
             run.updated_at,
@@ -1340,8 +1397,8 @@ impl RuntimeStore for SqliteStore {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT OR IGNORE INTO runs
-                 (id, project_id, project_name, skill_id, provider, model, status, project_schema_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+                 (id, project_id, project_name, skill_id, provider, model, status, project_schema_json, workflow_snapshot_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
                 params![
                     run.id.to_string(),
                     run.project_id.to_string(),
@@ -1351,6 +1408,7 @@ impl RuntimeStore for SqliteStore {
                     run.model,
                     status,
                     run.project_schema_json,
+                    run.workflow_snapshot_json,
                     now
                 ],
             )?;
@@ -1779,7 +1837,7 @@ fn sqlite_u64(value: u64) -> i64 {
 mod tests {
     use annotagent_core::{
         ArtifactProvenance, ArtifactRole, AttributeValue, RunEventKind, RunEventPayload,
-        VisionArtifactValue,
+        VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -1820,6 +1878,57 @@ mod tests {
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn project_persists_multiple_workflow_drafts_and_published_versions() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let now = Utc::now();
+        let make_draft = |id: &str| WorkflowDraft {
+            schema_version: 2,
+            id: id.to_owned(),
+            project_id: "multi-workflow-project".to_owned(),
+            name: id.to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![WorkflowDraftNode {
+                id: "commit".to_owned(),
+                node_type: "commit".to_owned(),
+                kind: WorkflowNodeKind::Commit,
+                ..WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            created_at: now,
+            updated_at: now,
+        };
+        for id in ["workflow-a", "workflow-b"] {
+            let draft = make_draft(id);
+            store.save_workflow_draft(&draft).expect("draft");
+            let snapshot = WorkflowSnapshot {
+                schema_version: 2,
+                draft: Some(draft.clone()),
+                ..WorkflowSnapshot::default()
+            };
+            store
+                .publish_workflow_draft(&draft, format!("hash-{id}"), snapshot)
+                .expect("published version");
+        }
+        assert_eq!(
+            store
+                .list_workflow_drafts(Some("multi-workflow-project"))
+                .expect("drafts")
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
+                .list_published_workflow_versions(Some("multi-workflow-project"))
+                .expect("versions")
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -1872,6 +1981,18 @@ mod tests {
             })
             .expect("migrated status");
         assert_eq!(migrated, "completed_with_review");
+        let workflow_snapshot_column = store
+            .with_connection(|connection| {
+                let mut statement = connection.prepare("PRAGMA table_info(runs)")?;
+                let columns = statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(columns
+                    .into_iter()
+                    .any(|name| name == "workflow_snapshot_json"))
+            })
+            .expect("run columns");
+        assert!(workflow_snapshot_column);
         let active_count =
             store
                 .with_connection(|connection| {
@@ -1887,9 +2008,12 @@ mod tests {
         store
             .with_connection(|connection| {
                 connection.execute(
-                    "INSERT INTO runs VALUES (
+                    "INSERT INTO runs
+                     (id, project_id, project_name, skill_id, provider, model, status,
+                      project_schema_json, workflow_snapshot_json, terminal_reason, created_at, updated_at)
+                     VALUES (
                         'suspended', NULL, 'new', 'generic', 'mock', 'mock',
-                        'awaiting_review', '{}', NULL, '2026-01-02T00:00:00Z',
+                        'awaiting_review', '{}', NULL, NULL, '2026-01-02T00:00:00Z',
                         '2026-01-02T00:00:00Z'
                     )",
                     [],
@@ -1914,6 +2038,7 @@ mod tests {
     async fn event_history_round_trips() {
         let store = SqliteStore::open_in_memory().expect("in-memory database");
         let run_id = RunId::new();
+        let frozen_workflow = r#"{"workflow_id":"workflow-a","version":1,"name":"before edit"}"#;
         store
             .create_run(&RunRecord {
                 id: run_id,
@@ -1924,6 +2049,7 @@ mod tests {
                 model: "mock".to_owned(),
                 status: RunStatus::Pending,
                 project_schema_json: "{}".to_owned(),
+                workflow_snapshot_json: Some(frozen_workflow.to_owned()),
             })
             .await
             .expect("create run");
@@ -1938,6 +2064,11 @@ mod tests {
         );
         store.record_event(&event).await.expect("record event");
         assert_eq!(store.list_events(run_id).expect("events"), vec![event]);
+        let history = store.history(run_id).expect("history");
+        assert_eq!(
+            history.run.workflow_snapshot_json.as_deref(),
+            Some(frozen_workflow)
+        );
 
         let artifact = VisionArtifact {
             id: ArtifactId::new(),

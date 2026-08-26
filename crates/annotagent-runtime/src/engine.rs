@@ -128,6 +128,7 @@ pub struct AgentRuntime {
     control: RunControl,
     event_bus: EventBus,
     usage: Mutex<UsageTotals>,
+    workflow_snapshot_json: Option<String>,
 }
 
 impl AgentRuntime {
@@ -150,7 +151,14 @@ impl AgentRuntime {
             control: RunControl::new(),
             event_bus: EventBus::new(512),
             usage: Mutex::new(UsageTotals::default()),
+            workflow_snapshot_json: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_workflow_snapshot_json(mut self, snapshot: Option<String>) -> Self {
+        self.workflow_snapshot_json = snapshot;
+        self
     }
 
     #[must_use]
@@ -192,6 +200,7 @@ impl AgentRuntime {
             status: RunStatus::Pending,
             project_schema_json: serde_json::to_string(request.project.as_ref())
                 .map_err(|error| RuntimeError::Store(error.to_string()))?,
+            workflow_snapshot_json: self.workflow_snapshot_json.clone(),
         };
         self.store
             .create_run(&run)

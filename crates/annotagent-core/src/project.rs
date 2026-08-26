@@ -48,11 +48,26 @@ impl ProjectSchema {
                 message: format!("unsupported project schema version {}", self.version),
             });
         }
-        if self.project.skill.trim().is_empty() {
-            issues.push(ConfigIssue {
-                path: "project.skill".to_owned(),
-                message: "skill id cannot be empty".to_owned(),
-            });
+        let mut enabled_skill_ids = BTreeSet::new();
+        for (index, skill) in self.project.enabled_skills.iter().enumerate() {
+            if !valid_identifier(&skill.id) {
+                issues.push(ConfigIssue {
+                    path: format!("project.enabled_skills[{index}].id"),
+                    message: format!("invalid Skill id {:?}", skill.id),
+                });
+            }
+            if skill.version.trim().is_empty() {
+                issues.push(ConfigIssue {
+                    path: format!("project.enabled_skills[{index}].version"),
+                    message: "Skill version cannot be empty".to_owned(),
+                });
+            }
+            if !enabled_skill_ids.insert(skill.id.as_str()) {
+                issues.push(ConfigIssue {
+                    path: format!("project.enabled_skills[{index}].id"),
+                    message: format!("duplicate enabled Skill {:?}", skill.id),
+                });
+            }
         }
         if self.dataset.root.as_os_str().is_empty() || self.dataset.root.is_absolute() {
             issues.push(ConfigIssue {
@@ -164,19 +179,52 @@ impl ProjectSchema {
 
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectDescriptor {
     pub name: String,
+    /// Legacy single-Skill binding. New projects use `enabled_skills`.
+    #[serde(default)]
     pub skill: String,
+    #[serde(default)]
     pub skill_version: String,
+    #[serde(default)]
+    pub enabled_skills: Vec<EnabledSkillConfig>,
     #[serde(default = "default_language")]
     pub language: String,
+}
+
+impl ProjectDescriptor {
+    /// Returns a deterministic Skill id -> version projection for both old and new schemas.
+    #[must_use]
+    pub fn enabled_skill_versions(&self) -> BTreeMap<String, String> {
+        if !self.enabled_skills.is_empty() {
+            return self
+                .enabled_skills
+                .iter()
+                .map(|skill| (skill.id.clone(), skill.version.clone()))
+                .collect();
+        }
+        if self.skill.trim().is_empty() {
+            BTreeMap::new()
+        } else {
+            BTreeMap::from([(self.skill.clone(), self.skill_version.clone())])
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnabledSkillConfig {
+    pub id: String,
+    pub version: String,
+    #[serde(default)]
+    pub configuration: BTreeMap<String, String>,
 }
 
 fn default_language() -> String {

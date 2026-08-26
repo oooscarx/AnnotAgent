@@ -1,11 +1,20 @@
-//! Safe, registry-bound workflow drafts, suggestions, and static validation.
+//! Versioned, registry-bound workflow schemas and static validation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{ArtifactKind, ModelRegistry, NodeRegistry, ProjectSchema, VisionCapability};
+use crate::{
+    ArtifactKind, ModelRegistry, NodeRegistry, ProjectSchema, TaskKind, ValidationCatalog,
+    VisionCapability, VisionModelDescriptor,
+};
+
+pub const WORKFLOW_SCHEMA_VERSION: u32 = 2;
+pub const MAX_WORKFLOW_RETRIES: u32 = 10;
+pub type ArtifactType = ArtifactKind;
+pub type WorkflowNode = WorkflowDraftNode;
+pub type WorkflowVersion = PublishedWorkflowVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,17 +25,108 @@ pub enum WorkflowDraftStatus {
     Published,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowNodeKind {
+    ImageInput,
+    #[default]
+    Transform,
+    VisionModel,
+    VisionLanguageModel,
+    DeterministicTool,
+    CandidateMerge,
+    Validator,
+    Refiner,
+    Gate,
+    HumanReview,
+    Commit,
+    Export,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodePort {
+    pub id: String,
+    pub artifact_type: ArtifactType,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowEdge {
+    pub from_node: String,
+    pub from_port: String,
+    pub to_node: String,
+    pub to_port: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct NodeConfig(pub BTreeMap<String, serde_json::Value>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetryPolicy {
+    #[serde(default)]
+    pub max_attempts: u32,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self { max_attempts: 1 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FallbackPolicy {
+    pub target_node: Option<String>,
+    #[serde(default)]
+    pub on_timeout: bool,
+    #[serde(default = "default_true")]
+    pub on_error: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ReviewGate {
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub allow_manual_override: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResourceRequirements {
+    pub timeout_seconds: Option<u64>,
+    pub max_memory_mb: Option<u64>,
+    pub accelerator: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct WorkflowDraftNode {
     pub id: String,
+    /// Registry operation id; concrete model and tool names are never Core enum variants.
     pub node_type: String,
     #[serde(default)]
+    pub kind: WorkflowNodeKind,
+    /// Compatibility projection for v1 clients. For v2, `edges` are authoritative.
+    #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub inputs: Vec<NodePort>,
+    #[serde(default)]
+    pub outputs: Vec<NodePort>,
     pub model_binding: Option<String>,
+    #[serde(default)]
+    pub required_skills: Vec<String>,
     #[serde(default)]
     pub validators: Vec<String>,
     #[serde(default)]
     pub refiners: Vec<String>,
+    /// Compatibility target used by the existing editor.
     pub fallback: Option<String>,
     #[serde(default)]
     pub max_retries: u32,
@@ -34,17 +134,52 @@ pub struct WorkflowDraftNode {
     pub review_gate: bool,
     #[serde(default)]
     pub parameters: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub retry_policy: RetryPolicy,
+    #[serde(default)]
+    pub fallback_policy: FallbackPolicy,
+    #[serde(default)]
+    pub gate: ReviewGate,
+    #[serde(default)]
+    pub resources: ResourceRequirements,
+}
+
+impl WorkflowDraftNode {
+    fn effective_retry_limit(&self) -> u32 {
+        self.retry_policy.max_attempts.max(self.max_retries)
+    }
+
+    fn effective_fallback(&self) -> Option<&str> {
+        self.fallback_policy
+            .target_node
+            .as_deref()
+            .or(self.fallback.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDraft {
+    #[serde(default = "default_workflow_schema_version")]
+    pub schema_version: u32,
     pub id: String,
     pub project_id: String,
     pub name: String,
     pub status: WorkflowDraftStatus,
     pub nodes: Vec<WorkflowDraftNode>,
+    #[serde(default)]
+    pub edges: Vec<WorkflowEdge>,
+    #[serde(default)]
+    pub enabled_skills: BTreeMap<String, String>,
+    #[serde(default)]
+    pub resource_versions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub allow_unvalidated_commit: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+const fn default_workflow_schema_version() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,6 +214,81 @@ pub struct WorkflowConstraints {
     pub max_nodes: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WorkflowSnapshot {
+    pub schema_version: u32,
+    pub draft: Option<WorkflowDraft>,
+    #[serde(default)]
+    pub enabled_skills: BTreeMap<String, String>,
+    #[serde(default)]
+    pub models: Vec<VisionModelDescriptor>,
+    #[serde(default)]
+    pub prompt_resources: BTreeMap<String, String>,
+}
+
+impl WorkflowSnapshot {
+    #[must_use]
+    pub fn frozen(
+        draft: &WorkflowDraft,
+        models: &ModelRegistry,
+        enabled_skills: BTreeMap<String, String>,
+    ) -> Self {
+        let referenced = draft
+            .nodes
+            .iter()
+            .filter_map(|node| node.model_binding.as_deref())
+            .collect::<BTreeSet<_>>();
+        let mut model_snapshots = models
+            .models()
+            .into_iter()
+            .filter(|model| referenced.contains(model.id.as_str()))
+            .collect::<Vec<_>>();
+        model_snapshots.sort_by(|left, right| left.id.cmp(&right.id));
+        Self {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            draft: Some(draft.clone()),
+            enabled_skills,
+            models: model_snapshots,
+            prompt_resources: draft.resource_versions.clone(),
+        }
+    }
+
+    pub fn stable_json(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    /// Canonical semantic material for content-addressing. Lifecycle state and timestamps are
+    /// deliberately excluded so validating or publishing an unchanged graph keeps the same hash.
+    pub fn content_hash_material(&self) -> Result<Vec<u8>, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Material<'a> {
+            schema_version: u32,
+            name: &'a str,
+            nodes: &'a [WorkflowDraftNode],
+            edges: &'a [WorkflowEdge],
+            enabled_skills: &'a BTreeMap<String, String>,
+            resource_versions: &'a BTreeMap<String, String>,
+            allow_unvalidated_commit: bool,
+            models: &'a [VisionModelDescriptor],
+            prompt_resources: &'a BTreeMap<String, String>,
+        }
+        let Some(draft) = self.draft.as_ref() else {
+            return serde_json::to_vec(self);
+        };
+        serde_json::to_vec(&Material {
+            schema_version: self.schema_version,
+            name: &draft.name,
+            nodes: &draft.nodes,
+            edges: &draft.edges,
+            enabled_skills: &self.enabled_skills,
+            resource_versions: &draft.resource_versions,
+            allow_unvalidated_commit: draft.allow_unvalidated_commit,
+            models: &self.models,
+            prompt_resources: &self.prompt_resources,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishedWorkflowVersion {
     pub workflow_id: String,
@@ -87,6 +297,8 @@ pub struct PublishedWorkflowVersion {
     pub source_draft_id: String,
     pub content_hash: String,
     pub draft: WorkflowDraft,
+    #[serde(default)]
+    pub snapshot: WorkflowSnapshot,
     pub published_at: DateTime<Utc>,
 }
 
@@ -126,7 +338,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 })
                 .map(|model| model.id)
         });
-        let node_type = if node_catalog.get("vision_language").is_some() {
+        let operation = if node_catalog.get("vision_language").is_some() {
             "vision_language".to_owned()
         } else {
             node_catalog
@@ -134,14 +346,52 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 .first()
                 .map_or_else(|| "unresolved".to_owned(), |node| node.id.clone())
         };
-        let mut nodes = project_schema
+        let skill_versions = project_schema.project.enabled_skill_versions();
+        let artifact_by_task = project_schema
             .tasks
             .iter()
-            .map(|task| WorkflowDraftNode {
-                id: task.id.to_string(),
-                node_type: node_type.clone(),
+            .map(|task| (task.id.to_string(), artifact_for_task(task.kind)))
+            .collect::<BTreeMap<_, _>>();
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for task in &project_schema.tasks {
+            let task_id = task.id.to_string();
+            let output_type = artifact_for_task(task.kind);
+            let inputs = task
+                .depends_on
+                .iter()
+                .map(|dependency| NodePort {
+                    id: format!("from_{dependency}"),
+                    artifact_type: artifact_by_task
+                        .get(dependency.as_str())
+                        .copied()
+                        .unwrap_or(output_type),
+                    required: true,
+                    multiple: false,
+                })
+                .collect::<Vec<_>>();
+            for dependency in &task.depends_on {
+                edges.push(WorkflowEdge {
+                    from_node: dependency.to_string(),
+                    from_port: "candidates".to_owned(),
+                    to_node: task_id.clone(),
+                    to_port: format!("from_{dependency}"),
+                });
+            }
+            nodes.push(WorkflowDraftNode {
+                id: task_id,
+                node_type: operation.clone(),
+                kind: WorkflowNodeKind::VisionLanguageModel,
                 depends_on: task.depends_on.iter().map(ToString::to_string).collect(),
+                inputs,
+                outputs: vec![NodePort {
+                    id: "candidates".to_owned(),
+                    artifact_type: output_type,
+                    required: true,
+                    multiple: true,
+                }],
                 model_binding: preferred.clone(),
+                required_skills: enabled_skills.to_vec(),
                 validators: task.validators.clone(),
                 refiners: task.refiners.clone(),
                 fallback: None,
@@ -151,23 +401,67 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                     ("task_kind".to_owned(), serde_json::json!(task.kind)),
                     ("required".to_owned(), serde_json::json!(task.required)),
                 ]),
-            })
-            .collect::<Vec<_>>();
-        if constraints.require_review_gate && node_catalog.get("review_gate").is_some() {
-            let dependencies = nodes.iter().map(|node| node.id.clone()).collect();
-            nodes.push(WorkflowDraftNode {
-                id: "review_gate".to_owned(),
-                node_type: "review_gate".to_owned(),
-                depends_on: dependencies,
-                model_binding: None,
-                validators: Vec::new(),
-                refiners: Vec::new(),
-                fallback: None,
-                max_retries: 0,
-                review_gate: true,
-                parameters: BTreeMap::new(),
+                retry_policy: RetryPolicy {
+                    max_attempts: project_schema.runtime.max_retries.saturating_add(1),
+                },
+                fallback_policy: FallbackPolicy::default(),
+                gate: ReviewGate::default(),
+                resources: ResourceRequirements {
+                    timeout_seconds: Some(project_schema.runtime.task_timeout_seconds),
+                    ..ResourceRequirements::default()
+                },
             });
         }
+
+        let task_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+        let validation_inputs = task_ids
+            .iter()
+            .filter_map(|id| artifact_by_task.get(id).map(|kind| (id, kind)))
+            .map(|(id, kind)| NodePort {
+                id: format!("from_{id}"),
+                artifact_type: *kind,
+                required: true,
+                multiple: true,
+            })
+            .collect::<Vec<_>>();
+        for id in &task_ids {
+            edges.push(WorkflowEdge {
+                from_node: id.clone(),
+                from_port: "candidates".to_owned(),
+                to_node: "validate_candidates".to_owned(),
+                to_port: format!("from_{id}"),
+            });
+        }
+        nodes.push(system_node(
+            "validate_candidates",
+            "static_validator",
+            WorkflowNodeKind::Validator,
+            task_ids.clone(),
+            validation_inputs,
+            Vec::new(),
+        ));
+
+        let mut commit_dependency = "validate_candidates".to_owned();
+        if constraints.require_review_gate && node_catalog.get("review_gate").is_some() {
+            nodes.push(system_node(
+                "review_gate",
+                "review_gate",
+                WorkflowNodeKind::HumanReview,
+                vec![commit_dependency.clone()],
+                Vec::new(),
+                Vec::new(),
+            ));
+            "review_gate".clone_into(&mut commit_dependency);
+        }
+        nodes.push(system_node(
+            "commit",
+            "commit",
+            WorkflowNodeKind::Commit,
+            vec![commit_dependency],
+            Vec::new(),
+            Vec::new(),
+        ));
+
         let mut warnings = Vec::new();
         if let Some(max_nodes) = constraints.max_nodes
             && nodes.len() > max_nodes
@@ -180,7 +474,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
         let unresolved_model_bindings = if preferred.is_none() {
             nodes
                 .iter()
-                .filter(|node| node.node_type == "vision_language")
+                .filter(|node| node.kind == WorkflowNodeKind::VisionLanguageModel)
                 .map(|node| node.id.clone())
                 .collect()
         } else {
@@ -189,19 +483,24 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
         let now = Utc::now();
         WorkflowSuggestion {
             draft: WorkflowDraft {
+                schema_version: WORKFLOW_SCHEMA_VERSION,
                 id: uuid::Uuid::new_v4().to_string(),
                 project_id: project_id.to_owned(),
                 name: format!("{} suggested workflow", project_schema.project.name),
                 status: WorkflowDraftStatus::Suggested,
                 nodes,
+                edges,
+                enabled_skills: skill_versions,
+                resource_versions: BTreeMap::new(),
+                allow_unvalidated_commit: false,
                 created_at: now,
                 updated_at: now,
             },
             rationale: vec![
-                "Mapped each configured annotation task to a registered vision-language node."
+                "Mapped configured annotation tasks to registry operations with typed ports."
                     .to_owned(),
                 format!(
-                    "Preserved validators and refiners from enabled Skills: {}.",
+                    "Bound the graph to enabled Skills: {}.",
                     enabled_skills.join(", ")
                 ),
             ],
@@ -210,9 +509,56 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
             alternatives: vec![
                 "Bind detection or segmentation tasks to registered specialist backends."
                     .to_owned(),
-                "Add a review gate after validators for conservative publishing.".to_owned(),
+                "Add a human review gate after validation for conservative publishing.".to_owned(),
             ],
         }
+    }
+}
+
+fn system_node(
+    id: &str,
+    operation: &str,
+    kind: WorkflowNodeKind,
+    depends_on: Vec<String>,
+    inputs: Vec<NodePort>,
+    outputs: Vec<NodePort>,
+) -> WorkflowDraftNode {
+    WorkflowDraftNode {
+        id: id.to_owned(),
+        node_type: operation.to_owned(),
+        kind,
+        depends_on,
+        inputs,
+        outputs,
+        model_binding: None,
+        required_skills: Vec::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        max_retries: 0,
+        review_gate: kind == WorkflowNodeKind::HumanReview,
+        parameters: BTreeMap::new(),
+        retry_policy: RetryPolicy::default(),
+        fallback_policy: FallbackPolicy::default(),
+        gate: ReviewGate {
+            required: kind == WorkflowNodeKind::HumanReview,
+            allow_manual_override: false,
+        },
+        resources: ResourceRequirements::default(),
+    }
+}
+
+const fn artifact_for_task(kind: TaskKind) -> ArtifactKind {
+    match kind {
+        TaskKind::Classification => ArtifactKind::Classification,
+        TaskKind::BoundingBox => ArtifactKind::BoundingBox,
+        TaskKind::Keypoints => ArtifactKind::Keypoints,
+        TaskKind::Polyline => ArtifactKind::Polyline,
+        TaskKind::Polygon => ArtifactKind::Polygon,
+        TaskKind::SemanticMask => ArtifactKind::SemanticMask,
+        TaskKind::InstanceMask => ArtifactKind::InstanceMask,
+        TaskKind::Attributes => ArtifactKind::Attributes,
+        TaskKind::Relations => ArtifactKind::Relations,
     }
 }
 
@@ -227,6 +573,30 @@ impl WorkflowStaticValidator {
         node_catalog: &NodeRegistry,
         model_registry: &ModelRegistry,
     ) -> WorkflowValidationReport {
+        self.validate_for_publish(
+            draft,
+            node_catalog,
+            model_registry,
+            &ValidationCatalog::default(),
+            &draft
+                .enabled_skills
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            false,
+        )
+    }
+
+    #[must_use]
+    pub fn validate_for_publish(
+        &self,
+        draft: &WorkflowDraft,
+        node_catalog: &NodeRegistry,
+        model_registry: &ModelRegistry,
+        extensions: &ValidationCatalog,
+        enabled_skills: &BTreeSet<String>,
+        publishing: bool,
+    ) -> WorkflowValidationReport {
         let mut issues = Vec::new();
         let ids = draft
             .nodes
@@ -240,32 +610,105 @@ impl WorkflowStaticValidator {
                 "node ids must be unique",
             ));
         }
+        let indexes = draft
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+
         for (index, node) in draft.nodes.iter().enumerate() {
             let path = format!("nodes[{index}]");
+            let input_ids = node
+                .inputs
+                .iter()
+                .map(|port| port.id.as_str())
+                .collect::<BTreeSet<_>>();
+            let output_ids = node
+                .outputs
+                .iter()
+                .map(|port| port.id.as_str())
+                .collect::<BTreeSet<_>>();
+            if input_ids.len() != node.inputs.len() {
+                issues.push(issue(
+                    "duplicate_input_port",
+                    &format!("{path}.inputs"),
+                    "input port ids must be unique",
+                ));
+            }
+            if output_ids.len() != node.outputs.len() {
+                issues.push(issue(
+                    "duplicate_output_port",
+                    &format!("{path}.outputs"),
+                    "output port ids must be unique",
+                ));
+            }
             let Some(descriptor) = node_catalog.get(&node.node_type) else {
                 issues.push(issue(
                     "unknown_node",
                     &format!("{path}.node_type"),
-                    &format!("node type {:?} is not registered", node.node_type),
+                    &format!("node operation {:?} is not registered", node.node_type),
                 ));
                 continue;
             };
-            for dependency in &node.depends_on {
-                if !ids.contains(dependency.as_str()) {
+            for input in &node.inputs {
+                if !descriptor.accepts.is_empty()
+                    && !descriptor.accepts.contains(&input.artifact_type)
+                {
                     issues.push(issue(
-                        "unknown_dependency",
-                        &format!("{path}.depends_on"),
-                        &format!("dependency {dependency:?} is not a draft node"),
+                        "node_input_type_unsupported",
+                        &format!("{path}.inputs.{}", input.id),
+                        &format!(
+                            "operation {:?} does not accept {:?}",
+                            node.node_type, input.artifact_type
+                        ),
                     ));
                 }
             }
-            if let Some(fallback) = &node.fallback
-                && !ids.contains(fallback.as_str())
-            {
+            for output in &node.outputs {
+                if !descriptor.produces.contains(&output.artifact_type) {
+                    issues.push(issue(
+                        "node_output_type_unsupported",
+                        &format!("{path}.outputs.{}", output.id),
+                        &format!(
+                            "operation {:?} does not produce {:?}",
+                            node.node_type, output.artifact_type
+                        ),
+                    ));
+                }
+            }
+            for (skill_index, skill) in node.required_skills.iter().enumerate() {
+                if !enabled_skills.contains(skill) {
+                    issues.push(issue(
+                        "required_skill_not_enabled",
+                        &format!("{path}.required_skills[{skill_index}]"),
+                        &format!("required Skill {skill:?} is not enabled"),
+                    ));
+                }
+            }
+            for (validator_index, validator) in node.validators.iter().enumerate() {
+                if !extensions.validators.contains(validator) {
+                    issues.push(issue(
+                        "unknown_validator",
+                        &format!("{path}.validators[{validator_index}]"),
+                        &format!("Validator {validator:?} is not registered"),
+                    ));
+                }
+            }
+            for (refiner_index, refiner) in node.refiners.iter().enumerate() {
+                if !extensions.refiners.contains(refiner) {
+                    issues.push(issue(
+                        "unknown_refiner",
+                        &format!("{path}.refiners[{refiner_index}]"),
+                        &format!("Refiner {refiner:?} is not registered"),
+                    ));
+                }
+            }
+            if node.effective_retry_limit() > MAX_WORKFLOW_RETRIES {
                 issues.push(issue(
-                    "unknown_fallback",
-                    &format!("{path}.fallback"),
-                    &format!("fallback {fallback:?} is not a draft node"),
+                    "retry_limit_exceeded",
+                    &format!("{path}.retry_policy.max_attempts"),
+                    &format!("retry limit must be at most {MAX_WORKFLOW_RETRIES}"),
                 ));
             }
             if descriptor.required_capabilities.is_empty() {
@@ -275,7 +718,7 @@ impl WorkflowStaticValidator {
                 issues.push(issue(
                     "unresolved_model_binding",
                     &format!("{path}.model_binding"),
-                    "this node requires a registered model binding",
+                    "this operation requires a registered model binding",
                 ));
                 continue;
             };
@@ -298,16 +741,335 @@ impl WorkflowStaticValidator {
                 )),
             }
         }
-        let execution_order = topological_order(&draft.nodes).unwrap_or_else(|cycle| {
-            issues.push(issue("workflow_cycle", "nodes", &cycle));
+
+        validate_edges(draft, &indexes, &mut issues);
+        validate_required_inputs(draft, &mut issues);
+        validate_fallbacks(draft, &ids, &mut issues);
+        let execution_order = topological_order(draft).unwrap_or_else(|cycle| {
+            issues.push(issue("workflow_cycle", "edges", &cycle));
             Vec::new()
         });
+        if draft.schema_version >= WORKFLOW_SCHEMA_VERSION {
+            validate_reachability_and_terminals(draft, &mut issues);
+            validate_commit_safety(draft, &mut issues);
+        }
+        if publishing && draft.schema_version != WORKFLOW_SCHEMA_VERSION {
+            issues.push(issue(
+                "unsupported_workflow_schema",
+                "schema_version",
+                &format!("publishing requires schema version {WORKFLOW_SCHEMA_VERSION}"),
+            ));
+        }
         WorkflowValidationReport {
             valid: issues.iter().all(|issue| !issue.blocking),
             issues,
             execution_order,
         }
     }
+}
+
+fn validate_edges(
+    draft: &WorkflowDraft,
+    indexes: &BTreeMap<&str, usize>,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    for (edge_index, edge) in draft.edges.iter().enumerate() {
+        let Some(&from_index) = indexes.get(edge.from_node.as_str()) else {
+            issues.push(issue(
+                "unknown_edge_node",
+                &format!("edges[{edge_index}].from_node"),
+                &format!("node {:?} does not exist", edge.from_node),
+            ));
+            continue;
+        };
+        let Some(&to_index) = indexes.get(edge.to_node.as_str()) else {
+            issues.push(issue(
+                "unknown_edge_node",
+                &format!("edges[{edge_index}].to_node"),
+                &format!("node {:?} does not exist", edge.to_node),
+            ));
+            continue;
+        };
+        let output = draft.nodes[from_index]
+            .outputs
+            .iter()
+            .find(|port| port.id == edge.from_port);
+        let input = draft.nodes[to_index]
+            .inputs
+            .iter()
+            .find(|port| port.id == edge.to_port);
+        if draft.nodes[from_index].outputs.is_empty() && draft.nodes[to_index].inputs.is_empty() {
+            continue;
+        }
+        let Some(output) = output else {
+            issues.push(issue(
+                "unknown_output_port",
+                &format!("edges[{edge_index}].from_port"),
+                &format!(
+                    "output port {:?} does not exist on node {:?}",
+                    edge.from_port, edge.from_node
+                ),
+            ));
+            continue;
+        };
+        let Some(input) = input else {
+            issues.push(issue(
+                "unknown_input_port",
+                &format!("edges[{edge_index}].to_port"),
+                &format!(
+                    "input port {:?} does not exist on node {:?}",
+                    edge.to_port, edge.to_node
+                ),
+            ));
+            continue;
+        };
+        if output.artifact_type != input.artifact_type {
+            issues.push(issue(
+                "artifact_type_mismatch",
+                &format!("nodes[{to_index}].inputs.{}", input.id),
+                &format!(
+                    "edge from {}.{} produces {:?}, but this port accepts {:?}",
+                    edge.from_node, edge.from_port, output.artifact_type, input.artifact_type
+                ),
+            ));
+        }
+    }
+}
+
+fn validate_required_inputs(draft: &WorkflowDraft, issues: &mut Vec<WorkflowValidationIssue>) {
+    for (node_index, node) in draft.nodes.iter().enumerate() {
+        for input in node.inputs.iter().filter(|port| port.required) {
+            let count = draft
+                .edges
+                .iter()
+                .filter(|edge| edge.to_node == node.id && edge.to_port == input.id)
+                .count();
+            if count == 0 {
+                issues.push(issue(
+                    "missing_required_input",
+                    &format!("nodes[{node_index}].inputs.{}", input.id),
+                    "required input port is not connected",
+                ));
+            } else if count > 1 && !input.multiple {
+                issues.push(issue(
+                    "multiple_edges_to_single_input",
+                    &format!("nodes[{node_index}].inputs.{}", input.id),
+                    "input port does not accept multiple edges",
+                ));
+            }
+        }
+    }
+}
+
+fn validate_fallbacks(
+    draft: &WorkflowDraft,
+    ids: &BTreeSet<&str>,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    let fallbacks = draft
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.effective_fallback()
+                .map(|target| (node.id.as_str(), target))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (index, node) in draft.nodes.iter().enumerate() {
+        if let Some(target) = node.effective_fallback()
+            && !ids.contains(target)
+        {
+            issues.push(issue(
+                "unknown_fallback",
+                &format!("nodes[{index}].fallback"),
+                &format!("fallback {target:?} is not a draft node"),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let mut current = node.id.as_str();
+        while let Some(next) = fallbacks.get(current).copied() {
+            if !seen.insert(current) {
+                issues.push(issue(
+                    "fallback_cycle",
+                    &format!("nodes[{index}].fallback"),
+                    "fallback path contains a cycle",
+                ));
+                break;
+            }
+            current = next;
+        }
+    }
+}
+
+fn validate_reachability_and_terminals(
+    draft: &WorkflowDraft,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    let explicit_inputs = draft
+        .nodes
+        .iter()
+        .filter(|node| node.kind == WorkflowNodeKind::ImageInput)
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    let roots = if explicit_inputs.is_empty() {
+        draft
+            .nodes
+            .iter()
+            .filter(|node| incoming_nodes(draft, &node.id).is_empty())
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>()
+    } else {
+        explicit_inputs
+    };
+    let mut reachable = BTreeSet::new();
+    let mut queue = VecDeque::from(roots);
+    while let Some(current) = queue.pop_front() {
+        if !reachable.insert(current.clone()) {
+            continue;
+        }
+        for next in outgoing_nodes(draft, &current) {
+            queue.push_back(next);
+        }
+    }
+    for (index, node) in draft.nodes.iter().enumerate() {
+        if !reachable.contains(&node.id) {
+            issues.push(issue(
+                "unreachable_node",
+                &format!("nodes[{index}]"),
+                &format!("node {:?} is unreachable from workflow input", node.id),
+            ));
+        }
+    }
+    let terminals = draft
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.kind,
+                WorkflowNodeKind::Commit | WorkflowNodeKind::Export
+            )
+        })
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if terminals.is_empty() {
+        issues.push(issue(
+            "no_terminal_path",
+            "nodes",
+            "workflow must contain a Commit or Export terminal node",
+        ));
+        return;
+    }
+    for (index, node) in draft.nodes.iter().enumerate() {
+        if !can_reach_any(draft, &node.id, &terminals) {
+            issues.push(issue(
+                "no_terminal_path",
+                &format!("nodes[{index}]"),
+                &format!("node {:?} has no path to Commit or Export", node.id),
+            ));
+        }
+    }
+}
+
+fn validate_commit_safety(draft: &WorkflowDraft, issues: &mut Vec<WorkflowValidationIssue>) {
+    if draft.allow_unvalidated_commit {
+        return;
+    }
+    let safe_nodes = draft
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.kind,
+                WorkflowNodeKind::Validator | WorkflowNodeKind::HumanReview
+            ) || node.review_gate
+                || node.gate.required
+        })
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    for (index, node) in draft
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == WorkflowNodeKind::Commit)
+    {
+        let ancestors = ancestors_of(draft, &node.id);
+        if ancestors.is_disjoint(&safe_nodes) {
+            issues.push(issue(
+                "unsafe_commit",
+                &format!("nodes[{index}]"),
+                "Commit requires an upstream Validator or HumanReview gate, or an explicit allow_unvalidated_commit policy",
+            ));
+        }
+    }
+}
+
+fn incoming_nodes(draft: &WorkflowDraft, id: &str) -> Vec<String> {
+    let mut incoming = draft
+        .edges
+        .iter()
+        .filter(|edge| edge.to_node == id)
+        .map(|edge| edge.from_node.clone())
+        .collect::<Vec<_>>();
+    if incoming.is_empty() {
+        incoming.extend(
+            draft
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .into_iter()
+                .flat_map(|node| node.depends_on.clone()),
+        );
+    }
+    incoming
+}
+
+fn outgoing_nodes(draft: &WorkflowDraft, id: &str) -> Vec<String> {
+    let mut outgoing = draft
+        .edges
+        .iter()
+        .filter(|edge| edge.from_node == id)
+        .map(|edge| edge.to_node.clone())
+        .collect::<Vec<_>>();
+    let compatibility_edges = draft
+        .nodes
+        .iter()
+        .filter(|node| node.depends_on.iter().any(|dependency| dependency == id))
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    for node_id in compatibility_edges {
+        if !outgoing.contains(&node_id) {
+            outgoing.push(node_id);
+        }
+    }
+    outgoing
+}
+
+fn can_reach_any(draft: &WorkflowDraft, start: &str, targets: &BTreeSet<&str>) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from([start.to_owned()]);
+    while let Some(current) = queue.pop_front() {
+        if targets.contains(current.as_str()) {
+            return true;
+        }
+        if seen.insert(current.clone()) {
+            queue.extend(outgoing_nodes(draft, &current));
+        }
+    }
+    false
+}
+
+fn ancestors_of<'a>(draft: &'a WorkflowDraft, start: &str) -> BTreeSet<&'a str> {
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from([start.to_owned()]);
+    while let Some(current) = queue.pop_front() {
+        for parent in incoming_nodes(draft, &current) {
+            if let Some(node) = draft.nodes.iter().find(|node| node.id == parent)
+                && seen.insert(node.id.as_str())
+            {
+                queue.push_back(node.id.clone());
+            }
+        }
+    }
+    seen
 }
 
 fn issue(code: &str, path: &str, message: &str) -> WorkflowValidationIssue {
@@ -319,17 +1081,20 @@ fn issue(code: &str, path: &str, message: &str) -> WorkflowValidationIssue {
     }
 }
 
-fn topological_order(nodes: &[WorkflowDraftNode]) -> Result<Vec<String>, String> {
-    let mut remaining = nodes
+fn topological_order(draft: &WorkflowDraft) -> Result<Vec<String>, String> {
+    let mut remaining = draft
+        .nodes
         .iter()
         .map(|node| {
             (
                 node.id.clone(),
-                node.depends_on.iter().cloned().collect::<BTreeSet<_>>(),
+                incoming_nodes(draft, &node.id)
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let mut order = Vec::with_capacity(nodes.len());
+    let mut order = Vec::with_capacity(draft.nodes.len());
     while !remaining.is_empty() {
         let ready = remaining
             .iter()
@@ -360,4 +1125,174 @@ pub const fn all_artifact_kinds() -> [ArtifactKind; 9] {
         ArtifactKind::Attributes,
         ArtifactKind::Relations,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::VisionNodeDescriptor;
+
+    fn node(id: &str, kind: WorkflowNodeKind) -> WorkflowDraftNode {
+        WorkflowDraftNode {
+            id: id.to_owned(),
+            node_type: id.to_owned(),
+            kind,
+            ..WorkflowDraftNode::default()
+        }
+    }
+
+    fn draft(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> WorkflowDraft {
+        let now = Utc::now();
+        WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "workflow".to_owned(),
+            project_id: "project".to_owned(),
+            name: "test".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes,
+            edges,
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn catalog(ids: &[(&str, Vec<VisionCapability>)]) -> NodeRegistry {
+        let mut registry = NodeRegistry::new();
+        for (id, capabilities) in ids {
+            registry
+                .register(VisionNodeDescriptor {
+                    id: (*id).to_owned(),
+                    display_name: (*id).to_owned(),
+                    required_capabilities: capabilities.clone(),
+                    accepts: all_artifact_kinds().to_vec(),
+                    produces: all_artifact_kinds().to_vec(),
+                    deterministic: capabilities.is_empty(),
+                })
+                .expect("node registration");
+        }
+        registry
+    }
+
+    #[test]
+    fn dependency_cycle_is_rejected() {
+        let mut first = node("first", WorkflowNodeKind::Transform);
+        first.depends_on = vec!["commit".to_owned()];
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.depends_on = vec!["first".to_owned()];
+        let workflow = draft(vec![first, commit], Vec::new());
+        let report = WorkflowStaticValidator.validate(
+            &workflow,
+            &catalog(&[("first", Vec::new()), ("commit", Vec::new())]),
+            &ModelRegistry::new(),
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "workflow_cycle")
+        );
+    }
+
+    #[test]
+    fn port_type_error_has_exact_input_path() {
+        let mut source = node("source", WorkflowNodeKind::Transform);
+        source.outputs.push(NodePort {
+            id: "candidates".to_owned(),
+            artifact_type: ArtifactKind::BoundingBox,
+            required: true,
+            multiple: true,
+        });
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.inputs.push(NodePort {
+            id: "candidates".to_owned(),
+            artifact_type: ArtifactKind::SemanticMask,
+            required: true,
+            multiple: true,
+        });
+        let workflow = draft(
+            vec![source, commit],
+            vec![WorkflowEdge {
+                from_node: "source".to_owned(),
+                from_port: "candidates".to_owned(),
+                to_node: "commit".to_owned(),
+                to_port: "candidates".to_owned(),
+            }],
+        );
+        let report = WorkflowStaticValidator.validate(
+            &workflow,
+            &catalog(&[("source", Vec::new()), ("commit", Vec::new())]),
+            &ModelRegistry::new(),
+        );
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == "artifact_type_mismatch" && issue.path == "nodes[1].inputs.candidates"
+        }));
+    }
+
+    #[test]
+    fn unresolved_model_binding_blocks_publish() {
+        let mut vision = node("vision", WorkflowNodeKind::VisionLanguageModel);
+        vision.outputs.push(NodePort {
+            id: "result".to_owned(),
+            artifact_type: ArtifactKind::Classification,
+            required: true,
+            multiple: false,
+        });
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.depends_on.push("vision".to_owned());
+        let workflow = draft(vec![vision, commit], Vec::new());
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &workflow,
+            &catalog(&[
+                ("vision", vec![VisionCapability::VisionLanguage]),
+                ("commit", Vec::new()),
+            ]),
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+        );
+        assert!(!report.valid);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "unresolved_model_binding")
+        );
+    }
+
+    #[test]
+    fn snapshot_serialization_is_stable_and_frozen() {
+        let workflow = draft(vec![node("commit", WorkflowNodeKind::Commit)], Vec::new());
+        let snapshot = WorkflowSnapshot::frozen(
+            &workflow,
+            &ModelRegistry::new(),
+            BTreeMap::from([("dummy".to_owned(), "1.0".to_owned())]),
+        );
+        assert_eq!(
+            snapshot.stable_json().expect("first serialization"),
+            snapshot.stable_json().expect("second serialization")
+        );
+        let hash_material = snapshot
+            .content_hash_material()
+            .expect("content hash material");
+        let mut lifecycle_change = snapshot.clone();
+        let lifecycle_draft = lifecycle_change.draft.as_mut().expect("draft");
+        lifecycle_draft.status = WorkflowDraftStatus::Validated;
+        lifecycle_draft.updated_at = Utc::now() + chrono::Duration::seconds(5);
+        assert_eq!(
+            hash_material,
+            lifecycle_change
+                .content_hash_material()
+                .expect("stable lifecycle hash")
+        );
+        let mut edited = workflow;
+        edited.name = "edited later".to_owned();
+        assert_ne!(
+            snapshot.draft.as_ref().expect("frozen draft").name,
+            edited.name
+        );
+    }
 }

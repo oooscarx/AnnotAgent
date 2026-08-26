@@ -9,10 +9,10 @@ use std::{
 use annotagent_core::{
     ArtifactKind, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry, PricingConfig,
     ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, ValidationCatalog, VisionCapability,
-    VisionModelDescriptor, VisionModelProvider, VisionNodeDescriptor, WorkflowAdvisor,
-    WorkflowConstraints, WorkflowDraft, WorkflowDraftStatus, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationReport, all_artifact_kinds,
+    RunEventKind, RunEventPayload, RunId, RunStatus, VisionCapability, VisionModelDescriptor,
+    VisionModelProvider, VisionNodeDescriptor, WorkflowAdvisor, WorkflowConstraints, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion,
+    WorkflowValidationReport, all_artifact_kinds,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
 use annotagent_provider::{
@@ -163,10 +163,15 @@ fn task_kind_name(kind: annotagent_core::TaskKind) -> String {
     .to_owned()
 }
 
-fn compatibility_workflow(project: &ProjectSchema, skill: &dyn DomainSkill) -> WorkflowVersion {
-    let graph = skill.workflow();
-    let dependency_map: HashMap<_, _> = graph
-        .nodes
+fn compatibility_workflow(
+    project: &ProjectSchema,
+    skills: &[Arc<dyn DomainSkill>],
+) -> WorkflowVersion {
+    let graph_nodes = skills
+        .iter()
+        .flat_map(|skill| skill.workflow().nodes)
+        .collect::<Vec<_>>();
+    let dependency_map: HashMap<_, _> = graph_nodes
         .into_iter()
         .map(|node| (node.id, node.depends_on))
         .collect();
@@ -190,13 +195,28 @@ fn compatibility_workflow(project: &ProjectSchema, skill: &dyn DomainSkill) -> W
         })
         .collect();
     WorkflowVersion {
-        workflow_id: format!("{}-configured", skill.id()),
+        workflow_id: format!(
+            "{}-configured",
+            if skills.is_empty() {
+                "generic".to_owned()
+            } else {
+                skills
+                    .iter()
+                    .map(|skill| skill.id())
+                    .collect::<Vec<_>>()
+                    .join("+")
+            }
+        ),
         name: "Configured task graph".to_owned(),
         version: project.version.to_string(),
         status: WorkflowStatus::Published,
         validation_status: "valid".to_owned(),
         is_default: true,
-        source: "project tasks + registered Skill graph".to_owned(),
+        source: if skills.is_empty() {
+            "project tasks".to_owned()
+        } else {
+            "project tasks + registered Skill graphs".to_owned()
+        },
         nodes,
     }
 }
@@ -337,7 +357,8 @@ impl<'a> DatasetCoordinator<'a> {
         config_path: Option<&Path>,
         limit: Option<usize>,
     ) -> Result<Vec<DatasetImageResult>> {
-        let (project, _) = load_project_with_registry(project_path, &self.application.skills)?;
+        let (project, _) =
+            load_project_schema_with_registry(project_path, &self.application.skills)?;
         let concurrency = project.runtime.max_parallel_images.max(1);
         let mut images = self
             .application
@@ -500,8 +521,7 @@ impl LocalApplication {
     pub fn create_project(&self, project_id: &str, yaml: &str) -> Result<ProjectSummary> {
         validate_project_id(project_id)?;
         let project = ProjectSchema::from_yaml(yaml).map_err(|error| anyhow!(error))?;
-        let skill = self.skills.get(&project.project.skill)?;
-        validate_schema(&project, skill.as_ref())?;
+        resolve_project_skills(&project, &self.skills)?;
         let directory = self.workspace.join(project_id);
         if directory.exists() {
             bail!("project {project_id:?} already exists");
@@ -513,7 +533,7 @@ impl LocalApplication {
 
     pub fn get_project(&self, project_id: &str) -> Result<ProjectSummary> {
         let path = self.project_path(project_id)?;
-        let (project, skill) = load_project_with_registry(&path, &self.skills)?;
+        let (project, project_skills) = load_project_schema_with_registry(&path, &self.skills)?;
         let dataset = path
             .parent()
             .unwrap_or(&self.workspace)
@@ -553,7 +573,7 @@ impl LocalApplication {
                 )
             })
             .cloned();
-        let workflow = compatibility_workflow(&project, skill.as_ref());
+        let workflow = compatibility_workflow(&project, &project_skills);
         let workflow_summary = WorkflowSummary {
             id: workflow.workflow_id.clone(),
             name: workflow.name.clone(),
@@ -597,17 +617,31 @@ impl LocalApplication {
                     required: task.required,
                 })
                 .collect(),
-            enabled_skills: vec![EnabledSkill {
-                id: skill.id().to_owned(),
-                display_name: skill.manifest().display_name.clone(),
-                version: project.project.skill_version.clone(),
-            }],
+            enabled_skills: project_skills
+                .iter()
+                .map(|skill| EnabledSkill {
+                    id: skill.id().to_owned(),
+                    display_name: skill.manifest().display_name.clone(),
+                    version: project
+                        .project
+                        .enabled_skill_versions()
+                        .get(skill.id())
+                        .cloned()
+                        .unwrap_or_else(|| skill.manifest().version.to_string()),
+                })
+                .collect(),
             workflows: vec![workflow_summary],
             active_workflow: workflow.clone(),
             available_workflow_versions: vec![workflow],
             model_bindings,
             export_formats: project.export.formats.clone(),
-            skill_id: project.project.skill.clone(),
+            skill_id: project
+                .project
+                .enabled_skill_versions()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(","),
             image_count,
             active_run,
             last_run,
@@ -616,7 +650,7 @@ impl LocalApplication {
 
     pub fn list_project_images(&self, project_id: &str) -> Result<Vec<PathBuf>> {
         let project_path = self.project_path(project_id)?;
-        let (project, _) = load_project_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let root = project_path
             .parent()
             .unwrap_or(&self.workspace)
@@ -640,12 +674,16 @@ impl LocalApplication {
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
-        let (project, skill) = load_project_with_registry(&project_path, &self.skills)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
         let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
             project_id,
             &project,
-            &[skill.id().to_owned()],
+            &project_skills
+                .iter()
+                .map(|skill| skill.id().to_owned())
+                .collect::<Vec<_>>(),
             &nodes,
             &models,
             constraints,
@@ -674,7 +712,21 @@ impl LocalApplication {
     ) -> Result<WorkflowValidationReport> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let (nodes, models) = workflow_catalog(settings)?;
-        let report = WorkflowStaticValidator.validate(&draft, &nodes, &models);
+        let enabled_skills = draft
+            .enabled_skills
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
+        let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &draft,
+            &nodes,
+            &models,
+            &validation_catalog,
+            &enabled_skills,
+            false,
+        );
         if report.valid && draft.status != WorkflowDraftStatus::Published {
             let mut validated = draft;
             validated.status = WorkflowDraftStatus::Validated;
@@ -696,9 +748,31 @@ impl LocalApplication {
         }
         draft.status = WorkflowDraftStatus::Validated;
         draft.updated_at = chrono::Utc::now();
-        let serialized = serde_json::to_vec(&draft)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        let enabled_skills = draft
+            .enabled_skills
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
+        let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
+        let publish_report = WorkflowStaticValidator.validate_for_publish(
+            &draft,
+            &nodes,
+            &models,
+            &validation_catalog,
+            &enabled_skills,
+            true,
+        );
+        if !publish_report.valid {
+            bail!("workflow has unresolved bindings and cannot be published");
+        }
+        let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone());
+        let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
-        Ok(self.store.publish_workflow_draft(&draft, content_hash)?)
+        Ok(self
+            .store
+            .publish_workflow_draft(&draft, content_hash, snapshot)?)
     }
 
     pub fn list_images_for_project_path(&self, project_path: &Path) -> Result<Vec<PathBuf>> {
@@ -706,7 +780,7 @@ impl LocalApplication {
             .canonicalize()
             .with_context(|| format!("cannot access {}", project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
-        let (project, _) = load_project_with_registry(&canonical, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&canonical, &self.skills)?;
         let root = canonical
             .parent()
             .unwrap_or(&self.workspace)
@@ -718,7 +792,7 @@ impl LocalApplication {
 
     pub fn import_images(&self, project_id: &str, source: &Path) -> Result<(u64, u64)> {
         let project_path = self.project_path(project_id)?;
-        let (project, _) = load_project_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let destination = project_path
             .parent()
             .unwrap_or(&self.workspace)
@@ -1136,29 +1210,45 @@ fn prepare_run_with_settings(
         ),
         other => bail!("unknown provider {other:?}; choose mock or openai_compatible"),
     };
-    let runtime = Arc::new(AgentRuntime::new(
-        skill,
-        provider,
-        store,
-        settings.pricing,
-        settings.budget,
-        AgentLoopConfig {
-            model: settings.provider.model,
-            max_model_turns_per_task: project.runtime.max_model_turns_per_task,
-            max_tool_calls_per_task: project.runtime.max_tool_calls_per_task,
-            max_recovery_turns_per_task: project.runtime.max_recovery_turns_per_task,
-            task_timeout: std::time::Duration::from_secs(project.runtime.task_timeout_seconds),
-            provider_request_timeout: std::time::Duration::from_secs(
-                project
-                    .runtime
-                    .provider_request_timeout_seconds
-                    .min(settings.provider.request_timeout_seconds),
-            ),
-            max_retries: project.runtime.max_retries,
-            max_output_tokens: settings.provider.max_output_tokens,
-            temperature: settings.provider.temperature,
-        },
-    ));
+    // Milestone 2 still executes the compatibility agent loop. Record that exact immutable graph
+    // rather than falsely attributing execution to a published DAG (the DAG executor arrives in M3).
+    let workflow_snapshot_json = Some(serde_json::to_string(&serde_json::json!({
+        "schema_version": 1,
+        "engine": "legacy_agent_runtime",
+        "workflow": skill.workflow(),
+        "skill_manifest": skill.manifest(),
+        "project": &project,
+        "model_binding": {
+            "provider": provider.name(),
+            "model": &settings.provider.model,
+        }
+    }))?);
+    let runtime = Arc::new(
+        AgentRuntime::new(
+            skill,
+            provider,
+            store,
+            settings.pricing,
+            settings.budget,
+            AgentLoopConfig {
+                model: settings.provider.model,
+                max_model_turns_per_task: project.runtime.max_model_turns_per_task,
+                max_tool_calls_per_task: project.runtime.max_tool_calls_per_task,
+                max_recovery_turns_per_task: project.runtime.max_recovery_turns_per_task,
+                task_timeout: std::time::Duration::from_secs(project.runtime.task_timeout_seconds),
+                provider_request_timeout: std::time::Duration::from_secs(
+                    project
+                        .runtime
+                        .provider_request_timeout_seconds
+                        .min(settings.provider.request_timeout_seconds),
+                ),
+                max_retries: project.runtime.max_retries,
+                max_output_tokens: settings.provider.max_output_tokens,
+                temperature: settings.provider.temperature,
+            },
+        )
+        .with_workflow_snapshot_json(workflow_snapshot_json),
+    );
     let project_root = project_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -1184,27 +1274,41 @@ fn load_project_with_registry(
     path: &Path,
     skills: &SkillRegistry,
 ) -> Result<(ProjectSchema, Arc<dyn DomainSkill>)> {
+    let (project, mut project_skills) = load_project_schema_with_registry(path, skills)?;
+    if project_skills.len() != 1 {
+        bail!(
+            "legacy agent runtime requires exactly one enabled Skill; this Project has {}. Publish and run a Workflow version instead",
+            project_skills.len()
+        );
+    }
+    Ok((project, project_skills.remove(0)))
+}
+
+fn load_project_schema_with_registry(
+    path: &Path,
+    skills: &SkillRegistry,
+) -> Result<(ProjectSchema, Vec<Arc<dyn DomainSkill>>)> {
     let yaml = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read project {}", path.display()))?;
     let project = ProjectSchema::from_yaml(&yaml).map_err(|error| anyhow!(error))?;
-    let skill = skills.get(&project.project.skill)?;
-    validate_schema(&project, skill.as_ref())?;
-    Ok((project, skill))
+    let project_skills = resolve_project_skills(&project, skills)?;
+    Ok((project, project_skills))
 }
 
-fn validate_schema(project: &ProjectSchema, skill: &dyn DomainSkill) -> Result<()> {
-    let catalog = ValidationCatalog {
-        validators: skill
-            .validators()
-            .into_iter()
-            .map(|validator| validator.id().to_owned())
-            .collect(),
-        refiners: skill
-            .refiners()
-            .into_iter()
-            .map(|refiner| refiner.id().to_owned())
-            .collect(),
-    };
+fn resolve_project_skills(
+    project: &ProjectSchema,
+    skills: &SkillRegistry,
+) -> Result<Vec<Arc<dyn DomainSkill>>> {
+    let enabled_ids = project
+        .project
+        .enabled_skill_versions()
+        .into_keys()
+        .collect::<Vec<_>>();
+    let project_skills = enabled_ids
+        .iter()
+        .map(|id| skills.get(id).map_err(anyhow::Error::from))
+        .collect::<Result<Vec<_>>>()?;
+    let catalog = skills.validation_catalog_for(&enabled_ids)?;
     let issues = project.validate(&catalog);
     if !issues.is_empty() {
         bail!(
@@ -1216,7 +1320,7 @@ fn validate_schema(project: &ProjectSchema, skill: &dyn DomainSkill) -> Result<(
                 .join("\n")
         );
     }
-    Ok(())
+    Ok(project_skills)
 }
 
 fn find_or_generate_image(project_path: &Path, project: &ProjectSchema) -> Result<PathBuf> {
@@ -1402,6 +1506,51 @@ impl TerminalEvent for RunEvent {
 mod tests {
     use super::*;
 
+    const GENERIC_PROJECT: &str = r"
+version: 1
+project:
+  name: Generic inspection
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [json]
+";
+
+    #[test]
+    fn generic_project_and_workflow_need_no_robocup_skill() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        let project = application
+            .create_project("generic", GENERIC_PROJECT)
+            .expect("generic project");
+        assert!(project.enabled_skills.is_empty());
+        assert!(project.skill_id.is_empty());
+
+        let settings = load_settings(None).expect("settings");
+        let first = application
+            .suggest_workflow("generic", &settings, &WorkflowConstraints::default())
+            .expect("first workflow");
+        let second = application
+            .suggest_workflow("generic", &settings, &WorkflowConstraints::default())
+            .expect("second workflow");
+        assert_ne!(first.draft.id, second.draft.id);
+        assert_eq!(
+            application
+                .list_workflow_drafts(Some("generic"))
+                .expect("drafts")
+                .len(),
+            2
+        );
+        let encoded = serde_json::to_string(&(project, first, second)).expect("JSON");
+        assert!(!encoded.to_ascii_lowercase().contains("robocup"));
+    }
+
     #[test]
     fn workspace_rejects_traversal_and_symlink_escape() {
         let temp = tempfile::tempdir().expect("temp");
@@ -1504,6 +1653,7 @@ mod tests {
                 model: "mock".to_owned(),
                 status: RunStatus::Pending,
                 project_schema_json: std::fs::read_to_string(project_path).expect("project YAML"),
+                workflow_snapshot_json: None,
             })
             .await
             .expect("run");
@@ -1559,13 +1709,10 @@ mod tests {
             )
             .expect("suggestion");
         assert!(suggestion.unresolved_model_bindings.is_empty());
-        assert!(
-            suggestion
-                .draft
-                .nodes
-                .iter()
-                .all(|node| node.node_type == "vision_language" || node.node_type == "review_gate")
-        );
+        assert!(suggestion.draft.nodes.iter().all(|node| matches!(
+            node.node_type.as_str(),
+            "vision_language" | "static_validator" | "review_gate" | "commit"
+        )));
         let mut edited = suggestion.draft;
         edited.nodes[0].fallback = Some("review_gate".to_owned());
         let edited = application

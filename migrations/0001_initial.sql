@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS runs (
     model TEXT NOT NULL,
     status TEXT NOT NULL,
     project_schema_json TEXT NOT NULL,
+    workflow_snapshot_json TEXT,
     terminal_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

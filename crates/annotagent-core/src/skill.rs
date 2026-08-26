@@ -20,6 +20,9 @@ pub struct SkillManifest {
     pub task_resources: BTreeMap<TaskId, Vec<String>>,
     #[serde(default)]
     pub correction_taxonomy: Vec<String>,
+    /// Label or overlay id -> domain-neutral visual metadata (color, shape, line style, etc.).
+    #[serde(default)]
+    pub visual_profile: BTreeMap<String, serde_json::Value>,
 }
 
 impl SkillManifest {

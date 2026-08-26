@@ -80,6 +80,7 @@ pub struct RunRecord {
     pub model: String,
     pub status: RunStatus,
     pub project_schema_json: String,
+    pub workflow_snapshot_json: Option<String>,
 }
 
 #[derive(Default)]

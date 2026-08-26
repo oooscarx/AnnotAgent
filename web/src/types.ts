@@ -139,22 +139,49 @@ export interface ProjectWorkflow {
 export interface WorkflowDraftNode {
   id: string;
   node_type: string;
+  kind?: "image_input" | "transform" | "vision_model" | "vision_language_model" | "deterministic_tool" | "candidate_merge" | "validator" | "refiner" | "gate" | "human_review" | "commit" | "export";
   depends_on: string[];
+  inputs?: WorkflowNodePort[];
+  outputs?: WorkflowNodePort[];
   model_binding?: string;
+  required_skills?: string[];
   validators: string[];
   refiners: string[];
   fallback?: string;
   max_retries: number;
   review_gate: boolean;
   parameters: Record<string, unknown>;
+  retry_policy?: { max_attempts: number };
+  fallback_policy?: { target_node?: string; on_timeout: boolean; on_error: boolean };
+  gate?: { required: boolean; allow_manual_override: boolean };
+  resources?: { timeout_seconds?: number; max_memory_mb?: number; accelerator?: string };
+}
+
+export interface WorkflowNodePort {
+  id: string;
+  artifact_type: "classification" | "bounding_box" | "keypoints" | "polyline" | "polygon" | "semantic_mask" | "instance_mask" | "attributes" | "relations";
+  required: boolean;
+  multiple: boolean;
+}
+
+export interface WorkflowEdge {
+  from_node: string;
+  from_port: string;
+  to_node: string;
+  to_port: string;
 }
 
 export interface WorkflowDraft {
+  schema_version?: number;
   id: string;
   project_id: string;
   name: string;
   status: "suggested" | "editing" | "validated" | "published";
   nodes: WorkflowDraftNode[];
+  edges?: WorkflowEdge[];
+  enabled_skills?: Record<string, string>;
+  resource_versions?: Record<string, string>;
+  allow_unvalidated_commit?: boolean;
   created_at: string;
   updated_at: string;
 }

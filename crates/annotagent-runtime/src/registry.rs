@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{DomainSkill, ValidationCatalog};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -18,6 +19,28 @@ pub enum RegistryError {
 #[derive(Default)]
 pub struct SkillRegistry {
     skills: BTreeMap<String, Arc<dyn DomainSkill>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct MergedVisualProfile {
+    pub values: BTreeMap<String, serde_json::Value>,
+    pub sources: BTreeMap<String, String>,
+    pub conflicts: Vec<VisualProfileConflict>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VisualProfileConflict {
+    pub key: String,
+    pub kept_skill: String,
+    pub ignored_skill: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NamespacedSkillExtensions {
+    pub nodes: Vec<String>,
+    pub tools: Vec<String>,
+    pub validators: Vec<String>,
+    pub refiners: Vec<String>,
 }
 
 impl SkillRegistry {
@@ -95,6 +118,101 @@ impl SkillRegistry {
             );
         }
         catalog
+    }
+
+    pub fn validation_catalog_for(
+        &self,
+        enabled_skill_ids: &[String],
+    ) -> Result<ValidationCatalog, RegistryError> {
+        let mut catalog = ValidationCatalog::default();
+        let use_namespace = enabled_skill_ids.len() > 1;
+        for skill_id in enabled_skill_ids {
+            let skill = self.get(skill_id)?;
+            catalog
+                .validators
+                .extend(skill.validators().into_iter().map(|validator| {
+                    if use_namespace {
+                        format!("{skill_id}.{}", validator.id())
+                    } else {
+                        validator.id().to_owned()
+                    }
+                }));
+            catalog
+                .refiners
+                .extend(skill.refiners().into_iter().map(|refiner| {
+                    if use_namespace {
+                        format!("{skill_id}.{}", refiner.id())
+                    } else {
+                        refiner.id().to_owned()
+                    }
+                }));
+        }
+        Ok(catalog)
+    }
+
+    /// Merges in sorted Skill-id order. The first owner wins and every collision is reported.
+    pub fn merge_visual_profiles(
+        &self,
+        enabled_skill_ids: &[String],
+    ) -> Result<MergedVisualProfile, RegistryError> {
+        let mut ids = enabled_skill_ids.to_vec();
+        ids.sort();
+        ids.dedup();
+        let mut merged = MergedVisualProfile::default();
+        for skill_id in ids {
+            let skill = self.get(&skill_id)?;
+            for (key, value) in &skill.manifest().visual_profile {
+                if let Some(kept_skill) = merged.sources.get(key) {
+                    merged.conflicts.push(VisualProfileConflict {
+                        key: key.clone(),
+                        kept_skill: kept_skill.clone(),
+                        ignored_skill: skill_id.clone(),
+                    });
+                } else {
+                    merged.values.insert(key.clone(), value.clone());
+                    merged.sources.insert(key.clone(), skill_id.clone());
+                }
+            }
+        }
+        Ok(merged)
+    }
+
+    pub fn namespaced_extensions_for(
+        &self,
+        enabled_skill_ids: &[String],
+    ) -> Result<NamespacedSkillExtensions, RegistryError> {
+        let mut ids = enabled_skill_ids.to_vec();
+        ids.sort();
+        ids.dedup();
+        let mut extensions = NamespacedSkillExtensions::default();
+        for skill_id in ids {
+            let skill = self.get(&skill_id)?;
+            extensions.nodes.extend(
+                skill
+                    .task_templates()
+                    .into_iter()
+                    .map(|node| format!("{skill_id}.{}", node.id)),
+            );
+            extensions.tools.extend(
+                skill
+                    .tool_factories()
+                    .into_iter()
+                    .map(|tool| format!("{skill_id}.{}", tool.definition().name)),
+            );
+            extensions.validators.extend(
+                skill
+                    .validators()
+                    .into_iter()
+                    .map(|validator| format!("{skill_id}.{}", validator.id())),
+            );
+            extensions.refiners.extend(
+                skill
+                    .refiners()
+                    .into_iter()
+                    .map(|refiner| format!("{skill_id}.{}", refiner.id())),
+            );
+        }
+        Ok(extensions)
     }
 }
 

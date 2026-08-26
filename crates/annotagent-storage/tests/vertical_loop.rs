@@ -109,6 +109,7 @@ impl BboxSkill {
                 summary_resources: Vec::new(),
                 task_resources: BTreeMap::new(),
                 correction_taxonomy: Vec::new(),
+                visual_profile: BTreeMap::new(),
             },
         }
     }
@@ -187,6 +188,7 @@ fn project() -> ProjectSchema {
             name: "Vertical loop".to_owned(),
             skill: "bbox_fixture".to_owned(),
             skill_version: "1".to_owned(),
+            enabled_skills: Vec::new(),
             language: "en".to_owned(),
         },
         dataset: DatasetConfig {
