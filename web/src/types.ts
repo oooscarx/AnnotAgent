@@ -105,6 +105,25 @@ export interface ProjectSummary {
   /** Compatibility field from ProjectSchema v1. */
   skill_id: string;
   image_count: number;
+  active_batch?: {
+    id: string;
+    status: RunStatus;
+    event_sequence: number;
+    max_concurrency: number;
+    budget_ledger: {
+      consumed: { image_count: number; request_count: number; total_tokens: number; cost: string };
+      reserved: { image_count: number; request_count: number; total_tokens: number; cost: string };
+    };
+  };
+  active_batch_progress?: {
+    total_images: number;
+    pending_images: number;
+    running_images: number;
+    completed_images: number;
+    failed_images: number;
+    review_images: number;
+    cancelled_images: number;
+  };
   active_run?: {
     id: string;
     provider: string;

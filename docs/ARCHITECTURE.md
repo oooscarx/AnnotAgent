@@ -15,7 +15,8 @@ The binary is the composition root. It registers `RoboCupSkill`, providers, SQLi
 ## Runtime topology
 
 ```text
-DatasetCoordinator (bounded concurrent images)
+DatasetCoordinator (persistent queue + lease + global budget)
+  ├─ SQLite batch/image/checkpoint/event state
   └─ LocalApplication::start_run_image_path
        └─ AgentRuntime::run_image
             ├─ Skill TaskGraph topological order
@@ -30,13 +31,19 @@ DatasetCoordinator (bounded concurrent images)
             └─ EventBus → Application broadcast → TUI / SSE
 ```
 
-Each image currently has its own durable run ID. This makes failure and audit history independently addressable. Dataset coordination is in the application crate because enumeration and workspace policy are application concerns; the image loop remains reusable and filesystem-agnostic in Runtime.
+Each image has its own durable child Run ID, while the Dataset batch has an independent
+`BatchId`. The coordinator claims images under a renewable worker lease and atomically reserves
+global token/request/image/cost budget before starting work. Completed images are never reclaimed;
+failed images require an explicit retry transition. Per-image checkpoints preserve node status,
+Artifact references, retry counters, review suspensions, and the child Runtime summary. On server
+startup, orphaned leases are recovered and unfinished images return to Pending without touching
+completed commits.
 
 The implemented hybrid model boundary is described in [Hybrid vision execution](HYBRID_VISION.md). Auxiliary detectors and segmenters supply typed Artifacts; they do not bypass Runtime validation, provenance, review, or commit.
 
 ## State and persistence
 
-`RunControl` is the process-local transition gate, while SQLite is the durable source of truth. Project DTOs expose `active_run` separately from `last_run`; task outcomes include `SucceededEmpty`, and stale worker leases reconcile to `Interrupted`. Pause waits at safe boundaries; cancellation uses `CancellationToken` and does not become failure. Versioned typed events are persisted before broadcast. SQLite uses 24 explicit tables from `migrations/0001_initial.sql`; images remain files and only relative metadata/hash references belong in history.
+`RunControl` is the process-local child-Run transition gate, while SQLite is the durable source of truth. Project DTOs expose `active_batch`, `active_batch_progress`, `active_run`, and `last_run`; task outcomes include `SucceededEmpty`, and stale child Runs reconcile to `Interrupted`. Batch pause stops new claims and allows already-running child work to checkpoint; cancellation propagates only to that batch's child Runs. Versioned typed Run events and monotonic Batch events are persisted before display. SQLite uses 28 explicit tables across migrations v1–v3; images remain files and only workspace-relative paths and typed references belong in batch state/history.
 
 ## Trust boundaries
 

@@ -150,6 +150,7 @@ pub struct Budget {
     pub max_cost: Option<Decimal>,
     pub max_requests: Option<u64>,
     pub max_images: Option<u64>,
+    pub max_wall_clock_seconds: Option<u64>,
 }
 
 impl Budget {

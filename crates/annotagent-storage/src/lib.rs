@@ -1,5 +1,9 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
+mod batch;
+
+pub use batch::BatchClaimResult;
+
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
@@ -17,6 +21,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const INITIAL_MIGRATION: &str = include_str!("../../../migrations/0001_initial.sql");
+const BATCH_MIGRATION: &str =
+    include_str!("../../../migrations/0003_persistent_dataset_batches.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -28,6 +34,10 @@ pub enum StorageError {
     Poisoned,
     #[error("run {0} was not found")]
     RunNotFound(RunId),
+    #[error("dataset batch {0} was not found")]
+    BatchNotFound(annotagent_core::BatchId),
+    #[error("dataset batch lease conflict: {0}")]
+    BatchLeaseConflict(String),
     #[error("unsupported history schema version {0}")]
     UnsupportedHistoryVersion(u32),
     #[error("invalid stored enum value: {0}")]
@@ -193,6 +203,11 @@ impl SqliteStore {
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (2, ?1, ?2)",
                 params!["immutable_workflow_run_snapshot", Utc::now().to_rfc3339()],
+            )?;
+            connection.execute_batch(BATCH_MIGRATION)?;
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (3, ?1, ?2)",
+                params!["persistent_dataset_batches", Utc::now().to_rfc3339()],
             )?;
             Ok(())
         })
@@ -1171,7 +1186,7 @@ impl SqliteStore {
         })
     }
 
-    fn with_connection<T>(
+    pub(crate) fn with_connection<T>(
         &self,
         operation: impl FnOnce(&Connection) -> Result<T, StorageError>,
     ) -> Result<T, StorageError> {
@@ -1872,6 +1887,9 @@ mod tests {
             "settings_metadata",
             "workflow_drafts",
             "workflow_versions",
+            "dataset_batches",
+            "batch_images",
+            "batch_events",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),

@@ -104,6 +104,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "uuid",
  "walkdir",

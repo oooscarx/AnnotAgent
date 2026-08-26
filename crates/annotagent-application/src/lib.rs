@@ -7,13 +7,15 @@ use std::{
 };
 
 use annotagent_core::{
-    ArtifactKind, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry, PricingConfig,
-    ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, VisionCapability, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WorkflowAdvisor, WorkflowConstraints, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion,
-    WorkflowValidationReport, all_artifact_kinds,
+    AdditionalUsage, ArtifactKind, BatchBudgetLedger, BatchBudgetLimits, BatchId,
+    BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
+    BatchStatus, BatchUsage, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry,
+    PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
+    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, TaskRunStatus, TokenUsage,
+    UsageSource, VisionCapability, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
+    WorkflowAdvisor, WorkflowConstraints, WorkflowDraft, WorkflowDraftStatus, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationReport, all_artifact_kinds,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
 use annotagent_provider::{
@@ -25,13 +27,14 @@ use annotagent_runtime::{
     SkillRegistry,
 };
 use annotagent_skill_robocup::RoboCupSkill;
-use annotagent_storage::{HistoryRun, RunStartReservation, SqliteStore};
+use annotagent_storage::{BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore};
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
+use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -69,6 +72,8 @@ pub struct ProjectSummary {
     /// Compatibility field for v1 clients. New clients use `enabled_skills`.
     pub skill_id: String,
     pub image_count: usize,
+    pub active_batch: Option<BatchRecord>,
+    pub active_batch_progress: Option<BatchProgress>,
     pub active_run: Option<HistoryRun>,
     pub last_run: Option<HistoryRun>,
 }
@@ -370,6 +375,12 @@ pub struct DatasetImageResult {
     pub result: ImageRunResult,
 }
 
+#[derive(Debug, Clone)]
+pub struct DatasetBatchExecution {
+    pub batch: BatchRecord,
+    pub results: Vec<DatasetImageResult>,
+}
+
 pub struct DatasetCoordinator<'a> {
     application: &'a LocalApplication,
 }
@@ -387,34 +398,476 @@ impl<'a> DatasetCoordinator<'a> {
         config_path: Option<&Path>,
         limit: Option<usize>,
     ) -> Result<Vec<DatasetImageResult>> {
-        let (project, _) =
-            load_project_schema_with_registry(project_path, &self.application.skills)?;
-        let concurrency = project.runtime.max_parallel_images.max(1);
+        let batch = self.create(project_path, provider, config_path, limit)?;
+        Ok(self.execute(batch.id, None).await?.results)
+    }
+
+    pub fn create(
+        &self,
+        project_path: &Path,
+        provider: &str,
+        config_path: Option<&Path>,
+        limit: Option<usize>,
+    ) -> Result<BatchRecord> {
+        let project_path = project_path.canonicalize()?;
+        ensure_within(&self.application.workspace, &project_path)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.application.skills)?;
+        let settings = load_settings(config_path)?;
         let mut images = self
             .application
-            .list_images_for_project_path(project_path)?;
+            .list_images_for_project_path(&project_path)?;
         if let Some(limit) = limit {
             images.truncate(limit);
         }
         if images.is_empty() {
             bail!("project has no supported images");
         }
-        stream::iter(images)
-            .map(|image_path| async move {
-                let started = self.application.start_run_image_path(
-                    project_path,
-                    &image_path,
-                    provider,
-                    config_path,
-                )?;
-                let result = self.application.wait_run(started.run_id).await?;
-                Ok(DatasetImageResult { image_path, result })
+        let relative_project_path = project_path
+            .strip_prefix(&self.application.workspace)
+            .context("project path is outside the workspace")?
+            .to_string_lossy()
+            .into_owned();
+        let image_records = images
+            .iter()
+            .map(|path| {
+                Ok((
+                    ImageId::new(),
+                    path.strip_prefix(&self.application.workspace)
+                        .context("image path is outside the workspace")?
+                        .to_string_lossy()
+                        .into_owned(),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let workflow = compatibility_workflow(&project, &project_skills);
+        let now = chrono::Utc::now();
+        let project_id = project_path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("project")
+            .to_owned();
+        if self
+            .application
+            .store
+            .list_batches(true)?
+            .iter()
+            .any(|batch| batch.project_id == project_id)
+        {
+            bail!("project {project_id:?} already has an active dataset batch");
+        }
+        let stable_id =
+            stable_project_id(project_path.parent().unwrap_or(&self.application.workspace));
+        if self.application.store.list_runs()?.iter().any(|run| {
+            run.project_id == Some(stable_id)
+                && matches!(
+                    run.status,
+                    RunStatus::Pending
+                        | RunStatus::Running
+                        | RunStatus::Paused
+                        | RunStatus::AwaitingReview
+                )
+        }) {
+            bail!("project {project_id:?} already has an active image Run");
+        }
+        let record = BatchRecord {
+            id: BatchId::new(),
+            project_id,
+            project_path: relative_project_path,
+            provider: provider.to_owned(),
+            status: BatchStatus::Pending,
+            max_concurrency: u32::try_from(project.runtime.max_parallel_images.max(1))
+                .unwrap_or(u32::MAX),
+            workflow_version: workflow.version.clone(),
+            workflow_snapshot: json!({
+                "workflow": workflow,
+                "settings": settings,
+            }),
+            project_snapshot: serde_json::to_value(&project)?,
+            budget_limits: batch_budget_limits(&settings.budget, now),
+            budget_ledger: BatchBudgetLedger::default(),
+            lease_owner: None,
+            lease_expires_at: None,
+            event_sequence: 0,
+            created_at: now,
+            updated_at: now,
+        };
+        Ok(self
+            .application
+            .store
+            .create_batch(record, &image_records)?)
+    }
+
+    pub async fn execute(
+        &self,
+        batch_id: BatchId,
+        temporary_api_key: Option<String>,
+    ) -> Result<DatasetBatchExecution> {
+        const LEASE_DURATION: std::time::Duration = std::time::Duration::from_secs(30);
+        let stored = self.application.store.get_batch(batch_id)?;
+        let settings: Settings = serde_json::from_value(
+            stored
+                .workflow_snapshot
+                .get("settings")
+                .cloned()
+                .context("batch snapshot lacks settings")?,
+        )?;
+        let project_path = self.application.workspace.join(&stored.project_path);
+        let owner = format!("worker-{}", uuid::Uuid::new_v4());
+        let batch = self.application.store.acquire_batch_lease(
+            batch_id,
+            &owner,
+            LEASE_DURATION,
+            chrono::Utc::now(),
+        )?;
+        let heartbeat_cancel = CancellationToken::new();
+        let heartbeat_store = self.application.store.clone();
+        let heartbeat_owner = owner.clone();
+        let heartbeat_token = heartbeat_cancel.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    () = heartbeat_token.cancelled() => break,
+                    _ = interval.tick() => {
+                        if heartbeat_store.renew_batch_lease(
+                            batch_id,
+                            &heartbeat_owner,
+                            LEASE_DURATION,
+                            chrono::Utc::now(),
+                        ).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let concurrency = usize::try_from(batch.max_concurrency.max(1)).unwrap_or(usize::MAX);
+        let worker_results = stream::iter(0..concurrency)
+            .map(|_| {
+                self.run_batch_worker(
+                    batch_id,
+                    &owner,
+                    &project_path,
+                    &settings,
+                    temporary_api_key.clone(),
+                )
             })
             .buffer_unordered(concurrency)
-            .collect::<Vec<Result<DatasetImageResult>>>()
-            .await
+            .collect::<Vec<_>>()
+            .await;
+        heartbeat_cancel.cancel();
+        let mut results = Vec::new();
+        for worker_result in worker_results {
+            results.extend(worker_result?);
+        }
+        let current = self.application.store.get_batch(batch_id)?;
+        let batch = if current.status == BatchStatus::Running {
+            self.application
+                .store
+                .finalize_batch(batch_id, &owner, chrono::Utc::now())?
+        } else {
+            current
+        };
+        Ok(DatasetBatchExecution { batch, results })
+    }
+
+    pub async fn resume(
+        &self,
+        batch_id: BatchId,
+        temporary_api_key: Option<String>,
+    ) -> Result<DatasetBatchExecution> {
+        let batch = self.application.store.get_batch(batch_id)?;
+        match batch.status {
+            BatchStatus::Paused | BatchStatus::Pending => {
+                if batch.status == BatchStatus::Paused {
+                    self.application.store.set_batch_status(
+                        batch_id,
+                        BatchStatus::Pending,
+                        chrono::Utc::now(),
+                    )?;
+                }
+            }
+            BatchStatus::Failed | BatchStatus::Partial => {
+                self.application
+                    .store
+                    .retry_failed_batch_images(batch_id, chrono::Utc::now())?;
+            }
+            status => bail!("batch {batch_id} cannot resume from {status:?}"),
+        }
+        self.execute(batch_id, temporary_api_key).await
+    }
+
+    pub fn pause(&self, batch_id: BatchId) -> Result<BatchRecord> {
+        Ok(self.application.store.set_batch_status(
+            batch_id,
+            BatchStatus::Paused,
+            chrono::Utc::now(),
+        )?)
+    }
+
+    pub fn cancel(&self, batch_id: BatchId) -> Result<BatchRecord> {
+        let child_run_ids = self
+            .application
+            .store
+            .list_batch_images(batch_id)?
             .into_iter()
-            .collect()
+            .filter_map(|image| image.child_run_id)
+            .collect::<BTreeSet<_>>();
+        let batch = self.application.store.set_batch_status(
+            batch_id,
+            BatchStatus::Cancelled,
+            chrono::Utc::now(),
+        )?;
+        if let Ok(active) = self.application.active.lock() {
+            for (_, managed) in active
+                .iter()
+                .filter(|(run_id, managed)| child_run_ids.contains(run_id) && managed.is_active())
+            {
+                let _ignored = managed.control.cancel();
+            }
+        }
+        Ok(batch)
+    }
+
+    async fn run_batch_worker(
+        &self,
+        batch_id: BatchId,
+        owner: &str,
+        project_path: &Path,
+        settings: &Settings,
+        temporary_api_key: Option<String>,
+    ) -> Result<Vec<DatasetImageResult>> {
+        let reservation = batch_image_reservation(settings);
+        let mut completed = Vec::new();
+        loop {
+            let claim = match self.application.store.claim_batch_image(
+                batch_id,
+                owner,
+                &reservation,
+                chrono::Utc::now(),
+            ) {
+                Ok(claim) => claim,
+                Err(annotagent_storage::StorageError::BatchLeaseConflict(_)) => break,
+                Err(error) => return Err(error.into()),
+            };
+            let image = match claim {
+                BatchClaimResult::Claimed(image) => image,
+                BatchClaimResult::Empty | BatchClaimResult::BudgetExceeded(_) => break,
+            };
+            let image_path = self.application.workspace.join(&image.image_path);
+            let prepared = prepare_run_with_settings(
+                project_path,
+                &self.application.store.get_batch(batch_id)?.provider,
+                settings.clone(),
+                temporary_api_key.clone(),
+                self.application.store.clone(),
+                &self.application.skills,
+                Some(&image_path),
+                Some(image.image_id),
+            );
+            let prepared = match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.application.store.finish_batch_image(
+                        batch_id,
+                        image.image_id,
+                        owner,
+                        BatchImageStatus::Failed,
+                        &BatchUsage::default(),
+                        &BatchImageCheckpoint::default(),
+                        Some(&error.to_string()),
+                        chrono::Utc::now(),
+                    )?;
+                    continue;
+                }
+            };
+            let child_run_id = prepared.request.run_id;
+            if let Err(error) = self.application.store.mark_batch_image_running(
+                batch_id,
+                image.image_id,
+                owner,
+                child_run_id,
+                chrono::Utc::now(),
+            ) {
+                if matches!(
+                    error,
+                    annotagent_storage::StorageError::BatchLeaseConflict(_)
+                ) {
+                    break;
+                }
+                return Err(error.into());
+            }
+            let started = self.application.start_prepared(prepared, false, None)?;
+            match self.application.wait_run(started.run_id).await {
+                Ok(result) => {
+                    let usage = batch_usage(&result.usage);
+                    let checkpoint = self.batch_image_checkpoint(started.run_id, &result)?;
+                    let image_status = batch_image_status(result.status);
+                    let error = matches!(image_status, BatchImageStatus::Failed).then(|| {
+                        result
+                            .issues
+                            .iter()
+                            .map(|issue| format!("{}: {}", issue.code, issue.message))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    });
+                    self.application.store.finish_batch_image(
+                        batch_id,
+                        image.image_id,
+                        owner,
+                        image_status,
+                        &usage,
+                        &checkpoint,
+                        error.as_deref(),
+                        chrono::Utc::now(),
+                    )?;
+                    completed.push(DatasetImageResult { image_path, result });
+                }
+                Err(error) => {
+                    self.application.store.finish_batch_image(
+                        batch_id,
+                        image.image_id,
+                        owner,
+                        BatchImageStatus::Failed,
+                        &BatchUsage::default(),
+                        &BatchImageCheckpoint::default(),
+                        Some(&error.to_string()),
+                        chrono::Utc::now(),
+                    )?;
+                }
+            }
+            let _ignored = self.application.store.renew_batch_lease(
+                batch_id,
+                owner,
+                std::time::Duration::from_secs(30),
+                chrono::Utc::now(),
+            );
+            let batch = self.application.store.get_batch(batch_id)?;
+            if batch.status != BatchStatus::Running {
+                break;
+            }
+        }
+        Ok(completed)
+    }
+
+    fn batch_image_checkpoint(
+        &self,
+        run_id: RunId,
+        result: &ImageRunResult,
+    ) -> Result<BatchImageCheckpoint> {
+        let task_runs = self.application.store.list_task_runs(run_id)?;
+        let events = self.application.store.list_events(run_id)?;
+        let artifacts = self.application.store.list_artifacts(run_id)?;
+        let mut node_states = BTreeMap::new();
+        let mut retry_counters = BTreeMap::new();
+        let mut review_suspensions = BTreeSet::new();
+        for task in task_runs {
+            let status = serde_json::to_value(task.status)?
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned();
+            let retries = events
+                .iter()
+                .filter(|event| {
+                    event.task_id.as_ref() == Some(&task.task_id)
+                        && event.kind == RunEventKind::RetryScheduled
+                })
+                .count();
+            let retries = u32::try_from(retries).unwrap_or(u32::MAX);
+            if task.status == TaskRunStatus::NeedsReview {
+                review_suspensions.insert(task.task_id.to_string());
+            }
+            retry_counters.insert(task.task_id.to_string(), retries);
+            node_states.insert(
+                task.task_id.to_string(),
+                BatchNodeState {
+                    status,
+                    artifact_references: artifacts
+                        .iter()
+                        .filter(|artifact| artifact.task_id.as_ref() == Some(&task.task_id))
+                        .map(|artifact| artifact.id)
+                        .collect(),
+                    retry_count: retries,
+                    review_suspended: task.status == TaskRunStatus::NeedsReview,
+                },
+            );
+        }
+        Ok(BatchImageCheckpoint {
+            node_states,
+            artifact_references: artifacts.iter().map(|artifact| artifact.id).collect(),
+            retry_counters,
+            review_suspensions,
+            runtime_checkpoint: Some(json!({
+                "run_id": run_id,
+                "status": result.status,
+                "committed": result.committed.len(),
+                "review": result.review_queue.len(),
+            })),
+        })
+    }
+}
+
+fn batch_budget_limits(
+    budget: &Budget,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> BatchBudgetLimits {
+    BatchBudgetLimits {
+        max_input_tokens: budget.max_input_tokens,
+        max_output_tokens: budget.max_output_tokens,
+        max_total_tokens: budget.max_total_tokens,
+        max_request_count: budget.max_requests,
+        max_image_count: budget.max_images,
+        max_cost: budget.max_cost,
+        wall_clock_deadline: budget.max_wall_clock_seconds.and_then(|seconds| {
+            chrono::Duration::try_seconds(i64::try_from(seconds).ok()?)
+                .map(|duration| started_at + duration)
+        }),
+    }
+}
+
+fn batch_image_reservation(settings: &Settings) -> BatchUsage {
+    let output_tokens = u64::from(settings.provider.max_output_tokens);
+    let token_usage = TokenUsage::known(0, output_tokens, UsageSource::Estimated);
+    let additional = AdditionalUsage {
+        image_count: 1,
+        request_count: 1,
+        ..AdditionalUsage::default()
+    };
+    BatchUsage {
+        output_tokens,
+        total_tokens: output_tokens,
+        request_count: 1,
+        image_count: 1,
+        cost: settings.pricing.calculate(&token_usage, &additional).total,
+        ..BatchUsage::default()
+    }
+}
+
+fn batch_usage(usage: &annotagent_core::UsageTotals) -> BatchUsage {
+    BatchUsage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        request_count: usage.requests,
+        image_count: 1,
+        cost: usage.cost,
+    }
+}
+
+const fn batch_image_status(status: RunStatus) -> BatchImageStatus {
+    match status {
+        RunStatus::Completed | RunStatus::Partial => BatchImageStatus::Completed,
+        RunStatus::CompletedWithReview | RunStatus::AwaitingReview => {
+            BatchImageStatus::AwaitingReview
+        }
+        RunStatus::Cancelled => BatchImageStatus::Cancelled,
+        RunStatus::Failed | RunStatus::BudgetExceeded | RunStatus::Interrupted => {
+            BatchImageStatus::Failed
+        }
+        RunStatus::Pending | RunStatus::Running | RunStatus::Paused => BatchImageStatus::Failed,
     }
 }
 
@@ -480,6 +933,7 @@ impl LocalApplication {
         let database_path = database_path.as_ref().to_path_buf();
         let store = Arc::new(SqliteStore::open(&database_path)?);
         store.reconcile_interrupted_runs()?;
+        store.recover_orphaned_batch_leases(chrono::Utc::now())?;
         let mut registry = SkillRegistry::new();
         registry.register(Arc::new(
             RoboCupSkill::new().map_err(|error| anyhow!(error))?,
@@ -591,6 +1045,15 @@ impl LocalApplication {
                 )
             })
             .cloned();
+        let active_batch = self
+            .store
+            .list_batches(true)?
+            .into_iter()
+            .find(|batch| batch.project_id == project_id);
+        let active_batch_progress = active_batch
+            .as_ref()
+            .map(|batch| self.store.batch_progress(batch.id))
+            .transpose()?;
         let last_run = project_runs
             .iter()
             .find(|run| {
@@ -679,6 +1142,8 @@ impl LocalApplication {
                 .collect::<Vec<_>>()
                 .join(","),
             image_count,
+            active_batch,
+            active_batch_progress,
             active_run,
             last_run,
         })
@@ -871,6 +1336,7 @@ impl LocalApplication {
             .canonicalize()
             .with_context(|| format!("cannot access {}", project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
+        self.ensure_no_active_batch(&canonical)?;
         let prepared = prepare_run_with(
             &canonical,
             provider,
@@ -892,6 +1358,7 @@ impl LocalApplication {
             .canonicalize()
             .with_context(|| format!("cannot access {}", project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
+        self.ensure_no_active_batch(&canonical)?;
         let prepared = prepare_run_with_settings(
             &canonical,
             provider,
@@ -899,6 +1366,7 @@ impl LocalApplication {
             temporary_api_key,
             self.store.clone(),
             &self.skills,
+            None,
             None,
         )?;
         self.start_prepared(prepared, true, None)
@@ -916,6 +1384,7 @@ impl LocalApplication {
             .canonicalize()
             .with_context(|| format!("cannot access {}", project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
+        self.ensure_no_active_batch(&canonical)?;
         let prepared = prepare_run_with_settings(
             &canonical,
             provider,
@@ -923,6 +1392,7 @@ impl LocalApplication {
             temporary_api_key,
             self.store.clone(),
             &self.skills,
+            None,
             None,
         )?;
         self.start_prepared(prepared, true, idempotency_key)
@@ -939,6 +1409,7 @@ impl LocalApplication {
         let image_path = image_path.canonicalize()?;
         ensure_within(&self.workspace, &project_path)?;
         ensure_within(&self.workspace, &image_path)?;
+        self.ensure_no_active_batch(&project_path)?;
         let settings = load_settings(config_path)?;
         let prepared = prepare_run_with_settings(
             &project_path,
@@ -948,6 +1419,7 @@ impl LocalApplication {
             self.store.clone(),
             &self.skills,
             Some(&image_path),
+            None,
         )?;
         self.start_prepared(prepared, false, None)
     }
@@ -1034,6 +1506,27 @@ impl LocalApplication {
             status: RunStatus::Pending,
             idempotent: false,
         })
+    }
+
+    fn ensure_no_active_batch(&self, project_path: &Path) -> Result<()> {
+        let project_id = project_path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("project");
+        if let Some(batch) = self
+            .store
+            .list_batches(true)?
+            .into_iter()
+            .find(|batch| batch.project_id == project_id)
+        {
+            bail!(
+                "active dataset batch {} already exists with status {:?}",
+                batch.id,
+                batch.status
+            );
+        }
+        Ok(())
     }
 
     fn managed(&self, run_id: RunId) -> Result<ManagedRun> {
@@ -1213,9 +1706,11 @@ fn prepare_run_with(
         store,
         skills,
         None,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_run_with_settings(
     project_path: &Path,
     provider_kind: &str,
@@ -1224,6 +1719,7 @@ fn prepare_run_with_settings(
     store: Arc<SqliteStore>,
     skills: &SkillRegistry,
     image_override: Option<&Path>,
+    image_id_override: Option<ImageId>,
 ) -> Result<PreparedRun> {
     let (project, skill) = load_project_with_registry(project_path, skills)?;
     let image_path = image_override.map_or_else(
@@ -1298,7 +1794,7 @@ fn prepare_run_with_settings(
             project_id,
             project_root,
             project: Arc::new(project),
-            image_id: ImageId::new(),
+            image_id: image_id_override.unwrap_or_default(),
             image,
             model_image: Some(model_image),
         },
@@ -1803,5 +2299,151 @@ export:
             )
         }));
         assert_eq!(app.list_runs().expect("runs").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn persistent_batch_pauses_restarts_and_resumes_one_hundred_images() {
+        let temp = tempfile::tempdir().expect("temp");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let project_yaml = include_str!("../../../examples/robocup/project.yaml")
+            .replace("max_parallel_images: 2", "max_parallel_images: 4");
+        let app = Arc::new(LocalApplication::new(&workspace).expect("app"));
+        app.create_project("batch-demo", &project_yaml)
+            .expect("project");
+        let image_root = workspace.join("batch-demo/images");
+        for index in 0..100 {
+            generate_synthetic_robocup(&image_root.join(format!("image-{index:03}.png")))
+                .expect("synthetic image");
+        }
+        let config = include_str!("../../../config/default.toml")
+            .replace("max_output_tokens = 4096", "max_output_tokens = 256")
+            .replace("max_output_tokens = 50000", "max_output_tokens = 1000000")
+            .replace("max_total_tokens = 250000", "max_total_tokens = 2000000")
+            .replace("max_cost = \"2.0\"", "max_cost = \"100.0\"")
+            .replace("max_requests = 500", "max_requests = 10000");
+        let config_path = workspace.join("batch-config.toml");
+        std::fs::write(&config_path, config).expect("config");
+        let coordinator = DatasetCoordinator::new(app.as_ref());
+        let batch = coordinator
+            .create(
+                &workspace.join("batch-demo/project.yaml"),
+                "mock",
+                Some(&config_path),
+                None,
+            )
+            .expect("batch");
+        assert_eq!(batch.max_concurrency, 4);
+        let task_app = app.clone();
+        let batch_id = batch.id;
+        let execution = tokio::spawn(async move {
+            DatasetCoordinator::new(task_app.as_ref())
+                .execute(batch_id, None)
+                .await
+        });
+        let mut observed_progress = false;
+        for _ in 0..500 {
+            let images = app.store.list_batch_images(batch_id).expect("batch images");
+            let completed = images
+                .iter()
+                .filter(|image| image.status == BatchImageStatus::Completed)
+                .count();
+            if completed > 0 && completed < 100 {
+                observed_progress = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            observed_progress,
+            "batch should expose intermediate progress"
+        );
+        coordinator.pause(batch_id).expect("pause");
+        let paused = execution
+            .await
+            .expect("worker task")
+            .expect("paused execution");
+        assert_eq!(paused.batch.status, BatchStatus::Paused);
+        let completed_before_restart = app
+            .store
+            .batch_checkpoint(batch_id)
+            .expect("paused checkpoint")
+            .completed_images
+            .len();
+        assert!((1..100).contains(&completed_before_restart));
+        drop(app);
+
+        let restarted = Arc::new(LocalApplication::new(&workspace).expect("restarted server"));
+        let project = restarted
+            .get_project("batch-demo")
+            .expect("project summary");
+        assert_eq!(
+            project.active_batch.as_ref().map(|batch| batch.id),
+            Some(batch_id)
+        );
+        assert_eq!(
+            project.active_batch.as_ref().map(|batch| batch.status),
+            Some(BatchStatus::Paused)
+        );
+        let resumed = DatasetCoordinator::new(restarted.as_ref())
+            .resume(batch_id, None)
+            .await
+            .expect("resume after restart");
+        assert_eq!(resumed.batch.status, BatchStatus::Completed);
+        let checkpoint = restarted
+            .store
+            .batch_checkpoint(batch_id)
+            .expect("final checkpoint");
+        assert_eq!(checkpoint.completed_images.len(), 100);
+        assert!(checkpoint.remaining_images.is_empty());
+        assert_eq!(
+            checkpoint.batch.budget_ledger.reserved,
+            BatchUsage::default()
+        );
+        assert_eq!(checkpoint.batch.budget_ledger.consumed.image_count, 100);
+        let runs = restarted.list_runs().expect("child runs");
+        assert_eq!(runs.len(), 100, "completed images must not execute twice");
+        let mut persisted_usage = annotagent_core::UsageTotals::default();
+        for run in &runs {
+            for usage in restarted.store.history(run.id).expect("history").usage {
+                persisted_usage.add(&usage);
+            }
+        }
+        assert_eq!(
+            checkpoint.batch.budget_ledger.consumed.input_tokens,
+            persisted_usage.input_tokens
+        );
+        assert_eq!(
+            checkpoint.batch.budget_ledger.consumed.output_tokens,
+            persisted_usage.output_tokens
+        );
+        assert_eq!(
+            checkpoint.batch.budget_ledger.consumed.request_count,
+            persisted_usage.requests
+        );
+        assert_eq!(
+            checkpoint.batch.budget_ledger.consumed.cost,
+            persisted_usage.cost
+        );
+        let events = restarted
+            .store
+            .list_batch_events(batch_id)
+            .expect("batch events");
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[1].sequence == pair[0].sequence + 1)
+        );
+        assert_eq!(
+            events.last().map(|event| event.sequence),
+            Some(checkpoint.event_sequence)
+        );
+        assert!(
+            restarted
+                .get_project("batch-demo")
+                .expect("finished project")
+                .active_batch
+                .is_none()
+        );
     }
 }

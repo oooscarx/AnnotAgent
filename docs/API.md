@@ -37,6 +37,12 @@ All paths are relative to the local Axum server.
 | GET | `/api/projects/{id}/images` | Ordered image list |
 | GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
 | POST | `/api/projects/{id}/runs` | Start one image run with saved workspace settings |
+| POST | `/api/projects/{id}/batches` | Create and asynchronously execute a durable dataset batch |
+| GET | `/api/batches` | List active and terminal dataset batches |
+| GET | `/api/batches/{batch}` | Durable checkpoint, progress summary, budget ledger, and ordered events |
+| POST | `/api/batches/{batch}/pause` | Stop new image/node claims and persist resumable state |
+| POST | `/api/batches/{batch}/resume` | Recover a paused/failed batch and execute only remaining images |
+| POST | `/api/batches/{batch}/cancel` | Cancel active child runs and prevent new node claims |
 | GET | `/api/runs/{run}` | Durable run summary |
 | POST | `/api/runs/{run}/pause` | Pause at a safe boundary |
 | POST | `/api/runs/{run}/resume` | Resume a paused run |
@@ -54,9 +60,18 @@ Errors are JSON objects with an HTTP status and a concrete message. User paths a
 
 ## Product DTO compatibility
 
-Project responses include Dataset, Annotation Schema, `EnabledSkill`, active/available `WorkflowVersion`, and `ModelBinding` fields. Project schema v1 still executes one Skill and one configured task graph. Workflow responses therefore describe the real compatibility graph; they do not imply that draft persistence, arbitrary graph execution, dry run, or publish endpoints exist.
+Project responses include Dataset, Annotation Schema, `EnabledSkill`, active/available `WorkflowVersion`, and `ModelBinding` fields. Project schema v1 still defaults to one Skill and its configured compatibility graph. Draft persistence, validation, publication, and the generic immutable DAG executor exist; explicit published-version selection in the product Start flow remains a later editor integration.
+
+When a dataset batch is active, Project responses also include `active_batch` and
+`active_batch_progress`. These values come from SQLite rather than process memory, so a
+restarted server can render Pending, Running, Paused, or Awaiting Review state before the
+operator resumes work.
 
 Run list summaries derive Project, compatibility Workflow version, Skill version, provider/model binding, usage, cost, and status from persisted history. First-class immutable Workflow snapshots remain a documented storage migration.
+
+Batch mutation is lease-guarded and transactional. Budget reservations include already
+consumed and concurrently reserved usage before an image is claimed. Batch events use a
+strictly increasing per-batch sequence and `/api/batches/{batch}` is the replay endpoint.
 
 ## SSE
 

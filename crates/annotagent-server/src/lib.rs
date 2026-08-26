@@ -12,13 +12,13 @@ use std::{
 };
 
 use annotagent_application::{
-    ActiveRunExists, AnnotAgentApplication, LocalApplication, ModelBinding, ProjectSummary,
-    Settings, WorkflowVersion, stable_project_id,
+    ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, LocalApplication, ModelBinding,
+    ProjectSummary, Settings, WorkflowVersion, stable_project_id,
 };
 use annotagent_core::{
-    Annotation, AnnotationId, CorrectionFeatures, CorrectionRecord, DatasetExporter, ExportRequest,
-    LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId, RunStatus, SnapshotImage,
-    UsageTotals, WorkflowConstraints, WorkflowDraft,
+    Annotation, AnnotationId, BatchId, CorrectionFeatures, CorrectionRecord, DatasetExporter,
+    ExportRequest, LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId, RunStatus,
+    SnapshotImage, UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -226,6 +226,17 @@ impl ApiError {
             }),
         }
     }
+
+    fn active_batch(batch: &annotagent_core::BatchRecord) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": "active_batch_exists",
+                "active_batch_id": batch.id,
+                "status": batch.status,
+            }),
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -267,6 +278,12 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(image_content),
         )
         .route("/api/projects/{project_id}/runs", post(start_run))
+        .route("/api/projects/{project_id}/batches", post(start_batch))
+        .route("/api/batches", get(list_batches))
+        .route("/api/batches/{batch_id}", get(get_batch))
+        .route("/api/batches/{batch_id}/pause", post(pause_batch))
+        .route("/api/batches/{batch_id}/resume", post(resume_batch))
+        .route("/api/batches/{batch_id}/cancel", post(cancel_batch))
         .route("/api/projects/{project_id}/export", post(export_dataset))
         .route("/api/runs/{run_id}", get(get_run))
         .route("/api/runs/{run_id}/pause", post(pause_run))
@@ -795,6 +812,14 @@ async fn start_run(
         .application
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
+    if let Some(batch) = state
+        .application
+        .get_project(&project_id)
+        .map_err(ApiError::internal)?
+        .active_batch
+    {
+        return Err(ApiError::active_batch(&batch));
+    }
     let settings = state.settings.read().await.clone();
     let request = payload.map_or(
         StartRunRequest {
@@ -838,6 +863,149 @@ async fn start_run(
             }
         })?;
     Ok((StatusCode::ACCEPTED, Json(json!(started))))
+}
+
+#[derive(Debug, Deserialize)]
+struct StartBatchRequest {
+    provider: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn start_batch(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    payload: Option<Json<StartBatchRequest>>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let project_path = state
+        .application
+        .project_path(&project_id)
+        .map_err(ApiError::not_found)?;
+    let project = state
+        .application
+        .get_project(&project_id)
+        .map_err(ApiError::internal)?;
+    if let Some(batch) = project.active_batch {
+        return Err(ApiError::active_batch(&batch));
+    }
+    if let Some(run) = project.active_run {
+        return Err(ApiError::active_run(&ActiveRunExists {
+            active_run_id: run.id,
+            status: run.status,
+        }));
+    }
+    let request = payload.map_or(
+        StartBatchRequest {
+            provider: None,
+            limit: None,
+        },
+        |Json(value)| value,
+    );
+    if request.limit == Some(0) {
+        return Err(ApiError::bad_request(
+            "batch limit must be greater than zero",
+        ));
+    }
+    let settings = state.settings.read().await.clone();
+    let provider = request
+        .provider
+        .unwrap_or_else(|| settings.default_provider.clone());
+    validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
+    let config_path = state
+        .settings_path
+        .is_file()
+        .then_some(state.settings_path.as_path());
+    let batch = DatasetCoordinator::new(state.application.as_ref())
+        .create(&project_path, &provider, config_path, request.limit)
+        .map_err(ApiError::bad_request)?;
+    let application = state.application.clone();
+    let api_key = state.api_key.read().await.clone();
+    let batch_id = batch.id;
+    tokio::spawn(async move {
+        let _ignored = DatasetCoordinator::new(application.as_ref())
+            .execute(batch_id, api_key)
+            .await;
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!({"batch": batch}))))
+}
+
+fn parse_batch_id(value: &str) -> ApiResult<BatchId> {
+    value.parse().map_err(ApiError::bad_request)
+}
+
+async fn list_batches(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let batches = state
+        .application
+        .store()
+        .list_batches(false)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"batches": batches})))
+}
+
+async fn get_batch(
+    State(state): State<ServerState>,
+    AxumPath(batch_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let batch_id = parse_batch_id(&batch_id)?;
+    let checkpoint = state
+        .application
+        .store()
+        .batch_checkpoint(batch_id)
+        .map_err(ApiError::not_found)?;
+    let events = state
+        .application
+        .store()
+        .list_batch_events(batch_id)
+        .map_err(ApiError::internal)?;
+    let progress = state
+        .application
+        .store()
+        .batch_progress(batch_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        json!({"checkpoint": checkpoint, "progress": progress, "events": events}),
+    ))
+}
+
+async fn pause_batch(
+    State(state): State<ServerState>,
+    AxumPath(batch_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let batch_id = parse_batch_id(&batch_id)?;
+    let batch = DatasetCoordinator::new(state.application.as_ref())
+        .pause(batch_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"batch": batch})))
+}
+
+async fn resume_batch(
+    State(state): State<ServerState>,
+    AxumPath(batch_id): AxumPath<String>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let batch_id = parse_batch_id(&batch_id)?;
+    let batch = state
+        .application
+        .store()
+        .get_batch(batch_id)
+        .map_err(ApiError::not_found)?;
+    let application = state.application.clone();
+    let api_key = state.api_key.read().await.clone();
+    tokio::spawn(async move {
+        let _ignored = DatasetCoordinator::new(application.as_ref())
+            .resume(batch_id, api_key)
+            .await;
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!({"batch": batch}))))
+}
+
+async fn cancel_batch(
+    State(state): State<ServerState>,
+    AxumPath(batch_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let batch_id = parse_batch_id(&batch_id)?;
+    let batch = DatasetCoordinator::new(state.application.as_ref())
+        .cancel(batch_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"batch": batch})))
 }
 
 fn parse_run_id(value: &str) -> ApiResult<RunId> {
@@ -1294,6 +1462,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use annotagent_core::RunStatus;
+    use annotagent_image_tools::generate_synthetic_robocup;
     use axum::body::to_bytes;
     use futures::StreamExt;
     use serde_json::json;
@@ -1654,6 +1823,103 @@ mod tests {
         assert_eq!(body["code"], json!("active_run_exists"));
         assert_eq!(body["active_run_id"], json!(active_run_id));
         assert_eq!(body["status"], json!("pending"));
+    }
+
+    #[tokio::test]
+    async fn batch_api_exposes_durable_progress_and_controls() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "batch-api",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        generate_synthetic_robocup(&temp.path().join("batch-api/images/one.png")).expect("image");
+        let batch = DatasetCoordinator::new(application.as_ref())
+            .create(
+                &temp.path().join("batch-api/project.yaml"),
+                "mock",
+                None,
+                None,
+            )
+            .expect("batch");
+        let service = router(
+            test_state(application, Arc::new(MemorySecretStore::default())),
+            None,
+        );
+        let listed =
+            response_json(request(&service, axum::http::Method::GET, "/api/batches", None).await)
+                .await;
+        assert_eq!(listed["batches"][0]["id"], json!(batch.id));
+        let detail = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/batches/{}", batch.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(detail["progress"]["total_images"], json!(1));
+        let paused = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/batches/{}/pause", batch.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(paused["batch"]["status"], json!("paused"));
+        let projects =
+            response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
+                .await;
+        assert_eq!(
+            projects["projects"][0]["active_batch"]["id"],
+            json!(batch.id)
+        );
+        assert_eq!(
+            projects["projects"][0]["active_batch_progress"]["pending_images"],
+            json!(1)
+        );
+        let duplicate_run = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/batch-api/runs",
+            Some(json!({"provider": "mock"})),
+        )
+        .await;
+        assert_eq!(duplicate_run.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(duplicate_run).await["code"],
+            json!("active_batch_exists")
+        );
+        let duplicate_batch = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/batch-api/batches",
+            Some(json!({"provider": "mock"})),
+        )
+        .await;
+        assert_eq!(duplicate_batch.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(duplicate_batch).await["code"],
+            json!("active_batch_exists")
+        );
+        let cancelled = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/batches/{}/cancel", batch.id),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(cancelled["batch"]["status"], json!("cancelled"));
     }
 
     async fn request(

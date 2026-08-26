@@ -94,6 +94,7 @@ uuid_id!(AnnotationId);
 uuid_id!(AnnotationRevisionId);
 uuid_id!(ArtifactId);
 uuid_id!(RunId);
+uuid_id!(BatchId);
 uuid_id!(RunStepId);
 uuid_id!(EventId);
 

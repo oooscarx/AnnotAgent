@@ -2,6 +2,7 @@
 
 pub mod annotation;
 pub mod artifact;
+pub mod batch;
 pub mod error;
 pub mod event;
 pub mod geometry;
@@ -15,6 +16,7 @@ pub mod workflow;
 
 pub use annotation::*;
 pub use artifact::*;
+pub use batch::*;
 pub use error::*;
 pub use event::*;
 pub use geometry::*;

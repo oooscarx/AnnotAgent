@@ -30,3 +30,5 @@ max_total_tokens = 250000
 max_cost = "2.0"
 max_requests = 500
 max_images = 1000
+# Optional batch-wide wall-clock deadline. Uncomment to enable.
+# max_wall_clock_seconds = 3600
