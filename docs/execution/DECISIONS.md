@@ -31,3 +31,11 @@ Every release gate has an offline fixture or deterministic test where feasible. 
 ## D-006 — Execution documentation is part of the implementation
 
 The files in `docs/execution/` are updated at each vertical milestone and are the recovery source after context compaction. They record evidence and decisions, not aspirational completion claims.
+
+## D-007 — Suspended review and completed-with-review are different states
+
+`AwaitingReview` is a non-terminal Run suspension that remains active and can later resume. `CompletedWithReview` is terminal history indicating that image processing finished with review items. A one-time SQLite migration converts legacy `awaiting_review` terminal rows to `completed_with_review` and removes stale active reservations; subsequent real suspensions retain the new state.
+
+## D-008 — History import preserves protocol identity as a graph
+
+When a colliding Run import receives new IDs, all typed references are remapped together: assistant/tool messages, tool-call rows/events, Artifacts and lineage, annotation/revision relation endpoints, and TaskRun ownership. Remapping only the table primary keys would create an invalid replay and is rejected as incomplete history handling.
