@@ -94,7 +94,7 @@ cargo run -p annotagent -- serve --workspace ./workspace --open
 
 Open `http://127.0.0.1:8787`. The GUI contains Dashboard, Project, Review, Skills, and Settings pages. Its SVG overlay supports zoom/pan and editing bbox, keypoint, polyline, polygon, and polygon-mask geometry. Every saved edit and review decision creates a revision; review decisions can create project-level correction memory.
 
-For a real provider, open Settings once, select `OpenAI-compatible`, enter the endpoint, model, and API key, then save. These values survive server restarts, and `Start image run` uses the saved default provider automatically. Use `Clear saved key` to remove the workspace credential from the system keychain.
+For a real provider, open Settings once, choose DashScope/Qwen, OpenAI, Google Gemini, or OpenRouter, select a vision model, paste its API key, and save. The catalog fills the compatible endpoint, protocol, and environment fallback automatically; private gateways remain available under `Custom`. These values survive server restarts, and `Start image run` uses the saved default provider automatically. Use `Clear saved key` to remove the workspace credential from the system keychain.
 
 ## Data and exports
 

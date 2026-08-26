@@ -20,6 +20,7 @@ This file records work and commands actually performed in the implementation ses
 8. Added HTTP integration coverage, docs, CI, demo script, and final acceptance checks.
 9. Added product-style settings persistence: non-secret values are atomically stored per workspace, provider keys use the native system credential store, and GUI runs inherit the saved default provider.
 10. Integrated AnnotAgent Visual System 1.0 across formal Web/PWA assets, canonical tokens, responsive GUI pages, generic annotation slots, accessible state language, and a shared truecolor/ANSI-256 Ratatui theme while preserving application behavior.
+11. Added a curated Vision Provider Catalog for DashScope/Qwen, OpenAI, Google Gemini, and OpenRouter. Provider selection now fills the compatible endpoint, protocol, key environment, and recommended vision model; custom gateways and unlisted model IDs remain available as explicit fallbacks.
 
 ## Problems found and fixed
 
@@ -29,6 +30,7 @@ This file records work and commands actually performed in the implementation ses
 - A real response emitted multiple expensive refinement calls. Runtime executes at most one evidence/refinement call per task and records skipped calls.
 - TUI and HTTP previously composed runtimes separately. Both now use the same application service and event stream.
 - Browser testing found a stale React closure that reset the selected project after an SSE terminal refresh. `projectId` now uses a functional state update; the selected synthetic project remained selected after a completed seven-request run.
+- Provider setup previously exposed transport-level fields as the primary workflow. The Settings page now leads with provider and model selectors, keeps transport and tuning fields under Advanced settings, and warns before replacing a saved key from another provider.
 
 ## Real image/provider smoke test
 
