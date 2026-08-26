@@ -16,8 +16,9 @@ This file records work and commands actually performed in the implementation ses
 4. Added the RoboCup DAG, field containment, field-line pixel refiner and validators, ball hard-negative rules, team-color tool, attributes, correction memory and review policy.
 5. Added Native/COCO/YOLO Detection/YOLO Segmentation/LabelMe exporters, CLI commands, history import/export and Ratatui.
 6. Refactored CLI/TUI/HTTP onto `LocalApplication`, added bounded `DatasetCoordinator`, Axum APIs/SSE/review/settings, and React/Vite pages with SVG editing.
-7. Hardened real-provider behavior after live evidence: task-scoped tools, normalized coordinate schemas, dynamic label enum, malformed candidate feedback, dependency failure handling, one evidence-call limit, safe cancellation and process-only keys.
+7. Hardened real-provider behavior after live evidence: task-scoped tools, normalized coordinate schemas, dynamic label enum, malformed candidate feedback, dependency failure handling, one evidence-call limit, safe cancellation and secret redaction.
 8. Added HTTP integration coverage, docs, CI, demo script, and final acceptance checks.
+9. Added product-style settings persistence: non-secret values are atomically stored per workspace, provider keys use the native system credential store, and GUI runs inherit the saved default provider.
 
 ## Problems found and fixed
 

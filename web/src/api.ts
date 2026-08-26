@@ -31,10 +31,13 @@ export const api = {
     }),
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
-  startRun: (projectId: string, provider = "mock") =>
+  startRun: (projectId: string, provider?: string) =>
     request<{ run_id: string; image_path: string }>(
       `/api/projects/${projectId}/runs`,
-      { method: "POST", body: JSON.stringify({ provider }) },
+      {
+        method: "POST",
+        body: JSON.stringify(provider ? { provider } : {}),
+      },
     ),
   control: (runId: string, action: "pause" | "resume" | "cancel") =>
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),

@@ -1,3 +1,5 @@
+default_provider = "mock"
+
 [provider]
 endpoint = "https://example.invalid/v1"
 api_key_env = "ANNOTAGENT_API_KEY"
@@ -28,4 +30,3 @@ max_total_tokens = 250000
 max_cost = "2.0"
 max_requests = 500
 max_images = 1000
-

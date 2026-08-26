@@ -1,4 +1,6 @@
 # OpenAI-compatible DashScope example. Keep the key in ANNOTAGENT_API_KEY.
+default_provider = "openai_compatible"
+
 [provider]
 endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key_env = "ANNOTAGENT_API_KEY"

@@ -265,15 +265,34 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
 function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const [settings, setSettings] = useState<Record<string, any>>();
   const [key, setKey] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => { api.settings().then(setSettings).catch((error: Error) => onError(error.message)); }, []);
-  if (!settings) return <Empty title="Loading settings" detail="Reading process-safe provider metadata." />;
+  if (!settings) return <Empty title="Loading settings" detail="Reading the saved workspace configuration." />;
   const provider = settings.provider ?? {};
   const pricing = settings.pricing ?? {};
   const budget = settings.budget ?? {};
   const setProvider = (field: string, value: string | number) => setSettings({ ...settings, provider: { ...provider, [field]: value } });
-  const save = () => api.saveSettings({ ...settings, temporary_api_key: key || undefined }).then((value) => { setSettings(value); setKey(""); setSaved(true); }).catch((error: Error) => onError(error.message));
-  return <section className="settings-grid"><Panel title="Vision model provider" eyebrow="OpenAI-compatible"><div className="form-grid"><label>Endpoint<input value={provider.endpoint ?? ""} onChange={(event) => setProvider("endpoint", event.target.value)} /></label><label>Model<input value={provider.model ?? ""} onChange={(event) => setProvider("model", event.target.value)} /></label><label>API key environment<input value={provider.api_key_env ?? ""} onChange={(event) => setProvider("api_key_env", event.target.value)} /></label><label>Protocol<select value={provider.protocol ?? "chat_completions"} onChange={(event) => setProvider("protocol", event.target.value)}><option value="chat_completions">Chat Completions</option></select></label><label>Temperature<input type="number" step="0.05" value={provider.temperature ?? 0.1} onChange={(event) => setProvider("temperature", Number(event.target.value))} /></label><label>Timeout seconds<input type="number" value={provider.request_timeout_seconds ?? 120} onChange={(event) => setProvider("request_timeout_seconds", Number(event.target.value))} /></label></div><label>Temporary API key<input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.temporary_api_key_configured ? "Configured for this process" : "Never written to SQLite or trace"} /></label></Panel><Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting"><div className="json-settings"><div><h3>Pricing</h3>{Object.entries(pricing).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, pricing: { ...pricing, [name]: event.target.value } })} /></label>)}</div><div><h3>Budget</h3>{Object.entries(budget).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, budget: { ...budget, [name]: name === "max_cost" ? event.target.value : Number(event.target.value) } })} /></label>)}</div></div></Panel><div className="settings-save"><span>{saved ? "Saved in the current service process." : "Secrets remain process-only."}</span><button className="primary" onClick={save}>Save settings</button></div></section>;
+  const finish = (value: Record<string, unknown>, nextMessage: string) => {
+    setSettings(value);
+    setKey("");
+    setMessage(nextMessage);
+  };
+  const save = () => {
+    setSaving(true);
+    api.saveSettings({ ...settings, api_key: key || undefined })
+      .then((value) => finish(value, "Saved locally. Future image runs will use these settings."))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setSaving(false));
+  };
+  const clearKey = () => {
+    setSaving(true);
+    api.saveSettings({ ...settings, clear_saved_api_key: true })
+      .then((value) => finish(value, "Saved API key removed from the system keychain."))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setSaving(false));
+  };
+  return <section className="settings-grid"><Panel title="Vision model provider" eyebrow="Saved workspace default"><div className="form-grid"><label>Default run provider<select value={settings.default_provider ?? "mock"} onChange={(event) => setSettings({ ...settings, default_provider: event.target.value })}><option value="mock">Mock (offline test)</option><option value="openai_compatible">OpenAI-compatible</option></select></label><label>Endpoint<input value={provider.endpoint ?? ""} onChange={(event) => setProvider("endpoint", event.target.value)} /></label><label>Model<input value={provider.model ?? ""} onChange={(event) => setProvider("model", event.target.value)} /></label><label>API key environment<input value={provider.api_key_env ?? ""} onChange={(event) => setProvider("api_key_env", event.target.value)} /></label><label>Protocol<select value={provider.protocol ?? "chat_completions"} onChange={(event) => setProvider("protocol", event.target.value)}><option value="chat_completions">Chat Completions</option></select></label><label>Temperature<input type="number" step="0.05" value={provider.temperature ?? 0.1} onChange={(event) => setProvider("temperature", Number(event.target.value))} /></label><label>Timeout seconds<input type="number" value={provider.request_timeout_seconds ?? 120} onChange={(event) => setProvider("request_timeout_seconds", Number(event.target.value))} /></label></div><label>Saved API key<input type="password" autoComplete="new-password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.api_key_persisted ? "Stored in the system keychain" : "Paste once to save in the system keychain"} /></label><div className="button-row"><button onClick={clearKey} disabled={saving || !settings.api_key_persisted}>Clear saved key</button><small>{settings.api_key_persisted ? "Keychain protected · never returned by the API" : "Environment variable fallback remains available"}</small></div>{settings.credential_store_error && <div className="error-banner"><span>System keychain unavailable: {String(settings.credential_store_error)}</span></div>}</Panel><Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting"><div className="json-settings"><div><h3>Pricing</h3>{Object.entries(pricing).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, pricing: { ...pricing, [name]: event.target.value } })} /></label>)}</div><div><h3>Budget</h3>{Object.entries(budget).map(([name, value]) => <label key={name}>{name}<input value={String(value)} onChange={(event) => setSettings({ ...settings, budget: { ...budget, [name]: name === "max_cost" ? event.target.value : Number(event.target.value) } })} /></label>)}</div></div></Panel><div className="settings-save"><span>{message || (settings.settings_persisted ? `Saved at ${settings.settings_path}` : "Save once to keep these settings across restarts.")}</span><button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save settings"}</button></div></section>;
 }
 
 function CreateProject({ onClose, onCreated, onError }: { onClose: () => void; onCreated: () => void; onError: (value: string) => void }) {

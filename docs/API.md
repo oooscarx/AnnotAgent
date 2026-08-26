@@ -33,7 +33,7 @@ All paths are relative to the local Axum server.
 | POST | `/api/projects/{id}/import` | Controlled workspace-folder image import |
 | GET | `/api/projects/{id}/images` | Ordered image list |
 | GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
-| POST | `/api/projects/{id}/runs` | Start one image run with process settings |
+| POST | `/api/projects/{id}/runs` | Start one image run with saved workspace settings |
 | GET | `/api/runs/{run}` | Durable run summary |
 | POST | `/api/runs/{run}/pause` | Pause at a safe boundary |
 | POST | `/api/runs/{run}/resume` | Resume a paused run |
@@ -44,7 +44,7 @@ All paths are relative to the local Axum server.
 | PATCH | `/api/annotations/{id}` | Validate edit and append revision |
 | GET | `/api/annotations/{id}/revisions` | Revision chain |
 | POST | `/api/projects/{id}/export` | Native/COCO/YOLO/LabelMe export |
-| GET/PUT | `/api/settings` | Process settings; temporary key is write-only |
+| GET/PUT | `/api/settings` | Durable workspace settings; API key is write-only |
 | GET | `/api/events?run_id=...` | Live SSE stream |
 
 Errors are JSON objects with an HTTP status and a concrete message. User paths are canonicalized against the workspace before reads.
@@ -55,4 +55,6 @@ Each SSE event name is the serialized `RunEventKind`; data is the complete versi
 
 ## Settings
 
-`GET /api/settings` exposes safe provider/pricing/budget metadata plus a boolean indicating whether a temporary key exists. `PUT` accepts a full settings object and optional `temporary_api_key`. The key is removed before validation/storage and held only by the current `ServerState` process.
+`GET /api/settings` exposes safe provider/pricing/budget metadata, the default run provider, persistence status, settings path, and booleans indicating whether an API key is configured and persisted. It never returns the key.
+
+`PUT /api/settings` accepts the full settings object plus optional write-only `api_key` or `clear_saved_api_key: true`. Non-secret settings are atomically stored at `<workspace>/.annotagent/settings.toml`. The key is stored per workspace in the operating system keychain and is never written to TOML or SQLite. A run request may still provide an explicit `provider`; when omitted, the saved `default_provider` is used.

@@ -31,9 +31,15 @@ use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
+    #[serde(default = "default_provider_kind")]
+    pub default_provider: String,
     pub provider: OpenAiCompatibleConfig,
     pub pricing: PricingConfig,
     pub budget: Budget,
+}
+
+fn default_provider_kind() -> String {
+    "mock".to_owned()
 }
 
 pub struct PreparedRun {

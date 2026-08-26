@@ -70,7 +70,7 @@ cargo run -p annotagent -- run \
   --limit 1
 ```
 
-Endpoint, model, protocol, timeout, output limit, reasoning mode, capability flags, custom headers, extra request fields, pricing, and budgets are configurable. The key is never stored in SQLite or trace output. The GUI also accepts a process-memory-only temporary key.
+Endpoint, model, default run provider, protocol, timeout, output limit, reasoning mode, capability flags, custom headers, extra request fields, pricing, and budgets are configurable. The Settings page persists non-secret values to `<workspace>/.annotagent/settings.toml`; an API key entered there is write-only and stored in the operating system keychain, never in SQLite, the settings file, API responses, or trace output. Environment-variable keys remain supported by the CLI and as a server fallback.
 
 ## TUI and Web GUI
 
@@ -89,6 +89,8 @@ cargo run -p annotagent -- serve --workspace ./workspace --open
 ```
 
 Open `http://127.0.0.1:8787`. The GUI contains Dashboard, Project, Review, Skills, and Settings pages. Its SVG overlay supports zoom/pan and editing bbox, keypoint, polyline, polygon, and polygon-mask geometry. Every saved edit and review decision creates a revision; review decisions can create project-level correction memory.
+
+For a real provider, open Settings once, select `OpenAI-compatible`, enter the endpoint, model, and API key, then save. These values survive server restarts, and `Start image run` uses the saved default provider automatically. Use `Clear saved key` to remove the workspace credential from the system keychain.
 
 ## Data and exports
 

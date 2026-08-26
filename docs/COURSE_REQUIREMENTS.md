@@ -32,7 +32,7 @@ cargo run -p annotagent -- serve --workspace ./workspace
 
 ## R3 — Configurable model
 
-`OpenAiCompatibleConfig`, `config/default.toml`, `config/qwen3.7-flash.example.toml`, and the Settings page cover endpoint, environment key name, process-only key, model, protocol, output/context control, reasoning mode, temperature, timeout, capabilities, headers, extra fields, pricing, and budgets.
+`OpenAiCompatibleConfig`, `config/default.toml`, `config/qwen3.7-flash.example.toml`, and the Settings page cover endpoint, environment key name, system-keychain-backed write-only key, model, default run provider, protocol, output/context control, reasoning mode, temperature, timeout, capabilities, headers, extra fields, pricing, and budgets.
 
 ```bash
 cargo run -p annotagent -- doctor

@@ -3,6 +3,8 @@
 use std::{
     collections::BTreeMap,
     convert::Infallible,
+    fs::OpenOptions,
+    io::Write,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -19,6 +21,7 @@ use annotagent_core::{
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
 };
+use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
     body::Body,
@@ -41,17 +44,52 @@ use tower_http::{
 #[derive(Clone)]
 pub struct ServerState {
     application: Arc<LocalApplication>,
-    settings: Arc<RwLock<Value>>,
-    temporary_api_key: Arc<RwLock<Option<String>>>,
+    settings: Arc<RwLock<Settings>>,
+    api_key: Arc<RwLock<Option<String>>>,
+    settings_path: Arc<PathBuf>,
+    settings_persisted: Arc<RwLock<bool>>,
+    api_key_persisted: Arc<RwLock<bool>>,
+    credential_store_error: Arc<RwLock<Option<String>>>,
+    secret_store: Arc<dyn SecretStore>,
+    secret_account: Arc<String>,
 }
 
 impl ServerState {
     pub fn new(application: Arc<LocalApplication>) -> anyhow::Result<Self> {
-        let settings = annotagent_application::load_settings(None)?;
+        Self::with_secret_store(application, Arc::new(SystemSecretStore))
+    }
+
+    fn with_secret_store(
+        application: Arc<LocalApplication>,
+        secret_store: Arc<dyn SecretStore>,
+    ) -> anyhow::Result<Self> {
+        let settings_path = application.workspace().join(".annotagent/settings.toml");
+        let settings_persisted = settings_path.is_file();
+        let settings = if settings_persisted {
+            annotagent_application::load_settings(Some(&settings_path))?
+        } else {
+            annotagent_application::load_settings(None)?
+        };
+        validate_provider_kind(&settings.default_provider)?;
+        let secret_account = format!("workspace-{}", stable_project_id(application.workspace()));
+        let (api_key, api_key_persisted, credential_store_error) =
+            match secret_store.load(&secret_account) {
+                Ok(value) => {
+                    let configured = value.is_some();
+                    (value, configured, None)
+                }
+                Err(error) => (None, false, Some(error.to_string())),
+            };
         Ok(Self {
             application,
-            settings: Arc::new(RwLock::new(serde_json::to_value(settings)?)),
-            temporary_api_key: Arc::new(RwLock::new(None)),
+            settings: Arc::new(RwLock::new(settings)),
+            api_key: Arc::new(RwLock::new(api_key)),
+            settings_path: Arc::new(settings_path),
+            settings_persisted: Arc::new(RwLock::new(settings_persisted)),
+            api_key_persisted: Arc::new(RwLock::new(api_key_persisted)),
+            credential_store_error: Arc::new(RwLock::new(credential_store_error)),
+            secret_store,
+            secret_account: Arc::new(secret_account),
         })
     }
 
@@ -59,6 +97,92 @@ impl ServerState {
     pub fn application(&self) -> &Arc<LocalApplication> {
         &self.application
     }
+}
+
+const SECRET_SERVICE: &str = "com.annotagent.provider-api-key";
+
+trait SecretStore: Send + Sync {
+    fn load(&self, account: &str) -> anyhow::Result<Option<String>>;
+    fn save(&self, account: &str, secret: &str) -> anyhow::Result<()>;
+    fn delete(&self, account: &str) -> anyhow::Result<()>;
+}
+
+struct SystemSecretStore;
+
+impl SystemSecretStore {
+    fn entry(account: &str) -> anyhow::Result<keyring::Entry> {
+        keyring::Entry::new(SECRET_SERVICE, account)
+            .map_err(|error| anyhow!("cannot access the system credential store: {error}"))
+    }
+}
+
+impl SecretStore for SystemSecretStore {
+    fn load(&self, account: &str) -> anyhow::Result<Option<String>> {
+        match Self::entry(account)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(anyhow!("cannot read the saved API key: {error}")),
+        }
+    }
+
+    fn save(&self, account: &str, secret: &str) -> anyhow::Result<()> {
+        Self::entry(account)?.set_password(secret).map_err(|error| {
+            anyhow!("cannot save the API key in the system credential store: {error}")
+        })
+    }
+
+    fn delete(&self, account: &str) -> anyhow::Result<()> {
+        match Self::entry(account)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(anyhow!("cannot clear the saved API key: {error}")),
+        }
+    }
+}
+
+fn validate_provider_kind(provider: &str) -> anyhow::Result<()> {
+    if matches!(provider, "mock" | "openai_compatible") {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "default_provider must be either \"mock\" or \"openai_compatible\""
+        ))
+    }
+}
+
+fn persist_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("settings path has no parent"))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("cannot create settings directory {}", parent.display()))?;
+    let serialized = toml::to_string_pretty(settings).context("cannot serialize settings")?;
+    let temporary_path = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4()));
+    let write_result = (|| -> anyhow::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .with_context(|| {
+                format!(
+                    "cannot create temporary settings file {}",
+                    temporary_path.display()
+                )
+            })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(serialized.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temporary_path, path)
+            .with_context(|| format!("cannot replace settings file {}", path.display()))?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ignored = std::fs::remove_file(&temporary_path);
+    }
+    write_result
 }
 
 #[derive(Debug)]
@@ -353,12 +477,7 @@ async fn image_content(
 
 #[derive(Debug, Deserialize)]
 struct StartRunRequest {
-    #[serde(default = "default_provider")]
-    provider: String,
-}
-
-fn default_provider() -> String {
-    "mock".to_owned()
+    provider: Option<String>,
 }
 
 async fn start_run(
@@ -366,17 +485,19 @@ async fn start_run(
     AxumPath(project_id): AxumPath<String>,
     payload: Option<Json<StartRunRequest>>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    let provider = payload.map_or_else(default_provider, |Json(value)| value.provider);
     let project_path = state
         .application
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
-    let settings = serde_json::from_value::<Settings>(state.settings.read().await.clone())
-        .map_err(ApiError::internal)?;
-    let temporary_api_key = state.temporary_api_key.read().await.clone();
+    let settings = state.settings.read().await.clone();
+    let provider = payload
+        .and_then(|Json(value)| value.provider)
+        .unwrap_or_else(|| settings.default_provider.clone());
+    validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
+    let api_key = state.api_key.read().await.clone();
     let started = state
         .application
-        .start_run_path_with_settings(&project_path, &provider, settings, temporary_api_key)
+        .start_run_path_with_settings(&project_path, &provider, settings, api_key)
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::ACCEPTED, Json(json!(started))))
 }
@@ -694,12 +815,34 @@ async fn export_dataset(
 }
 
 async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
-    let mut settings = state.settings.read().await.clone();
+    let settings = state.settings.read().await.clone();
+    let mut settings = serde_json::to_value(settings).expect("Settings always serialize");
     if let Some(object) = settings.as_object_mut() {
+        let api_key_persisted = *state.api_key_persisted.read().await;
+        let api_key_configured = state.api_key.read().await.is_some();
         object.insert(
-            "temporary_api_key_configured".to_owned(),
-            Value::Bool(state.temporary_api_key.read().await.is_some()),
+            "api_key_configured".to_owned(),
+            Value::Bool(api_key_configured),
         );
+        object.insert(
+            "api_key_persisted".to_owned(),
+            Value::Bool(api_key_persisted),
+        );
+        object.insert(
+            "settings_persisted".to_owned(),
+            Value::Bool(*state.settings_persisted.read().await),
+        );
+        object.insert(
+            "settings_path".to_owned(),
+            Value::String(state.settings_path.display().to_string()),
+        );
+        object.insert(
+            "credential_store".to_owned(),
+            Value::String("system_keychain".to_owned()),
+        );
+        if let Some(error) = state.credential_store_error.read().await.clone() {
+            object.insert("credential_store_error".to_owned(), Value::String(error));
+        }
     }
     Json(settings)
 }
@@ -708,15 +851,68 @@ async fn put_settings(
     State(state): State<ServerState>,
     Json(mut settings): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let temporary_key = settings
+    let object = settings
         .as_object_mut()
-        .and_then(|object| object.remove("temporary_api_key"))
-        .and_then(|value| value.as_str().map(str::to_owned));
-    serde_json::from_value::<Settings>(settings.clone()).map_err(ApiError::bad_request)?;
-    *state.settings.write().await = settings;
-    if temporary_key.is_some() {
-        *state.temporary_api_key.write().await = temporary_key;
+        .ok_or_else(|| ApiError::bad_request("settings must be a JSON object"))?;
+    let api_key = object
+        .remove("api_key")
+        .or_else(|| object.remove("temporary_api_key"))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .filter(|value| !value.trim().is_empty());
+    let clear_saved_api_key = object
+        .remove("clear_saved_api_key")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    for field in [
+        "api_key_configured",
+        "api_key_persisted",
+        "temporary_api_key_configured",
+        "settings_persisted",
+        "settings_path",
+        "credential_store",
+        "credential_store_error",
+    ] {
+        object.remove(field);
     }
+    if clear_saved_api_key && api_key.is_some() {
+        return Err(ApiError::bad_request(
+            "cannot save and clear the API key in one request",
+        ));
+    }
+    let validated = serde_json::from_value::<Settings>(settings).map_err(ApiError::bad_request)?;
+    validate_provider_kind(&validated.default_provider).map_err(ApiError::bad_request)?;
+
+    let settings_path = state.settings_path.clone();
+    let saved_settings = validated.clone();
+    tokio::task::spawn_blocking(move || persist_settings(&settings_path, &saved_settings))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::internal)?;
+    *state.settings.write().await = validated;
+    *state.settings_persisted.write().await = true;
+
+    if clear_saved_api_key || api_key.is_some() {
+        let secret_store = state.secret_store.clone();
+        let secret_account = state.secret_account.clone();
+        let requested_key = api_key.clone();
+        let credential_result = tokio::task::spawn_blocking(move || {
+            if let Some(secret) = requested_key {
+                secret_store.save(&secret_account, &secret)
+            } else {
+                secret_store.delete(&secret_account)
+            }
+        })
+        .await
+        .map_err(ApiError::internal)?;
+        if let Err(error) = credential_result {
+            *state.credential_store_error.write().await = Some(error.to_string());
+            return Err(ApiError::internal(error));
+        }
+        *state.api_key.write().await = api_key;
+        *state.api_key_persisted.write().await = !clear_saved_api_key;
+        *state.credential_store_error.write().await = None;
+    }
+
     Ok(get_settings(State(state)).await)
 }
 
@@ -757,6 +953,8 @@ async fn events(
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Mutex};
+
     use annotagent_core::RunStatus;
     use axum::body::to_bytes;
     use futures::StreamExt;
@@ -765,11 +963,53 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
+    struct MemorySecretStore {
+        secrets: Mutex<HashMap<String, String>>,
+    }
+
+    impl SecretStore for MemorySecretStore {
+        fn load(&self, account: &str) -> anyhow::Result<Option<String>> {
+            Ok(self
+                .secrets
+                .lock()
+                .expect("secret store lock")
+                .get(account)
+                .cloned())
+        }
+
+        fn save(&self, account: &str, secret: &str) -> anyhow::Result<()> {
+            self.secrets
+                .lock()
+                .expect("secret store lock")
+                .insert(account.to_owned(), secret.to_owned());
+            Ok(())
+        }
+
+        fn delete(&self, account: &str) -> anyhow::Result<()> {
+            self.secrets
+                .lock()
+                .expect("secret store lock")
+                .remove(account);
+            Ok(())
+        }
+    }
+
+    fn test_state(
+        application: Arc<LocalApplication>,
+        secret_store: Arc<MemorySecretStore>,
+    ) -> ServerState {
+        ServerState::with_secret_store(application, secret_store).expect("state")
+    }
+
     #[tokio::test]
     async fn health_works_and_traversal_is_rejected() {
         let temp = tempfile::tempdir().expect("temp");
         let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
-        let service = router(ServerState::new(app).expect("state"), None);
+        let service = router(
+            test_state(app, Arc::new(MemorySecretStore::default())),
+            None,
+        );
         let response = service
             .clone()
             .oneshot(
@@ -804,7 +1044,7 @@ mod tests {
     async fn project_sse_review_revision_and_budget_flow_works_over_http() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
-        let state = ServerState::new(application.clone()).expect("state");
+        let state = test_state(application.clone(), Arc::new(MemorySecretStore::default()));
         let service = router(state.clone(), None);
         let skill = application
             .skills()
@@ -832,7 +1072,7 @@ mod tests {
                 &service,
                 axum::http::Method::POST,
                 "/api/projects/review-demo/runs",
-                Some(json!({"provider": "mock"})),
+                Some(json!({})),
             )
             .await,
         )
@@ -933,6 +1173,70 @@ mod tests {
             RunStatus::BudgetExceeded,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn settings_and_api_key_survive_server_restart() {
+        let temp = tempfile::tempdir().expect("temp");
+        let secrets = Arc::new(MemorySecretStore::default());
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(test_state(application, secrets.clone()), None);
+
+        let mut settings =
+            response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)
+                .await;
+        settings["default_provider"] = json!("openai_compatible");
+        settings["provider"]["endpoint"] = json!("https://provider.example/v1");
+        settings["provider"]["model"] = json!("persisted-vision-model");
+        settings["api_key"] = json!("test-secret-that-must-not-reach-disk");
+        let saved = response_json(
+            request(
+                &service,
+                axum::http::Method::PUT,
+                "/api/settings",
+                Some(settings),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["settings_persisted"], json!(true));
+        assert_eq!(saved["api_key_persisted"], json!(true));
+        assert_eq!(saved["api_key_configured"], json!(true));
+        assert!(saved.get("api_key").is_none());
+
+        let settings_path = temp.path().join(".annotagent/settings.toml");
+        let persisted = std::fs::read_to_string(&settings_path).expect("persisted settings");
+        assert!(persisted.contains("persisted-vision-model"));
+        assert!(!persisted.contains("test-secret-that-must-not-reach-disk"));
+
+        let restarted_application =
+            Arc::new(LocalApplication::new(temp.path()).expect("restarted application"));
+        let restarted = router(test_state(restarted_application, secrets.clone()), None);
+        let restored = response_json(
+            request(&restarted, axum::http::Method::GET, "/api/settings", None).await,
+        )
+        .await;
+        assert_eq!(restored["default_provider"], json!("openai_compatible"));
+        assert_eq!(
+            restored["provider"]["endpoint"],
+            json!("https://provider.example/v1")
+        );
+        assert_eq!(restored["api_key_persisted"], json!(true));
+
+        let mut clear_request = restored;
+        clear_request["clear_saved_api_key"] = json!(true);
+        let cleared = response_json(
+            request(
+                &restarted,
+                axum::http::Method::PUT,
+                "/api/settings",
+                Some(clear_request),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(cleared["api_key_configured"], json!(false));
+        assert_eq!(cleared["api_key_persisted"], json!(false));
     }
 
     async fn request(
