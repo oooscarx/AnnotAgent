@@ -39,6 +39,23 @@ Artifact references, retry counters, review suspensions, and the child Runtime s
 startup, orphaned leases are recovered and unfinished images return to Pending without touching
 completed commits.
 
+## Workflow authoring boundary
+
+The Workflow Advisor receives a bounded `WorkflowAdvisorInput`: Project Schema, enabled Skills,
+registered nodes/models/Validators/Refiners/resources, operator constraints, and aggregate image
+profile. The offline Advisor is deterministic. The optional workspace-LLM Advisor has exactly one
+strict submission action and may only adjust registered model bindings and review gates on a safe
+base Draft; it has no Shell, URL, code-execution, or arbitrary-tool surface. Every output is saved
+as a Draft and is revalidated against the same registries before persistence.
+
+Drafts support node/edge/parameter/binding/retry/fallback/review edits, archive, and publication.
+Published versions are immutable frozen snapshots. Sample Dry Run decodes selected images and
+executes registered model nodes in an isolated in-memory sandbox, returning typed output classes,
+per-node latency/issues, aggregate cost, and static validation without creating annotations.
+Runs may select a published version explicitly; history stores that selection beside the exact
+legacy Skill graph currently executed, keeping product attribution honest until the compatibility
+image path is replaced by the generic DAG executor.
+
 The implemented hybrid model boundary is described in [Hybrid vision execution](HYBRID_VISION.md). Auxiliary detectors and segmenters supply typed Artifacts; they do not bypass Runtime validation, provenance, review, or commit.
 
 ## State and persistence

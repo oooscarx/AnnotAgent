@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 06:11 CST
+Last updated: 2026-08-27 06:45 CST
 
 ## Current milestone
 
-Milestone 6 — Advisor and Workflow Editor.
+Milestone 7 — RoboCup hybrid Skill.
 
 ## Completed
 
@@ -44,33 +44,37 @@ Milestone 6 — Advisor and Workflow Editor.
 - Added persistent pause/resume/cancel semantics; cancelled batches cannot claim or start later nodes and completed images are never repeated.
 - Added Batch HTTP APIs, progress summaries, active Batch state on Project pages, and mutual exclusion between Batch and single-image Run starts.
 - Passed the generated 100-image concurrency-4 pause → server restart → resume gate with exactly 100 child Runs and matching history/budget totals.
+- Completed the bounded Advisor input/output contract for Mock and optional workspace-LLM modes; live advice has only one strict registered submission action and is revalidated before persistence.
+- Added persisted blank/template Draft creation, node/edge/parameter/binding/retry/fallback/review editing, archive, immutable publish, version clone, and version comparison.
+- Added real selected-image sandbox Dry Run with bounded decode, registered backend calls, typed node output classes, latency/cost/issues, and no annotation writes.
+- Replaced compatibility-only Project Workflow lists with real published versions and added explicit version selection to image Runs and honest history summaries.
+- Passed the full HTTP Workflow Designer journey and an in-app browser journey covering invalid port paths, repair, one-image Dry Run, publish immutability, clone editability, version selection, and history attribution.
+- Added `ANNOTAGENT_DISABLE_KEYCHAIN=1` for headless CI/browser testing; production continues to use the system keychain by default.
 
 ## In progress
 
-- Completing constrained Advisor output and the persisted Workflow editing lifecycle for Milestone 6.
+- Building the three RoboCup hybrid Workflow templates and evaluation path for Milestone 7.
 
 ## Next
 
-1. Constrain LLM Advisor suggestions to the Workflow schema and validate every binding.
-2. Add all node/edge editing actions, clone/archive/version lifecycle, and explicit Run version selection.
-3. Execute sample-image Dry Runs and compare candidate Workflow versions with persisted evidence.
+1. Add high-accuracy, balanced, and fast RoboCup templates through generic registered nodes.
+2. Execute the mixed VLM/detector/segmenter/refiner/validator graph with fixture evidence and conditional real weights.
+3. Add the RoboCup evaluation CLI and aggregate precision/recall/review/cost/latency report.
 
 ## Current release gaps
 
-- Published Drafts are persisted and immutable, but the main Run path still records and executes an honest compatibility snapshot rather than an explicitly selected published DAG.
-- The generic DAG executor is implemented, but the product Start flow does not yet expose explicit published-version selection (scheduled for the Editor/run integration milestone).
-- Workflow Dry Run is static validation, not sample-image sandbox execution.
-- Workflow Editor cannot yet add/delete nodes or edges, clone versions, or archive drafts.
+- Product Run selection and history identify an immutable Workflow Version, but the image executor still records and executes the compatibility Skill graph rather than interpreting that selected generic DAG. Milestone 7 must close the execution wiring before claiming hybrid product execution.
 - Review lacks the full geometry editing and undo/redo gate.
 - Data import is image ingestion/history import, not Native/COCO/LabelMe annotation import.
 - Generic and RoboCup offline demo commands required by the release do not exist yet.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-5 acceptance run passed 98 Rust tests and 13 Web tests with all build/static checks at exit 0.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-6 acceptance script passes 100 Rust tests, 13 Web tests, all-target/all-feature Clippy, workspace/Web builds, doctor, and the 28-table SQLite migration check.
 
 ## Recent commit
 
+- `364c3ee feat(workflow): complete advisor and editor lifecycle`
 - `92a5c5b feat(batch): persist dataset coordination and recovery`
 - `b41f55d feat(models): complete mixed vision backend registry`
 - `33ab172 feat(runtime): execute immutable published DAG snapshots`

@@ -38,7 +38,7 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Published snapshot DAG execution | PASS | Generic runtime tests execute an immutable published snapshot with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, and replayable I/O trace. Product version-selection UI remains M6 scope. |
 | Checkpoint/restart resume/global budget | PASS | SQLite v3 batches persist full checkpoints, leases, exact consumed/reserved budgets, and monotonic events; the concurrency-4 100-image pause/restart/resume gate completes with no duplicate child Run. |
 | Mixed model backends | PASS | Complete registry metadata, mock/OpenAI-compatible/HTTP JSON/deterministic CV adapters, worker discovery protocol, strict JSON-only fallback, structured errors, secret references, and GUI health are tested. Live weights remain conditional. |
-| Workflow Advisor/editor | INCOMPLETE | Suggest/save/static dry-run/publish work; node/edge lifecycle, sample-image Dry Run, clone/archive/version selection remain. |
+| Workflow Advisor/editor | PASS | Registry-bounded Mock/live Advisor paths, full persisted edit lifecycle, selected-image sandbox Dry Run, compare/publish/clone/archive, explicit Run version selection, HTTP journey, and real browser journey pass. Live Qwen advice remains conditional. |
 | RoboCup hybrid release example | INCOMPLETE | Domain algorithms and an example foundation exist; required templates/evaluation CLI/complete generic DAG execution do not. |
 | Review geometry editing | INCOMPLETE | Existing revision UI is not the full bbox/keypoint/polyline/polygon editor with undo/redo and before/after. |
 | Annotation import/export round trips | INCOMPLETE | Export tests exist; Native/COCO/LabelMe imports and round-trip reports do not. |
@@ -186,3 +186,31 @@ Gate evidence:
 10. No test sets an absolute runtime threshold; the full 100-image gate completed without an uncaught panic.
 
 Milestone 5 status: `PASS`.
+
+## Milestone 6 — Advisor and Workflow Editor
+
+Implementation commit: `364c3ee feat(workflow): complete advisor and editor lifecycle`
+
+Acceptance commands:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Rust fmt + clippy | 0 | All workspace targets pass formatting and `-D warnings`. |
+| Rust test | 0 | All 100 Rust unit/integration tests and doc tests passed after repairing the async HTTP polling assertion. |
+| Web typecheck/test/build | 0 | Typecheck passed; 7 files/13 tests passed; production Vite build passed. |
+| In-app browser journey | 0-equivalent | Local GUI exercised clone/edit, exact invalid-port feedback, repair, one-image sandbox Dry Run, binding/gate edit, publish lock, clone, explicit Run version selection, and snapshot-derived Runs history. |
+| `./scripts/acceptance.sh` | 0 | Fmt, all-target/all-feature Clippy, 100 Rust tests, workspace build, Web checks, doctor, 28-table SQLite, migrations, Web build, and offline/mock readiness all passed. |
+
+Gate evidence:
+
+1. `WorkflowAdvisorInput` contains Project Schema, enabled Skills, registered node/model catalogs, Validator/Refiner/resource IDs, cost/latency/accuracy constraints, and a bounded dataset profile. The GUI consumes this catalog instead of accepting arbitrary node/model IDs.
+2. The deterministic Mock Advisor remains the offline acceptance path. The workspace-LLM Advisor has one strict `submit_workflow_advice` action, can only adjust registered bindings and review gates on a safe base Draft, has no Shell/URL/code/arbitrary tools, and passes full registry validation before persistence.
+3. Blank/template/Advisor Drafts, full node and connection edits, parameters, bindings, retries, fallbacks, review gates, ports/issues, save, archive, publish, clone, and compare are persisted through application/storage/HTTP contracts.
+4. `workflow_alpha_editor_journey_is_persistent_and_version_explicit` introduces an Artifact port mismatch, asserts the exact node-input issue path, repairs it, executes a selected synthetic sample through the isolated sandbox, publishes, rejects mutation, clones and republishes, compares versions, starts an explicit-version Run, and verifies the persisted selection beside the honest compatibility engine snapshot.
+5. `workflow_designer_http_journey_validates_dry_runs_publishes_and_clones` repeats the product API journey, proves Project summaries expose the actual published version, and proves Run summaries derive the chosen Workflow name/version from persisted history.
+6. Browser evidence on `qwen-live` showed `unknown_input_port edges[0].to_port` plus `missing_required_input nodes[2].inputs.from_field_region`; after repair, Dry Run reported one `color_1001525.png` sample at 544×448, eight node outputs, measured latency, and zero mock cost.
+7. Publishing disabled all edit controls. Selecting the published template version and cloning produced a distinct editable Draft. Project Run selection used that exact workflow/version, and Runs history rendered `RoboCup Demo template workflow@v1` rather than the former hard-coded compatibility label.
+8. Browser startup exposed a headless system-keychain block. `ANNOTAGENT_DISABLE_KEYCHAIN=1` now provides an explicit CI/test-only opt-out while leaving secure keychain persistence as the default.
+9. Real Qwen Advisor execution is not claimed because no supported live credential was supplied during this milestone; it remains `LIVE-CONDITIONAL` in `BLOCKERS.md`.
+
+Milestone 6 status: `PASS` offline; live Qwen advice remains conditional.

@@ -34,6 +34,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed in `92a5c5b`; acceptance evidence recorded.
 7. **M6 — Advisor and Workflow Editor**
    - Complete constrained advisor, all persisted editing actions, sample-image Dry Run, compare, clone, archive, and explicit Run version selection.
+   - Status: completed in `364c3ee`; acceptance evidence recorded.
 8. **M7 — RoboCup hybrid Skill**
    - Supply three templates, real mixed execution through generic contracts, evaluation CLI, synthetic fixtures, and conditional live smoke evidence.
 9. **M8 — Review and data round trips**

@@ -30,13 +30,22 @@ All paths are relative to the local Axum server.
 | GET | `/api/skills`, `/api/skills/{id}` | Skill boundary, tools, validators, resources, template |
 | GET/POST | `/api/projects` | Dashboard list or validated project creation |
 | GET | `/api/projects/{id}` | Project summary |
-| GET | `/api/workflows` | Actual configured Workflow compatibility views |
+| GET | `/api/projects/{id}/workflow-catalog` | Registry-bounded Advisor/editor context and data profile |
+| GET | `/api/workflows` | Published Workflow Versions for all Projects |
+| GET/POST | `/api/workflow-drafts` | List or create blank/template Drafts |
+| POST | `/api/workflow-drafts/suggest` | Mock or constrained workspace-LLM Advisor suggestion |
+| PATCH | `/api/workflow-drafts/{id}` | Persist an editable Draft |
+| POST | `/api/workflow-drafts/{id}/dry-run` | Validate and execute up to ten selected images in an isolated sandbox |
+| POST | `/api/workflow-drafts/{id}/publish` | Publish an immutable Workflow Version |
+| POST | `/api/workflow-drafts/{id}/archive` | Archive and lock a Draft |
+| POST | `/api/workflows/{id}/versions/{version}/clone` | Clone an immutable version to a new editable Draft |
+| POST | `/api/workflows/compare` | Compare two immutable Workflow Versions |
 | GET | `/api/models` | Saved workspace Model Binding |
 | GET | `/api/runs` | Cross-Project Run summaries with Workflow/Skill/model context and usage |
 | POST | `/api/projects/{id}/import` | Controlled workspace-folder image import |
 | GET | `/api/projects/{id}/images` | Ordered image list |
 | GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
-| POST | `/api/projects/{id}/runs` | Start one image run with saved workspace settings |
+| POST | `/api/projects/{id}/runs` | Start one image run; optional `workflow_id` + `version` select an immutable version together |
 | POST | `/api/projects/{id}/batches` | Create and asynchronously execute a durable dataset batch |
 | GET | `/api/batches` | List active and terminal dataset batches |
 | GET | `/api/batches/{batch}` | Durable checkpoint, progress summary, budget ledger, and ordered events |
@@ -60,14 +69,14 @@ Errors are JSON objects with an HTTP status and a concrete message. User paths a
 
 ## Product DTO compatibility
 
-Project responses include Dataset, Annotation Schema, `EnabledSkill`, active/available `WorkflowVersion`, and `ModelBinding` fields. Project schema v1 still defaults to one Skill and its configured compatibility graph. Draft persistence, validation, publication, and the generic immutable DAG executor exist; explicit published-version selection in the product Start flow remains a later editor integration.
+Project responses include Dataset, Annotation Schema, `EnabledSkill`, active/available published `WorkflowVersion`, and `ModelBinding` fields. When no version has been published, schema v1 exposes its configured compatibility graph. Draft creation, registry-bounded Advisor suggestions, editing, sample Dry Run, publication, archive, clone, comparison, and explicit Run version selection are first-class product APIs.
 
 When a dataset batch is active, Project responses also include `active_batch` and
 `active_batch_progress`. These values come from SQLite rather than process memory, so a
 restarted server can render Pending, Running, Paused, or Awaiting Review state before the
 operator resumes work.
 
-Run list summaries derive Project, compatibility Workflow version, Skill version, provider/model binding, usage, cost, and status from persisted history. First-class immutable Workflow snapshots remain a documented storage migration.
+Run list summaries derive the selected immutable Workflow name/version, Skill version, provider/model binding, usage, cost, and status from persisted history. The current image Runtime records both the selected immutable version and the compatibility Skill graph it actually executes; it does not claim that the selected generic DAG replaced the compatibility executor.
 
 Batch mutation is lease-guarded and transactional. Budget reservations include already
 consumed and concurrently reserved usage before an image is claimed. Batch events use a

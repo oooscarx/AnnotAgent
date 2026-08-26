@@ -79,3 +79,23 @@ Rejected: treating a list of unrelated process-local image Runs as a durable bat
 The Batch ledger distinguishes exact consumed and reserved usage. Claiming an image, checking the combined ledger against token/request/image/cost/deadline limits, and recording its reservation occur in one SQLite transaction. Completion releases the reservation and adds actual usage atomically. Worker ownership is a renewable lease; a new server owner recovers orphaned leases and requeues unfinished work.
 
 Rejected: checking a shared counter before a request without reserving capacity, which lets concurrent workers oversell the same remaining budget.
+
+## D-017 — Advisor creativity is limited to registered choices
+
+The offline Advisor creates a deterministic registry-bound Draft. The optional workspace-LLM
+Advisor receives the same bounded catalog and one strict submission action; it may rename the
+Draft and adjust only registered model bindings and review gates on a safe base graph. Static
+validation remains authoritative and every suggestion stays a Draft until an operator publishes it.
+
+Rejected: allowing an Advisor to emit arbitrary code, Shell commands, URLs, unknown tools, or an
+already-published/running Workflow.
+
+## D-018 — Run selection and execution attribution are recorded separately
+
+An image Run may select an immutable Workflow Version and history presents that exact name and
+version. Until the product image path is wired to the generic DAG executor, the same snapshot also
+records `legacy_agent_runtime`, the actual Skill graph/model binding, and an explicit compatibility
+note. Selection is auditable without falsely claiming that the generic graph controlled execution.
+
+Rejected: replacing the actual compatibility snapshot with the selected Draft merely to make the
+UI appear fully integrated.

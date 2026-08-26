@@ -5,6 +5,7 @@
 - Do not commit `.env` or local provider configuration containing a key.
 - CLI providers read the configured environment variable only when making a request.
 - The Web API key is write-only and stored per workspace in the operating system keychain (Keychain Services on macOS, Credential Manager on Windows, Secret Service on Linux). It is omitted from responses, the local TOML settings file, SQLite, model trace, and logs.
+- Headless CI and browser automation may set `ANNOTAGENT_DISABLE_KEYCHAIN=1`; in that mode the server never reads or writes the system keychain and live providers must use their configured API-key environment variable. This opt-out is never enabled by default.
 - Non-secret Web settings are atomically written to `<workspace>/.annotagent/settings.toml` with owner-only permissions on Unix.
 - Custom headers and endpoint metadata are represented safely; Authorization and image base64 are not persisted.
 - A key pasted into a chat or terminal transcript should be rotated after testing.
