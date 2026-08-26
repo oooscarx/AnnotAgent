@@ -1,7 +1,7 @@
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
+use annotagent_application::{AnnotAgentApplication, LocalApplication};
 use annotagent_core::{RunEvent, RunEventPayload, RunStatus};
-use annotagent_runtime::RunControl;
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -16,19 +16,18 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::sync::broadcast;
 
 use crate::runner;
 
 struct ActiveRun {
-    control: RunControl,
+    run_id: annotagent_core::RunId,
     events: broadcast::Receiver<RunEvent>,
-    handle:
-        JoinHandle<Result<annotagent_runtime::ImageRunResult, annotagent_runtime::RuntimeError>>,
 }
 
 struct TuiState {
     project: PathBuf,
+    application: Arc<LocalApplication>,
     input: String,
     trace: Vec<String>,
     status: RunStatus,
@@ -39,9 +38,10 @@ struct TuiState {
 }
 
 impl TuiState {
-    fn new(project: PathBuf) -> Self {
+    fn new(project: PathBuf, application: Arc<LocalApplication>) -> Self {
         Self {
             project,
+            application,
             input: String::new(),
             trace: vec!["Ready. Press r or enter /run to start the deterministic demo.".to_owned()],
             status: RunStatus::Pending,
@@ -64,20 +64,16 @@ impl TuiState {
             self.push("A run is already active.");
             return Ok(());
         }
-        let prepared = runner::prepare_run(&self.project, "mock", None)?;
-        let mut events = prepared.runtime.event_bus().subscribe();
-        // Ensure the subscription is live before the task emits RunCreated.
+        let mut events = self.application.subscribe();
         while events.try_recv().is_ok() {}
-        let control = prepared.runtime.control();
-        let runtime = prepared.runtime;
-        let request = prepared.request;
-        let handle = tokio::spawn(async move { runtime.run_image(request).await });
+        let started = self
+            .application
+            .start_run_path(&self.project, "mock", None)?;
         self.active = Some(ActiveRun {
-            control,
+            run_id: started.run_id,
             events,
-            handle,
         });
-        self.push(format!("Started image {}", prepared.image_path.display()));
+        self.push(format!("Started image {}", started.image_path.display()));
         Ok(())
     }
 
@@ -139,14 +135,17 @@ impl TuiState {
     }
 
     async fn collect_finished(&mut self) {
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| active.handle.is_finished())
-            && let Some(active) = self.active.take()
+        if matches!(
+            self.status,
+            RunStatus::AwaitingReview
+                | RunStatus::Completed
+                | RunStatus::Cancelled
+                | RunStatus::BudgetExceeded
+                | RunStatus::Failed
+        ) && let Some(active) = self.active.take()
         {
-            match active.handle.await {
-                Ok(Ok(result)) => {
+            match self.application.wait_run(active.run_id).await {
+                Ok(result) => {
                     self.status = result.status;
                     self.push(format!(
                         "finished: committed {}, review {}, issues {}",
@@ -155,21 +154,24 @@ impl TuiState {
                         result.issues.len()
                     ));
                 }
-                Ok(Err(error)) => self.push(format!("run failed: {error}")),
-                Err(error) => self.push(format!("run task failed: {error}")),
+                Err(error) => self.push(format!("run failed: {error:#}")),
             }
         }
     }
 
-    fn pause_or_resume(&mut self) {
+    async fn pause_or_resume(&mut self) {
         let Some(active) = &self.active else {
             self.push("No active run.");
             return;
         };
-        let result = if active.control.status().ok() == Some(RunStatus::Paused) {
-            active.control.resume().map(|_| "resumed")
+        let run_id = active.run_id;
+        let result = if self.status == RunStatus::Paused {
+            self.application
+                .resume_run(run_id)
+                .await
+                .map(|()| "resumed")
         } else {
-            active.control.pause().map(|_| "paused")
+            self.application.pause_run(run_id).await.map(|()| "paused")
         };
         match result {
             Ok(message) => self.push(message),
@@ -177,35 +179,36 @@ impl TuiState {
         }
     }
 
-    fn cancel(&mut self) {
+    async fn cancel(&mut self) {
         let Some(active) = &self.active else {
             self.push("No active run.");
             return;
         };
-        match active.control.cancel() {
-            Ok(_) => self.push("cancellation requested"),
+        let run_id = active.run_id;
+        match self.application.cancel_run(run_id).await {
+            Ok(()) => self.push("cancellation requested"),
             Err(error) => self.push(format!("control error: {error}")),
         }
     }
 
-    fn command(&mut self, command: &str) -> Result<()> {
+    async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
             "/run" => self.start(),
             "/pause" => {
                 if let Some(active) = &self.active {
-                    active.control.pause()?;
+                    self.application.pause_run(active.run_id).await?;
                 }
                 Ok(())
             }
             "/resume" | "/retry" => {
                 if let Some(active) = &self.active {
-                    active.control.resume()?;
+                    self.application.resume_run(active.run_id).await?;
                 }
                 Ok(())
             }
             "/cancel" => {
-                self.cancel();
+                self.cancel().await;
                 Ok(())
             }
             "/open" => {
@@ -254,12 +257,20 @@ impl TuiState {
 
 pub async fn run(project: PathBuf) -> Result<()> {
     runner::load_project(&project)?;
+    let workspace = project
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .canonicalize()?;
+    let application = Arc::new(LocalApplication::with_database(
+        workspace,
+        runner::database_path()?,
+    )?);
     enable_raw_mode().context("cannot enable terminal raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("cannot enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("cannot create terminal")?;
-    let result = event_loop(&mut terminal, project).await;
+    let result = event_loop(&mut terminal, project, application).await;
     disable_raw_mode().context("cannot disable terminal raw mode")?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)
         .context("cannot leave alternate screen")?;
@@ -270,15 +281,16 @@ pub async fn run(project: PathBuf) -> Result<()> {
 async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     project: PathBuf,
+    application: Arc<LocalApplication>,
 ) -> Result<()> {
-    let mut state = TuiState::new(project);
+    let mut state = TuiState::new(project, application);
     loop {
         state.drain_events();
         state.collect_finished().await;
         terminal.draw(|frame| draw(frame, &state))?;
         if state.quit {
             if let Some(active) = &state.active {
-                let _ignored = active.control.cancel();
+                let _ignored = state.application.cancel_run(active.run_id).await;
             }
             return Ok(());
         }
@@ -293,17 +305,17 @@ async fn event_loop(
                         state.push(format!("cannot start: {error:#}"));
                     }
                 }
-                KeyCode::Char('c') if state.input.is_empty() => state.cancel(),
+                KeyCode::Char('c') if state.input.is_empty() => state.cancel().await,
                 KeyCode::Char('g') if state.input.is_empty() => {
                     if let Err(error) = webbrowser::open("http://127.0.0.1:8787") {
                         state.push(format!("cannot open GUI: {error}"));
                     }
                 }
-                KeyCode::Char(' ') if state.input.is_empty() => state.pause_or_resume(),
+                KeyCode::Char(' ') if state.input.is_empty() => state.pause_or_resume().await,
                 KeyCode::Enter => {
                     let command = std::mem::take(&mut state.input);
                     if !command.is_empty()
-                        && let Err(error) = state.command(&command)
+                        && let Err(error) = state.command(&command).await
                     {
                         state.push(format!("command failed: {error:#}"));
                     }

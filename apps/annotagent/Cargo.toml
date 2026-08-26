@@ -11,16 +11,19 @@ name = "annotagent"
 path = "src/main.rs"
 
 [dependencies]
+annotagent-application = { path = "../../crates/annotagent-application" }
 annotagent-core = { path = "../../crates/annotagent-core" }
 annotagent-export = { path = "../../crates/annotagent-export" }
 annotagent-image-tools = { path = "../../crates/annotagent-image-tools" }
 annotagent-provider = { path = "../../crates/annotagent-provider" }
 annotagent-runtime = { path = "../../crates/annotagent-runtime" }
+annotagent-server = { path = "../../crates/annotagent-server" }
 annotagent-skill-robocup = { path = "../../crates/annotagent-skill-robocup" }
 annotagent-storage = { path = "../../crates/annotagent-storage" }
 anyhow.workspace = true
 clap.workspace = true
 crossterm.workspace = true
+futures.workspace = true
 ratatui.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
@@ -35,4 +38,3 @@ webbrowser.workspace = true
 
 [lints]
 workspace = true
-

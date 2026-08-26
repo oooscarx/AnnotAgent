@@ -3,8 +3,9 @@
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
-    Annotation, AnnotationRevision, AnnotationValue, CorrectionRecord, LabelId, ProjectId,
-    RunEvent, RunId, RunStatus, TaskId, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue, CorrectionRecord,
+    LabelId, ProjectId, RevisionActor, RunEvent, RunId, RunStatus, TaskId, ToolCallId, ToolResult,
+    UsageRecord, ValidationIssue,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -140,6 +141,112 @@ impl SqliteStore {
                     serde_json::from_str(&json).map_err(StorageError::from)
                 })
                 .collect()
+        })
+    }
+
+    pub fn find_annotation(
+        &self,
+        annotation_id: annotagent_core::AnnotationId,
+    ) -> Result<Option<(RunId, Annotation)>, StorageError> {
+        self.with_connection(|connection| {
+            let row = connection
+                .query_row(
+                    "SELECT run_id, annotation_json FROM annotations WHERE id = ?1",
+                    [annotation_id.to_string()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            row.map(|(run_id, annotation)| {
+                Ok((
+                    run_id.parse().map_err(|error| {
+                        StorageError::InvalidEnum(format!("invalid run id: {error}"))
+                    })?,
+                    serde_json::from_str(&annotation)?,
+                ))
+            })
+            .transpose()
+        })
+    }
+
+    pub fn update_annotation(
+        &self,
+        annotation: &Annotation,
+        reason: Option<&str>,
+    ) -> Result<AnnotationRevision, StorageError> {
+        annotation
+            .validate()
+            .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let before_json: String = transaction
+                .query_row(
+                    "SELECT annotation_json FROM annotations WHERE id = ?1",
+                    [annotation.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!("annotation {} was not found", annotation.id))
+                })?;
+            let before: Annotation = serde_json::from_str(&before_json)?;
+            let parent_revision_id = transaction
+                .query_row(
+                    "SELECT revision_id FROM annotation_revisions
+                     WHERE annotation_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                    [annotation.id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|id| id.parse())
+                .transpose()
+                .map_err(|error| {
+                    StorageError::InvalidEnum(format!("invalid revision id: {error}"))
+                })?;
+            let revision = AnnotationRevision {
+                revision_id: AnnotationRevisionId::new(),
+                annotation_id: annotation.id,
+                parent_revision_id,
+                before: Some(before.snapshot()),
+                after: Some(annotation.snapshot()),
+                actor: RevisionActor::Human,
+                reason: reason.map(str::to_owned),
+                created_at: Utc::now(),
+            };
+            revision
+                .validate()
+                .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+            transaction.execute(
+                "UPDATE annotations SET label = ?2, review_status = ?3, annotation_json = ?4
+                 WHERE id = ?1",
+                params![
+                    annotation.id.to_string(),
+                    annotation.label.as_ref().map(LabelId::as_str),
+                    enum_string(annotation.review_status)?,
+                    serde_json::to_string(annotation)?,
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO annotation_revisions
+                 (revision_id, annotation_id, parent_revision_id, revision_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    revision.revision_id.to_string(),
+                    revision.annotation_id.to_string(),
+                    revision.parent_revision_id.map(|id| id.to_string()),
+                    serde_json::to_string(&revision)?,
+                    revision.created_at.to_rfc3339(),
+                ],
+            )?;
+            transaction.execute(
+                "UPDATE review_queue SET status = ?2, resolved_at = ?3 WHERE annotation_id = ?1",
+                params![
+                    annotation.id.to_string(),
+                    enum_string(annotation.review_status)?,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(revision)
         })
     }
 

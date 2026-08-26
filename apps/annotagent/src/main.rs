@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use annotagent_application::{AnnotAgentApplication, DatasetCoordinator, LocalApplication};
 use annotagent_core::{DatasetExporter, DomainSkill, ProjectSnapshot, SnapshotImage};
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -139,7 +140,7 @@ async fn main() -> Result<()> {
             workspace,
             open,
             port,
-        } => serve_command(&workspace, port, open),
+        } => serve_command(&workspace, port, open).await,
         Command::Skills { command } => skills_command(command),
         Command::History { command } => history_command(command),
         Command::Export {
@@ -251,17 +252,53 @@ async fn run_command(arguments: &RunArgs) -> Result<()> {
     if arguments.limit.is_some_and(|limit| limit == 0) {
         bail!("--limit must be greater than zero");
     }
-    let prepared = runner::prepare_run(
-        &arguments.project,
-        &arguments.provider,
-        arguments.config.as_deref(),
-    )?;
-    println!(
-        "run {}: image {}",
-        prepared.request.run_id,
-        prepared.image_path.display()
-    );
-    let result = prepared.runtime.run_image(prepared.request).await?;
+    let workspace = arguments
+        .project
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()?;
+    let application = LocalApplication::with_database(workspace, runner::database_path()?)?;
+    if arguments.limit == Some(1) {
+        let prepared = application.start_run_path(
+            &arguments.project,
+            &arguments.provider,
+            arguments.config.as_deref(),
+        )?;
+        println!(
+            "run {}: image {}",
+            prepared.run_id,
+            prepared.image_path.display()
+        );
+        let result = tokio::select! {
+            result = application.wait_run(prepared.run_id) => result?,
+            signal = tokio::signal::ctrl_c() => {
+                signal.context("cannot listen for Ctrl-C")?;
+                eprintln!("cancellation requested; waiting for the active model call to stop safely");
+                application.cancel_run(prepared.run_id).await?;
+                application.wait_run(prepared.run_id).await?
+            }
+        };
+        print_image_result(&result);
+        return Ok(());
+    }
+
+    let coordinator = DatasetCoordinator::new(&application);
+    let results = coordinator
+        .run(
+            &arguments.project,
+            &arguments.provider,
+            arguments.config.as_deref(),
+            arguments.limit,
+        )
+        .await?;
+    for item in results {
+        println!("image {}", item.image_path.display());
+        print_image_result(&item.result);
+    }
+    Ok(())
+}
+
+fn print_image_result(result: &annotagent_runtime::ImageRunResult) {
     println!(
         "status={:?} committed={} review={} issues={} tokens={}/{} requests={} cost={}",
         result.status,
@@ -273,10 +310,9 @@ async fn run_command(arguments: &RunArgs) -> Result<()> {
         result.usage.requests,
         result.usage.cost
     );
-    for issue in result.issues {
+    for issue in &result.issues {
         println!("issue {}: {}", issue.code, issue.message);
     }
-    Ok(())
 }
 
 fn skills_command(command: SkillsCommand) -> Result<()> {
@@ -480,6 +516,15 @@ async fn demo(name: &str) -> Result<()> {
     .await
 }
 
-fn serve_command(_workspace: &Path, _port: u16, _open: bool) -> Result<()> {
-    bail!("web server support is not available in this build")
+async fn serve_command(workspace: &Path, port: u16, open: bool) -> Result<()> {
+    let application = Arc::new(LocalApplication::new(workspace)?);
+    let state = annotagent_server::ServerState::new(application)?;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let url = format!("http://{address}");
+    println!("RoboCup AnnotAgent GUI: {url}");
+    println!("workspace: {}", workspace.display());
+    if open {
+        webbrowser::open(&url)?;
+    }
+    annotagent_server::serve(state, address, Some(Path::new("web/dist"))).await
 }
