@@ -25,7 +25,7 @@ export function App() {
     api.dashboard().then((data) => {
       setProjects(data.projects);
       setRuns(data.runs);
-      if (!projectId && data.projects[0]) setProjectId(data.projects[0].id);
+      setProjectId((current) => current || data.projects[0]?.id || "");
     }).catch((reason: Error) => setError(reason.message));
 
   useEffect(() => {
@@ -177,7 +177,7 @@ function ProjectPage({ project, events, onError }: { project?: ProjectSummary; e
       <div className="toolbar-panel">
         <div><span className="eyebrow">{project.skill_id} skill</span><h2>{project.name}</h2><p>{project.image_count} images · deterministic quality gates enabled</p></div>
         <div className="button-row">
-          <button className="primary" onClick={start}>Start batch</button>
+          <button className="primary" onClick={start}>Start image run</button>
           <button onClick={() => control("pause")}>Pause</button>
           <button onClick={() => control("resume")}>Resume</button>
           <button className="danger" onClick={() => control("cancel")}>Cancel</button>

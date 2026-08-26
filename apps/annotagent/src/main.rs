@@ -499,6 +499,14 @@ fn doctor() -> Result<()> {
             "missing (run npm --prefix web run build)"
         }
     );
+    let port_status = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 8787)) {
+        Ok(listener) => {
+            drop(listener);
+            "available"
+        }
+        Err(_) => "in use",
+    };
+    println!("port 127.0.0.1:8787: {port_status}");
     Ok(())
 }
 

@@ -17,7 +17,7 @@ use annotagent_core::{
     LabelId, ProjectSnapshot, ReviewStatus, RunId, SnapshotImage,
 };
 use annotagent_export::{
-    CocoExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
+    CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
 };
 use axum::{
     Json, Router,
@@ -676,6 +676,7 @@ async fn export_dataset(
         "coco" => Box::new(CocoExporter),
         "yolo" | "yolo_detection" => Box::new(YoloDetectionExporter),
         "yolo_segmentation" => Box::new(YoloSegmentationExporter),
+        "labelme" => Box::new(LabelMeExporter),
         other => {
             return Err(ApiError::bad_request(format!(
                 "unknown export format {other:?}"
