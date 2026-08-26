@@ -89,7 +89,7 @@ export function App() {
     </aside>
     <main id="main-content">
       <header className="topbar">
-        <div><span className="eyebrow">{PRODUCT_TAGLINE}</span><h1>{PAGE_TITLES[page]}</h1></div>
+        <div><span className="product-tagline">{PRODUCT_TAGLINE}</span><h1>{PAGE_TITLES[page]}</h1></div>
         <div className="project-switch">
           {activeSkills(selectedProject).map((skill) => {
             const profile = visualProfilesForSkills([skill.id])[0];
@@ -127,7 +127,7 @@ function Dashboard({ projects, runs, models, skills, reviewQueue, onSelect, onRe
   const tokens = runs.reduce((sum, run) => sum + run.input_tokens + run.output_tokens, 0);
   const cost = runs.reduce((sum, run) => sum + Number(run.cost || 0), 0);
   return <section className="page-stack">
-    <div className="hero-panel aa-dark"><div><span className="kicker">ANNOTAGENT WORKFLOW PLATFORM</span><h2>Compose annotation work<br /><em>that stays auditable.</em></h2><p>Projects bind datasets, typed workflows, vision models, reusable Skills, deterministic validation, and human review.</p></div><div className="hero-actions"><button className="primary" onClick={() => onSelect(projects[0]?.id ?? "")}>Open a project</button><button onClick={onRefresh}>Refresh state</button></div></div>
+    <div className="hero-panel aa-dark"><div><span className="kicker">AnnotAgent workflow platform</span><h2>Compose annotation work<br /><em>that stays auditable.</em></h2><p>Projects bind datasets, typed workflows, vision models, reusable Skills, deterministic validation, and human review.</p></div><div className="hero-actions"><button className="primary" onClick={() => onSelect(projects[0]?.id ?? "")}>Open a project</button><button onClick={onRefresh}>Refresh state</button></div></div>
     <div className="metrics-grid platform-metrics">
       <Metric label="Projects" value={projects.length} detail={`${projects.reduce((sum, project) => sum + project.image_count, 0)} images registered`} />
       <Metric label="Published workflows" value={publishedWorkflows} detail="Validated compatibility versions" />
@@ -229,7 +229,7 @@ function Trace({ events }: { events: RunEvent[] }) {
 function SkillsPage({ onError }: { onError: (value: string) => void }) {
   const [skills, setSkills] = useState<SkillDetail[]>([]);
   useEffect(() => { void api.skills().then(setSkills).catch((error: Error) => onError(error.message)); }, []);
-  return <section className="page-stack"><div className="boundary-note"><span>ANNOTAGENT</span><i>DomainSkill registry boundary</i><span>INSTALLED SKILLS</span></div>{skills.map((skill) => <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={skill.id}><p className="lede">{skill.description}</p><div className="skill-columns"><TagGroup title="Node templates" values={skill.tasks.map((task) => task.id)} /><TagGroup title="Registered tools" values={skill.tools} /><TagGroup title="Validators" values={skill.validators} /><TagGroup title="Refiners" values={skill.refiners} /><TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} /><TagGroup title="Prompt resources" values={skill.resources} /></div></Panel>)}{skills.length === 0 && <Empty title="No Skills installed" detail="Install a registered extension before creating a runnable Project." />}</section>;
+  return <section className="page-stack"><div className="boundary-note"><span>AnnotAgent</span><i>DomainSkill registry boundary</i><span>Installed Skills</span></div>{skills.map((skill) => <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={skill.id}><p className="lede">{skill.description}</p><div className="skill-columns"><TagGroup title="Node templates" values={skill.tasks.map((task) => task.id)} /><TagGroup title="Registered tools" values={skill.tools} /><TagGroup title="Validators" values={skill.validators} /><TagGroup title="Refiners" values={skill.refiners} /><TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} /><TagGroup title="Prompt resources" values={skill.resources} /></div></Panel>)}{skills.length === 0 && <Empty title="No Skills installed" detail="Install a registered extension before creating a runnable Project." />}</section>;
 }
 
 function SettingsPage({ onError }: { onError: (value: string) => void }) {
