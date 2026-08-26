@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 07:06 CST
+Last updated: 2026-08-27 07:35 CST
 
 ## Current milestone
 
-Milestone 8 — Review, editing, import, and round trips.
+Milestone 9 — Hardening and release acceptance.
 
 ## Completed
 
@@ -55,30 +55,36 @@ Milestone 8 — Review, editing, import, and round trips.
 - Extended hybrid execution evidence with aggregate model-call/compute/latency usage and proved both low-risk Commit and RoboCup white-shoe review paths.
 - Added a ground-truth-only evaluation CLI with bbox/mask/keypoint/polyline/classification/attribute and operational metrics, explicit thresholds, and synthetic fixtures.
 - Proved field-region mask IoU 0.75 passes the configured 0.70 gate, field-line refinement improves its coarse candidate, white-shoe candidates cannot auto-commit, and absent penalty marks are `SucceededEmpty`.
+- Added a real Review editing session for bbox resize/move, keypoint and vertex dragging, vertex add/delete, empty-canvas geometry creation, attributes, correction reasons, before/after comparison, and undo/redo.
+- Added persisted Human annotation creation and kept every imported annotation in `NeedsReview` with its original or explicit Imported source.
+- Added Native, COCO, LabelMe, YOLO detection, and YOLO segmentation importers with label mapping, dry-run, per-record issues, and explicit compatibility warnings.
+- Added Project HTTP/Web import flows and a CLI `import-annotations` command; import sources are restricted to the workspace sandbox.
+- Proved Native annotation/provenance/revision round trips, representable COCO/LabelMe/YOLO round trips, and recovery from a corrupt LabelMe shape without aborting the file.
+- Verified the Review editor in the in-app browser: Project-scoped queue, correctly bound new bbox, four accessible resize handles, undo/redo state restoration, split comparison, attributes, and correction reason.
 
 ## In progress
 
-- Building the Milestone 8 review editing and annotation import/round-trip gates.
+- Auditing the complete Milestone 9 security, observability, demo, documentation, and release matrix.
 
 ## Next
 
-1. Add complete bbox/keypoint/polyline/polygon editing with undo/redo and correction reasons.
-2. Implement Native, COCO, LabelMe, and feasible YOLO import with compatibility reports and dry-run.
-3. Prove Native and representable COCO/LabelMe round trips without silent field loss.
+1. Close path/symlink/ZIP/image-limit and untrusted-model-output security gates.
+2. Add the two required stable offline demo commands and expand automated API/browser acceptance.
+3. Complete the release documentation and run the full blocking matrix.
 
 ## Current release gaps
 
 - Product Run selection and history identify an immutable Workflow Version, but the image executor still records and executes the compatibility Skill graph rather than interpreting that selected generic DAG. M7 proves the shared hybrid executor and domain Artifact chain directly; product published-DAG execution remains a release gap and is not claimed.
-- Review lacks the full geometry editing and undo/redo gate.
-- Data import is image ingestion/history import, not Native/COCO/LabelMe annotation import.
 - Generic and RoboCup offline demo commands required by the release do not exist yet.
+- The final security/observability matrix and release documentation have not yet been completed.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-7 acceptance script passes 104 Rust tests, 13 Web tests, all-target/all-feature Clippy, workspace/Web builds, doctor, and the 28-table SQLite migration check.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-8 acceptance script passes 107 Rust tests, 13 Web tests, all-target/all-feature Clippy, workspace/Web builds, doctor, and the 28-table SQLite migration check.
 
 ## Recent commit
 
+- `3636e0f feat(review): complete editing and annotation round trips`
 - `08d3958 feat(robocup): complete hybrid skill and evaluation`
 - `364c3ee feat(workflow): complete advisor and editor lifecycle`
 - `92a5c5b feat(batch): persist dataset coordination and recovery`

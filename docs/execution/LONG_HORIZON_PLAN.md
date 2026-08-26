@@ -40,6 +40,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed offline in `08d3958`; live Qwen and configured external-weight smoke remain conditional.
 9. **M8 — Review and data round trips**
    - Add geometry editing, undo/redo, comparisons, correction reasons, Native/COCO/LabelMe import, and compatibility reports.
+   - Status: completed in `3636e0f`; acceptance evidence recorded.
 10. **M9 — Hardening and release acceptance**
     - Complete security tests, observability, required docs, two offline demos, API/browser smoke, and the complete blocking matrix.
 

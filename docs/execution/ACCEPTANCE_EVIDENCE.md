@@ -238,3 +238,28 @@ Gate evidence:
 7. Real Qwen and external detector/segmenter smoke are `LIVE-CONDITIONAL`: no credential or configured weights were read from conversation history, and fixture backends are not represented as real inference.
 
 Milestone 7 status: `PASS` offline; live Qwen and configured external-model smoke remain conditional.
+
+## Milestone 8 — Review, editing, import, and round trips
+
+Implementation commit: `3636e0f feat(review): complete editing and annotation round trips`
+
+Acceptance commands:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| `./scripts/acceptance.sh` | 0 | Formatting, strict all-target/all-feature Clippy, 107 Rust tests, workspace build, 7-file/13-test Web suite, production Web build, doctor, 28 SQLite tables, and migrations pass. |
+| Export/import integration tests | 0 | Five tests cover Native exact preservation, representable COCO/LabelMe/YOLO round trips, compatibility warnings, and corrupt-record isolation. |
+| In-app browser Review journey | 0-equivalent | A Project-scoped queue created an `objects`/`ball` bbox with four named resize handles; undo restored the original revision, redo restored creation, and split before/after, attributes, and correction reason controls rendered. |
+| Secret scan | 0-equivalent | No supplied-key prefix exists in repository sources. |
+
+Gate evidence:
+
+1. `AnnotationCanvas` supports bbox dragging and corner resize, keypoint/polyline/polygon/polygon-mask vertex dragging, double-click vertex creation, and Delete/Backspace vertex removal with accessible SVG button names.
+2. Review creates geometry against a Project task of the matching kind instead of cloning an incompatible classification task. New Human annotations persist through the Run API; attributes, correction reason, notes, revision save, accept/reject/delete, before/after split, and current-session undo/redo are live controls.
+3. Review results carry Project identity and the Web queue is filtered to the active Project, preventing a decision from being applied with another Project's policy.
+4. Native import preserves valid annotations, source, provenance, and revision chains. COCO parses bbox, polygon, keypoints, and string RLE; LabelMe parses rectangle, point, line/linestrip, and polygon; YOLO detection and segmentation parse normalized text rows.
+5. All importers support label mapping and dry-run, return record-scoped issues, and emit warnings for unrepresentable provenance/revision/attribute/relation data. A malformed LabelMe shape is skipped while the valid shape in the same file imports.
+6. Product persistence maps known Project images to existing single-image or Batch child Runs, rejects duplicate annotation IDs, and routes imported records to `NeedsReview`. It does not invent an arbitrary owning Run for unmatched images.
+7. Exporters continue to return explicit skipped/warning records for incompatible shapes. Native round-trip equality includes annotations, provenance, and revisions; representable COCO/LabelMe/YOLO geometry round trips within the normalized contract.
+
+Milestone 8 status: `PASS`.

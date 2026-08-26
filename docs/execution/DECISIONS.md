@@ -113,3 +113,15 @@ quality-gate claims cannot be inferred from it.
 
 Rejected: global RoboCup template IDs in Core, arbitrary template selection across Projects, or
 plausible-looking accuracy reports derived from predictions without human-labelled truth.
+
+## D-020 — Annotation import is report-first and Review-bound
+
+Every importer returns valid annotations, revisions where the source can express them, per-record
+issues, and format-level compatibility warnings before persistence. Dry-run uses the same parser and
+mapping path without writes. Product import then maps images to persisted child Runs and commits only
+valid records into `NeedsReview`; it never assigns an unrelated Run merely to make an import succeed.
+Native keeps provenance and revision chains, while lossy interchange formats say exactly what they
+cannot represent.
+
+Rejected: aborting a whole dataset on one malformed record, silently dropping unsupported fields,
+or importing annotations directly as accepted ground truth.
