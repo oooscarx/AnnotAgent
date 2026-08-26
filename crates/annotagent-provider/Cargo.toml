@@ -9,6 +9,9 @@ rust-version.workspace = true
 [dependencies]
 annotagent-core = { path = "../annotagent-core" }
 async-trait.workspace = true
+base64.workspace = true
+chrono.workspace = true
+image.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -20,7 +23,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-chrono.workspace = true
 
 [lints]
 workspace = true

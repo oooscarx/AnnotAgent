@@ -1,13 +1,18 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use annotagent_core::{
-    ArtifactId, CoreError, CoreResult, ModelMessage, ModelRequest, ModelRole, ToolDefinition,
-    VisionArtifact, VisionBackendKind, VisionCapability, VisionInferenceRequest,
-    VisionInferenceResponse, VisionModelBackend, VisionModelProvider,
+    ArtifactId, ArtifactProvenance, ArtifactRole, ArtifactValidationState, CoreError, CoreResult,
+    LabelId, MaskEncoding, ModelMessage, ModelRequest, ModelRole, NormalizedRect, ToolDefinition,
+    VISION_WORKER_PROTOCOL_VERSION, VisionArtifact, VisionArtifactValue, VisionBackendKind,
+    VisionCapability, VisionInferenceRequest, VisionInferenceResponse, VisionModelBackend,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelProvider, VisionWorkerCapabilities,
 };
 use async_trait::async_trait;
+use base64::Engine;
 use reqwest::Client;
 use tokio_util::sync::CancellationToken;
+
+const MAX_INLINE_IMAGE_BASE64_BYTES: usize = 28_000_000;
 
 pub struct MockVisionBackend {
     id: String,
@@ -66,6 +71,8 @@ impl VisionModelBackend for MockVisionBackend {
             artifacts,
             request_id: Some(format!("mock-{}", request.run_id)),
             metadata: BTreeMap::from([("backend".to_owned(), serde_json::json!(self.id))]),
+            model_identity: Some(self.id.clone()),
+            ..VisionInferenceResponse::default()
         })
     }
 }
@@ -77,6 +84,8 @@ pub struct HttpJsonVisionBackendConfig {
     pub capabilities: Vec<VisionCapability>,
     pub request_timeout: Duration,
     pub authorization: Option<String>,
+    pub expected_model_identity: Option<String>,
+    pub max_retries: u32,
 }
 
 pub struct HttpJsonVisionBackend {
@@ -91,6 +100,74 @@ impl HttpJsonVisionBackend {
             .build()
             .map_err(|error| CoreError::Provider(format!("cannot build HTTP client: {error}")))?;
         Ok(Self { config, client })
+    }
+
+    fn base_url(&self) -> &str {
+        self.config
+            .endpoint
+            .strip_suffix("/v1/infer")
+            .or_else(|| self.config.endpoint.strip_suffix("/infer"))
+            .unwrap_or(self.config.endpoint.trim_end_matches('/'))
+    }
+
+    pub async fn health(&self) -> CoreResult<VisionModelHealth> {
+        let response = self
+            .authorized(self.client.get(format!("{}/health", self.base_url())))
+            .send()
+            .await
+            .map_err(|error| CoreError::Provider(format!("worker health failed: {error}")))?;
+        if !response.status().is_success() {
+            return Ok(VisionModelHealth {
+                status: VisionModelHealthStatus::Unavailable,
+                detail: Some(format!("worker health returned {}", response.status())),
+                checked_at: Some(chrono::Utc::now()),
+            });
+        }
+        let mut health = response
+            .json::<VisionModelHealth>()
+            .await
+            .map_err(|error| CoreError::Provider(format!("invalid worker health JSON: {error}")))?;
+        health.checked_at = Some(chrono::Utc::now());
+        Ok(health)
+    }
+
+    pub async fn discover_capabilities(&self) -> CoreResult<VisionWorkerCapabilities> {
+        let response = self
+            .authorized(
+                self.client
+                    .get(format!("{}/v1/capabilities", self.base_url())),
+            )
+            .send()
+            .await
+            .map_err(|error| {
+                CoreError::Provider(format!("worker capability discovery failed: {error}"))
+            })?;
+        if !response.status().is_success() {
+            return Err(CoreError::Provider(format!(
+                "worker capability discovery returned {}",
+                response.status()
+            )));
+        }
+        let capabilities = response
+            .json::<VisionWorkerCapabilities>()
+            .await
+            .map_err(|error| {
+                CoreError::Provider(format!("invalid worker capabilities JSON: {error}"))
+            })?;
+        if capabilities.protocol_version != VISION_WORKER_PROTOCOL_VERSION {
+            return Err(CoreError::Provider(format!(
+                "worker protocol version {} is unsupported",
+                capabilities.protocol_version
+            )));
+        }
+        Ok(capabilities)
+    }
+
+    fn authorized(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(authorization) = &self.config.authorization {
+            request = request.header(reqwest::header::AUTHORIZATION, authorization);
+        }
+        request
     }
 }
 
@@ -113,34 +190,295 @@ impl VisionModelBackend for HttpJsonVisionBackend {
         request: VisionInferenceRequest,
         cancellation: CancellationToken,
     ) -> CoreResult<VisionInferenceResponse> {
-        let mut builder = self.client.post(&self.config.endpoint).json(&request);
-        if let Some(authorization) = &self.config.authorization {
-            builder = builder.header(reqwest::header::AUTHORIZATION, authorization);
-        }
-        let response = tokio::select! {
-            () = cancellation.cancelled() => {
-                return Err(CoreError::Provider("vision inference cancelled".to_owned()))
-            },
-            response = builder.send() => response,
-        }
-        .map_err(|error| CoreError::Provider(format!("HTTP vision backend failed: {error}")))?;
-        let status = response.status();
-        if !status.is_success() {
-            let detail = response.text().await.unwrap_or_default();
-            return Err(CoreError::Provider(format!(
-                "HTTP vision backend returned {status}: {}",
-                truncate(&detail, 500)
+        if request
+            .image
+            .as_ref()
+            .is_some_and(|image| image.data_base64.len() > MAX_INLINE_IMAGE_BASE64_BYTES)
+        {
+            return Err(CoreError::Validation(format!(
+                "inline image exceeds bounded upload limit of {MAX_INLINE_IMAGE_BASE64_BYTES} base64 bytes"
             )));
         }
-        let response = response
-            .json::<VisionInferenceResponse>()
-            .await
-            .map_err(|error| {
-                CoreError::Provider(format!("invalid HTTP vision response schema: {error}"))
+        let started = std::time::Instant::now();
+        for retry in 0..=self.config.max_retries {
+            let builder = self.authorized(self.client.post(&self.config.endpoint).json(&request));
+            let builder = if let Some(timeout_ms) = request.timeout_ms {
+                builder.timeout(Duration::from_millis(timeout_ms))
+            } else {
+                builder
+            };
+            let response = tokio::select! {
+                () = cancellation.cancelled() => {
+                    return Err(CoreError::Provider(format!(
+                        "worker={} model={} node={} task={} elapsed_ms={} retry={} code=cancelled",
+                        self.config.id, request.model_id, request.node_id, request.task_id,
+                        started.elapsed().as_millis(), retry
+                    )))
+                },
+                response = builder.send() => response,
+            };
+            let response = match response {
+                Ok(response) => response,
+                Err(error) if retry < self.config.max_retries => {
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(CoreError::Provider(format!(
+                        "worker={} model={} node={} task={} elapsed_ms={} retry={} code=transport_error detail={}",
+                        self.config.id,
+                        request.model_id,
+                        request.node_id,
+                        request.task_id,
+                        started.elapsed().as_millis(),
+                        retry,
+                        truncate(&error.to_string(), 300)
+                    )));
+                }
+            };
+            let status = response.status();
+            let detail = response.bytes().await.map_err(|error| {
+                CoreError::Provider(format!("cannot read HTTP vision response: {error}"))
             })?;
-        validate_backend_response(&request, &response)?;
-        Ok(response)
+            let decoded = serde_json::from_slice::<VisionInferenceResponse>(&detail);
+            if let Ok(response) = decoded {
+                if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION {
+                    return Err(CoreError::Provider(format!(
+                        "worker={} model={} node={} task={} elapsed_ms={} retry={} code=protocol_version_mismatch",
+                        self.config.id,
+                        request.model_id,
+                        request.node_id,
+                        request.task_id,
+                        started.elapsed().as_millis(),
+                        retry
+                    )));
+                }
+                if let Some(error) = &response.error {
+                    if error.retryable && retry < self.config.max_retries {
+                        continue;
+                    }
+                    return Err(CoreError::Provider(format!(
+                        "worker={} model={} node={} task={} elapsed_ms={} retry={} code={} detail={}",
+                        self.config.id,
+                        request.model_id,
+                        request.node_id,
+                        request.task_id,
+                        started.elapsed().as_millis(),
+                        retry,
+                        error.code,
+                        truncate(&error.message, 300)
+                    )));
+                }
+                if !status.is_success() {
+                    return Err(CoreError::Provider(format!(
+                        "worker={} model={} node={} task={} elapsed_ms={} retry={} code=http_{}",
+                        self.config.id,
+                        request.model_id,
+                        request.node_id,
+                        request.task_id,
+                        started.elapsed().as_millis(),
+                        retry,
+                        status.as_u16()
+                    )));
+                }
+                if let Some(expected) = &self.config.expected_model_identity
+                    && response.model_identity.as_deref() != Some(expected)
+                {
+                    return Err(CoreError::Provider(format!(
+                        "worker model identity mismatch: expected {expected:?}, received {:?}",
+                        response.model_identity
+                    )));
+                }
+                validate_backend_response(&request, &response)?;
+                return Ok(response);
+            }
+            if status.is_server_error() && retry < self.config.max_retries {
+                continue;
+            }
+            return Err(CoreError::Provider(format!(
+                "worker={} model={} node={} task={} elapsed_ms={} retry={} code=invalid_response detail={}",
+                self.config.id,
+                request.model_id,
+                request.node_id,
+                request.task_id,
+                started.elapsed().as_millis(),
+                retry,
+                truncate(&String::from_utf8_lossy(&detail), 300)
+            )));
+        }
+        Err(CoreError::Provider(
+            "HTTP vision retries exhausted".to_owned(),
+        ))
     }
+}
+
+pub struct DeterministicCvBackend {
+    id: String,
+    capabilities: Vec<VisionCapability>,
+    threshold: u8,
+}
+
+impl DeterministicCvBackend {
+    #[must_use]
+    pub fn new(id: impl Into<String>, capabilities: Vec<VisionCapability>, threshold: u8) -> Self {
+        Self {
+            id: id.into(),
+            capabilities,
+            threshold,
+        }
+    }
+}
+
+#[async_trait]
+impl VisionModelBackend for DeterministicCvBackend {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn kind(&self) -> VisionBackendKind {
+        VisionBackendKind::DeterministicCv
+    }
+
+    fn capabilities(&self) -> Vec<VisionCapability> {
+        self.capabilities.clone()
+    }
+
+    async fn infer(
+        &self,
+        request: VisionInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<VisionInferenceResponse> {
+        if cancellation.is_cancelled() || request.cancellation_requested {
+            return Err(CoreError::Provider("deterministic CV cancelled".to_owned()));
+        }
+        if !self.capabilities.contains(&request.operation) {
+            return Err(CoreError::Validation(format!(
+                "deterministic CV backend {:?} does not support {:?}",
+                self.id, request.operation
+            )));
+        }
+        let image = request.image.as_ref().ok_or_else(|| {
+            CoreError::Validation("deterministic CV requires an image".to_owned())
+        })?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&image.data_base64)
+            .map_err(|error| CoreError::Validation(format!("invalid image base64: {error}")))?;
+        let decoded = image::load_from_memory(&bytes)
+            .map_err(|error| CoreError::Validation(format!("invalid image: {error}")))?
+            .to_luma8();
+        let started = std::time::Instant::now();
+        let artifacts = deterministic_artifacts(self, &request, &decoded)?;
+        Ok(VisionInferenceResponse {
+            protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+            model_identity: Some(format!("{}@deterministic-v1", self.id)),
+            artifacts,
+            request_id: Some(request.request_id),
+            timings: annotagent_core::VisionBackendTimings {
+                total_ms: Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
+                ..annotagent_core::VisionBackendTimings::default()
+            },
+            ..VisionInferenceResponse::default()
+        })
+    }
+}
+
+fn deterministic_artifacts(
+    backend: &DeterministicCvBackend,
+    request: &VisionInferenceRequest,
+    image: &image::GrayImage,
+) -> CoreResult<Vec<VisionArtifact>> {
+    let (width, height) = image.dimensions();
+    let selected = image
+        .enumerate_pixels()
+        .filter(|(_, _, pixel)| pixel.0[0] >= backend.threshold)
+        .map(|(x, y, _)| (x, y))
+        .collect::<Vec<_>>();
+    let value = match request.operation {
+        VisionCapability::Classification => {
+            let total = u64::from(width).saturating_mul(u64::from(height)).max(1);
+            let bright = u64::try_from(selected.len()).unwrap_or(u64::MAX);
+            VisionArtifactValue::Classification {
+                labels: vec![LabelId::from(if bright.saturating_mul(2) >= total {
+                    "bright"
+                } else {
+                    "dark"
+                })],
+            }
+        }
+        VisionCapability::ObjectDetection => {
+            let Some(min_x) = selected.iter().map(|(x, _)| *x).min() else {
+                return Ok(Vec::new());
+            };
+            let max_x = selected.iter().map(|(x, _)| *x).max().unwrap_or(min_x);
+            let min_y = selected.iter().map(|(_, y)| *y).min().unwrap_or(0);
+            let max_y = selected.iter().map(|(_, y)| *y).max().unwrap_or(min_y);
+            VisionArtifactValue::BoundingBox {
+                rect: NormalizedRect::new(
+                    min_x as f32 / width as f32,
+                    min_y as f32 / height as f32,
+                    (max_x - min_x + 1) as f32 / width as f32,
+                    (max_y - min_y + 1) as f32 / height as f32,
+                )?,
+            }
+        }
+        VisionCapability::SemanticSegmentation => VisionArtifactValue::SemanticMask {
+            mask: MaskEncoding::CocoRle {
+                width,
+                height,
+                counts: binary_coco_rle(image, backend.threshold),
+            },
+        },
+        other => {
+            return Err(CoreError::Validation(format!(
+                "deterministic operation {other:?} is not implemented"
+            )));
+        }
+    };
+    let artifact = VisionArtifact {
+        id: ArtifactId::new(),
+        image_id: request.image_id,
+        task_id: Some(request.task_id.clone()),
+        label: None,
+        role: ArtifactRole::Candidate,
+        value,
+        source_node: request.node_id.clone(),
+        confidence: Some(1.0),
+        metadata: BTreeMap::new(),
+        validation_state: ArtifactValidationState::Unvalidated,
+        provenance: ArtifactProvenance {
+            tool: Some(format!("deterministic_cv:{}", backend.id)),
+            ..ArtifactProvenance::default()
+        },
+        revision: 1,
+        replaces_artifact_id: None,
+        created_at: chrono::Utc::now(),
+    };
+    artifact.validate()?;
+    Ok(vec![artifact])
+}
+
+fn binary_coco_rle(image: &image::GrayImage, threshold: u8) -> String {
+    let mut counts = Vec::new();
+    let mut current = false;
+    let mut count = 0_u64;
+    for x in 0..image.width() {
+        for y in 0..image.height() {
+            let selected = image.get_pixel(x, y).0[0] >= threshold;
+            if selected == current {
+                count = count.saturating_add(1);
+            } else {
+                counts.push(count);
+                count = 1;
+                current = selected;
+            }
+        }
+    }
+    counts.push(count);
+    counts
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub struct OpenAiVisionBackend {
@@ -247,6 +585,18 @@ fn validate_backend_response(
     request: &VisionInferenceRequest,
     response: &VisionInferenceResponse,
 ) -> CoreResult<()> {
+    if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION {
+        return Err(CoreError::Provider(format!(
+            "unsupported vision response protocol {}",
+            response.protocol_version
+        )));
+    }
+    if let Some(error) = &response.error {
+        return Err(CoreError::Provider(format!(
+            "vision backend error {}: {}",
+            error.code, error.message
+        )));
+    }
     for artifact in &response.artifacts {
         if artifact.image_id != request.image_id
             || artifact.task_id.as_ref() != Some(&request.task_id)
@@ -268,10 +618,15 @@ fn truncate(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, ArtifactValidationState, ImageId, LabelId, RunId, TaskId,
-        VisionArtifactValue,
+        AttributeValue, ImageId, Keypoint, ModelImage, NormalizedPoint, RelationEndpoint,
+        RelationValue, RunId, TaskId, VisionBackendError, VisionInputType, VisionModelLimits,
+        all_artifact_kinds,
     };
-    use axum::{Json, Router, routing::post};
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    use base64::Engine as _;
 
     use crate::{MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider};
 
@@ -298,8 +653,118 @@ mod tests {
         }
     }
 
+    fn artifact_value(
+        image_id: ImageId,
+        task_id: &TaskId,
+        value: VisionArtifactValue,
+    ) -> VisionArtifact {
+        VisionArtifact {
+            value,
+            ..artifact(image_id, task_id)
+        }
+    }
+
+    fn all_artifacts(image_id: ImageId, task_id: &TaskId) -> Vec<VisionArtifact> {
+        let first = ArtifactId::new();
+        let second = ArtifactId::new();
+        vec![
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Classification {
+                    labels: vec![LabelId::from("target")],
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::BoundingBox {
+                    rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("box"),
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Keypoints {
+                    points: vec![Keypoint {
+                        name: "center".to_owned(),
+                        point: NormalizedPoint::new(0.5, 0.5).expect("point"),
+                        visible: true,
+                    }],
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Polyline {
+                    points: vec![
+                        NormalizedPoint::new(0.1, 0.1).expect("point"),
+                        NormalizedPoint::new(0.9, 0.9).expect("point"),
+                    ],
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Polygon {
+                    rings: vec![vec![
+                        NormalizedPoint::new(0.1, 0.1).expect("point"),
+                        NormalizedPoint::new(0.9, 0.1).expect("point"),
+                        NormalizedPoint::new(0.5, 0.9).expect("point"),
+                    ]],
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::SemanticMask {
+                    mask: MaskEncoding::CocoRle {
+                        width: 2,
+                        height: 2,
+                        counts: "0 4".to_owned(),
+                    },
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::InstanceMask {
+                    mask: MaskEncoding::CocoRle {
+                        width: 2,
+                        height: 2,
+                        counts: "0 4".to_owned(),
+                    },
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Attributes {
+                    values: BTreeMap::from([(
+                        "verified".to_owned(),
+                        AttributeValue::Boolean(true),
+                    )]),
+                },
+            ),
+            artifact_value(
+                image_id,
+                task_id,
+                VisionArtifactValue::Relations {
+                    relations: vec![RelationValue {
+                        source: RelationEndpoint::Artifact(first),
+                        predicate: "near".to_owned(),
+                        target: RelationEndpoint::Artifact(second),
+                    }],
+                },
+            ),
+        ]
+    }
+
     fn request() -> VisionInferenceRequest {
         VisionInferenceRequest {
+            protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            operation: VisionCapability::Classification,
             run_id: RunId::new(),
             image_id: ImageId::new(),
             task_id: TaskId::from("classification"),
@@ -309,6 +774,8 @@ mod tests {
             input_artifacts: Vec::new(),
             prompt: Some("classify".to_owned()),
             parameters: BTreeMap::new(),
+            timeout_ms: Some(2_000),
+            cancellation_requested: false,
         }
     }
 
@@ -337,9 +804,34 @@ mod tests {
             Json(request): Json<VisionInferenceRequest>,
         ) -> Json<VisionInferenceResponse> {
             Json(VisionInferenceResponse {
-                artifacts: vec![artifact(request.image_id, &request.task_id)],
+                artifacts: all_artifacts(request.image_id, &request.task_id),
                 request_id: Some("worker-request".to_owned()),
                 metadata: BTreeMap::new(),
+                model_identity: Some("fixture".to_owned()),
+                ..VisionInferenceResponse::default()
+            })
+        }
+        async fn health() -> Json<VisionModelHealth> {
+            Json(VisionModelHealth {
+                status: VisionModelHealthStatus::Healthy,
+                detail: Some("fixture ready".to_owned()),
+                checked_at: None,
+            })
+        }
+        async fn capabilities() -> Json<VisionWorkerCapabilities> {
+            Json(VisionWorkerCapabilities {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                worker_id: "fixture-worker".to_owned(),
+                model_identity: "fixture".to_owned(),
+                capabilities: vec![
+                    VisionCapability::Classification,
+                    VisionCapability::ObjectDetection,
+                    VisionCapability::PromptedSegmentation,
+                    VisionCapability::SemanticSegmentation,
+                ],
+                input_types: vec![VisionInputType::Image],
+                output_types: all_artifact_kinds().to_vec(),
+                limits: VisionModelLimits::default(),
             })
         }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -347,16 +839,24 @@ mod tests {
             .expect("bind test worker");
         let address = listener.local_addr().expect("address");
         tokio::spawn(async move {
-            axum::serve(listener, Router::new().route("/infer", post(infer)))
-                .await
-                .expect("test worker");
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/health", get(health))
+                    .route("/v1/capabilities", get(capabilities))
+                    .route("/v1/infer", post(infer)),
+            )
+            .await
+            .expect("test worker");
         });
         let backend = HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
             id: "python-worker".to_owned(),
-            endpoint: format!("http://{address}/infer"),
+            endpoint: format!("http://{address}/v1/infer"),
             capabilities: vec![VisionCapability::Classification],
             request_timeout: Duration::from_secs(2),
             authorization: None,
+            expected_model_identity: Some("fixture".to_owned()),
+            max_retries: 1,
         })
         .expect("backend");
         let response = backend
@@ -364,7 +864,29 @@ mod tests {
             .await
             .expect("HTTP inference");
         assert_eq!(response.request_id.as_deref(), Some("worker-request"));
-        assert_eq!(response.artifacts.len(), 1);
+        assert_eq!(response.artifacts.len(), 9);
+        let health = backend.health().await.expect("worker health");
+        assert_eq!(health.status, VisionModelHealthStatus::Healthy);
+        let capabilities = backend
+            .discover_capabilities()
+            .await
+            .expect("worker capabilities");
+        assert_eq!(capabilities.model_identity, "fixture");
+        assert!(
+            capabilities
+                .capabilities
+                .contains(&VisionCapability::ObjectDetection)
+        );
+        assert!(
+            capabilities
+                .capabilities
+                .contains(&VisionCapability::PromptedSegmentation)
+        );
+        assert!(
+            capabilities
+                .capabilities
+                .contains(&VisionCapability::SemanticSegmentation)
+        );
     }
 
     #[tokio::test]
@@ -374,6 +896,8 @@ mod tests {
             artifacts: vec![artifact(request.image_id, &request.task_id)],
             request_id: None,
             metadata: BTreeMap::new(),
+            model_identity: Some("vision".to_owned()),
+            ..VisionInferenceResponse::default()
         };
         let provider = Arc::new(MockVisionProvider::new(MockScript {
             steps: vec![MockStep {
@@ -394,5 +918,104 @@ mod tests {
             .await
             .expect("OpenAI adapter");
         assert_eq!(response.artifacts, expected.artifacts);
+    }
+
+    #[tokio::test]
+    async fn worker_error_preserves_execution_identity_and_retry() {
+        async fn infer() -> Json<VisionInferenceResponse> {
+            Json(VisionInferenceResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                model_identity: Some("fixture".to_owned()),
+                error: Some(VisionBackendError {
+                    code: "weights_unavailable".to_owned(),
+                    message: "fixture has no weights".to_owned(),
+                    retryable: true,
+                }),
+                ..VisionInferenceResponse::default()
+            })
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind error worker");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/v1/infer", post(infer)))
+                .await
+                .expect("error worker");
+        });
+        let backend = HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
+            id: "worker-a".to_owned(),
+            endpoint: format!("http://{address}/v1/infer"),
+            capabilities: vec![VisionCapability::Classification],
+            request_timeout: Duration::from_secs(2),
+            authorization: None,
+            expected_model_identity: Some("fixture".to_owned()),
+            max_retries: 1,
+        })
+        .expect("backend");
+        let error = backend
+            .infer(request(), CancellationToken::new())
+            .await
+            .expect_err("worker error");
+        let message = error.to_string();
+        for expected in [
+            "worker=worker-a",
+            "model=model",
+            "node=classifier",
+            "task=classification",
+            "elapsed_ms=",
+            "retry=1",
+            "code=weights_unavailable",
+        ] {
+            assert!(
+                message.contains(expected),
+                "missing {expected:?}: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deterministic_cv_executes_real_pixel_algorithm() {
+        let mut pixels = image::GrayImage::new(4, 4);
+        for x in 1..=2 {
+            for y in 1..=2 {
+                pixels.put_pixel(x, y, image::Luma([255]));
+            }
+        }
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(pixels)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("PNG");
+        let mut request = request();
+        request.operation = VisionCapability::ObjectDetection;
+        request.image = Some(ModelImage {
+            id: "fixture".to_owned(),
+            mime_type: "image/png".to_owned(),
+            data_base64: base64::engine::general_purpose::STANDARD.encode(encoded.into_inner()),
+        });
+        let backend = DeterministicCvBackend::new(
+            "threshold",
+            vec![
+                VisionCapability::Classification,
+                VisionCapability::ObjectDetection,
+                VisionCapability::SemanticSegmentation,
+            ],
+            200,
+        );
+        let response = backend
+            .infer(request, CancellationToken::new())
+            .await
+            .expect("deterministic inference");
+        assert_eq!(
+            response.model_identity.as_deref(),
+            Some("threshold@deterministic-v1")
+        );
+        let VisionArtifactValue::BoundingBox { rect } = response.artifacts[0].value else {
+            panic!("expected bounding box")
+        };
+        assert_eq!(
+            rect,
+            NormalizedRect::new(0.25, 0.25, 0.5, 0.5).expect("box")
+        );
     }
 }

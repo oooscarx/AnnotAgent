@@ -147,6 +147,19 @@ impl OpenAiCompatibleProvider {
                 ),
             );
         }
+        if self.config.supports_json_schema {
+            body.insert(
+                "response_format".to_owned(),
+                json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "annotagent_constrained_action",
+                        "strict": true,
+                        "schema": json_action_schema(&request.tools)
+                    }
+                }),
+            );
+        }
         if let Some(mode) = &self.config.reasoning_mode {
             body.insert("reasoning_effort".to_owned(), json!(mode));
         }
@@ -281,7 +294,7 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 CoreError::Provider(format!("cannot read provider response: {error}"))
             })?;
             if !status.is_success() {
-                let safe = String::from_utf8_lossy(&bytes);
+                let safe = String::from_utf8_lossy(&bytes).replace(&key, "[REDACTED]");
                 return Err(CoreError::Provider(format!(
                     "provider returned {status}: {}",
                     truncate(&safe, 500)
@@ -289,7 +302,11 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             }
             let value: Value = serde_json::from_slice(&bytes)
                 .map_err(|error| CoreError::Provider(format!("invalid provider JSON: {error}")))?;
-            return parse_chat_response(&value, request_id);
+            let mut parsed = parse_chat_response(&value, request_id)?;
+            if !self.config.supports_tool_calls {
+                promote_json_action(&mut parsed, &request.tools)?;
+            }
+            return Ok(parsed);
         }
         Err(CoreError::Provider("provider retries exhausted".to_owned()))
     }
@@ -297,6 +314,62 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
 
 fn is_retriable(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn json_action_schema(tools: &[annotagent_core::ToolDefinition]) -> Value {
+    if tools.is_empty() {
+        return json!({"type": "object", "additionalProperties": false});
+    }
+    let actions = tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {"const": tool.name},
+                    "arguments": tool.parameters,
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": false,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"oneOf": actions})
+}
+
+fn promote_json_action(
+    response: &mut ModelResponse,
+    tools: &[annotagent_core::ToolDefinition],
+) -> CoreResult<()> {
+    if !response.tool_calls.is_empty() || tools.is_empty() {
+        return Ok(());
+    }
+    let content = response.content.as_deref().ok_or_else(|| {
+        CoreError::Provider("JSON-only provider returned no constrained action".to_owned())
+    })?;
+    let action: Value = serde_json::from_str(content)
+        .map_err(|error| CoreError::Provider(format!("invalid JSON-only action: {error}")))?;
+    let name = action.get("name").and_then(Value::as_str).ok_or_else(|| {
+        CoreError::Provider("JSON-only action lacks string field `name`".to_owned())
+    })?;
+    if !tools.iter().any(|tool| tool.name == name) {
+        return Err(CoreError::Provider(format!(
+            "JSON-only action selected unregistered tool {name:?}"
+        )));
+    }
+    let arguments = action
+        .get("arguments")
+        .filter(|value| value.is_object())
+        .cloned()
+        .ok_or_else(|| {
+            CoreError::Provider("JSON-only action lacks object field `arguments`".to_owned())
+        })?;
+    response.tool_calls.push(ModelToolCall {
+        id: ToolCallId::new(format!("json-action-{}", uuid::Uuid::new_v4())),
+        name: name.to_owned(),
+        arguments,
+    });
+    Ok(())
 }
 
 fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<ModelResponse> {
@@ -344,10 +417,11 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
         .pointer("/usage/completion_tokens")
         .and_then(Value::as_u64);
     let total = value.pointer("/usage/total_tokens").and_then(Value::as_u64);
-    let source = if input.is_some() || output.is_some() {
-        UsageSource::Actual
-    } else {
-        UsageSource::Unknown
+    let source = match value.pointer("/usage/source").and_then(Value::as_str) {
+        Some("estimated") => UsageSource::Estimated,
+        Some("actual") => UsageSource::Actual,
+        _ if input.is_some() || output.is_some() => UsageSource::Actual,
+        _ => UsageSource::Unknown,
     };
     Ok(ModelResponse {
         content,
@@ -442,5 +516,96 @@ mod tests {
             redact_secrets(&json!({"Authorization": "Bearer secret", "data_base64": "huge"}));
         assert_eq!(value["Authorization"], "[REDACTED]");
         assert_eq!(value["data_base64"], "[BINARY OMITTED]");
+    }
+
+    #[test]
+    fn json_only_mode_emits_a_constrained_response_schema_without_tools() {
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint: "https://provider.invalid/v1".to_owned(),
+                api_key_env: "UNUSED_TEST_KEY".to_owned(),
+                model: "json-vision".to_owned(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 1,
+                max_output_tokens: 100,
+                temperature: 0.0,
+                reasoning_mode: None,
+                supports_tool_calls: false,
+                supports_json_schema: true,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::new(),
+                max_retries: 0,
+            },
+            Some("not-sent".to_owned()),
+        )
+        .expect("provider");
+        let body = provider.request_body(&ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("classification"),
+            messages: vec![ModelMessage {
+                role: ModelRole::User,
+                content: "return one action".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+            images: Vec::new(),
+            tools: vec![annotagent_core::ToolDefinition {
+                name: "submit".to_owned(),
+                description: "submit".to_owned(),
+                parameters: json!({"type": "object"}),
+                read_only: false,
+            }],
+            max_output_tokens: 100,
+            temperature: 0.0,
+            extra: BTreeMap::new(),
+        });
+        assert!(body.get("tools").is_none());
+        assert_eq!(body["response_format"]["type"], "json_schema");
+        assert_eq!(body["response_format"]["json_schema"]["strict"], true);
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["oneOf"][0]["properties"]["name"]["const"],
+            "submit"
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["oneOf"][0]["additionalProperties"],
+            false
+        );
+
+        let mut response = ModelResponse {
+            content: Some(json!({"name": "submit", "arguments": {}}).to_string()),
+            tool_calls: Vec::new(),
+            usage: TokenUsage {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: None,
+                source: UsageSource::Unknown,
+            },
+            request_id: Some("json-request".to_owned()),
+            provider_metadata: BTreeMap::new(),
+        };
+        promote_json_action(
+            &mut response,
+            &[annotagent_core::ToolDefinition {
+                name: "submit".to_owned(),
+                description: "submit".to_owned(),
+                parameters: json!({"type": "object"}),
+                read_only: false,
+            }],
+        )
+        .expect("constrained action");
+        assert_eq!(response.tool_calls[0].name, "submit");
+    }
+
+    #[test]
+    fn usage_source_preserves_provider_estimates() {
+        let response = parse_chat_response(
+            &json!({
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3, "source": "estimated"}
+            }),
+            None,
+        )
+        .expect("response");
+        assert_eq!(response.usage.source, UsageSource::Estimated);
     }
 }

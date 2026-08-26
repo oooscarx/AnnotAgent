@@ -418,6 +418,12 @@ fn workspace_model_binding(settings: &Settings) -> ModelBinding {
         },
         role: "vision".to_owned(),
         scope: "workspace_default".to_owned(),
+        health_status: if offline { "healthy" } else { "unknown" }.to_owned(),
+        health_detail: Some(if offline {
+            "offline backend is available".to_owned()
+        } else {
+            "external provider is checked on request".to_owned()
+        }),
     }
 }
 
@@ -496,6 +502,12 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
             model: run.model.clone(),
             role: "vision".to_owned(),
             scope: "run_snapshot".to_owned(),
+            health_status: if run.status == RunStatus::Failed {
+                "degraded".to_owned()
+            } else {
+                "unknown".to_owned()
+            },
+            health_detail: run.terminal_reason.clone(),
         }],
         provider: run.provider,
         model: run.model,
@@ -1420,6 +1432,7 @@ mod tests {
             response_json(request(&service, axum::http::Method::GET, "/api/models", None).await)
                 .await;
         assert_eq!(models["models"][0]["provider"], json!("mock"));
+        assert_eq!(models["models"][0]["health_status"], json!("healthy"));
 
         let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
         assert_eq!(sse.status(), StatusCode::OK);

@@ -1134,8 +1134,41 @@ pub const fn all_artifact_kinds() -> [ArtifactKind; 9] {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use tokio_util::sync::CancellationToken;
+
     use super::*;
-    use crate::VisionNodeDescriptor;
+    use crate::{
+        CoreResult, VisionBackendKind, VisionInferenceRequest, VisionInferenceResponse,
+        VisionModelBackend, VisionNodeDescriptor,
+    };
+
+    struct ClassificationBackend;
+
+    #[async_trait]
+    impl VisionModelBackend for ClassificationBackend {
+        fn id(&self) -> &str {
+            "classification-backend"
+        }
+
+        fn kind(&self) -> VisionBackendKind {
+            VisionBackendKind::Mock
+        }
+
+        fn capabilities(&self) -> Vec<VisionCapability> {
+            vec![VisionCapability::Classification]
+        }
+
+        async fn infer(
+            &self,
+            _request: VisionInferenceRequest,
+            _cancellation: CancellationToken,
+        ) -> CoreResult<VisionInferenceResponse> {
+            Ok(VisionInferenceResponse::default())
+        }
+    }
 
     fn node(id: &str, kind: WorkflowNodeKind) -> WorkflowDraftNode {
         WorkflowDraftNode {
@@ -1267,6 +1300,63 @@ mod tests {
                 .iter()
                 .any(|issue| issue.code == "unresolved_model_binding")
         );
+    }
+
+    #[test]
+    fn model_capability_mismatch_blocks_publish() {
+        let mut vision = node("vision", WorkflowNodeKind::VisionLanguageModel);
+        vision.model_binding = Some("classifier".to_owned());
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.depends_on.push("vision".to_owned());
+        let workflow = draft(vec![vision, commit], Vec::new());
+        let mut models = ModelRegistry::new();
+        models
+            .register_backend(Arc::new(ClassificationBackend))
+            .expect("backend");
+        models
+            .register_model(VisionModelDescriptor {
+                id: "classifier".to_owned(),
+                backend_id: "classification-backend".to_owned(),
+                capabilities: vec![VisionCapability::Classification],
+                ..VisionModelDescriptor::default()
+            })
+            .expect("model");
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &workflow,
+            &catalog(&[
+                ("vision", vec![VisionCapability::VisionLanguage]),
+                ("commit", Vec::new()),
+            ]),
+            &models,
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+        );
+        assert!(!report.valid);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "model_capability_mismatch")
+        );
+    }
+
+    #[test]
+    fn model_registry_rejects_plaintext_secret_material() {
+        let mut models = ModelRegistry::new();
+        models
+            .register_backend(Arc::new(ClassificationBackend))
+            .expect("backend");
+        let error = models
+            .register_model(VisionModelDescriptor {
+                id: "unsafe-model".to_owned(),
+                backend_id: "classification-backend".to_owned(),
+                capabilities: vec![VisionCapability::Classification],
+                secret_reference: Some("plaintext-secret".to_owned()),
+                ..VisionModelDescriptor::default()
+            })
+            .expect_err("plaintext secret must be rejected");
+        assert!(error.to_string().contains("never secret material"));
     }
 
     #[test]

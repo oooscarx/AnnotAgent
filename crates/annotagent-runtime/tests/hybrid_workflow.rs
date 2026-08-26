@@ -108,6 +108,7 @@ async fn generic_hybrid_detector_segmenter_validator_review_gate_and_commit() {
             backend_id: "detector-backend".to_owned(),
             capabilities: vec![VisionCapability::ObjectDetection],
             configuration: BTreeMap::new(),
+            ..VisionModelDescriptor::default()
         })
         .expect("detector model");
     models
@@ -116,6 +117,7 @@ async fn generic_hybrid_detector_segmenter_validator_review_gate_and_commit() {
             backend_id: "segmenter-backend".to_owned(),
             capabilities: vec![VisionCapability::PromptedSegmentation],
             configuration: BTreeMap::new(),
+            ..VisionModelDescriptor::default()
         })
         .expect("segmenter model");
 
@@ -251,6 +253,7 @@ export: {formats: [native]}
             backend_id: "vlm-backend".to_owned(),
             capabilities: vec![VisionCapability::VisionLanguage],
             configuration: BTreeMap::new(),
+            ..VisionModelDescriptor::default()
         })
         .expect("model");
     let suggestion = RegistryWorkflowAdvisor.suggest_workflow(

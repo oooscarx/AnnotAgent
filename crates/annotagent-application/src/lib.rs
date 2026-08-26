@@ -9,7 +9,8 @@ use std::{
 use annotagent_core::{
     ArtifactKind, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry, PricingConfig,
     ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, VisionCapability, VisionModelDescriptor,
+    RunEventKind, RunEventPayload, RunId, RunStatus, VisionCapability, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
     VisionModelProvider, VisionNodeDescriptor, WorkflowAdvisor, WorkflowConstraints, WorkflowDraft,
     WorkflowDraftStatus, WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion,
     WorkflowValidationReport, all_artifact_kinds,
@@ -102,6 +103,8 @@ pub struct ModelBinding {
     pub model: String,
     pub role: String,
     pub scope: String,
+    pub health_status: String,
+    pub health_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -239,12 +242,39 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     )))?;
     models.register_model(VisionModelDescriptor {
         id: "default-vision".to_owned(),
+        display_name: "Workspace default vision model".to_owned(),
         backend_id: "workspace-provider-adapter".to_owned(),
         capabilities: vec![VisionCapability::VisionLanguage],
+        input_types: vec![VisionInputType::Image, VisionInputType::Text],
+        output_types: all_artifact_kinds().to_vec(),
+        model: settings.provider.model.clone(),
+        model_version: "provider-managed".to_owned(),
+        endpoint_or_path: Some(settings.provider.endpoint.clone()),
+        health: VisionModelHealth {
+            status: if settings.default_provider == "mock" {
+                VisionModelHealthStatus::Healthy
+            } else {
+                VisionModelHealthStatus::Unknown
+            },
+            detail: Some(if settings.default_provider == "mock" {
+                "offline deterministic fixture available".to_owned()
+            } else {
+                "configured; health is verified on the next request".to_owned()
+            }),
+            checked_at: Some(chrono::Utc::now()),
+        },
+        limits: VisionModelLimits {
+            max_images: Some(1),
+            timeout_seconds: Some(settings.provider.request_timeout_seconds),
+            ..VisionModelLimits::default()
+        },
+        secret_reference: (settings.default_provider != "mock")
+            .then(|| format!("env:{}", settings.provider.api_key_env)),
         configuration: BTreeMap::from([
             ("provider".to_owned(), json!(settings.default_provider)),
             ("model".to_owned(), json!(settings.provider.model)),
         ]),
+        ..VisionModelDescriptor::default()
     })?;
 
     let mut nodes = NodeRegistry::new();
@@ -594,6 +624,12 @@ impl LocalApplication {
                     model: run.model.clone(),
                     role: "vision".to_owned(),
                     scope: "latest_run".to_owned(),
+                    health_status: if run.status == RunStatus::Failed {
+                        "degraded".to_owned()
+                    } else {
+                        "unknown".to_owned()
+                    },
+                    health_detail: Some("health at execution time was not recorded".to_owned()),
                 }]
             })
             .unwrap_or_default();

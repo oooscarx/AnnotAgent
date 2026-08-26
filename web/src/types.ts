@@ -44,6 +44,8 @@ export interface ModelBinding {
   model: string;
   role: string;
   scope: string;
+  health_status: "healthy" | "degraded" | "unavailable" | "unknown";
+  health_detail?: string;
 }
 
 export interface WorkflowNodeSummary {

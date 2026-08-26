@@ -99,7 +99,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [Hybrid vision execution](docs/HYBRID_VISION.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [Hybrid vision execution](docs/HYBRID_VISION.md), [Vision worker protocol](docs/VISION_WORKER_PROTOCOL.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

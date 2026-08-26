@@ -131,6 +131,13 @@ impl<'a> HybridWorkflowExecutor<'a> {
                     let response = backend
                         .infer(
                             VisionInferenceRequest {
+                                protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION,
+                                request_id: format!("{}-{}", request.run_id, node.id),
+                                operation: descriptor
+                                    .required_capabilities
+                                    .first()
+                                    .copied()
+                                    .unwrap_or(annotagent_core::VisionCapability::VisionLanguage),
                                 run_id: request.run_id,
                                 image_id: request.image_id,
                                 task_id: request.task_id.clone(),
@@ -140,6 +147,8 @@ impl<'a> HybridWorkflowExecutor<'a> {
                                 input_artifacts: inputs,
                                 prompt: None,
                                 parameters: node.parameters.clone(),
+                                timeout_ms: None,
+                                cancellation_requested: false,
                             },
                             cancellation.clone(),
                         )
