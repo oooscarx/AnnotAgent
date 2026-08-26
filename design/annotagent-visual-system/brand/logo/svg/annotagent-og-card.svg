@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img">
+<title>AnnotAgent social card</title>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111F"/><stop offset="1" stop-color="#102A43"/></linearGradient>
+  <linearGradient id="aaGradient" x1="24" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop stop-color="#00B3A4"/><stop offset=".48" stop-color="#2563EB"/><stop offset="1" stop-color="#7C3AED"/></linearGradient>
+  <radialGradient id="glow"><stop stop-color="#00B3A4" stop-opacity=".28"/><stop offset="1" stop-color="#00B3A4" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="1000" cy="80" r="360" fill="url(#glow)"/>
+<g opacity=".16" stroke="#7DD3FC" stroke-width="1"><path d="M0 30H1200"/><path d="M0 70H1200"/><path d="M0 110H1200"/><path d="M0 150H1200"/><path d="M0 190H1200"/><path d="M0 230H1200"/><path d="M0 270H1200"/><path d="M0 310H1200"/><path d="M0 350H1200"/><path d="M0 390H1200"/><path d="M0 430H1200"/><path d="M0 470H1200"/><path d="M0 510H1200"/><path d="M0 550H1200"/><path d="M0 590H1200"/><path d="M0 0V630"/><path d="M40 0V630"/><path d="M80 0V630"/><path d="M120 0V630"/><path d="M160 0V630"/><path d="M200 0V630"/><path d="M240 0V630"/><path d="M280 0V630"/><path d="M320 0V630"/><path d="M360 0V630"/><path d="M400 0V630"/><path d="M440 0V630"/><path d="M480 0V630"/><path d="M520 0V630"/><path d="M560 0V630"/><path d="M600 0V630"/><path d="M640 0V630"/><path d="M680 0V630"/><path d="M720 0V630"/><path d="M760 0V630"/><path d="M800 0V630"/><path d="M840 0V630"/><path d="M880 0V630"/><path d="M920 0V630"/><path d="M960 0V630"/><path d="M1000 0V630"/><path d="M1040 0V630"/><path d="M1080 0V630"/><path d="M1120 0V630"/><path d="M1160 0V630"/></g>
+<g transform="translate(90 135) scale(2.35)">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M33 14H22a8 8 0 0 0-8 8v11" stroke="#FFFFFF" stroke-width="7"/>
+        <path d="M95 14h11a8 8 0 0 1 8 8v11" stroke="#FFFFFF" stroke-width="7"/>
+        <path d="M14 95v11a8 8 0 0 0 8 8h11" stroke="#2DD4BF" stroke-width="7"/>
+        <path d="M114 95v11a8 8 0 0 1-8 8H95" stroke="#A78BFA" stroke-width="7"/>
+      </g>
+      <path fill="url(#aaGradient)" fill-rule="evenodd" d="M36 99 59.5 31.5C61.2 26.6 64.6 24 69.8 24h5.1c5.1 0 8.6 2.7 10.3 7.5L109 99H86.4l-6.7-20.3H54.4L47.9 99H36Zm25.1-41.1h12.2l-6-18.1-6.2 18.1Z"/>
+      <path d="M55.3 77.8h23.6" stroke="rgba(255,255,255,.72)" stroke-width="3" stroke-linecap="round"/>
+    </g>
+<text x="430" y="275" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="100" font-weight="750" letter-spacing="-4"><tspan fill="white">Annot</tspan><tspan fill="#00B3A4">Agent</tspan></text>
+<text x="438" y="337" font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="550" fill="#CBD5E1">Agentic annotation · deterministic validation · human review</text>
+<g transform="translate(438 395)">
+ <rect width="202" height="48" rx="24" fill="#0F2A45" stroke="#2DD4BF" stroke-opacity=".5"/>
+ <circle cx="25" cy="24" r="6" fill="#2DD4BF"/><text x="44" y="31" font-family="Inter, sans-serif" font-size="20" fill="white">AnnotAgent Core</text>
+ <g transform="translate(224 0)"><rect width="214" height="48" rx="24" fill="#0F2A45" stroke="#A78BFA" stroke-opacity=".5"/><circle cx="25" cy="24" r="6" fill="#A78BFA"/><text x="44" y="31" font-family="Inter, sans-serif" font-size="20" fill="white">RoboCup Skill</text></g>
+</g>
+<text x="92" y="574" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="21" fill="#94A3B8">MODEL -> TOOL -> VALIDATOR → REVIEW → COMMIT</text>
+</svg>

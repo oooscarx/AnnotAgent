@@ -1,0 +1,4 @@
+┌─          ─┐
+      /\       AnnotAgent
+     /__\      Agentic annotation · auditable by design
+└─          ─┘

@@ -1,0 +1,21 @@
+{
+  "name": "AnnotAgent Visual System",
+  "version": "1.0.0",
+  "canonical_sources": [
+    "tokens/tokens.json",
+    "tokens/tokens.css",
+    "brand/logo/svg/"
+  ],
+  "reference_only": [
+    "reference/annotagent-ai-moodboard.png",
+    "reference/robocup-annotagent-ai-moodboard.png"
+  ],
+  "products": {
+    "core": "AnnotAgent",
+    "default_skill_product": "RoboCup AnnotAgent"
+  },
+  "font_files_included": false,
+  "installer": "codex/install_visual_system.py",
+  "codex_skill": "codex/skill/annotagent-visual-system/SKILL.md",
+  "codex_prompt": "codex/CODEX-PROMPT.md"
+}

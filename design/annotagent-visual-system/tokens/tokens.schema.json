@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnnotAgent design tokens",
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "color",
+    "typography"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "color": {
+      "type": "object"
+    },
+    "typography": {
+      "type": "object"
+    },
+    "spacing": {
+      "type": "object"
+    },
+    "radius": {
+      "type": "object"
+    },
+    "shadow": {
+      "type": "object"
+    },
+    "motion": {
+      "type": "object"
+    },
+    "layout": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

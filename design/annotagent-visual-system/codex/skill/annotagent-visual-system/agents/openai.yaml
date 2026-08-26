@@ -1,0 +1,9 @@
+interface:
+  display_name: "AnnotAgent Visual System"
+  short_description: "Apply the AnnotAgent brand, tokens, GUI, and TUI visual rules."
+  icon_small: "./assets/annotagent-mark.svg"
+  icon_large: "./assets/annotagent-app-icon-512.png"
+  brand_color: "#2563EB"
+  default_prompt: "Apply the AnnotAgent visual system to this repository without changing functional behavior."
+policy:
+  allow_implicit_invocation: true
