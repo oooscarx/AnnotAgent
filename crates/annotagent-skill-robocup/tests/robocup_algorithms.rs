@@ -192,7 +192,7 @@ async fn team_color_tool_and_validator_report_conflict() {
         )
         .await
         .expect("team color evidence");
-    assert_eq!(tool_result.data["recommendation"], "red");
+    assert_eq!(tool_result.model_result["recommendation"], "red");
 
     let mut candidate = annotation(
         "robot",

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
+    project_id TEXT,
     project_name TEXT NOT NULL,
     skill_id TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -42,11 +43,34 @@ CREATE TABLE IF NOT EXISTS runs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS active_project_runs (
+    project_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    idempotency_key TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_start_requests (
+    project_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS run_images (
     run_id TEXT NOT NULL,
     image_id TEXT NOT NULL,
     status TEXT NOT NULL,
     PRIMARY KEY(run_id, image_id)
+);
+CREATE TABLE IF NOT EXISTS task_runs (
+    run_id TEXT NOT NULL,
+    image_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(run_id, image_id, task_id)
 );
 CREATE TABLE IF NOT EXISTS run_steps (
     id TEXT PRIMARY KEY,
@@ -79,6 +103,16 @@ CREATE TABLE IF NOT EXISTS model_calls (
     completed_at TEXT NOT NULL,
     duration_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS model_messages (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    image_id TEXT,
+    task_id TEXT,
+    message_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_messages_run_sequence
+ON model_messages(run_id, sequence);
 CREATE TABLE IF NOT EXISTS tool_calls (
     call_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
@@ -88,6 +122,18 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     error TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS vision_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    image_id TEXT NOT NULL,
+    task_id TEXT,
+    source_node TEXT NOT NULL,
+    validation_state TEXT NOT NULL,
+    artifact_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vision_artifacts_run
+ON vision_artifacts(run_id, created_at);
 CREATE TABLE IF NOT EXISTS annotations (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
@@ -152,4 +198,22 @@ CREATE TABLE IF NOT EXISTS settings_metadata (
     updated_at TEXT NOT NULL,
     CHECK (lower(key) NOT LIKE '%api_key%' AND lower(key) NOT LIKE '%secret%')
 );
-
+CREATE TABLE IF NOT EXISTS workflow_drafts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    draft_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_drafts_project_updated
+ON workflow_drafts(project_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS workflow_versions (
+    workflow_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    project_id TEXT NOT NULL,
+    source_draft_id TEXT NOT NULL,
+    version_json TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    PRIMARY KEY(workflow_id, version)
+);

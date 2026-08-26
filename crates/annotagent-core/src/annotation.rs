@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnnotationId, AnnotationRevisionId, CoreError, CoreResult, ImageId, LabelId, NormalizedPoint,
-    NormalizedRect, RunStepId, TaskId,
+    AnnotationId, AnnotationRevisionId, ArtifactId, CoreError, CoreResult, ImageId, LabelId,
+    NormalizedPoint, NormalizedRect, RunStepId, TaskId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +171,8 @@ pub struct AnnotationProvenance {
     pub model: Option<String>,
     pub tool_names: Vec<String>,
     pub parent_annotation_id: Option<AnnotationId>,
+    #[serde(default)]
+    pub artifact_ids: Vec<ArtifactId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

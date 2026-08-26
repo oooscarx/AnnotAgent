@@ -13,8 +13,12 @@ dataset:
   recursive: true
 runtime:
   max_parallel_images: 2
-  max_agent_steps_per_image: 10
-  max_retries_per_task: 3
+  max_model_turns_per_task: 8
+  max_tool_calls_per_task: 12
+  max_recovery_turns_per_task: 2
+  task_timeout_seconds: 300
+  provider_request_timeout_seconds: 120
+  max_retries: 3
   auto_resume: true
 tasks:
   - id: scene_type

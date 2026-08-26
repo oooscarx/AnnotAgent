@@ -41,11 +41,13 @@ impl ContextManager {
                 skill.manifest().description
             ),
             tool_call_id: None,
+            tool_calls: Vec::new(),
         }];
         messages.extend(resources.into_iter().map(|resource| ModelMessage {
             role: ModelRole::System,
             content: format!("Skill resource {}:\n{}", resource.name, resource.content),
             tool_call_id: None,
+            tool_calls: Vec::new(),
         }));
         messages.push(ModelMessage {
             role: ModelRole::User,
@@ -73,6 +75,7 @@ impl ContextManager {
                 usage.output_tokens,
             ),
             tool_call_id: None,
+            tool_calls: Vec::new(),
         });
         Ok(messages)
     }
@@ -83,6 +86,7 @@ impl ContextManager {
             role: ModelRole::Tool,
             content: format!("{name}: {summary}"),
             tool_call_id: None,
+            tool_calls: Vec::new(),
         }
     }
 }

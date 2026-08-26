@@ -167,9 +167,35 @@ fn message_json(message: &ModelMessage) -> Value {
         ModelRole::Assistant => "assistant",
         ModelRole::Tool => "tool",
     };
-    let mut value = json!({"role": role, "content": message.content});
+    let content = if message.role == ModelRole::Assistant
+        && message.content.is_empty()
+        && !message.tool_calls.is_empty()
+    {
+        Value::Null
+    } else {
+        json!(message.content)
+    };
+    let mut value = json!({"role": role, "content": content});
     if let Some(call_id) = &message.tool_call_id {
         value["tool_call_id"] = json!(call_id.as_str());
+    }
+    if !message.tool_calls.is_empty() {
+        value["tool_calls"] = Value::Array(
+            message
+                .tool_calls
+                .iter()
+                .map(|call| {
+                    json!({
+                        "id": call.id.as_str(),
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments.to_string()
+                        }
+                    })
+                })
+                .collect(),
+        );
     }
     value
 }
@@ -386,6 +412,28 @@ mod tests {
         .expect("valid response");
         assert_eq!(response.tool_calls[0].arguments["id"], 1);
         assert_eq!(response.usage.total_tokens, Some(15));
+    }
+
+    #[test]
+    fn serializes_assistant_tool_call_history_for_follow_up_turns() {
+        let message = ModelMessage {
+            role: ModelRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::new("call-1"),
+                name: "refine_line".to_owned(),
+                arguments: json!({"points": [[0.1, 0.2], [0.8, 0.2]]}),
+            }],
+        };
+        let value = message_json(&message);
+        assert!(value["content"].is_null());
+        assert_eq!(value["tool_calls"][0]["id"], "call-1");
+        assert_eq!(value["tool_calls"][0]["function"]["name"], "refine_line");
+        assert_eq!(
+            value["tool_calls"][0]["function"]["arguments"],
+            json!({"points": [[0.1, 0.2], [0.8, 0.2]]}).to_string()
+        );
     }
 
     #[test]

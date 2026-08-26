@@ -34,10 +34,10 @@ impl AgentTool for DummyTool {
         _context: &ToolContext,
         arguments: serde_json::Value,
     ) -> CoreResult<ToolResult> {
-        Ok(ToolResult {
-            summary: "classification submitted".to_owned(),
-            data: arguments,
-        })
+        Ok(ToolResult::structured(
+            "classification submitted",
+            arguments,
+        ))
     }
 }
 
@@ -165,5 +165,5 @@ async fn external_skill_registers_and_executes_without_runtime_changes() {
         )
         .await
         .expect("dummy classification executes");
-    assert_eq!(result.data["label"], "bright");
+    assert_eq!(result.model_result["label"], "bright");
 }

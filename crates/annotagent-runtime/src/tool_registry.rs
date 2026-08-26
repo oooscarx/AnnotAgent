@@ -54,6 +54,13 @@ impl ToolRegistry {
             .collect()
     }
 
+    #[must_use]
+    pub fn is_read_only(&self, name: &str) -> bool {
+        self.tools
+            .get(name)
+            .is_some_and(|tool| tool.definition().read_only)
+    }
+
     pub async fn execute(
         &self,
         name: &str,

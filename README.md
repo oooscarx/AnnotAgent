@@ -23,7 +23,7 @@ A Project is one concrete annotation effort. It owns a Dataset and Annotation Sc
 
 ## 3. Workflow
 
-A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page shows the actual configured task graph, its binding, validation state, and published compatibility version. Arbitrary drafts, immutable published snapshots, version selection, LLM suggestion, editing, dry runs, and publishing are designed but not yet executed by Runtime; disabled controls say so explicitly.
+A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static Dry Run validation, and immutable published snapshots. The generic hybrid executor can run registered model backends, validators, review gates, and commits; the existing Project task graph remains the default production Run definition until a published Draft is explicitly selected in a future version.
 
 ## 4. Model
 
@@ -35,7 +35,7 @@ A Skill contributes domain nodes, validators, refiners, prompt resources, Workfl
 
 ## 6. Review
 
-Models only submit candidates. Rust validation and review policy determine whether a candidate is committed, retried, or queued. Human edits append revisions instead of overwriting history, and the trace exposes execution events without hidden chain-of-thought.
+Models select registered actions and may submit candidates or operate on stable Artifact references. Rust validation and review policy determine whether a candidate is committed, retried, completed empty, or queued. Human edits append revisions instead of overwriting history, and the trace exposes model/tool/Artifact events without hidden chain-of-thought.
 
 ## 7. Example Application: RoboCup Perception
 
@@ -99,7 +99,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [Hybrid vision execution](docs/HYBRID_VISION.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{AnnotationId, EventId, ImageId, RunId, TaskId, ToolCallId, UsageTotals};
+use crate::{AnnotationId, ArtifactId, EventId, ImageId, RunId, TaskId, ToolCallId, UsageTotals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,29 +11,52 @@ pub enum RunStatus {
     Pending,
     Running,
     Paused,
-    AwaitingReview,
     Completed,
+    #[serde(alias = "awaiting_review")]
+    CompletedWithReview,
+    Partial,
     Cancelled,
     BudgetExceeded,
     Failed,
+    Interrupted,
 }
 
 impl RunStatus {
     #[must_use]
     pub const fn can_transition_to(self, next: Self) -> bool {
         use RunStatus::{
-            AwaitingReview, BudgetExceeded, Cancelled, Completed, Failed, Paused, Pending, Running,
+            BudgetExceeded, Cancelled, Completed, CompletedWithReview, Failed, Interrupted,
+            Partial, Paused, Pending, Running,
         };
         matches!(
             (self, next),
             (Pending | Paused, Running | Cancelled)
                 | (
                     Running,
-                    Paused | AwaitingReview | Completed | Cancelled | BudgetExceeded | Failed
+                    Paused
+                        | Completed
+                        | CompletedWithReview
+                        | Partial
+                        | Cancelled
+                        | BudgetExceeded
+                        | Failed
+                        | Interrupted
                 )
-                | (AwaitingReview, Running | Completed | Cancelled)
         )
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRunStatus {
+    Pending,
+    Running,
+    Succeeded,
+    SucceededEmpty,
+    NeedsReview,
+    Skipped,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,14 +67,19 @@ pub enum RunEventKind {
     ImageQueued,
     ImageStarted,
     TaskStarted,
+    TaskCompleted,
     SkillResourceLoaded,
     ModelCallStarted,
     ModelCallCompleted,
+    ModelCallFailed,
     ToolCallStarted,
     ToolCallCompleted,
     ValidationCompleted,
     RefinementStarted,
     RefinementCompleted,
+    ArtifactCreated,
+    ArtifactValidated,
+    ArtifactCommitted,
     RetryScheduled,
     AnnotationDrafted,
     AnnotationCommitted,
@@ -64,6 +92,7 @@ pub enum RunEventKind {
     ImageCompleted,
     RunCompleted,
     RunFailed,
+    RunInterrupted,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -95,6 +124,20 @@ pub enum RunEventPayload {
     },
     Annotation {
         annotation_ids: Vec<AnnotationId>,
+        summary: String,
+    },
+    Artifact {
+        artifact_ids: Vec<ArtifactId>,
+        summary: String,
+    },
+    ProviderFailure {
+        task_id: TaskId,
+        node_id: String,
+        provider: String,
+        model: String,
+        elapsed_ms: u64,
+        retry_count: u32,
+        error_code: String,
         summary: String,
     },
     Usage {

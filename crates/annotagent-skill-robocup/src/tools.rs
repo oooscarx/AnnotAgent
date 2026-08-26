@@ -1,6 +1,7 @@
 use annotagent_core::{
-    AgentTool, CoreError, CoreResult, NormalizedPoint, NormalizedRect, ToolContext, ToolDefinition,
-    ToolResult,
+    AgentTool, ArtifactId, ArtifactProvenance, ArtifactRole, ArtifactValidationState, CoreError,
+    CoreResult, LabelId, NormalizedPoint, NormalizedRect, ToolContext, ToolDefinition, ToolResult,
+    VisionArtifact, VisionArtifactValue,
 };
 use annotagent_image_tools::color_statistics;
 use async_trait::async_trait;
@@ -52,13 +53,56 @@ impl AgentTool for RoboCupFieldLineTool {
             .ok_or_else(|| CoreError::Tool("current image is unavailable".to_owned()))?;
         let (points, support, continuity) =
             refine_points(image, &input.points, None, 12, 12, 0.62)?;
-        Ok(ToolResult {
-            summary: format!(
-                "refined {} points; support={support:.3}, continuity={continuity:.3}",
-                points.len()
+        let image_id = context
+            .image_id
+            .ok_or_else(|| CoreError::Tool("current image id is unavailable".to_owned()))?;
+        let original_id = ArtifactId::new();
+        let original = VisionArtifact {
+            id: original_id,
+            image_id,
+            task_id: context.task_id.clone(),
+            label: Some(LabelId::from("white_field_line")),
+            role: ArtifactRole::Candidate,
+            value: VisionArtifactValue::Polyline {
+                points: input.points,
+            },
+            source_node: "refine_robocup_field_line.input".to_owned(),
+            confidence: None,
+            metadata: BTreeMap::default(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            provenance: ArtifactProvenance::default(),
+            created_at: chrono::Utc::now(),
+        };
+        let refined = VisionArtifact {
+            id: ArtifactId::new(),
+            image_id,
+            task_id: context.task_id.clone(),
+            label: Some(LabelId::from("white_field_line")),
+            role: ArtifactRole::RefinedCandidate,
+            value: VisionArtifactValue::Polyline { points },
+            source_node: "refine_robocup_field_line".to_owned(),
+            confidence: Some(f32::midpoint(support, continuity)),
+            metadata: [
+                ("pixel_support".to_owned(), json!(support)),
+                ("continuity".to_owned(), json!(continuity)),
+            ]
+            .into_iter()
+            .collect(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            provenance: ArtifactProvenance {
+                tool: Some("refine_robocup_field_line".to_owned()),
+                input_artifact_ids: vec![original_id],
+                ..ArtifactProvenance::default()
+            },
+            created_at: chrono::Utc::now(),
+        };
+        Ok(ToolResult::with_artifacts(
+            format!(
+                "created original and refined polyline artifacts; support={support:.3}, continuity={continuity:.3}"
             ),
-            data: json!({"points": points, "pixel_support": support, "continuity": continuity}),
-        })
+            vec![original, refined],
+            &json!({"pixel_support": support, "continuity": continuity}),
+        ))
     }
 }
 
@@ -84,19 +128,19 @@ impl AgentTool for BallEvidenceTool {
             .as_deref()
             .ok_or_else(|| CoreError::Tool("current image is unavailable".to_owned()))?;
         let statistics = color_statistics(image, rect)?;
-        Ok(ToolResult {
-            summary: format!(
+        Ok(ToolResult::structured(
+            format!(
                 "ball crop white_ratio={:.3}, aspect_ratio={:.3}, relative_area={:.5}",
                 statistics.white_ratio,
                 rect.width() / rect.height(),
                 rect.area()
             ),
-            data: json!({
+            json!({
                 "white_ratio": statistics.white_ratio,
                 "aspect_ratio": rect.width() / rect.height(),
                 "relative_area": rect.area()
             }),
-        })
+        ))
     }
 }
 
@@ -132,17 +176,17 @@ impl AgentTool for TeamColorEvidenceTool {
         } else {
             "unknown"
         };
-        Ok(ToolResult {
-            summary: format!(
+        Ok(ToolResult::structured(
+            format!(
                 "torso evidence red={:.3}, blue={:.3}, recommendation={recommendation}",
                 statistics.red_ratio, statistics.blue_ratio
             ),
-            data: json!({
+            json!({
                 "red_ratio": statistics.red_ratio,
                 "blue_ratio": statistics.blue_ratio,
                 "recommendation": recommendation
             }),
-        })
+        ))
     }
 }
 
@@ -177,3 +221,4 @@ fn parse_bbox(arguments: Value) -> CoreResult<NormalizedRect> {
         .map(|input| input.bbox)
         .map_err(|error| CoreError::Tool(format!("invalid bbox arguments: {error}")))
 }
+use std::collections::BTreeMap;

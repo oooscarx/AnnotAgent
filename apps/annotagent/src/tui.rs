@@ -159,7 +159,10 @@ impl TuiState {
             RunEventPayload::Validation { issue_codes, .. } => {
                 self.push(format!("validation: {}", issue_codes.join(", ")));
             }
-            RunEventPayload::Annotation { summary, .. } | RunEventPayload::Message { summary } => {
+            RunEventPayload::Annotation { summary, .. }
+            | RunEventPayload::Artifact { summary, .. }
+            | RunEventPayload::ProviderFailure { summary, .. }
+            | RunEventPayload::Message { summary } => {
                 self.push(format!("{:?}: {summary}", event.kind));
             }
             RunEventPayload::Progress {
@@ -173,11 +176,13 @@ impl TuiState {
     async fn collect_finished(&mut self) {
         if matches!(
             self.status,
-            RunStatus::AwaitingReview
+            RunStatus::CompletedWithReview
                 | RunStatus::Completed
+                | RunStatus::Partial
                 | RunStatus::Cancelled
                 | RunStatus::BudgetExceeded
                 | RunStatus::Failed
+                | RunStatus::Interrupted
         ) && let Some(active) = self.active.take()
         {
             match self.application.wait_run(active.run_id).await {
@@ -557,10 +562,12 @@ fn status_label(status: RunStatus) -> &'static str {
         RunStatus::Pending => "Draft",
         RunStatus::Running => "Running",
         RunStatus::Paused => "Paused",
-        RunStatus::AwaitingReview => "Needs review",
-        RunStatus::Completed => "Auto accepted",
+        RunStatus::CompletedWithReview => "Completed with review",
+        RunStatus::Partial => "Partial",
+        RunStatus::Completed => "Completed",
         RunStatus::Cancelled => "Rejected",
         RunStatus::BudgetExceeded | RunStatus::Failed => "Failed",
+        RunStatus::Interrupted => "Interrupted",
     }
 }
 
@@ -569,8 +576,11 @@ fn status_tone(status: RunStatus) -> StatusTone {
         RunStatus::Pending => StatusTone::Neutral,
         RunStatus::Running | RunStatus::Paused => StatusTone::Running,
         RunStatus::Completed => StatusTone::Success,
-        RunStatus::AwaitingReview => StatusTone::Warning,
-        RunStatus::Cancelled | RunStatus::BudgetExceeded | RunStatus::Failed => StatusTone::Danger,
+        RunStatus::CompletedWithReview | RunStatus::Partial => StatusTone::Warning,
+        RunStatus::Cancelled
+        | RunStatus::BudgetExceeded
+        | RunStatus::Failed
+        | RunStatus::Interrupted => StatusTone::Danger,
     }
 }
 
@@ -643,8 +653,11 @@ mod tests {
     #[test]
     fn status_labels_are_not_color_only() {
         assert_eq!(status_label(RunStatus::Pending), "Draft");
-        assert_eq!(status_label(RunStatus::AwaitingReview), "Needs review");
-        assert_eq!(status_label(RunStatus::Completed), "Auto accepted");
+        assert_eq!(
+            status_label(RunStatus::CompletedWithReview),
+            "Completed with review"
+        );
+        assert_eq!(status_label(RunStatus::Completed), "Completed");
         assert_eq!(status_label(RunStatus::Failed), "Failed");
     }
 }

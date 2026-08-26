@@ -12,13 +12,13 @@ use std::{
 };
 
 use annotagent_application::{
-    AnnotAgentApplication, LocalApplication, ModelBinding, ProjectSummary, Settings,
-    WorkflowVersion, stable_project_id,
+    ActiveRunExists, AnnotAgentApplication, LocalApplication, ModelBinding, ProjectSummary,
+    Settings, WorkflowVersion, stable_project_id,
 };
 use annotagent_core::{
     Annotation, AnnotationId, CorrectionFeatures, CorrectionRecord, DatasetExporter, ExportRequest,
     LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId, RunStatus, SnapshotImage,
-    UsageTotals,
+    UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -29,7 +29,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response, Sse, sse::Event},
     routing::{get, patch, post},
 };
@@ -191,39 +191,46 @@ fn persist_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
 #[derive(Debug)]
 struct ApiError {
     status: StatusCode,
-    message: String,
+    body: Value,
 }
 
 impl ApiError {
     fn bad_request(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            message: error.to_string(),
+            body: json!({"error": error.to_string(), "status": StatusCode::BAD_REQUEST.as_u16()}),
         }
     }
 
     fn not_found(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
-            message: error.to_string(),
+            body: json!({"error": error.to_string(), "status": StatusCode::NOT_FOUND.as_u16()}),
         }
     }
 
     fn internal(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
+            body: json!({"error": error.to_string(), "status": StatusCode::INTERNAL_SERVER_ERROR.as_u16()}),
+        }
+    }
+
+    fn active_run(conflict: &ActiveRunExists) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": "active_run_exists",
+                "active_run_id": conflict.active_run_id,
+                "status": conflict.status,
+            }),
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({"error": self.message, "status": self.status.as_u16()})),
-        )
-            .into_response()
+        (self.status, Json(self.body)).into_response()
     }
 }
 
@@ -236,6 +243,20 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/skills/{skill_id}", get(get_skill))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/workflows", get(list_workflows))
+        .route("/api/workflow-drafts", get(list_workflow_drafts))
+        .route("/api/workflow-drafts/suggest", post(suggest_workflow))
+        .route(
+            "/api/workflow-drafts/{draft_id}",
+            patch(save_workflow_draft),
+        )
+        .route(
+            "/api/workflow-drafts/{draft_id}/dry-run",
+            post(dry_run_workflow),
+        )
+        .route(
+            "/api/workflow-drafts/{draft_id}/publish",
+            post(publish_workflow),
+        )
         .route("/api/models", get(list_models))
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
@@ -434,6 +455,7 @@ struct RunSummary {
     provider: String,
     model: String,
     status: RunStatus,
+    controllable: bool,
     input_tokens: u64,
     output_tokens: u64,
     cost: String,
@@ -461,6 +483,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     for record in &usage {
         totals.add(record);
     }
+    let controllable = state.application.is_run_controllable(run.id);
     Ok(RunSummary {
         id: run.id,
         project_name: run.project_name,
@@ -477,6 +500,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
         provider: run.provider,
         model: run.model,
         status: run.status,
+        controllable,
         input_tokens: totals.input_tokens,
         output_tokens: totals.output_tokens,
         cost: totals.cost.to_string(),
@@ -551,6 +575,82 @@ async fn list_workflows(State(state): State<ServerState>) -> ApiResult<Json<Valu
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({"workflows": workflows})))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowDraftQuery {
+    project_id: Option<String>,
+}
+
+async fn list_workflow_drafts(
+    State(state): State<ServerState>,
+    Query(query): Query<WorkflowDraftQuery>,
+) -> ApiResult<Json<Value>> {
+    let drafts = state
+        .application
+        .list_workflow_drafts(query.project_id.as_deref())
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"drafts": drafts})))
+}
+
+#[derive(Debug, Deserialize)]
+struct SuggestWorkflowRequest {
+    project_id: String,
+    #[serde(default)]
+    constraints: WorkflowConstraints,
+}
+
+async fn suggest_workflow(
+    State(state): State<ServerState>,
+    Json(request): Json<SuggestWorkflowRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let settings = state.settings.read().await.clone();
+    let suggestion = state
+        .application
+        .suggest_workflow(&request.project_id, &settings, &request.constraints)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(suggestion))))
+}
+
+async fn save_workflow_draft(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+    Json(mut draft): Json<WorkflowDraft>,
+) -> ApiResult<Json<Value>> {
+    if draft.id != draft_id {
+        return Err(ApiError::bad_request(
+            "draft id in the path must match the request body",
+        ));
+    }
+    draft = state
+        .application
+        .save_workflow_draft(draft)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(draft)))
+}
+
+async fn dry_run_workflow(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let settings = state.settings.read().await.clone();
+    let report = state
+        .application
+        .dry_run_workflow(&draft_id, &settings)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(report)))
+}
+
+async fn publish_workflow(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let settings = state.settings.read().await.clone();
+    let version = state
+        .application
+        .publish_workflow(&draft_id, &settings)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(version)))
 }
 
 async fn list_models(State(state): State<ServerState>) -> Json<Value> {
@@ -670,11 +770,13 @@ async fn image_content(
 #[derive(Debug, Deserialize)]
 struct StartRunRequest {
     provider: Option<String>,
+    idempotency_key: Option<String>,
 }
 
 async fn start_run(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
+    headers: HeaderMap,
     payload: Option<Json<StartRunRequest>>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let project_path = state
@@ -682,15 +784,47 @@ async fn start_run(
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
     let settings = state.settings.read().await.clone();
-    let provider = payload
-        .and_then(|Json(value)| value.provider)
+    let request = payload.map_or(
+        StartRunRequest {
+            provider: None,
+            idempotency_key: None,
+        },
+        |Json(value)| value,
+    );
+    let provider = request
+        .provider
         .unwrap_or_else(|| settings.default_provider.clone());
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .or(request.idempotency_key);
+    if idempotency_key
+        .as_ref()
+        .is_some_and(|key| key.is_empty() || key.len() > 200)
+    {
+        return Err(ApiError::bad_request(
+            "idempotency key must contain between 1 and 200 bytes",
+        ));
+    }
     validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
     let api_key = state.api_key.read().await.clone();
     let started = state
         .application
-        .start_run_path_with_settings(&project_path, &provider, settings, api_key)
-        .map_err(ApiError::bad_request)?;
+        .start_run_path_with_settings_idempotent(
+            &project_path,
+            &provider,
+            settings,
+            api_key,
+            idempotency_key.as_deref(),
+        )
+        .map_err(|error| {
+            if let Some(conflict) = error.downcast_ref::<ActiveRunExists>() {
+                ApiError::active_run(conflict)
+            } else {
+                ApiError::bad_request(error)
+            }
+        })?;
     Ok((StatusCode::ACCEPTED, Json(json!(started))))
 }
 
@@ -1246,7 +1380,7 @@ mod tests {
         let project_yaml = skill
             .project_template()
             .expect("project template")
-            .replace("max_retries_per_task: 3", "max_retries_per_task: 0");
+            .replace("max_retries: 3", "max_retries: 0");
         let response = request(
             &service,
             axum::http::Method::POST,
@@ -1309,7 +1443,7 @@ mod tests {
             .expect("SSE body");
         assert!(String::from_utf8_lossy(&first_event).contains("run_"));
 
-        wait_for_status(&application, run_id, RunStatus::AwaitingReview).await;
+        wait_for_status(&application, run_id, RunStatus::CompletedWithReview).await;
         let runs =
             response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
                 .await;
@@ -1472,6 +1606,43 @@ mod tests {
         assert_eq!(cleared["api_key_persisted"], json!(false));
     }
 
+    #[tokio::test]
+    async fn duplicate_project_start_returns_structured_409_conflict() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "duplicate-demo",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let project_path = application
+            .project_path("duplicate-demo")
+            .expect("project path");
+        let project_id = stable_project_id(project_path.parent().expect("project root"));
+        let active_run_id = RunId::new();
+        application
+            .store()
+            .reserve_project_run(project_id, active_run_id, None)
+            .expect("active reservation");
+        let service = router(
+            test_state(application, Arc::new(MemorySecretStore::default())),
+            None,
+        );
+        let response = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/duplicate-demo/runs",
+            Some(json!({"provider": "mock"})),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response_json(response).await;
+        assert_eq!(body["code"], json!("active_run_exists"));
+        assert_eq!(body["active_run_id"], json!(active_run_id));
+        assert_eq!(body["status"], json!("pending"));
+    }
+
     async fn request(
         service: &Router,
         method: axum::http::Method,
@@ -1510,6 +1681,13 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("run {run_id} did not reach {expected:?}");
+        panic!(
+            "run {run_id} did not reach {expected:?}; runs={:#?}; tasks={:#?}",
+            application.list_runs().expect("runs"),
+            application
+                .store()
+                .list_task_runs(run_id)
+                .expect("task runs")
+        );
     }
 }

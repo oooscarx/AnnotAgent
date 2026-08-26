@@ -2,11 +2,13 @@ export type RunStatus =
   | "pending"
   | "running"
   | "paused"
-  | "awaiting_review"
   | "completed"
+  | "completed_with_review"
+  | "partial"
   | "cancelled"
   | "budget_exceeded"
-  | "failed";
+  | "failed"
+  | "interrupted";
 
 export interface HistoryRun {
   id: string;
@@ -18,6 +20,7 @@ export interface HistoryRun {
   provider: string;
   model: string;
   status: RunStatus;
+  controllable: boolean;
   input_tokens: number;
   output_tokens: number;
   cost: string;
@@ -99,11 +102,20 @@ export interface ProjectSummary {
   /** Compatibility field from ProjectSchema v1. */
   skill_id: string;
   image_count: number;
-  recent_run?: {
+  active_run?: {
     id: string;
     provider: string;
     model: string;
     status: RunStatus;
+    created_at: string;
+    updated_at: string;
+  };
+  last_run?: {
+    id: string;
+    provider: string;
+    model: string;
+    status: RunStatus;
+    terminal_reason?: string;
     created_at: string;
     updated_at: string;
   };
@@ -121,6 +133,35 @@ export interface ProjectWorkflow {
   project_id: string;
   project_name: string;
   workflow: WorkflowVersion;
+}
+
+export interface WorkflowDraftNode {
+  id: string;
+  node_type: string;
+  depends_on: string[];
+  model_binding?: string;
+  validators: string[];
+  refiners: string[];
+  fallback?: string;
+  max_retries: number;
+  review_gate: boolean;
+  parameters: Record<string, unknown>;
+}
+
+export interface WorkflowDraft {
+  id: string;
+  project_id: string;
+  name: string;
+  status: "suggested" | "editing" | "validated" | "published";
+  nodes: WorkflowDraftNode[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowValidationReport {
+  valid: boolean;
+  issues: { code: string; path: string; message: string; blocking: boolean }[];
+  execution_order: string[];
 }
 
 export interface ImageItem {

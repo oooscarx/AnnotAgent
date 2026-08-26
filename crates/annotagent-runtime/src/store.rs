@@ -1,6 +1,7 @@
 use annotagent_core::{
-    Annotation, AnnotationRevision, LabelId, ProjectId, RunEvent, RunId, RunStatus, TaskId,
-    ToolCallId, ToolResult, UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, ArtifactId, ArtifactValidationState, ImageId, LabelId,
+    ModelMessage, ProjectId, RunEvent, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId,
+    ToolResult, UsageRecord, ValidationIssue, VisionArtifact,
 };
 use async_trait::async_trait;
 
@@ -13,8 +14,23 @@ pub trait RuntimeStore: Send + Sync {
         status: RunStatus,
         reason: Option<&str>,
     ) -> Result<(), String>;
+    async fn set_task_run_status(
+        &self,
+        run_id: RunId,
+        image_id: ImageId,
+        task_id: &TaskId,
+        status: TaskRunStatus,
+        reason: Option<&str>,
+    ) -> Result<(), String>;
     async fn record_event(&self, event: &RunEvent) -> Result<(), String>;
     async fn record_usage(&self, run_id: RunId, usage: &UsageRecord) -> Result<(), String>;
+    async fn record_model_message(
+        &self,
+        run_id: RunId,
+        image_id: Option<ImageId>,
+        task_id: Option<&TaskId>,
+        message: &ModelMessage,
+    ) -> Result<(), String>;
     async fn record_tool_call(
         &self,
         run_id: RunId,
@@ -24,6 +40,19 @@ pub trait RuntimeStore: Send + Sync {
         result: Option<&ToolResult>,
         error: Option<&str>,
     ) -> Result<(), String>;
+    async fn record_artifact(&self, run_id: RunId, artifact: &VisionArtifact)
+    -> Result<(), String>;
+    async fn set_artifact_validation_state(
+        &self,
+        run_id: RunId,
+        artifact_id: ArtifactId,
+        state: ArtifactValidationState,
+    ) -> Result<(), String>;
+    async fn find_artifact(
+        &self,
+        run_id: RunId,
+        artifact_id: ArtifactId,
+    ) -> Result<Option<VisionArtifact>, String>;
     async fn record_validation(
         &self,
         run_id: RunId,
@@ -44,6 +73,7 @@ pub trait RuntimeStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct RunRecord {
     pub id: RunId,
+    pub project_id: ProjectId,
     pub project_name: String,
     pub skill_id: String,
     pub provider: String,
@@ -57,6 +87,8 @@ pub struct MemoryRuntimeStore {
     events: std::sync::Mutex<Vec<RunEvent>>,
     annotations: std::sync::Mutex<Vec<Annotation>>,
     usage: std::sync::Mutex<Vec<UsageRecord>>,
+    model_messages: std::sync::Mutex<Vec<ModelMessage>>,
+    artifacts: std::sync::Mutex<Vec<VisionArtifact>>,
 }
 
 impl MemoryRuntimeStore {
@@ -80,6 +112,20 @@ impl MemoryRuntimeStore {
             .map(|items| items.clone())
             .map_err(|_| "usage store lock poisoned".to_owned())
     }
+
+    pub fn model_messages(&self) -> Result<Vec<ModelMessage>, String> {
+        self.model_messages
+            .lock()
+            .map(|items| items.clone())
+            .map_err(|_| "model message store lock poisoned".to_owned())
+    }
+
+    pub fn artifacts(&self) -> Result<Vec<VisionArtifact>, String> {
+        self.artifacts
+            .lock()
+            .map(|items| items.clone())
+            .map_err(|_| "artifact store lock poisoned".to_owned())
+    }
 }
 
 #[async_trait]
@@ -92,6 +138,17 @@ impl RuntimeStore for MemoryRuntimeStore {
         &self,
         _run_id: RunId,
         _status: RunStatus,
+        _reason: Option<&str>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn set_task_run_status(
+        &self,
+        _run_id: RunId,
+        _image_id: ImageId,
+        _task_id: &TaskId,
+        _status: TaskRunStatus,
         _reason: Option<&str>,
     ) -> Result<(), String> {
         Ok(())
@@ -113,6 +170,20 @@ impl RuntimeStore for MemoryRuntimeStore {
         Ok(())
     }
 
+    async fn record_model_message(
+        &self,
+        _run_id: RunId,
+        _image_id: Option<ImageId>,
+        _task_id: Option<&TaskId>,
+        message: &ModelMessage,
+    ) -> Result<(), String> {
+        self.model_messages
+            .lock()
+            .map_err(|_| "model message store lock poisoned".to_owned())?
+            .push(message.clone());
+        Ok(())
+    }
+
     async fn record_tool_call(
         &self,
         _run_id: RunId,
@@ -123,6 +194,50 @@ impl RuntimeStore for MemoryRuntimeStore {
         _error: Option<&str>,
     ) -> Result<(), String> {
         Ok(())
+    }
+
+    async fn record_artifact(
+        &self,
+        _run_id: RunId,
+        artifact: &VisionArtifact,
+    ) -> Result<(), String> {
+        self.artifacts
+            .lock()
+            .map_err(|_| "artifact store lock poisoned".to_owned())?
+            .push(artifact.clone());
+        Ok(())
+    }
+
+    async fn set_artifact_validation_state(
+        &self,
+        _run_id: RunId,
+        artifact_id: ArtifactId,
+        state: ArtifactValidationState,
+    ) -> Result<(), String> {
+        let mut artifacts = self
+            .artifacts
+            .lock()
+            .map_err(|_| "artifact store lock poisoned".to_owned())?;
+        let artifact = artifacts
+            .iter_mut()
+            .find(|artifact| artifact.id == artifact_id)
+            .ok_or_else(|| format!("artifact {artifact_id} was not found"))?;
+        artifact.validation_state = state;
+        Ok(())
+    }
+
+    async fn find_artifact(
+        &self,
+        _run_id: RunId,
+        artifact_id: ArtifactId,
+    ) -> Result<Option<VisionArtifact>, String> {
+        Ok(self
+            .artifacts
+            .lock()
+            .map_err(|_| "artifact store lock poisoned".to_owned())?
+            .iter()
+            .find(|artifact| artifact.id == artifact_id)
+            .cloned())
     }
 
     async fn record_validation(

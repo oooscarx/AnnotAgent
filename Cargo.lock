@@ -98,6 +98,7 @@ dependencies = [
  "annotagent-storage",
  "anyhow",
  "async-trait",
+ "chrono",
  "futures",
  "serde",
  "serde_json",
@@ -155,6 +156,8 @@ version = "0.1.0"
 dependencies = [
  "annotagent-core",
  "async-trait",
+ "axum",
+ "chrono",
  "reqwest",
  "serde",
  "serde_json",
@@ -170,6 +173,7 @@ name = "annotagent-runtime"
 version = "0.1.0"
 dependencies = [
  "annotagent-core",
+ "annotagent-provider",
  "async-trait",
  "chrono",
  "rust_decimal",

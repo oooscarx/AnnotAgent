@@ -92,18 +92,30 @@ impl DomainSkill for BboxSkill {
     }
 
     fn task_templates(&self) -> Vec<TaskTemplate> {
-        vec![TaskTemplate {
-            id: TaskId::from("objects"),
-            description: "detect objects".to_owned(),
-        }]
+        vec![
+            TaskTemplate {
+                id: TaskId::from("objects"),
+                description: "detect objects".to_owned(),
+            },
+            TaskTemplate {
+                id: TaskId::from("optional_check"),
+                description: "optional follow-up".to_owned(),
+            },
+        ]
     }
 
     fn workflow(&self) -> TaskGraph {
         TaskGraph {
-            nodes: vec![TaskNode {
-                id: TaskId::from("objects"),
-                depends_on: Vec::new(),
-            }],
+            nodes: vec![
+                TaskNode {
+                    id: TaskId::from("objects"),
+                    depends_on: Vec::new(),
+                },
+                TaskNode {
+                    id: TaskId::from("optional_check"),
+                    depends_on: Vec::new(),
+                },
+            ],
         }
     }
 
@@ -152,8 +164,12 @@ fn project() -> ProjectSchema {
         },
         runtime: RuntimeConfig {
             max_parallel_images: 1,
-            max_agent_steps_per_image: 3,
-            max_retries_per_task: 1,
+            max_model_turns_per_task: 3,
+            max_tool_calls_per_task: 6,
+            max_recovery_turns_per_task: 1,
+            task_timeout_seconds: 60,
+            provider_request_timeout_seconds: 30,
+            max_retries: 1,
             auto_resume: true,
         },
         tasks: vec![TaskConfig {
@@ -221,7 +237,7 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
             ..Budget::default()
         },
         AgentLoopConfig {
-            max_steps_per_image: 3,
+            max_model_turns_per_task: 3,
             ..AgentLoopConfig::default()
         },
     );
@@ -299,6 +315,92 @@ async fn model_tool_validator_commit_event_sqlite_and_usage_form_one_loop() {
 }
 
 #[tokio::test]
+async fn provider_failure_is_recorded_and_retried_without_consuming_the_agent_step() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::Error {
+                    message: "request timed out after 120 seconds".to_owned(),
+                },
+                usage: MockUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+            },
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "target",
+                        "value": {"kind": "bounding_box", "rect": [0.2, 0.3, 0.2, 0.1]},
+                        "attributes": {},
+                        "confidence": 0.95
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 25,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite store"));
+    let runtime = AgentRuntime::new(
+        Arc::new(BboxSkill::new()),
+        provider,
+        store.clone(),
+        PricingConfig::default(),
+        Budget {
+            max_requests: Some(10),
+            ..Budget::default()
+        },
+        AgentLoopConfig {
+            max_model_turns_per_task: 1,
+            max_retries: 2,
+            ..AgentLoopConfig::default()
+        },
+    );
+    let run_id = annotagent_core::RunId::new();
+    let result = runtime
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: annotagent_core::ProjectId::new(),
+            project_root: PathBuf::from("."),
+            project: Arc::new(project()),
+            image_id: ImageId::new(),
+            image: Arc::new(ImageFrame {
+                metadata: ImageMetadata {
+                    width: 1,
+                    height: 1,
+                    mime_type: "image/png".to_owned(),
+                    sha256: "provider-retry-fixture".to_owned(),
+                },
+                rgb: vec![0, 128, 0],
+            }),
+            model_image: None,
+        })
+        .await
+        .expect("provider retry completes");
+
+    assert_eq!(result.status, annotagent_core::RunStatus::Completed);
+    assert_eq!(result.usage.requests, 2);
+    let history = store.history(run_id).expect("history");
+    assert_eq!(history.usage.len(), 2);
+    assert!(!history.usage[0].success);
+    assert!(history.usage[1].success);
+    assert!(
+        history
+            .events
+            .iter()
+            .any(|event| { event.kind == annotagent_core::RunEventKind::ModelCallFailed })
+    );
+}
+
+#[tokio::test]
 async fn malformed_model_candidate_is_fed_back_and_retried_instead_of_crashing_run() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
@@ -349,7 +451,7 @@ async fn malformed_model_candidate_is_fed_back_and_retried_instead_of_crashing_r
             ..Budget::default()
         },
         AgentLoopConfig {
-            max_steps_per_image: 3,
+            max_model_turns_per_task: 3,
             ..AgentLoopConfig::default()
         },
     );
@@ -394,4 +496,98 @@ async fn malformed_model_candidate_is_fed_back_and_retried_instead_of_crashing_r
             .iter()
             .any(|event| event.kind == annotagent_core::RunEventKind::RetryScheduled)
     );
+}
+
+#[tokio::test]
+async fn required_success_and_optional_failure_produce_partial_run() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "target",
+                        "value": {"kind": "bounding_box", "rect": [0.2, 0.3, 0.2, 0.1]},
+                        "attributes": {},
+                        "confidence": 0.95
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 25,
+                },
+            },
+            MockStep {
+                expect_task: Some("optional_check".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::Error {
+                    message: "optional provider failure".to_owned(),
+                },
+                usage: MockUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+            },
+        ],
+    }));
+    let mut project = project();
+    project.tasks.push(TaskConfig {
+        id: TaskId::from("optional_check"),
+        kind: TaskKind::BoundingBox,
+        labels: vec!["target".to_owned()],
+        required: false,
+        multi_label: false,
+        depends_on: Vec::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        target_task: None,
+        target_labels: Vec::new(),
+        attributes: BTreeMap::new(),
+    });
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite store"));
+    let runtime = AgentRuntime::new(
+        Arc::new(BboxSkill::new()),
+        provider,
+        store.clone(),
+        PricingConfig::default(),
+        Budget::default(),
+        AgentLoopConfig {
+            max_retries: 0,
+            ..AgentLoopConfig::default()
+        },
+    );
+    let run_id = annotagent_core::RunId::new();
+    let result = runtime
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: annotagent_core::ProjectId::new(),
+            project_root: PathBuf::from("."),
+            project: Arc::new(project),
+            image_id: ImageId::new(),
+            image: Arc::new(ImageFrame {
+                metadata: ImageMetadata {
+                    width: 1,
+                    height: 1,
+                    mime_type: "image/png".to_owned(),
+                    sha256: "partial-run".to_owned(),
+                },
+                rgb: vec![0, 128, 0],
+            }),
+            model_image: None,
+        })
+        .await
+        .expect("optional failure is represented, not raised");
+    assert_eq!(result.status, annotagent_core::RunStatus::Partial);
+    assert_eq!(result.committed.len(), 1);
+    let statuses = store.list_task_runs(run_id).expect("task statuses");
+    assert!(statuses.iter().any(|task| {
+        task.task_id == TaskId::from("objects")
+            && task.status == annotagent_core::TaskRunStatus::Succeeded
+    }));
+    assert!(statuses.iter().any(|task| {
+        task.task_id == TaskId::from("optional_check")
+            && task.status == annotagent_core::TaskRunStatus::Failed
+    }));
 }

@@ -18,6 +18,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+annotagent-provider = { path = "../annotagent-provider" }
 chrono.workspace = true
 tempfile = "3"
 uuid.workspace = true

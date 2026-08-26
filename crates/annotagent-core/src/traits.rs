@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::{
     Annotation, AnnotationId, AnnotationSnapshot, CoreResult, CorrectionKind, ImageFrame, ImageId,
     LabelId, ProjectId, ProjectSchema, RunId, SkillManifest, SkillResource, SkillResourceRequest,
-    TaskGraph, TaskId, TaskTemplate, TokenUsage, ToolCallId,
+    TaskGraph, TaskId, TaskTemplate, TokenUsage, ToolCallId, VisionArtifact,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,8 +34,54 @@ pub struct ToolContext {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
-    pub summary: String,
-    pub data: serde_json::Value,
+    /// Complete auditable result. It may contain fields that are not appropriate for a model.
+    #[serde(default)]
+    pub persisted_result: serde_json::Value,
+    /// Bounded structured result sent back to the model, or an artifact reference.
+    #[serde(default, alias = "data")]
+    pub model_result: serde_json::Value,
+    /// Short display text for traces and operator-facing UI.
+    #[serde(alias = "summary")]
+    pub ui_summary: String,
+    /// Typed outputs created by this node. Model-facing messages contain references to these.
+    #[serde(default)]
+    pub artifacts: Vec<VisionArtifact>,
+}
+
+impl ToolResult {
+    #[must_use]
+    pub fn structured(summary: impl Into<String>, result: serde_json::Value) -> Self {
+        Self {
+            persisted_result: result.clone(),
+            model_result: result,
+            ui_summary: summary.into(),
+            artifacts: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_artifacts(
+        summary: impl Into<String>,
+        artifacts: Vec<VisionArtifact>,
+        metadata: &serde_json::Value,
+    ) -> Self {
+        let references = artifacts
+            .iter()
+            .map(VisionArtifact::reference)
+            .collect::<Vec<_>>();
+        Self {
+            persisted_result: serde_json::json!({
+                "artifacts": artifacts,
+                "metadata": metadata,
+            }),
+            model_result: serde_json::json!({
+                "artifact_references": references,
+                "metadata": metadata,
+            }),
+            ui_summary: summary.into(),
+            artifacts,
+        }
+    }
 }
 
 #[async_trait]
@@ -199,6 +245,8 @@ pub struct ModelMessage {
     pub role: ModelRole,
     pub content: String,
     pub tool_call_id: Option<ToolCallId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

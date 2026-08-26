@@ -21,6 +21,8 @@ DatasetCoordinator (bounded concurrent images)
             ├─ Skill TaskGraph topological order
             ├─ ContextManager task-focused messages
             ├─ VisionModelProvider
+            ├─ ModelRegistry / NodeRegistry
+            ├─ typed VisionArtifact + hybrid backends
             ├─ ToolRegistry (task scope + JSON Schema)
             ├─ AnnotationValidator / AnnotationRefiner
             ├─ ReviewPolicy
@@ -30,9 +32,11 @@ DatasetCoordinator (bounded concurrent images)
 
 Each image currently has its own durable run ID. This makes failure and audit history independently addressable. Dataset coordination is in the application crate because enumeration and workspace policy are application concerns; the image loop remains reusable and filesystem-agnostic in Runtime.
 
+The implemented hybrid model boundary is described in [Hybrid vision execution](HYBRID_VISION.md). Auxiliary detectors and segmenters supply typed Artifacts; they do not bypass Runtime validation, provenance, review, or commit.
+
 ## State and persistence
 
-`RunControl` is the only state-transition gate. Pause waits at safe boundaries; cancellation uses `CancellationToken` and does not become failure. Versioned typed events are persisted before broadcast. SQLite uses 17 explicit tables from `migrations/0001_initial.sql`; images remain files and only relative metadata/hash references belong in history.
+`RunControl` is the process-local transition gate, while SQLite is the durable source of truth. Project DTOs expose `active_run` separately from `last_run`; task outcomes include `SucceededEmpty`, and stale worker leases reconcile to `Interrupted`. Pause waits at safe boundaries; cancellation uses `CancellationToken` and does not become failure. Versioned typed events are persisted before broadcast. SQLite uses 24 explicit tables from `migrations/0001_initial.sql`; images remain files and only relative metadata/hash references belong in history.
 
 ## Trust boundaries
 

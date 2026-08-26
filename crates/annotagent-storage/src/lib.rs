@@ -3,9 +3,11 @@
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
-    Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue, CorrectionRecord,
-    LabelId, ProjectId, RevisionActor, RunEvent, RunId, RunStatus, TaskId, ToolCallId, ToolResult,
-    UsageRecord, ValidationIssue,
+    Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue, ArtifactId,
+    ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage, ProjectId,
+    PublishedWorkflowVersion, RevisionActor, RunEvent, RunId, RunStatus, TaskId, TaskRunStatus,
+    ToolCallId, ToolResult, UsageRecord, ValidationIssue, VisionArtifact, WorkflowDraft,
+    WorkflowDraftStatus,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -35,6 +37,8 @@ pub enum StorageError {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryRun {
     pub id: RunId,
+    #[serde(default)]
+    pub project_id: Option<ProjectId>,
     pub project_name: String,
     pub skill_id: String,
     pub provider: String,
@@ -57,6 +61,24 @@ pub struct HistoryToolCall {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryModelMessage {
+    pub image_id: Option<ImageId>,
+    pub task_id: Option<TaskId>,
+    pub message: ModelMessage,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistoryTaskRun {
+    pub run_id: RunId,
+    pub image_id: ImageId,
+    pub task_id: TaskId,
+    pub status: TaskRunStatus,
+    pub reason: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryDocument {
     pub schema_version: u32,
     pub run: HistoryRun,
@@ -64,6 +86,10 @@ pub struct HistoryDocument {
     pub annotations: Vec<Annotation>,
     pub revisions: Vec<AnnotationRevision>,
     pub usage: Vec<UsageRecord>,
+    #[serde(default)]
+    pub model_messages: Vec<HistoryModelMessage>,
+    #[serde(default)]
+    pub artifacts: Vec<VisionArtifact>,
     pub tool_calls: Vec<HistoryToolCall>,
 }
 
@@ -72,6 +98,13 @@ pub struct HistoryImportReport {
     pub run_id: RunId,
     pub ids_remapped: bool,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStartReservation {
+    Reserved,
+    Idempotent { run_id: RunId, status: RunStatus },
+    Conflict { run_id: RunId, status: RunStatus },
 }
 
 pub struct SqliteStore {
@@ -99,6 +132,21 @@ impl SqliteStore {
     pub fn migrate(&self) -> Result<(), StorageError> {
         self.with_connection(|connection| {
             connection.execute_batch(INITIAL_MIGRATION)?;
+            let has_project_id = {
+                let mut statement = connection.prepare("PRAGMA table_info(runs)")?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|name| name == "project_id")
+            };
+            if !has_project_id {
+                connection.execute("ALTER TABLE runs ADD COLUMN project_id TEXT", [])?;
+            }
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_project_created ON runs(project_id, created_at DESC)",
+                [],
+            )?;
             Ok(())
         })
     }
@@ -141,6 +189,16 @@ impl SqliteStore {
                     serde_json::from_str(&json).map_err(StorageError::from)
                 })
                 .collect()
+        })
+    }
+
+    pub fn list_artifacts(&self, run_id: RunId) -> Result<Vec<VisionArtifact>, StorageError> {
+        self.with_connection(|connection| {
+            query_json_rows::<VisionArtifact>(
+                connection,
+                "SELECT artifact_json FROM vision_artifacts WHERE run_id = ?1 ORDER BY created_at",
+                run_id,
+            )
         })
     }
 
@@ -286,7 +344,7 @@ impl SqliteStore {
     pub fn list_runs(&self) -> Result<Vec<HistoryRun>, StorageError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, project_name, skill_id, provider, model, status,
+                "SELECT id, project_id, project_name, skill_id, provider, model, status,
                         project_schema_json, terminal_reason, created_at, updated_at
                  FROM runs ORDER BY created_at DESC",
             )?;
@@ -297,11 +355,259 @@ impl SqliteStore {
         })
     }
 
+    pub fn list_task_runs(&self, run_id: RunId) -> Result<Vec<HistoryTaskRun>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT image_id, task_id, status, reason, updated_at
+                 FROM task_runs WHERE run_id = ?1 ORDER BY updated_at, task_id",
+            )?;
+            statement
+                .query_map([run_id.to_string()], |row| {
+                    let image_id = row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    let status_text = row.get::<_, String>(2)?;
+                    let status = serde_json::from_value(serde_json::Value::String(status_text))
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })?;
+                    Ok(HistoryTaskRun {
+                        run_id,
+                        image_id,
+                        task_id: TaskId::from(row.get::<_, String>(1)?),
+                        status,
+                        reason: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                })?
+                .map(|row| row.map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    pub fn reserve_project_run(
+        &self,
+        project_id: ProjectId,
+        run_id: RunId,
+        idempotency_key: Option<&str>,
+    ) -> Result<RunStartReservation, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            if let Some(key) = idempotency_key {
+                let existing = transaction
+                    .query_row(
+                        "SELECT r.run_id, COALESCE(a.status, runs.status, 'interrupted')
+                         FROM run_start_requests r
+                         LEFT JOIN active_project_runs a ON a.run_id = r.run_id
+                         LEFT JOIN runs ON runs.id = r.run_id
+                         WHERE r.project_id = ?1 AND r.idempotency_key = ?2",
+                        params![project_id.to_string(), key],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                if let Some((existing_id, status)) = existing {
+                    transaction.commit()?;
+                    return Ok(RunStartReservation::Idempotent {
+                        run_id: parse_run_id(&existing_id)?,
+                        status: parse_run_status(&status)?,
+                    });
+                }
+            }
+            let active = transaction
+                .query_row(
+                    "SELECT run_id, status FROM active_project_runs WHERE project_id = ?1",
+                    [project_id.to_string()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            if let Some((active_id, status)) = active {
+                transaction.commit()?;
+                return Ok(RunStartReservation::Conflict {
+                    run_id: parse_run_id(&active_id)?,
+                    status: parse_run_status(&status)?,
+                });
+            }
+            let now = Utc::now().to_rfc3339();
+            if let Some(key) = idempotency_key {
+                transaction.execute(
+                    "INSERT INTO run_start_requests (project_id, idempotency_key, run_id, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![project_id.to_string(), key, run_id.to_string(), now],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO active_project_runs (project_id, run_id, status, idempotency_key, updated_at)
+                 VALUES (?1, ?2, 'pending', ?3, ?4)",
+                params![project_id.to_string(), run_id.to_string(), idempotency_key, now],
+            )?;
+            transaction.commit()?;
+            Ok(RunStartReservation::Reserved)
+        })
+    }
+
+    pub fn reconcile_interrupted_runs(&self) -> Result<Vec<RunId>, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let run_ids = {
+                let mut statement =
+                    transaction.prepare("SELECT run_id FROM active_project_runs")?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .map(|row| parse_run_id(&row?))
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            let now = Utc::now().to_rfc3339();
+            for run_id in &run_ids {
+                transaction.execute(
+                    "UPDATE runs SET status = 'interrupted', terminal_reason = ?2, updated_at = ?3
+                     WHERE id = ?1 AND status IN ('pending', 'running', 'paused')",
+                    params![
+                        run_id.to_string(),
+                        "run was interrupted because no worker lease survived server startup",
+                        now
+                    ],
+                )?;
+            }
+            transaction.execute("DELETE FROM active_project_runs", [])?;
+            transaction.commit()?;
+            Ok(run_ids)
+        })
+    }
+
+    pub fn save_workflow_draft(&self, draft: &WorkflowDraft) -> Result<(), StorageError> {
+        let status = enum_string(draft.status)?;
+        let draft_json = serde_json::to_string(draft)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO workflow_drafts
+                 (id, project_id, status, draft_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                   status = excluded.status,
+                   draft_json = excluded.draft_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    draft.id,
+                    draft.project_id,
+                    status,
+                    draft_json,
+                    draft.created_at.to_rfc3339(),
+                    draft.updated_at.to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_workflow_drafts(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<WorkflowDraft>, StorageError> {
+        self.with_connection(|connection| {
+            let (sql, parameter) = project_id.map_or(
+                ("SELECT draft_json FROM workflow_drafts ORDER BY updated_at DESC", None),
+                |project_id| {
+                    (
+                        "SELECT draft_json FROM workflow_drafts WHERE project_id = ?1 ORDER BY updated_at DESC",
+                        Some(project_id),
+                    )
+                },
+            );
+            let mut statement = connection.prepare(sql)?;
+            let rows = if let Some(project_id) = parameter {
+                statement
+                    .query_map([project_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    pub fn get_workflow_draft(&self, id: &str) -> Result<WorkflowDraft, StorageError> {
+        self.with_connection(|connection| {
+            let json = connection
+                .query_row(
+                    "SELECT draft_json FROM workflow_drafts WHERE id = ?1",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!("workflow draft {id:?} was not found"))
+                })?;
+            serde_json::from_str(&json).map_err(StorageError::from)
+        })
+    }
+
+    pub fn publish_workflow_draft(
+        &self,
+        draft: &WorkflowDraft,
+        content_hash: String,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let next_version: u32 = transaction.query_row(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM workflow_versions WHERE workflow_id = ?1",
+                [&draft.id],
+                |row| row.get(0),
+            )?;
+            let mut published_draft = draft.clone();
+            published_draft.status = WorkflowDraftStatus::Published;
+            published_draft.updated_at = Utc::now();
+            let version = PublishedWorkflowVersion {
+                workflow_id: draft.id.clone(),
+                version: next_version,
+                project_id: draft.project_id.clone(),
+                source_draft_id: draft.id.clone(),
+                content_hash,
+                draft: published_draft.clone(),
+                published_at: Utc::now(),
+            };
+            transaction.execute(
+                "INSERT INTO workflow_versions
+                 (workflow_id, version, project_id, source_draft_id, version_json, published_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    version.workflow_id,
+                    version.version,
+                    version.project_id,
+                    version.source_draft_id,
+                    serde_json::to_string(&version)?,
+                    version.published_at.to_rfc3339()
+                ],
+            )?;
+            transaction.execute(
+                "UPDATE workflow_drafts SET status = 'published', draft_json = ?2, updated_at = ?3 WHERE id = ?1",
+                params![
+                    draft.id,
+                    serde_json::to_string(&published_draft)?,
+                    published_draft.updated_at.to_rfc3339()
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(version)
+        })
+    }
+
     pub fn history(&self, run_id: RunId) -> Result<HistoryDocument, StorageError> {
         self.with_connection(|connection| {
             let run = connection
                 .query_row(
-                    "SELECT id, project_name, skill_id, provider, model, status,
+                    "SELECT id, project_id, project_name, skill_id, provider, model, status,
                             project_schema_json, terminal_reason, created_at, updated_at
                      FROM runs WHERE id = ?1",
                     [run_id.to_string()],
@@ -329,6 +635,36 @@ impl SqliteStore {
             let usage = query_json_rows::<UsageRecord>(
                 connection,
                 "SELECT usage_json FROM usage_records WHERE run_id = ?1 ORDER BY id",
+                run_id,
+            )?;
+            let mut message_statement = connection.prepare(
+                "SELECT image_id, task_id, message_json, created_at
+                 FROM model_messages WHERE run_id = ?1 ORDER BY sequence",
+            )?;
+            let model_messages = message_statement
+                .query_map([run_id.to_string()], |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .map(|row| {
+                    let (image_id, task_id, message, created_at) = row?;
+                    Ok(HistoryModelMessage {
+                        image_id: image_id.map(|value| value.parse()).transpose().map_err(
+                            |error| StorageError::InvalidEnum(format!("invalid image id: {error}")),
+                        )?,
+                        task_id: task_id.map(TaskId::from),
+                        message: serde_json::from_str(&message)?,
+                        created_at,
+                    })
+                })
+                .collect::<Result<Vec<_>, StorageError>>()?;
+            let artifacts = query_json_rows::<VisionArtifact>(
+                connection,
+                "SELECT artifact_json FROM vision_artifacts WHERE run_id = ?1 ORDER BY created_at",
                 run_id,
             )?;
             let mut statement = connection.prepare(
@@ -367,6 +703,8 @@ impl SqliteStore {
                 annotations,
                 revisions,
                 usage,
+                model_messages,
+                artifacts,
                 tool_calls,
             })
         })
@@ -500,6 +838,38 @@ impl SqliteStore {
                     ],
                 )?;
             }
+            for entry in &document.model_messages {
+                transaction.execute(
+                    "INSERT INTO model_messages
+                     (run_id, image_id, task_id, message_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        target_run_id.to_string(),
+                        entry.image_id.map(|id| id.to_string()),
+                        entry.task_id.as_ref().map(TaskId::as_str),
+                        serde_json::to_string(&entry.message)?,
+                        entry.created_at
+                    ],
+                )?;
+            }
+            for artifact in &document.artifacts {
+                transaction.execute(
+                    "INSERT INTO vision_artifacts
+                     (artifact_id, run_id, image_id, task_id, source_node, validation_state,
+                      artifact_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        artifact.id.to_string(),
+                        target_run_id.to_string(),
+                        artifact.image_id.to_string(),
+                        artifact.task_id.as_ref().map(TaskId::as_str),
+                        artifact.source_node,
+                        enum_string(artifact.validation_state)?,
+                        serde_json::to_string(artifact)?,
+                        artifact.created_at.to_rfc3339()
+                    ],
+                )?;
+            }
             for call in &document.tool_calls {
                 let call_id = if ids_remapped {
                     ToolCallId::new(format!("imported-{}", Uuid::new_v4()))
@@ -578,26 +948,37 @@ fn history_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRun>
     let id = row.get::<_, String>(0)?.parse().map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })?;
-    let status_text = row.get::<_, String>(5)?;
+    let status_text = row.get::<_, String>(6)?;
     let status =
         serde_json::from_value(serde_json::Value::String(status_text)).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                5,
+                6,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?;
     Ok(HistoryRun {
         id,
-        project_name: row.get(1)?,
-        skill_id: row.get(2)?,
-        provider: row.get(3)?,
-        model: row.get(4)?,
+        project_id: row
+            .get::<_, Option<String>>(1)?
+            .map(|value| value.parse())
+            .transpose()
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+        project_name: row.get(2)?,
+        skill_id: row.get(3)?,
+        provider: row.get(4)?,
+        model: row.get(5)?,
         status,
-        project_schema_json: row.get(6)?,
-        terminal_reason: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        project_schema_json: row.get(7)?,
+        terminal_reason: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -620,17 +1001,28 @@ fn enum_string<T: serde::Serialize>(value: T) -> Result<String, StorageError> {
         .ok_or_else(|| StorageError::InvalidEnum("enum did not serialize as a string".to_owned()))
 }
 
+fn parse_run_id(value: &str) -> Result<RunId, StorageError> {
+    value
+        .parse()
+        .map_err(|error| StorageError::InvalidEnum(format!("invalid run id: {error}")))
+}
+
+fn parse_run_status(value: &str) -> Result<RunStatus, StorageError> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned())).map_err(StorageError::from)
+}
+
 fn insert_history_run(
     transaction: &rusqlite::Transaction<'_>,
     run: &HistoryRun,
 ) -> Result<(), StorageError> {
     transaction.execute(
         "INSERT INTO runs
-         (id, project_name, skill_id, provider, model, status, project_schema_json,
+         (id, project_id, project_name, skill_id, provider, model, status, project_schema_json,
           terminal_reason, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             run.id.to_string(),
+            run.project_id.map(|id| id.to_string()),
             run.project_name,
             run.skill_id,
             run.provider,
@@ -690,10 +1082,11 @@ impl RuntimeStore for SqliteStore {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT OR IGNORE INTO runs
-                 (id, project_name, skill_id, provider, model, status, project_schema_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                 (id, project_id, project_name, skill_id, provider, model, status, project_schema_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 params![
                     run.id.to_string(),
+                    run.project_id.to_string(),
                     run.project_name,
                     run.skill_id,
                     run.provider,
@@ -720,9 +1113,57 @@ impl RuntimeStore for SqliteStore {
             .unwrap_or("failed")
             .to_owned();
         self.with_connection(|connection| {
-            connection.execute(
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute(
                 "UPDATE runs SET status = ?2, terminal_reason = ?3, updated_at = ?4 WHERE id = ?1",
                 params![run_id.to_string(), status, reason, Utc::now().to_rfc3339()],
+            )?;
+            if matches!(status.as_str(), "pending" | "running" | "paused") {
+                transaction.execute(
+                    "UPDATE active_project_runs SET status = ?2, updated_at = ?3 WHERE run_id = ?1",
+                    params![run_id.to_string(), status, Utc::now().to_rfc3339()],
+                )?;
+            } else {
+                transaction.execute(
+                    "DELETE FROM active_project_runs WHERE run_id = ?1",
+                    [run_id.to_string()],
+                )?;
+            }
+            transaction.commit()?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn set_task_run_status(
+        &self,
+        run_id: RunId,
+        image_id: ImageId,
+        task_id: &TaskId,
+        status: TaskRunStatus,
+        reason: Option<&str>,
+    ) -> Result<(), String> {
+        let status = serde_json::to_value(status)
+            .map_err(|error| error.to_string())?
+            .as_str()
+            .unwrap_or("failed")
+            .to_owned();
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO task_runs (run_id, image_id, task_id, status, reason, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(run_id, image_id, task_id) DO UPDATE SET
+                   status = excluded.status,
+                   reason = excluded.reason,
+                   updated_at = excluded.updated_at",
+                params![
+                    run_id.to_string(),
+                    image_id.to_string(),
+                    task_id.as_str(),
+                    status,
+                    reason,
+                    Utc::now().to_rfc3339()
+                ],
             )?;
             Ok(())
         })
@@ -795,6 +1236,32 @@ impl RuntimeStore for SqliteStore {
         .map_err(|error| error.to_string())
     }
 
+    async fn record_model_message(
+        &self,
+        run_id: RunId,
+        image_id: Option<ImageId>,
+        task_id: Option<&TaskId>,
+        message: &ModelMessage,
+    ) -> Result<(), String> {
+        let message_json = json(message)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO model_messages
+                 (run_id, image_id, task_id, message_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    run_id.to_string(),
+                    image_id.map(|id| id.to_string()),
+                    task_id.map(TaskId::as_str),
+                    message_json,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
     async fn record_tool_call(
         &self,
         run_id: RunId,
@@ -822,6 +1289,95 @@ impl RuntimeStore for SqliteStore {
                 ],
             )?;
             Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn record_artifact(
+        &self,
+        run_id: RunId,
+        artifact: &VisionArtifact,
+    ) -> Result<(), String> {
+        artifact.validate().map_err(|error| error.to_string())?;
+        let state = serde_json::to_value(artifact.validation_state)
+            .map_err(|error| error.to_string())?
+            .as_str()
+            .unwrap_or("unvalidated")
+            .to_owned();
+        let artifact_json = json(artifact)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT OR REPLACE INTO vision_artifacts
+                 (artifact_id, run_id, image_id, task_id, source_node, validation_state,
+                  artifact_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    artifact.id.to_string(),
+                    run_id.to_string(),
+                    artifact.image_id.to_string(),
+                    artifact.task_id.as_ref().map(TaskId::as_str),
+                    artifact.source_node,
+                    state,
+                    artifact_json,
+                    artifact.created_at.to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn set_artifact_validation_state(
+        &self,
+        run_id: RunId,
+        artifact_id: ArtifactId,
+        state: ArtifactValidationState,
+    ) -> Result<(), String> {
+        self.with_connection(|connection| {
+            let stored = connection
+                .query_row(
+                    "SELECT artifact_json FROM vision_artifacts
+                     WHERE artifact_id = ?1 AND run_id = ?2",
+                    params![artifact_id.to_string(), run_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!("artifact {artifact_id} was not found"))
+                })?;
+            let mut artifact: VisionArtifact = serde_json::from_str(&stored)?;
+            artifact.validation_state = state;
+            connection.execute(
+                "UPDATE vision_artifacts SET validation_state = ?2, artifact_json = ?3
+                 WHERE artifact_id = ?1 AND run_id = ?4",
+                params![
+                    artifact_id.to_string(),
+                    enum_string(state)?,
+                    serde_json::to_string(&artifact)?,
+                    run_id.to_string()
+                ],
+            )?;
+            Ok(())
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    async fn find_artifact(
+        &self,
+        run_id: RunId,
+        artifact_id: ArtifactId,
+    ) -> Result<Option<VisionArtifact>, String> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT artifact_json FROM vision_artifacts
+                     WHERE artifact_id = ?1 AND run_id = ?2",
+                    params![artifact_id.to_string(), run_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|value| serde_json::from_str(&value).map_err(StorageError::from))
+                .transpose()
         })
         .map_err(|error| error.to_string())
     }
@@ -976,16 +1532,23 @@ mod tests {
             "annotations",
             "annotation_revisions",
             "runs",
+            "active_project_runs",
+            "run_start_requests",
             "run_images",
+            "task_runs",
             "run_steps",
             "run_events",
             "model_calls",
+            "model_messages",
             "tool_calls",
+            "vision_artifacts",
             "validation_issues",
             "usage_records",
             "correction_records",
             "review_queue",
             "settings_metadata",
+            "workflow_drafts",
+            "workflow_versions",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
@@ -1001,6 +1564,7 @@ mod tests {
         store
             .create_run(&RunRecord {
                 id: run_id,
+                project_id: ProjectId::new(),
                 project_name: "test".to_owned(),
                 skill_id: "dummy".to_owned(),
                 provider: "mock".to_owned(),
@@ -1021,5 +1585,36 @@ mod tests {
         );
         store.record_event(&event).await.expect("record event");
         assert_eq!(store.list_events(run_id).expect("events"), vec![event]);
+    }
+
+    #[test]
+    fn project_run_reservation_is_transactional_and_idempotent() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_id = ProjectId::new();
+        let run_id = RunId::new();
+        assert_eq!(
+            store
+                .reserve_project_run(project_id, run_id, Some("request-1"))
+                .expect("reservation"),
+            RunStartReservation::Reserved
+        );
+        assert_eq!(
+            store
+                .reserve_project_run(project_id, RunId::new(), Some("request-1"))
+                .expect("idempotent replay"),
+            RunStartReservation::Idempotent {
+                run_id,
+                status: RunStatus::Pending,
+            }
+        );
+        assert_eq!(
+            store
+                .reserve_project_run(project_id, RunId::new(), Some("request-2"))
+                .expect("conflict"),
+            RunStartReservation::Conflict {
+                run_id,
+                status: RunStatus::Pending,
+            }
+        );
     }
 }

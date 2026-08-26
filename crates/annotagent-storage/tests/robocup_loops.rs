@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
     AnnotationSource, AnnotationValue, Budget, CorrectionFeatures, CorrectionRecord, LabelId,
-    PricingConfig, ProjectId, ProjectSchema, RunEventKind, RunId, RunStatus, TaskId,
+    PricingConfig, ProjectId, ProjectSchema, RunEventKind, RunId, RunStatus, TaskId, TaskRunStatus,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_provider::{
@@ -41,6 +41,14 @@ fn fixture() -> (tempfile::TempDir, Arc<annotagent_core::ImageFrame>) {
 }
 
 fn runtime(provider: Arc<MockVisionProvider>, store: Arc<SqliteStore>) -> AgentRuntime {
+    runtime_with_steps(provider, store, 4)
+}
+
+fn runtime_with_steps(
+    provider: Arc<MockVisionProvider>,
+    store: Arc<SqliteStore>,
+    max_model_turns_per_task: u32,
+) -> AgentRuntime {
     AgentRuntime::new(
         Arc::new(RoboCupSkill::new().expect("RoboCup skill")),
         provider,
@@ -51,11 +59,258 @@ fn runtime(provider: Arc<MockVisionProvider>, store: Arc<SqliteStore>) -> AgentR
             ..Budget::default()
         },
         AgentLoopConfig {
-            max_steps_per_image: 4,
-            max_retries_per_task: 2,
+            max_model_turns_per_task,
+            max_retries: 2,
             ..AgentLoopConfig::default()
         },
     )
+}
+
+#[tokio::test]
+async fn qwen_compatible_tool_result_is_followed_by_model_submit_and_commit() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCall {
+                    name: "evaluate_ball_hard_negative".to_owned(),
+                    arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 20,
+                },
+            },
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: Some("white_ratio".to_owned()),
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "robot",
+                        "value": {"kind": "bounding_box", "rect": [0.4, 0.25, 0.15, 0.4]},
+                        "attributes": {},
+                        "confidence": 0.97
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 140,
+                    output_tokens: 35,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let (temporary, image) = fixture();
+    let run_id = RunId::new();
+    let result = runtime(provider, store.clone())
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project_for("objects")),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("evidence then submit");
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    assert_eq!(result.committed.len(), 1);
+    assert_eq!(result.usage.requests, 2);
+    let history = store.history(run_id).expect("history");
+    let first_assistant = history
+        .model_messages
+        .iter()
+        .position(|entry| {
+            entry
+                .message
+                .tool_calls
+                .iter()
+                .any(|call| call.name == "evaluate_ball_hard_negative")
+        })
+        .expect("evidence tool call");
+    let tool_result = &history.model_messages[first_assistant + 1].message;
+    assert_eq!(tool_result.role, annotagent_core::ModelRole::Tool);
+    assert!(tool_result.content.contains("white_ratio"));
+    assert!(
+        history.model_messages[first_assistant + 2..]
+            .iter()
+            .any(|entry| entry
+                .message
+                .tool_calls
+                .iter()
+                .any(|call| call.name == "submit_annotation_candidates"))
+    );
+}
+
+#[tokio::test]
+async fn absent_penalty_mark_is_a_succeeded_empty_task_and_run_completes() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![MockStep {
+            expect_task: Some("penalty_mark".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: "finish_task".to_owned(),
+                arguments: json!({}),
+            },
+            usage: MockUsage {
+                input_tokens: 60,
+                output_tokens: 5,
+            },
+        }],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let (temporary, image) = fixture();
+    let run_id = RunId::new();
+    let result = runtime(provider, store.clone())
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project_for("penalty_mark")),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("valid empty task");
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    assert!(result.committed.is_empty());
+    let task_runs = store.list_task_runs(run_id).expect("task status");
+    assert_eq!(task_runs.len(), 1);
+    assert_eq!(task_runs[0].status, TaskRunStatus::SucceededEmpty);
+}
+
+#[tokio::test]
+async fn identical_deterministic_tool_call_reuses_cached_result() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCalls {
+                    calls: vec![
+                        MockToolCall {
+                            name: "evaluate_ball_hard_negative".to_owned(),
+                            arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
+                        },
+                        MockToolCall {
+                            name: "evaluate_ball_hard_negative".to_owned(),
+                            arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
+                        },
+                    ],
+                    content: None,
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 30,
+                },
+            },
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: Some(
+                    "identical deterministic tool call reused".to_owned(),
+                ),
+                response: MockResponseSpec::ToolCall {
+                    name: "submit_annotation_candidates".to_owned(),
+                    arguments: json!({"annotations": [{
+                        "label": "robot",
+                        "value": {"kind": "bounding_box", "rect": [0.4, 0.25, 0.15, 0.4]},
+                        "attributes": {},
+                        "confidence": 0.97
+                    }]}),
+                },
+                usage: MockUsage {
+                    input_tokens: 140,
+                    output_tokens: 35,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let (temporary, image) = fixture();
+    let run_id = RunId::new();
+    let result = runtime(provider, store.clone())
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project_for("objects")),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("cached tool loop");
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    let history = store.history(run_id).expect("history");
+    assert!(history.tool_calls.iter().any(|call| {
+        call.result
+            .as_ref()
+            .is_some_and(|result| result.ui_summary.starts_with("cache hit"))
+    }));
+}
+
+#[tokio::test]
+async fn structured_tool_data_reaches_the_model_before_submission() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![MockStep {
+            expect_task: Some("field_line".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: "refine_robocup_field_line".to_owned(),
+                arguments: json!({"points": [[0.08, 0.47], [0.92, 0.47]]}),
+            },
+            usage: MockUsage {
+                input_tokens: 120,
+                output_tokens: 30,
+            },
+        }],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let (temporary, image) = fixture();
+    let run_id = RunId::new();
+    let result = runtime_with_steps(provider, store.clone(), 2)
+        .run_image(ImageRunRequest {
+            run_id,
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project_for("field_line")),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("artifact-producing tool completes the task");
+
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    assert_eq!(result.usage.requests, 1);
+    assert_eq!(result.committed.len(), 1);
+    let history = store.history(run_id).expect("history");
+    assert_eq!(history.artifacts.len(), 2);
+    let assistant_index = history
+        .model_messages
+        .iter()
+        .position(|entry| !entry.message.tool_calls.is_empty())
+        .expect("assistant tool-call message");
+    let assistant = &history.model_messages[assistant_index].message;
+    let tool = &history.model_messages[assistant_index + 1].message;
+    assert_eq!(tool.role, annotagent_core::ModelRole::Tool);
+    assert_eq!(
+        tool.tool_call_id.as_ref(),
+        Some(&assistant.tool_calls[0].id)
+    );
+    assert!(tool.content.contains("artifact_references"));
+    assert!(tool.content.contains("pixel_support"));
+    assert!(!tool.content.contains("points"));
+    assert!(
+        history
+            .events
+            .iter()
+            .any(|event| { event.kind == RunEventKind::ArtifactCommitted })
+    );
 }
 
 #[tokio::test]
@@ -246,7 +501,7 @@ async fn coarse_field_line_is_refined_validated_committed_and_revisioned() {
 }
 
 #[tokio::test]
-async fn multiple_refinement_calls_are_limited_before_final_submission() {
+async fn multiple_tool_calls_are_persisted_and_answered_in_order() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
             MockStep {
@@ -276,7 +531,7 @@ async fn multiple_refinement_calls_are_limited_before_final_submission() {
             },
             MockStep {
                 expect_task: Some("field_line".to_owned()),
-                expect_message_contains: Some("submit the final candidate now".to_owned()),
+                expect_message_contains: Some("pixel_support".to_owned()),
                 response: MockResponseSpec::ToolCall {
                     name: "submit_annotation_candidates".to_owned(),
                     arguments: json!({"annotations": [{
@@ -294,9 +549,10 @@ async fn multiple_refinement_calls_are_limited_before_final_submission() {
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
     let (temporary, image) = fixture();
-    let result = runtime(provider, store)
+    let run_id = RunId::new();
+    let result = runtime(provider, store.clone())
         .run_image(ImageRunRequest {
-            run_id: RunId::new(),
+            run_id,
             project_id: ProjectId::new(),
             project_root: temporary.path().to_path_buf(),
             project: Arc::new(project_for("field_line")),
@@ -305,13 +561,18 @@ async fn multiple_refinement_calls_are_limited_before_final_submission() {
             model_image: None,
         })
         .await
-        .expect("limited field-line loop");
+        .expect("multi-tool field-line loop");
     assert_eq!(result.status, RunStatus::Completed);
     assert_eq!(result.committed.len(), 1);
-    assert!(
-        result
-            .issues
-            .iter()
-            .any(|issue| issue.code == "tool_call_budget_exceeded")
-    );
+    let messages = store.history(run_id).expect("history").model_messages;
+    let assistant_index = messages
+        .iter()
+        .position(|entry| entry.message.tool_calls.len() == 3)
+        .expect("assistant with three tool calls");
+    let calls = &messages[assistant_index].message.tool_calls;
+    for (offset, call) in calls.iter().enumerate() {
+        let tool = &messages[assistant_index + offset + 1].message;
+        assert_eq!(tool.role, annotagent_core::ModelRole::Tool);
+        assert_eq!(tool.tool_call_id.as_ref(), Some(&call.id));
+    }
 }

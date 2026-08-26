@@ -1,26 +1,30 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use annotagent_core::{
-    Budget, DomainSkill, ImageId, PricingConfig, ProjectId, ProjectSchema, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, ValidationCatalog, VisionModelProvider,
+    ArtifactKind, Budget, DomainSkill, ImageId, ModelRegistry, NodeRegistry, PricingConfig,
+    ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, ValidationCatalog, VisionCapability,
+    VisionModelDescriptor, VisionModelProvider, VisionNodeDescriptor, WorkflowAdvisor,
+    WorkflowConstraints, WorkflowDraft, WorkflowDraftStatus, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationReport, all_artifact_kinds,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
 use annotagent_provider::{
-    MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider, OpenAiCompatibleConfig,
-    OpenAiCompatibleProvider,
+    MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider,
+    OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
 use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, ImageRunRequest, ImageRunResult, RunControl, RuntimeStore,
     SkillRegistry,
 };
 use annotagent_skill_robocup::RoboCupSkill;
-use annotagent_storage::{HistoryRun, SqliteStore};
+use annotagent_storage::{HistoryRun, RunStartReservation, SqliteStore};
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
@@ -64,7 +68,8 @@ pub struct ProjectSummary {
     /// Compatibility field for v1 clients. New clients use `enabled_skills`.
     pub skill_id: String,
     pub image_count: usize,
-    pub recent_run: Option<HistoryRun>,
+    pub active_run: Option<HistoryRun>,
+    pub last_run: Option<HistoryRun>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -195,11 +200,118 @@ fn compatibility_workflow(project: &ProjectSchema, skill: &dyn DomainSkill) -> W
     }
 }
 
+fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
+    let capabilities = vec![
+        VisionCapability::VisionLanguage,
+        VisionCapability::ObjectDetection,
+        VisionCapability::SemanticSegmentation,
+        VisionCapability::InstanceSegmentation,
+        VisionCapability::PromptedSegmentation,
+        VisionCapability::Classification,
+        VisionCapability::KeypointDetection,
+    ];
+    let mut models = ModelRegistry::new();
+    models.register_backend(Arc::new(MockVisionBackend::new(
+        "workspace-provider-adapter",
+        capabilities,
+        Vec::new(),
+    )))?;
+    models.register_model(VisionModelDescriptor {
+        id: "default-vision".to_owned(),
+        backend_id: "workspace-provider-adapter".to_owned(),
+        capabilities: vec![VisionCapability::VisionLanguage],
+        configuration: BTreeMap::from([
+            ("provider".to_owned(), json!(settings.default_provider)),
+            ("model".to_owned(), json!(settings.provider.model)),
+        ]),
+    })?;
+
+    let mut nodes = NodeRegistry::new();
+    let artifact_kinds = all_artifact_kinds().to_vec();
+    for (id, capability, produces, deterministic) in [
+        (
+            "vision_language",
+            Some(VisionCapability::VisionLanguage),
+            artifact_kinds.clone(),
+            false,
+        ),
+        (
+            "object_detection",
+            Some(VisionCapability::ObjectDetection),
+            vec![ArtifactKind::BoundingBox],
+            false,
+        ),
+        (
+            "semantic_segmentation",
+            Some(VisionCapability::SemanticSegmentation),
+            vec![ArtifactKind::SemanticMask],
+            false,
+        ),
+        (
+            "instance_segmentation",
+            Some(VisionCapability::InstanceSegmentation),
+            vec![ArtifactKind::InstanceMask],
+            false,
+        ),
+        (
+            "prompted_segmentation",
+            Some(VisionCapability::PromptedSegmentation),
+            vec![ArtifactKind::InstanceMask],
+            false,
+        ),
+        (
+            "classification",
+            Some(VisionCapability::Classification),
+            vec![ArtifactKind::Classification],
+            false,
+        ),
+        (
+            "keypoint_detection",
+            Some(VisionCapability::KeypointDetection),
+            vec![ArtifactKind::Keypoints],
+            false,
+        ),
+        ("static_validator", None, artifact_kinds.clone(), true),
+        ("review_gate", None, artifact_kinds.clone(), true),
+        ("commit", None, artifact_kinds, true),
+    ] {
+        nodes.register(VisionNodeDescriptor {
+            id: id.to_owned(),
+            display_name: id.replace('_', " "),
+            required_capabilities: capability.into_iter().collect(),
+            accepts: all_artifact_kinds().to_vec(),
+            produces,
+            deterministic,
+        })?;
+    }
+    Ok((nodes, models))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StartedRun {
     pub run_id: RunId,
     pub image_path: PathBuf,
+    pub status: RunStatus,
+    pub idempotent: bool,
 }
+
+#[derive(Debug, Clone)]
+pub struct ActiveRunExists {
+    pub active_run_id: RunId,
+    pub status: RunStatus,
+}
+
+impl std::fmt::Display for ActiveRunExists {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "active run {} already exists with status {:?}",
+            self.active_run_id, self.status
+        )
+    }
+}
+
+impl std::error::Error for ActiveRunExists {}
 
 #[derive(Debug, Clone)]
 pub struct DatasetImageResult {
@@ -256,8 +368,15 @@ impl<'a> DatasetCoordinator<'a> {
 
 #[derive(Clone)]
 struct ManagedRun {
+    project_name: String,
     control: RunControl,
     result: watch::Receiver<Option<Result<ImageRunResult, String>>>,
+}
+
+impl ManagedRun {
+    fn is_active(&self) -> bool {
+        self.result.borrow().is_none()
+    }
 }
 
 #[async_trait]
@@ -308,6 +427,7 @@ impl LocalApplication {
         }
         let database_path = database_path.as_ref().to_path_buf();
         let store = Arc::new(SqliteStore::open(&database_path)?);
+        store.reconcile_interrupted_runs()?;
         let mut registry = SkillRegistry::new();
         registry.register(Arc::new(
             RoboCupSkill::new().map_err(|error| anyhow!(error))?,
@@ -341,6 +461,25 @@ impl LocalApplication {
     #[must_use]
     pub fn skills(&self) -> Arc<SkillRegistry> {
         self.skills.clone()
+    }
+
+    pub fn active_run_for_project(&self, project_name: &str) -> Result<Option<RunId>> {
+        Ok(self
+            .active
+            .lock()
+            .map_err(|_| anyhow!("active run lock poisoned"))?
+            .iter()
+            .find_map(|(run_id, managed)| {
+                (managed.project_name == project_name && managed.is_active()).then_some(*run_id)
+            }))
+    }
+
+    pub fn is_run_controllable(&self, run_id: RunId) -> bool {
+        self.active
+            .lock()
+            .ok()
+            .and_then(|active| active.get(&run_id).cloned())
+            .is_some_and(|managed| managed.is_active())
     }
 
     pub fn project_path(&self, project_id: &str) -> Result<PathBuf> {
@@ -379,11 +518,34 @@ impl LocalApplication {
             .unwrap_or(&self.workspace)
             .join(&project.dataset.root);
         let image_count = supported_images(&dataset).count();
-        let recent_run = self
+        let stable_id = stable_project_id(path.parent().unwrap_or(&self.workspace));
+        let project_runs = self
             .store
             .list_runs()?
             .into_iter()
-            .find(|run| run.project_name == project.project.name);
+            .filter(|run| {
+                run.project_id == Some(stable_id)
+                    || (run.project_id.is_none() && run.project_name == project.project.name)
+            })
+            .collect::<Vec<_>>();
+        let active_run = project_runs
+            .iter()
+            .find(|run| {
+                matches!(
+                    run.status,
+                    RunStatus::Pending | RunStatus::Running | RunStatus::Paused
+                )
+            })
+            .cloned();
+        let last_run = project_runs
+            .iter()
+            .find(|run| {
+                !matches!(
+                    run.status,
+                    RunStatus::Pending | RunStatus::Running | RunStatus::Paused
+                )
+            })
+            .cloned();
         let workflow = compatibility_workflow(&project, skill.as_ref());
         let workflow_summary = WorkflowSummary {
             id: workflow.workflow_id.clone(),
@@ -394,7 +556,9 @@ impl LocalApplication {
             is_default: workflow.is_default,
             node_count: workflow.nodes.len(),
         };
-        let model_bindings = recent_run
+        let model_bindings = active_run
+            .as_ref()
+            .or(last_run.as_ref())
             .as_ref()
             .map(|run| {
                 vec![ModelBinding {
@@ -438,7 +602,8 @@ impl LocalApplication {
             export_formats: project.export.formats.clone(),
             skill_id: project.project.skill.clone(),
             image_count,
-            recent_run,
+            active_run,
+            last_run,
         })
     }
 
@@ -452,6 +617,81 @@ impl LocalApplication {
         let mut images: Vec<_> = supported_images(&root).collect();
         images.sort();
         Ok(images)
+    }
+
+    pub fn list_workflow_drafts(&self, project_id: Option<&str>) -> Result<Vec<WorkflowDraft>> {
+        if let Some(project_id) = project_id {
+            validate_project_id(project_id)?;
+        }
+        Ok(self.store.list_workflow_drafts(project_id)?)
+    }
+
+    pub fn suggest_workflow(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        let project_path = self.project_path(project_id)?;
+        let (project, skill) = load_project_with_registry(&project_path, &self.skills)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
+            project_id,
+            &project,
+            &[skill.id().to_owned()],
+            &nodes,
+            &models,
+            constraints,
+        );
+        self.store.save_workflow_draft(&suggestion.draft)?;
+        Ok(suggestion)
+    }
+
+    pub fn save_workflow_draft(&self, mut draft: WorkflowDraft) -> Result<WorkflowDraft> {
+        self.project_path(&draft.project_id)?;
+        if let Ok(existing) = self.store.get_workflow_draft(&draft.id)
+            && existing.status == WorkflowDraftStatus::Published
+        {
+            bail!("published workflow drafts are immutable; create a new draft");
+        }
+        draft.status = WorkflowDraftStatus::Editing;
+        draft.updated_at = chrono::Utc::now();
+        self.store.save_workflow_draft(&draft)?;
+        Ok(draft)
+    }
+
+    pub fn dry_run_workflow(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+    ) -> Result<WorkflowValidationReport> {
+        let draft = self.store.get_workflow_draft(draft_id)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        let report = WorkflowStaticValidator.validate(&draft, &nodes, &models);
+        if report.valid && draft.status != WorkflowDraftStatus::Published {
+            let mut validated = draft;
+            validated.status = WorkflowDraftStatus::Validated;
+            validated.updated_at = chrono::Utc::now();
+            self.store.save_workflow_draft(&validated)?;
+        }
+        Ok(report)
+    }
+
+    pub fn publish_workflow(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+    ) -> Result<PublishedWorkflowVersion> {
+        let mut draft = self.store.get_workflow_draft(draft_id)?;
+        let report = self.dry_run_workflow(draft_id, settings)?;
+        if !report.valid {
+            bail!("workflow has blocking static validation issues");
+        }
+        draft.status = WorkflowDraftStatus::Validated;
+        draft.updated_at = chrono::Utc::now();
+        let serialized = serde_json::to_vec(&draft)?;
+        let content_hash = annotagent_image_tools::sha256(&serialized);
+        Ok(self.store.publish_workflow_draft(&draft, content_hash)?)
     }
 
     pub fn list_images_for_project_path(&self, project_path: &Path) -> Result<Vec<PathBuf>> {
@@ -521,7 +761,7 @@ impl LocalApplication {
             self.store.clone(),
             &self.skills,
         )?;
-        self.start_prepared(prepared)
+        self.start_prepared(prepared, true, None)
     }
 
     pub fn start_run_path_with_settings(
@@ -544,7 +784,31 @@ impl LocalApplication {
             &self.skills,
             None,
         )?;
-        self.start_prepared(prepared)
+        self.start_prepared(prepared, true, None)
+    }
+
+    pub fn start_run_path_with_settings_idempotent(
+        &self,
+        project_path: &Path,
+        provider: &str,
+        settings: Settings,
+        temporary_api_key: Option<String>,
+        idempotency_key: Option<&str>,
+    ) -> Result<StartedRun> {
+        let canonical = project_path
+            .canonicalize()
+            .with_context(|| format!("cannot access {}", project_path.display()))?;
+        ensure_within(&self.workspace, &canonical)?;
+        let prepared = prepare_run_with_settings(
+            &canonical,
+            provider,
+            settings,
+            temporary_api_key,
+            self.store.clone(),
+            &self.skills,
+            None,
+        )?;
+        self.start_prepared(prepared, true, idempotency_key)
     }
 
     pub fn start_run_image_path(
@@ -568,13 +832,56 @@ impl LocalApplication {
             &self.skills,
             Some(&image_path),
         )?;
-        self.start_prepared(prepared)
+        self.start_prepared(prepared, false, None)
     }
 
-    fn start_prepared(&self, prepared: PreparedRun) -> Result<StartedRun> {
+    fn start_prepared(
+        &self,
+        prepared: PreparedRun,
+        enforce_project_exclusivity: bool,
+        idempotency_key: Option<&str>,
+    ) -> Result<StartedRun> {
         let run_id = prepared.request.run_id;
+        let project_name = prepared.request.project.project.name.clone();
         let image_path = prepared.image_path.clone();
         let control = prepared.runtime.control();
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| anyhow!("active run lock poisoned"))?;
+        if enforce_project_exclusivity {
+            if idempotency_key.is_none()
+                && let Some((active_run_id, managed)) = active.iter().find(|(_, managed)| {
+                    managed.project_name == project_name && managed.is_active()
+                })
+            {
+                return Err(anyhow!(ActiveRunExists {
+                    active_run_id: *active_run_id,
+                    status: managed.control.status().unwrap_or(RunStatus::Running),
+                }));
+            }
+            match self.store.reserve_project_run(
+                prepared.request.project_id,
+                run_id,
+                idempotency_key,
+            )? {
+                RunStartReservation::Reserved => {}
+                RunStartReservation::Idempotent { run_id, status } => {
+                    return Ok(StartedRun {
+                        run_id,
+                        image_path,
+                        status,
+                        idempotent: true,
+                    });
+                }
+                RunStartReservation::Conflict { run_id, status } => {
+                    return Err(anyhow!(ActiveRunExists {
+                        active_run_id: run_id,
+                        status,
+                    }));
+                }
+            }
+        }
         let mut events = prepared.runtime.event_bus().subscribe();
         let event_sender = self.event_sender.clone();
         tokio::spawn(async move {
@@ -596,11 +903,20 @@ impl LocalApplication {
                 .map_err(|error| error.to_string());
             result_sender.send_replace(Some(result));
         });
-        self.active
-            .lock()
-            .map_err(|_| anyhow!("active run lock poisoned"))?
-            .insert(run_id, ManagedRun { control, result });
-        Ok(StartedRun { run_id, image_path })
+        active.insert(
+            run_id,
+            ManagedRun {
+                project_name,
+                control,
+                result,
+            },
+        );
+        Ok(StartedRun {
+            run_id,
+            image_path,
+            status: RunStatus::Pending,
+            idempotent: false,
+        })
     }
 
     fn managed(&self, run_id: RunId) -> Result<ManagedRun> {
@@ -821,11 +1137,19 @@ fn prepare_run_with_settings(
         settings.budget,
         AgentLoopConfig {
             model: settings.provider.model,
-            max_steps_per_image: project.runtime.max_agent_steps_per_image,
-            max_retries_per_task: project.runtime.max_retries_per_task,
+            max_model_turns_per_task: project.runtime.max_model_turns_per_task,
+            max_tool_calls_per_task: project.runtime.max_tool_calls_per_task,
+            max_recovery_turns_per_task: project.runtime.max_recovery_turns_per_task,
+            task_timeout: std::time::Duration::from_secs(project.runtime.task_timeout_seconds),
+            provider_request_timeout: std::time::Duration::from_secs(
+                project
+                    .runtime
+                    .provider_request_timeout_seconds
+                    .min(settings.provider.request_timeout_seconds),
+            ),
+            max_retries: project.runtime.max_retries,
             max_output_tokens: settings.provider.max_output_tokens,
             temperature: settings.provider.temperature,
-            ..AgentLoopConfig::default()
         },
     ));
     let project_root = project_path
@@ -925,7 +1249,13 @@ fn mock_script(project: &ProjectSchema, skill: &dyn DomainSkill) -> Result<MockS
         steps: ordered
             .into_iter()
             .filter(|task| known.contains(task.as_str()))
-            .flat_map(|task| mock_steps(task.as_str()))
+            .flat_map(|task| {
+                let mut steps = mock_steps(task.as_str());
+                if project.runtime.max_retries == 0 {
+                    steps.truncate(1);
+                }
+                steps
+            })
             .collect(),
     })
 }
@@ -1049,11 +1379,13 @@ impl TerminalEvent for RunEvent {
             annotagent_core::RunEventPayload::State { to, .. }
                 if matches!(
                     to,
-                    annotagent_core::RunStatus::AwaitingReview
+                    annotagent_core::RunStatus::CompletedWithReview
                         | annotagent_core::RunStatus::Completed
+                        | annotagent_core::RunStatus::Partial
                         | annotagent_core::RunStatus::Cancelled
                         | annotagent_core::RunStatus::BudgetExceeded
                         | annotagent_core::RunStatus::Failed
+                        | annotagent_core::RunStatus::Interrupted
                 )
         )
     }
@@ -1104,6 +1436,155 @@ mod tests {
         assert!(summary.model_bindings.is_empty());
     }
 
+    #[test]
+    fn exclusive_project_start_rejects_a_second_active_run() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        let summary = application
+            .create_project(
+                "robocup-demo",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("Project summary");
+        let active_run_id = RunId::new();
+        let (_result_sender, result) = watch::channel(None::<Result<ImageRunResult, String>>);
+        application.active.lock().expect("active runs").insert(
+            active_run_id,
+            ManagedRun {
+                project_name: summary.name,
+                control: RunControl::new(),
+                result,
+            },
+        );
+
+        let error = application
+            .start_run_path(
+                &temporary.path().join("robocup-demo/project.yaml"),
+                "mock",
+                None,
+            )
+            .expect_err("duplicate run must be rejected");
+        assert!(error.to_string().contains(&active_run_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn startup_reconciles_stale_running_run_as_interrupted() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        let summary = application
+            .create_project(
+                "stale-demo",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let project_path = application
+            .project_path("stale-demo")
+            .expect("project path");
+        let project_id = stable_project_id(project_path.parent().expect("project root"));
+        let run_id = RunId::new();
+        application
+            .store
+            .reserve_project_run(project_id, run_id, None)
+            .expect("reservation");
+        application
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: run_id,
+                project_id,
+                project_name: summary.name,
+                skill_id: "robocup".to_owned(),
+                provider: "mock".to_owned(),
+                model: "mock".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json: std::fs::read_to_string(project_path).expect("project YAML"),
+            })
+            .await
+            .expect("run");
+        application
+            .store
+            .set_run_status(run_id, RunStatus::Running, None)
+            .await
+            .expect("running");
+        drop(application);
+
+        let restarted = LocalApplication::new(temporary.path()).expect("restarted application");
+        let run = restarted
+            .list_runs()
+            .expect("runs")
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .expect("stale run");
+        assert_eq!(run.status, RunStatus::Interrupted);
+        assert!(
+            run.terminal_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no worker lease"))
+        );
+        let project = restarted
+            .get_project("stale-demo")
+            .expect("project summary");
+        assert!(project.active_run.is_none());
+        assert_eq!(
+            project.last_run.as_ref().map(|run| run.status),
+            Some(RunStatus::Interrupted)
+        );
+    }
+
+    #[test]
+    fn workflow_suggestion_edit_dry_run_and_publish_are_real() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "workflow-demo",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let settings = load_settings(None).expect("settings");
+        let suggestion = application
+            .suggest_workflow(
+                "workflow-demo",
+                &settings,
+                &WorkflowConstraints {
+                    require_review_gate: true,
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect("suggestion");
+        assert!(suggestion.unresolved_model_bindings.is_empty());
+        assert!(
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .all(|node| node.node_type == "vision_language" || node.node_type == "review_gate")
+        );
+        let mut edited = suggestion.draft;
+        edited.nodes[0].fallback = Some("review_gate".to_owned());
+        let edited = application
+            .save_workflow_draft(edited)
+            .expect("saved draft");
+        assert_eq!(edited.status, WorkflowDraftStatus::Editing);
+        let report = application
+            .dry_run_workflow(&edited.id, &settings)
+            .expect("dry run");
+        assert!(report.valid, "{:#?}", report.issues);
+        assert_eq!(report.execution_order.len(), edited.nodes.len());
+        let version = application
+            .publish_workflow(&edited.id, &settings)
+            .expect("publish");
+        assert_eq!(version.version, 1);
+        assert!(!version.content_hash.is_empty());
+        assert_eq!(version.draft.status, WorkflowDraftStatus::Published);
+        assert!(
+            application
+                .save_workflow_draft(version.draft)
+                .expect_err("published draft is immutable")
+                .to_string()
+                .contains("immutable")
+        );
+    }
+
     #[tokio::test]
     async fn dataset_coordinator_runs_each_selected_image() {
         let temp = tempfile::tempdir().expect("temp");
@@ -1128,7 +1609,7 @@ mod tests {
         assert!(results.iter().all(|item| {
             matches!(
                 item.result.status,
-                RunStatus::Completed | RunStatus::AwaitingReview
+                RunStatus::Completed | RunStatus::CompletedWithReview | RunStatus::Partial
             )
         }));
         assert_eq!(app.list_runs().expect("runs").len(), 2);

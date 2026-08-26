@@ -202,10 +202,18 @@ const fn default_true() -> bool {
 pub struct RuntimeConfig {
     #[serde(default = "default_parallel_images")]
     pub max_parallel_images: usize,
-    #[serde(default = "default_max_steps")]
-    pub max_agent_steps_per_image: u32,
+    #[serde(default = "default_model_turns")]
+    pub max_model_turns_per_task: u32,
+    #[serde(default = "default_tool_calls")]
+    pub max_tool_calls_per_task: u32,
+    #[serde(default = "default_recovery_turns")]
+    pub max_recovery_turns_per_task: u32,
+    #[serde(default = "default_task_timeout")]
+    pub task_timeout_seconds: u64,
+    #[serde(default = "default_provider_timeout")]
+    pub provider_request_timeout_seconds: u64,
     #[serde(default = "default_retries")]
-    pub max_retries_per_task: u32,
+    pub max_retries: u32,
     #[serde(default)]
     pub auto_resume: bool,
 }
@@ -213,8 +221,20 @@ pub struct RuntimeConfig {
 const fn default_parallel_images() -> usize {
     2
 }
-const fn default_max_steps() -> u32 {
-    10
+const fn default_model_turns() -> u32 {
+    8
+}
+const fn default_tool_calls() -> u32 {
+    12
+}
+const fn default_recovery_turns() -> u32 {
+    2
+}
+const fn default_task_timeout() -> u64 {
+    300
+}
+const fn default_provider_timeout() -> u64 {
+    120
 }
 const fn default_retries() -> u32 {
     3
