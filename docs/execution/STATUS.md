@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 03:58 CST
+Last updated: 2026-08-27 05:12 CST
 
 ## Current milestone
 
-Milestone 2 — versioned strongly typed Workflow design and migration.
+Milestone 3 — generic published-snapshot DAG Runtime.
 
 ## Completed
 
@@ -21,21 +21,25 @@ Milestone 2 — versioned strongly typed Workflow design and migration.
 - Added a distinct non-terminal `AwaitingReview` Run state with a one-time backward migration for legacy terminal rows.
 - Preserved task runs and remapped tool-call, annotation, Artifact, event, and revision references during history import.
 - Added structured Provider and Task failure events; exact timeout/task/provider/model/retry/elapsed details now persist in trace and terminal history.
+- Completed the Workflow v2 schema with generic node kinds, explicit typed ports/edges, bounded retry/fallback/review/resource policies, and precise static validation.
+- Added immutable published snapshots with stable semantic content hashes and frozen Skill, Model, and prompt/resource bindings.
+- Added schema migration v2 and history import/export support for immutable Run workflow snapshots.
+- Added backward-compatible zero/multi-Skill Projects, namespaced extension catalogs, and deterministic visual-profile merge conflict evidence.
+- Proved Generic Project creation and Workflow suggestion without RoboCup, while keeping the legacy single-Skill executor explicitly separated from the upcoming DAG executor.
 
 ## In progress
 
-- Designing the explicit typed node/port/edge model and backward-compatible Workflow migration for Milestone 2.
+- Designing the persisted node-execution/checkpoint contract for Milestone 3 before replacing compatibility execution.
 
 ## Next
 
-1. Introduce namespaced multi-Skill Project bindings without breaking Project Schema v1.
-2. Replace dependency-only Draft nodes with explicit typed ports, edges, retry/fallback/review/resource policies.
-3. Add precise static validation and immutable Run snapshot persistence tests.
+1. Execute an immutable published Workflow snapshot rather than a mutable Project/Skill graph.
+2. Add typed node input/output snapshots, cache keys, retries, fallback and gate branch decisions.
+3. Add durable HumanReview suspension/resume and cancellation tests around the generic DAG executor.
 
 ## Current release gaps
 
-- Existing Workflow Draft nodes use a compact dependency list, not explicit typed ports and edges.
-- Published Drafts are persisted and immutable, but the main Run path does not yet execute an explicitly selected published snapshot.
+- Published Drafts are persisted and immutable, but the main Run path still records and executes an honest compatibility snapshot rather than an explicitly selected published DAG.
 - The existing hybrid executor is a linear foundation, not the required branching, resumable DAG Runtime.
 - Dataset coordination has in-process pause/resume but no durable per-node checkpoint, active worker lease, or restart resume.
 - Workflow Dry Run is static validation, not sample-image sandbox execution.
@@ -47,9 +51,9 @@ Milestone 2 — versioned strongly typed Workflow design and migration.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-1 acceptance run passed 72 Rust tests and 13 Web tests with all build/static checks at exit 0.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-2 acceptance run passed 79 Rust tests and 13 Web tests with all build/static checks at exit 0.
 
 ## Recent commit
 
+- `684ce6f feat(workflow): add versioned typed workflow contracts`
 - `309d31a fix(runtime): complete typed artifact and failure semantics`
-- `9a19176 chore(release): establish Workflow Alpha acceptance ledger`

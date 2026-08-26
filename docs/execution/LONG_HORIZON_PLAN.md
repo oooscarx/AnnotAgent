@@ -22,6 +22,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Prove all tool-call replay and Run/Task state gates.
 3. **M2 — Versioned strongly typed Workflow**
    - Add typed nodes, ports, edges, policies, resource requirements, precise validation, migrations, multi-Skill composition, and immutable snapshots.
+   - Status: completed in `684ce6f`; acceptance evidence recorded.
 4. **M3 — Generic DAG Runtime**
    - Execute published snapshots with topological parallelism, retry, fallback, gates, suspension/resume, cancellation, cache, usage, and replayable trace.
 5. **M4 — Model Registry and mixed backends**

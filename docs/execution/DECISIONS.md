@@ -39,3 +39,11 @@ The files in `docs/execution/` are updated at each vertical milestone and are th
 ## D-008 — History import preserves protocol identity as a graph
 
 When a colliding Run import receives new IDs, all typed references are remapped together: assistant/tool messages, tool-call rows/events, Artifacts and lineage, annotation/revision relation endpoints, and TaskRun ownership. Remapping only the table primary keys would create an invalid replay and is rejected as incomplete history handling.
+
+## D-009 — Compatibility Runs identify themselves honestly
+
+Until Milestone 3 executes a published DAG, the existing Agent Runtime persists a complete `legacy_agent_runtime` snapshot containing the actual Skill manifest, task graph, Project schema, and model binding. It does not attach the latest published Workflow merely because one exists; that would make history claim execution semantics that did not occur.
+
+## D-010 — Multi-Skill collisions are namespaced and visual precedence is explicit
+
+For a multi-Skill Project, task/node, tool, Validator, and Refiner extension IDs are projected as `<skill>.<extension>`. Visual profiles merge in sorted Skill-ID order; the first owner wins and every ignored collision records both Skill IDs. Single-Skill legacy IDs remain readable for Schema v1 compatibility.

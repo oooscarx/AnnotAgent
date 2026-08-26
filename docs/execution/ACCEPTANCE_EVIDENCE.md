@@ -34,7 +34,7 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Tool-call replay and structured results | PASS | Runtime/provider/storage tests cover assistant tool calls, ordered tool results, multi-call replay, and structured geometry. |
 | Typed Artifact persistence | PASS | All nine required shapes, revision/replacement lineage, SQLite/history persistence, direct field-line validation, and imported-reference remapping are tested. |
 | Run/Task state semantics | PASS | Empty, partial, duplicate start, active restore, stale reconciliation, distinct review suspension, and structured timeout/provider/task visibility are tested. |
-| Strongly typed Workflow ports/edges | INCOMPLETE | No explicit `NodePort`/`WorkflowEdge` data model or port-level validator evidence. |
+| Strongly typed Workflow ports/edges | PASS | Workflow v2 defines generic node kinds, typed ports/edges/policies/resources, precise static checks, immutable published snapshots, and migration evidence. |
 | Published snapshot DAG execution | INCOMPLETE | Published versions persist, but the main Run path does not select and execute them. |
 | Checkpoint/restart resume/global budget | INCOMPLETE | No 100-image restart-resume gate. |
 | Mixed model backends | INCOMPLETE | Mock, OpenAI-compatible, and HTTP infer adapters exist; deterministic CV, worker discovery endpoints, JSON-only fallback, and health UI remain. |
@@ -73,3 +73,30 @@ Gate evidence:
 7. Failure visibility: `task_timeout_is_structured_in_events_and_terminal_history` and `provider_timeout_preserves_provider_model_task_retry_and_elapsed` prove exact structured fields and durable terminal reasons.
 
 Milestone 1 status: `PASS`.
+
+## Milestone 2 — versioned strongly typed Workflow
+
+Implementation commit: `684ce6f feat(workflow): add versioned typed workflow contracts`
+
+`./scripts/acceptance.sh` was run after the implementation:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Rust fmt + clippy | 0 | All workspace targets/features pass formatting and `-D warnings`. |
+| Rust test | 0 | 79 unit/integration tests passed; 0 failed. |
+| Rust build | 0 | All workspace crates built. |
+| Web typecheck/test/build | 0 | Typecheck passed; 7 files/13 tests passed; production build passed. |
+| Doctor | 0 | SQLite reports 25 tables; schema migrations v1/v2 and offline/mock operation pass. |
+
+Gate evidence:
+
+1. Multiple Workflows: `project_persists_multiple_workflow_drafts_and_published_versions` and the Generic application test persist two Draft identities and two published versions for one Project.
+2. Multiple Skills: `two_skills_are_namespaced_and_visual_merge_is_deterministic` proves same-named node/tool/validator extensions coexist under deterministic namespaces; visual collision ownership and ignored source are explicit.
+3. DAG/ports: `dependency_cycle_is_rejected` and `port_type_error_has_exact_input_path` prove cycles and incompatible Artifact edges are blocking; the latter reports `nodes[1].inputs.candidates`.
+4. Binding safety: `unresolved_model_binding_blocks_publish` proves required model capability bindings cannot be omitted at publish time; validation also checks enabled Skills and registered Validators/Refiners.
+5. Commit/runtime policy: static validation checks retry upper bounds, fallback cycles, unreachable nodes, terminal paths, and Validator/HumanReview barriers before Commit.
+6. Immutability/hash: application publication rejects edits to a published Draft; `snapshot_serialization_is_stable_and_frozen` proves semantic hash material ignores lifecycle timestamps while frozen content is unaffected by later Draft edits.
+7. Persistence/history: migration v2 adds `workflow_snapshot_json` without losing legacy Run rows; history round-trip preserves the exact frozen snapshot. Compatibility runs record the graph they actually execute and do not claim to have executed a published DAG.
+8. Generic boundary: `generic_project_and_workflow_need_no_robocup_skill` creates, reads, and suggests multiple Workflows for a zero-Skill Project and asserts serialized output contains no RoboCup domain data.
+
+Milestone 2 status: `PASS`.
