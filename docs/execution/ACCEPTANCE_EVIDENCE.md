@@ -35,7 +35,7 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Typed Artifact persistence | PASS | All nine required shapes, revision/replacement lineage, SQLite/history persistence, direct field-line validation, and imported-reference remapping are tested. |
 | Run/Task state semantics | PASS | Empty, partial, duplicate start, active restore, stale reconciliation, distinct review suspension, and structured timeout/provider/task visibility are tested. |
 | Strongly typed Workflow ports/edges | PASS | Workflow v2 defines generic node kinds, typed ports/edges/policies/resources, precise static checks, immutable published snapshots, and migration evidence. |
-| Published snapshot DAG execution | INCOMPLETE | Published versions persist, but the main Run path does not select and execute them. |
+| Published snapshot DAG execution | PASS | Generic runtime tests execute an immutable published snapshot with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, and replayable I/O trace. Product version-selection UI remains M6 scope. |
 | Checkpoint/restart resume/global budget | INCOMPLETE | No 100-image restart-resume gate. |
 | Mixed model backends | INCOMPLETE | Mock, OpenAI-compatible, and HTTP infer adapters exist; deterministic CV, worker discovery endpoints, JSON-only fallback, and health UI remain. |
 | Workflow Advisor/editor | INCOMPLETE | Suggest/save/static dry-run/publish work; node/edge lifecycle, sample-image Dry Run, clone/archive/version selection remain. |
@@ -100,3 +100,31 @@ Gate evidence:
 8. Generic boundary: `generic_project_and_workflow_need_no_robocup_skill` creates, reads, and suggests multiple Workflows for a zero-Skill Project and asserts serialized output contains no RoboCup domain data.
 
 Milestone 2 status: `PASS`.
+
+## Milestone 3 — generic published-snapshot DAG Runtime
+
+Implementation commits: `33ab172 feat(runtime): execute immutable published DAG snapshots` and `2c05a83 test(runtime): enforce built-in commit safety`
+
+`./scripts/acceptance.sh` was run after the implementation:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Rust fmt + clippy | 0 | All workspace targets/features pass formatting and `-D warnings`. |
+| Rust test | 0 | 85 unit/integration tests passed; 0 failed. |
+| Rust build | 0 | All workspace crates built. |
+| Web typecheck/test/build | 0 | Typecheck passed; 7 files/13 tests passed; production build passed. |
+| Doctor | 0 | Database, migrations, workspace, example, Web build, and offline/mock checks pass. |
+
+Gate evidence from `crates/annotagent-runtime/tests/published_dag.rs`:
+
+1. Target graph: `published_dag_branches_suspends_resumes_caches_and_replays_trace` executes input → mock detector → deterministic refiner → Validator → confidence Gate, with pass → Commit and review → HumanReview → Commit routes.
+2. Branching/suspension: high confidence skips review and commits; low confidence returns `AwaitingReview`, serializes/restores the complete checkpoint, accepts explicit approval, resumes, and commits without rerunning completed nodes.
+3. Retry/fallback: `retry_limit_and_fallback_are_bounded` proves success on the exact third allowed attempt and activation of a declared fallback after exhaustion.
+4. Cancellation/timeout: cancellation aborts the running node and marks not-yet-started nodes Cancelled; timeout produces structured `node_timeout` evidence.
+5. Parallel scheduling: two independent ready nodes overlap, with measured maximum concurrency of two.
+6. Cache/usage: repeated deterministic refinement hits the content-addressed Artifact cache; cache-hit usage and cost are zero while non-cached model usage remains accounted per node.
+7. Trace/replay: checkpoints contain node statuses, exact input/output Artifact snapshots, branch routes, attempts, cache keys/hits, structured failure, timestamps, tokens, and cost and round-trip through JSON.
+8. Immutable input: changing snapshot content without changing the published content hash is rejected before execution.
+9. Safe Commit: built-in Commit cannot be overridden by a registered runner and rejects Artifacts that are neither Validated nor Human-reviewed.
+
+Milestone 3 status: `PASS`.

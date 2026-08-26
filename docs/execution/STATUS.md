@@ -1,10 +1,10 @@
 # Workflow Alpha Status
 
-Last updated: 2026-08-27 05:12 CST
+Last updated: 2026-08-27 05:25 CST
 
 ## Current milestone
 
-Milestone 3 — generic published-snapshot DAG Runtime.
+Milestone 4 — Model Registry and mixed vision backends.
 
 ## Completed
 
@@ -26,21 +26,26 @@ Milestone 3 — generic published-snapshot DAG Runtime.
 - Added schema migration v2 and history import/export support for immutable Run workflow snapshots.
 - Added backward-compatible zero/multi-Skill Projects, namespaced extension catalogs, and deterministic visual-profile merge conflict evidence.
 - Proved Generic Project creation and Workflow suggestion without RoboCup, while keeping the legacy single-Skill executor explicitly separated from the upcoming DAG executor.
+- Added a generic executor that accepts only immutable published Workflow snapshots and rejects content-hash tampering.
+- Added wave-parallel DAG scheduling, conditional gate routes, bounded node retry/timeout, fallback activation, cancellation, and safe Commit enforcement.
+- Added serializable suspension checkpoints and HumanReview approval/resume without rerunning completed nodes.
+- Added deterministic Artifact caching keyed by node/model/input/config/Skill snapshot material, with zero incremental cache-hit usage/cost.
+- Added replayable per-node traces containing attempts, cache evidence, route, exact input/output Artifacts, structured errors, timing, tokens, and cost.
 
 ## In progress
 
-- Designing the persisted node-execution/checkpoint contract for Milestone 3 before replacing compatibility execution.
+- Expanding Model Registry metadata and execution adapters for Milestone 4.
 
 ## Next
 
-1. Execute an immutable published Workflow snapshot rather than a mutable Project/Skill graph.
-2. Add typed node input/output snapshots, cache keys, retries, fallback and gate branch decisions.
-3. Add durable HumanReview suspension/resume and cancellation tests around the generic DAG executor.
+1. Add complete model/version/input/output/cost/health metadata and capability resolution.
+2. Add deterministic CV and versioned HTTP worker health/capabilities/inference contracts.
+3. Add JSON-only VLM fallback parsing and mixed-backend failure isolation tests.
 
 ## Current release gaps
 
 - Published Drafts are persisted and immutable, but the main Run path still records and executes an honest compatibility snapshot rather than an explicitly selected published DAG.
-- The existing hybrid executor is a linear foundation, not the required branching, resumable DAG Runtime.
+- The generic DAG executor is implemented, but the product Start flow does not yet expose explicit published-version selection (scheduled for the Editor/run integration milestone).
 - Dataset coordination has in-process pause/resume but no durable per-node checkpoint, active worker lease, or restart resume.
 - Workflow Dry Run is static validation, not sample-image sandbox execution.
 - Workflow Editor cannot yet add/delete nodes or edges, clone versions, or archive drafts.
@@ -51,9 +56,10 @@ Milestone 3 — generic published-snapshot DAG Runtime.
 
 ## Recent tests
 
-See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-2 acceptance run passed 79 Rust tests and 13 Web tests with all build/static checks at exit 0.
+See `ACCEPTANCE_EVIDENCE.md` for commands and counts. The post-Milestone-3 acceptance run passed 85 Rust tests and 13 Web tests with all build/static checks at exit 0.
 
 ## Recent commit
 
+- `33ab172 feat(runtime): execute immutable published DAG snapshots`
+- `2c05a83 test(runtime): enforce built-in commit safety`
 - `684ce6f feat(workflow): add versioned typed workflow contracts`
-- `309d31a fix(runtime): complete typed artifact and failure semantics`

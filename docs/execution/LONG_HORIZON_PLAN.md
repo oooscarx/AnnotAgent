@@ -25,6 +25,7 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed in `684ce6f`; acceptance evidence recorded.
 4. **M3 — Generic DAG Runtime**
    - Execute published snapshots with topological parallelism, retry, fallback, gates, suspension/resume, cancellation, cache, usage, and replayable trace.
+   - Status: completed in `33ab172`; acceptance evidence recorded.
 5. **M4 — Model Registry and mixed backends**
    - Complete registry metadata, deterministic CV, versioned HTTP worker protocol, JSON-only VLM fallback, health, and failure behavior.
 6. **M5 — Persistent Dataset Coordinator**

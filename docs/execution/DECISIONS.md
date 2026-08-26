@@ -47,3 +47,11 @@ Until Milestone 3 executes a published DAG, the existing Agent Runtime persists 
 ## D-010 — Multi-Skill collisions are namespaced and visual precedence is explicit
 
 For a multi-Skill Project, task/node, tool, Validator, and Refiner extension IDs are projected as `<skill>.<extension>`. Visual profiles merge in sorted Skill-ID order; the first owner wins and every ignored collision records both Skill IDs. Single-Skill legacy IDs remain readable for Schema v1 compatibility.
+
+## D-011 — Suspension state is a complete replayable checkpoint
+
+A DAG checkpoint owns node states, outputs, selected routes, activated fallbacks, review approvals, usage, and structured input/output traces and is bound to the published content hash. Resume rejects another Workflow hash and schedules only unfinished nodes. This serializable contract is the persistence boundary that the Dataset Coordinator will make durable in Milestone 5.
+
+## D-012 — Commit and cache semantics are Runtime invariants
+
+ImageInput, HumanReview, CandidateMerge, and Commit are built-ins; registering an operation with the same string cannot replace their safety behavior. Commit accepts only Valid Artifacts. Cache hits reuse immutable deterministic output, retain provenance, and add zero tokens/cost to the resumed execution.
