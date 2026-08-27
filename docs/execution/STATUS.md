@@ -1,14 +1,14 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 14:59 CST
+Last updated: 2026-08-27 15:37 CST
 
 ## Current milestone
 
-Milestone LP2 — complete: executable Pipeline Artifacts, generic Core nodes, formal Classification
-and YOLO Detection Skills, mock/OpenAI-compatible/HTTP JSON bindings, cache, Commit, and node Replay.
+Milestone LP3 — complete: persisted application execution, three generic offline examples,
+exact-version 100-image Label Pipeline batch, and reuse of the durable lifecycle/recovery path.
 
-Milestone LP3 — next: application-owned example Projects, persisted Pipeline Run integration,
-100-image Label Pipeline batch, lifecycle/recovery, and CLI demo gates.
+Milestone LP4 — next: target-Label Advisor contracts, application/server APIs for Label Pipeline
+Drafts, bounded Dry Run, typed Artifact inspection, and exact-node Replay.
 
 ## Product objective
 
@@ -54,21 +54,32 @@ acceptance path.
   bindings. Detection supports mock and generic HTTP JSON bindings over protocol v1.
 - `replay_from` resets one node and its descendants while retaining completed upstream outputs.
   The crop-classification gate proves classifier Replay does not call the detector again.
+- LP3 connects typed Pipeline execution to application-owned published Runs. The selected image is
+  materialized as an `ImageArtifact`; node outputs are persisted in the Run checkpoint and committed
+  Pipeline candidates become formal stored annotations.
+- The application Model/Node Catalog now exposes real mock classifier and detector bindings plus the
+  formal Skill and Core node descriptors used by publication validation.
+- Three generic example Project Schemas cover whole-image classification, detection, and shared
+  detector → Crop → Classification composition without enabling RoboCup.
+- A 100-image synthetic Dataset gate executes the exact immutable published whole-image
+  Classification Workflow and persists one committed annotation per child Run.
 
-## LP2 verification
+## LP3 verification
 
-- Three executable Label Pipeline integration tests passed: whole-image classification, typed
-  detection, and crop classification with Replay.
-- Two provider protocol tests passed: generic HTTP detector/classifier and bounded
-  OpenAI-compatible classifier.
-- `cargo test --workspace --all-features`: 122 Rust tests passed, 0 failed; doc tests passed.
+- Four Label Pipeline integration tests passed: all three executable offline flows plus validation
+  of the three generic example Project Schemas.
+- The application integration gate passed exact-version execution, typed checkpoint persistence,
+  formal annotation storage, and a 100-image Label Pipeline Dataset batch.
+- Existing pause/resume/cancel, startup reconciliation, active-Run exclusion, and persistent
+  100-image restart recovery tests pass through the same application coordinator used by the new
+  Pipeline path.
+- `cargo test --workspace --all-features`: 124 Rust tests passed, 0 failed; doc tests passed.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
 - Core domain scan for RoboCup/YOLO/domain Labels: clean.
 - No conversation credential was read, restored, logged, or used.
 
 ## Remaining release blockers
 
-LP3–LP5 must still connect this Runtime to persisted application Runs, ship three example Projects
-and the Label-specific 100-image/lifecycle evidence, constrain the target-Label Advisor, and finish
-the product GUI/Inspector plus full Rust/Web/browser acceptance. Until those gates pass, Label
-Pipeline Alpha is not release-complete.
+LP4–LP5 must still constrain the target-Label Advisor, expose authoring/inspection/Replay APIs, and
+finish the product GUI/Inspector plus full Rust/Web/browser acceptance. Until those gates pass,
+Label Pipeline Alpha is not release-complete.

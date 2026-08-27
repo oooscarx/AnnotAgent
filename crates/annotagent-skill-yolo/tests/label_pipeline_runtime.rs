@@ -8,9 +8,10 @@ use std::{
 
 use annotagent_core::{
     ArtifactKind, ArtifactRef, CoreResult, ImageArtifact, ImageId, NodePort, PipelineArtifact,
-    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend,
-    PublishedWorkflowVersion, RunId, VisionCapability, WORKFLOW_SCHEMA_VERSION, WorkflowDraft,
-    WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, ProjectSchema,
+    PublishedWorkflowVersion, RunId, ValidationCatalog, VisionCapability, WORKFLOW_SCHEMA_VERSION,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot,
 };
 use annotagent_runtime::{
     CORE_ATTACH_RESULT, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_FILTER, CorePipelineRunner,
@@ -173,6 +174,23 @@ fn register_core(executor: &mut PublishedDagExecutor, operations: &[&str]) {
         executor
             .register_runner((*operation).to_owned(), runner.clone(), true)
             .expect("Core runner");
+    }
+}
+
+#[test]
+fn three_example_project_schemas_are_generic_and_valid() {
+    for yaml in [
+        include_str!("../../../examples/label-pipelines/whole-image-classification/project.yaml"),
+        include_str!("../../../examples/label-pipelines/yolo-detection/project.yaml"),
+        include_str!("../../../examples/label-pipelines/yolo-crop-classification/project.yaml"),
+    ] {
+        let project = ProjectSchema::from_yaml(yaml).expect("example Project Schema");
+        assert!(
+            project.validate(&ValidationCatalog::default()).is_empty(),
+            "{}",
+            project.project.name
+        );
+        assert!(!yaml.to_ascii_lowercase().contains("robocup"));
     }
 }
 

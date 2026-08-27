@@ -329,7 +329,10 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         id: "default-vision".to_owned(),
         display_name: "Workspace default vision model".to_owned(),
         backend_id: "workspace-provider-adapter".to_owned(),
-        capabilities: vec![VisionCapability::VisionLanguage],
+        capabilities: vec![
+            VisionCapability::VisionLanguage,
+            VisionCapability::Classification,
+        ],
         input_types: vec![VisionInputType::Image, VisionInputType::Text],
         output_types: all_artifact_kinds().to_vec(),
         model: settings.provider.model.clone(),
@@ -361,6 +364,37 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ]),
         ..VisionModelDescriptor::default()
     })?;
+    for (id, display_name, capability, output_type) in [
+        (
+            "mock-classifier",
+            "Offline mock classifier",
+            VisionCapability::Classification,
+            ArtifactKind::ClassificationSet,
+        ),
+        (
+            "mock-detector",
+            "Offline mock detector",
+            VisionCapability::ObjectDetection,
+            ArtifactKind::DetectionSet,
+        ),
+    ] {
+        models.register_model(VisionModelDescriptor {
+            id: id.to_owned(),
+            display_name: display_name.to_owned(),
+            backend_id: "workspace-provider-adapter".to_owned(),
+            capabilities: vec![capability],
+            input_types: vec![VisionInputType::Image],
+            output_types: vec![output_type],
+            model: id.to_owned(),
+            model_version: "1".to_owned(),
+            health: VisionModelHealth {
+                status: VisionModelHealthStatus::Healthy,
+                detail: Some("offline deterministic fixture available".to_owned()),
+                checked_at: Some(chrono::Utc::now()),
+            },
+            ..VisionModelDescriptor::default()
+        })?;
+    }
 
     let mut nodes = NodeRegistry::new();
     let artifact_kinds = all_artifact_kinds().to_vec();
@@ -431,6 +465,76 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             produces,
             deterministic,
         })?;
+    }
+    for descriptor in [
+        annotagent_skill_classification::node_descriptor(),
+        annotagent_skill_yolo::node_descriptor(),
+        VisionNodeDescriptor {
+            id: annotagent_core::IMAGE_INPUT_OPERATION.to_owned(),
+            display_name: "Image Input".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: Vec::new(),
+            produces: vec![ArtifactKind::Image],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_CROP.to_owned(),
+            display_name: "Crop".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::CropSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_FILTER.to_owned(),
+            display_name: "Filter".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_MAP_LABEL.to_owned(),
+            display_name: "Map Label".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_ATTACH_RESULT.to_owned(),
+            display_name: "Attach Result".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet, ArtifactKind::ClassificationSet],
+            produces: vec![ArtifactKind::AnnotationCandidateSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_ATTACH_ATTRIBUTE.to_owned(),
+            display_name: "Attach Attribute".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::AnnotationCandidateSet],
+            produces: vec![ArtifactKind::AnnotationCandidateSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_CONFIDENCE_GATE.to_owned(),
+            display_name: "Confidence Gate".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![
+                ArtifactKind::DetectionSet,
+                ArtifactKind::ClassificationSet,
+                ArtifactKind::AnnotationCandidateSet,
+            ],
+            produces: vec![
+                ArtifactKind::DetectionSet,
+                ArtifactKind::ClassificationSet,
+                ArtifactKind::AnnotationCandidateSet,
+            ],
+            deterministic: true,
+        },
+    ] {
+        nodes.register(descriptor)?;
     }
     Ok((nodes, models))
 }
@@ -2995,6 +3099,8 @@ impl TerminalEvent for RunEvent {
 
 #[cfg(test)]
 mod tests {
+    use annotagent_core::{LabelId, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind};
+
     use super::*;
 
     const GENERIC_PROJECT: &str = r"
@@ -3031,6 +3137,26 @@ review:
   force_review_below: 0.5
 export:
   formats: [native, coco]
+";
+
+    const GENERIC_CLASSIFICATION_PROJECT: &str = r"
+version: 1
+project:
+  name: Generic scene classification
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: scene
+    kind: classification
+    labels: [day, night]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
 ";
 
     #[test]
@@ -3132,6 +3258,150 @@ export:
                 .any(|event| event.kind == RunEventKind::ArtifactCommitted
                     || event.kind == RunEventKind::ArtifactCreated)
         );
+    }
+
+    #[tokio::test]
+    async fn published_label_pipeline_executes_and_persists_typed_checkpoint() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("label-classification", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary
+                .path()
+                .join("label-classification/images/sample.png"),
+        )
+        .expect("sample image");
+        let now = chrono::Utc::now();
+        let port = |id: &str, artifact_type| annotagent_core::NodePort {
+            id: id.to_owned(),
+            artifact_type,
+            required: true,
+            multiple: false,
+        };
+        let draft = WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "label-classification-draft".to_owned(),
+            project_id: "label-classification".to_owned(),
+            name: "Whole-image Classification Demo".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![
+                WorkflowDraftNode {
+                    id: "image".to_owned(),
+                    node_type: annotagent_core::IMAGE_INPUT_OPERATION.to_owned(),
+                    kind: WorkflowNodeKind::ImageInput,
+                    outputs: vec![port("image", ArtifactKind::Image)],
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "classifier".to_owned(),
+                    node_type: annotagent_skill_classification::CLASSIFICATION_OPERATION.to_owned(),
+                    kind: WorkflowNodeKind::VisionModel,
+                    inputs: vec![port("image", ArtifactKind::Image)],
+                    outputs: vec![port("classifications", ArtifactKind::ClassificationSet)],
+                    model_binding: Some("mock-classifier".to_owned()),
+                    parameters: BTreeMap::from([
+                        ("labels".to_owned(), json!(["day", "night"])),
+                        ("mock_label".to_owned(), json!("day")),
+                    ]),
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "commit".to_owned(),
+                    node_type: "commit".to_owned(),
+                    kind: WorkflowNodeKind::Commit,
+                    inputs: vec![port("classifications", ArtifactKind::ClassificationSet)],
+                    parameters: BTreeMap::from([("task_id".to_owned(), json!("scene"))]),
+                    ..WorkflowDraftNode::default()
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    from_node: "image".to_owned(),
+                    from_port: "image".to_owned(),
+                    to_node: "classifier".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "classifier".to_owned(),
+                    from_port: "classifications".to_owned(),
+                    to_node: "commit".to_owned(),
+                    to_port: "classifications".to_owned(),
+                    route: None,
+                },
+            ],
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .save_workflow_draft(draft)
+            .expect("save Label Pipeline Draft");
+        let settings = load_settings(None).expect("settings");
+        let published = application
+            .publish_workflow("label-classification-draft", &settings)
+            .expect("publish Label Pipeline");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("label-classification/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("label-pipeline-app-run"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start Label Pipeline Run");
+        let result = application.wait_run(started.run_id).await.expect("Run");
+        assert_eq!(result.status, RunStatus::Completed, "{:#?}", result.issues);
+        assert_eq!(result.committed.len(), 1);
+        assert_eq!(result.committed[0].task_id, TaskId::from("scene"));
+        assert_eq!(result.committed[0].label, Some(LabelId::from("day")));
+        let history = application.store.history(started.run_id).expect("history");
+        assert_eq!(history.annotations.len(), 1);
+        let snapshot: serde_json::Value = serde_json::from_str(
+            history
+                .run
+                .workflow_snapshot_json
+                .as_deref()
+                .expect("snapshot"),
+        )
+        .expect("snapshot JSON");
+        assert_eq!(
+            snapshot["checkpoint"]["node_outputs"]["classifier"]["pipeline_artifacts"][0]["kind"],
+            json!("classification_set")
+        );
+
+        let image_root = temporary.path().join("label-classification/images");
+        for index in 0..99 {
+            annotagent_image_tools::generate_synthetic_inspection(
+                &image_root.join(format!("batch-{index:03}.png")),
+            )
+            .expect("batch image");
+        }
+        let coordinator = DatasetCoordinator::new(&application);
+        let batch = coordinator
+            .create_with_workflow(
+                &temporary.path().join("label-classification/project.yaml"),
+                "mock",
+                None,
+                Some(100),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("Label Pipeline Batch");
+        let execution = coordinator
+            .execute(batch.id, None)
+            .await
+            .expect("Label Pipeline Batch execution");
+        assert_eq!(execution.batch.status, BatchStatus::Completed);
+        assert_eq!(execution.results.len(), 100);
+        assert!(execution.results.iter().all(|result| {
+            result.result.status == RunStatus::Completed && result.result.committed.len() == 1
+        }));
     }
 
     #[tokio::test]

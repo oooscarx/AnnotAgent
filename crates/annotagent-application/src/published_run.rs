@@ -3,20 +3,27 @@ use std::{collections::BTreeMap, sync::Arc};
 use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
     AnnotationSource, AnnotationValidator, ArtifactId, ArtifactKind, ArtifactProvenance,
-    ArtifactRole, ArtifactValidationState, AttributeValue, ImageId, IssueSeverity, Keypoint,
-    LabelId, MaskEncoding, NormalizedPoint, NormalizedRect, PublishedWorkflowVersion,
-    RefinementContext, RelationEndpoint, RelationValue, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    UsageRecord, UsageSource, UsageTotals, ValidationContext, ValidationEvidence, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, VisionBackendKind, VisionInferenceRequest,
-    VisionModelBackend, VisionModelProvider, WorkflowNodeKind,
+    ArtifactRole, ArtifactValidationState, AttributeValue, ImageArtifact, ImageId, IssueSeverity,
+    Keypoint, LabelId, MaskEncoding, NormalizedPoint, NormalizedRect, PipelineArtifact,
+    PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue, ReviewStatus,
+    RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind,
+    TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
+    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
+    VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowNodeKind,
 };
-use annotagent_provider::{OpenAiCompatibleProvider, OpenAiVisionBackend};
+use annotagent_provider::{
+    OpenAiCompatiblePipelineClassifier, OpenAiCompatibleProvider, OpenAiVisionBackend,
+};
 use annotagent_runtime::{
-    AgentRuntime, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
-    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunStatus, ImageRunRequest, ImageRunResult,
-    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    AgentRuntime, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT, CORE_CONFIDENCE_GATE, CORE_CROP,
+    CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner, DagExecutionRequest, DagNodeContext,
+    DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunStatus,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
+use annotagent_skill_classification::{
+    CLASSIFICATION_OPERATION, ClassificationSkillRunner, MockClassificationBackend,
+};
+use annotagent_skill_yolo::{MockYoloBackend, YOLO_DETECTION_OPERATION, YoloDetectionSkillRunner};
 use annotagent_storage::SqliteStore;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -56,6 +63,7 @@ pub(crate) struct PublishedWorkflowRuntime {
     provider_name: String,
     model_name: String,
     external_backend: Option<Arc<dyn VisionModelBackend>>,
+    pipeline_provider: Option<Arc<dyn VisionModelProvider>>,
     store: Arc<SqliteStore>,
     control: RunControl,
     events: broadcast::Sender<RunEvent>,
@@ -74,6 +82,7 @@ impl PublishedWorkflowRuntime {
         validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
         refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
     ) -> Result<Self> {
+        let mut pipeline_provider = None;
         let external_backend: Option<Arc<dyn VisionModelBackend>> = match provider_kind {
             "mock" => None,
             "openai_compatible" => {
@@ -84,6 +93,7 @@ impl PublishedWorkflowRuntime {
                     )
                     .map_err(|error| anyhow!(error))?,
                 );
+                pipeline_provider = Some(provider.clone());
                 Some(Arc::new(OpenAiVisionBackend::new(
                     "workspace-openai-compatible",
                     &settings.provider.model,
@@ -100,6 +110,7 @@ impl PublishedWorkflowRuntime {
             provider_name: provider_kind.to_owned(),
             model_name: settings.provider.model.clone(),
             external_backend,
+            pipeline_provider,
             store,
             control: RunControl::new(),
             events,
@@ -152,7 +163,8 @@ impl PublishedWorkflowRuntime {
         let mut issues = Vec::new();
         for trace in &result.checkpoint.traces {
             let task_id = TaskId::from(trace.node_id.as_str());
-            let output_empty = trace.output_artifacts.is_empty();
+            let output_empty =
+                trace.output_artifacts.is_empty() && trace.output_pipeline_artifacts.is_empty();
             let task_status = match trace.status {
                 DagNodeStatus::Succeeded | DagNodeStatus::Cached if output_empty => {
                     TaskRunStatus::SucceededEmpty
@@ -237,6 +249,29 @@ impl PublishedWorkflowRuntime {
                             ),
                         },
                     )
+                    .scoped(Some(request.image_id), Some(task_id.clone())),
+                )
+                .await?;
+            }
+            if !trace.output_pipeline_artifacts.is_empty() {
+                self.publish(
+                    RunEvent::new(
+                        request.run_id,
+                        RunEventKind::ArtifactCreated,
+                        RunEventPayload::Message {
+                            summary: format!(
+                                "node {} produced {} typed Pipeline Artifact(s): {}",
+                                trace.node_id,
+                                trace.output_pipeline_artifacts.len(),
+                                trace
+                                    .output_pipeline_artifacts
+                                    .iter()
+                                    .map(|artifact| format!("{:?}", artifact.artifact_type()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        },
+                    )
                     .scoped(Some(request.image_id), Some(task_id)),
                 )
                 .await?;
@@ -286,6 +321,17 @@ impl PublishedWorkflowRuntime {
                     ReviewStatus::AutoAccepted
                 },
             );
+            self.store
+                .commit_annotation(request.run_id, &annotation)
+                .await
+                .map_err(|error| anyhow!(error))?;
+            if awaiting_review {
+                review.push(annotation);
+            } else {
+                committed.push(annotation);
+            }
+        }
+        for annotation in pipeline_annotations(&self.workflow, result, awaiting_review) {
             self.store
                 .commit_annotation(request.run_id, &annotation)
                 .await
@@ -459,29 +505,119 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
         });
         let mut executor = PublishedDagExecutor::new();
         let mut operations = std::collections::BTreeSet::new();
+        let core_pipeline_runner = Arc::new(CorePipelineRunner);
         for node in &self.workflow.draft.nodes {
-            if !matches!(
-                node.kind,
-                WorkflowNodeKind::ImageInput
-                    | WorkflowNodeKind::HumanReview
-                    | WorkflowNodeKind::Commit
-                    | WorkflowNodeKind::CandidateMerge
-            ) && operations.insert(node.node_type.clone())
-            {
-                executor.register_runner(
-                    node.node_type.clone(),
-                    runner.clone(),
-                    matches!(
-                        node.kind,
-                        WorkflowNodeKind::Transform
-                            | WorkflowNodeKind::DeterministicTool
-                            | WorkflowNodeKind::Validator
-                            | WorkflowNodeKind::Refiner
-                            | WorkflowNodeKind::Gate
-                    ),
-                )?;
+            if !operations.insert(node.node_type.clone()) {
+                continue;
+            }
+            match node.node_type.as_str() {
+                CORE_CROP
+                | CORE_FILTER
+                | CORE_MAP_LABEL
+                | CORE_ATTACH_RESULT
+                | CORE_ATTACH_ATTRIBUTE
+                | CORE_CONFIDENCE_GATE => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        core_pipeline_runner.clone(),
+                        true,
+                    )?;
+                }
+                CLASSIFICATION_OPERATION => {
+                    let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+                        if let Some(provider) = &self.pipeline_provider {
+                            Arc::new(OpenAiCompatiblePipelineClassifier::new(
+                                "workspace-openai-compatible-classifier",
+                                provider.clone(),
+                            ))
+                        } else {
+                            Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
+                        };
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ClassificationSkillRunner::new(
+                            backend,
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| self.model_name.clone()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                YOLO_DETECTION_OPERATION => {
+                    if self.provider_name != "mock" {
+                        bail!(
+                            "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
+                        );
+                    }
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(YoloDetectionSkillRunner::new(
+                            Arc::new(MockYoloBackend::new("workspace-mock-detector")),
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| "mock-detector".to_owned()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                _ if !matches!(
+                    node.kind,
+                    WorkflowNodeKind::ImageInput
+                        | WorkflowNodeKind::HumanReview
+                        | WorkflowNodeKind::Commit
+                        | WorkflowNodeKind::CandidateMerge
+                ) =>
+                {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        runner.clone(),
+                        matches!(
+                            node.kind,
+                            WorkflowNodeKind::Transform
+                                | WorkflowNodeKind::DeterministicTool
+                                | WorkflowNodeKind::Validator
+                                | WorkflowNodeKind::Refiner
+                                | WorkflowNodeKind::Gate
+                        ),
+                    )?;
+                }
+                _ => {}
             }
         }
+        let image_input = self
+            .workflow
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.kind == WorkflowNodeKind::ImageInput);
+        let initial_pipeline_artifacts = image_input
+            .map(|node| {
+                PipelineArtifact::Image(ImageArtifact {
+                    reference: annotagent_core::ArtifactRef {
+                        artifact_id: format!("image:{}", request.image_id),
+                        source_node: node.id.clone(),
+                        port: node
+                            .outputs
+                            .first()
+                            .map_or_else(|| "image".to_owned(), |port| port.id.clone()),
+                        artifact_type: ArtifactKind::Image,
+                        item_id: None,
+                    },
+                    image_id: request.image_id,
+                    width: request.image.metadata.width,
+                    height: request.image.metadata.height,
+                    mime_type: request.image.metadata.mime_type.clone(),
+                    blob_ref: request.model_image.as_ref().map_or_else(
+                        || format!("workspace://{}", request.image.metadata.sha256),
+                        |image| format!("workspace://{}", image.id),
+                    ),
+                })
+            })
+            .into_iter()
+            .collect();
         let result = executor
             .execute(
                 &self.workflow,
@@ -489,7 +625,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     run_id: request.run_id,
                     image_id: request.image_id,
                     initial_artifacts: Vec::new(),
-                    initial_pipeline_artifacts: Vec::new(),
+                    initial_pipeline_artifacts,
                     cancellation: self.control.cancellation_token(),
                 },
             )
@@ -1105,6 +1241,109 @@ fn artifact_annotation(artifact: &VisionArtifact, status: ReviewStatus) -> Annot
         },
         created_at: artifact.created_at,
     }
+}
+
+fn pipeline_annotations(
+    workflow: &PublishedWorkflowVersion,
+    result: &annotagent_runtime::DagRunResult,
+    awaiting_review: bool,
+) -> Vec<Annotation> {
+    let status = if awaiting_review {
+        ReviewStatus::NeedsReview
+    } else {
+        ReviewStatus::AutoAccepted
+    };
+    let mut annotations = Vec::new();
+    for commit in workflow
+        .draft
+        .nodes
+        .iter()
+        .filter(|node| node.kind == WorkflowNodeKind::Commit)
+    {
+        let Some(output) = result.checkpoint.node_outputs.get(&commit.id) else {
+            continue;
+        };
+        let task_id = commit
+            .parameters
+            .get("task_id")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| TaskId::from("unbound"), TaskId::from);
+        for artifact in &output.pipeline_artifacts {
+            match artifact {
+                PipelineArtifact::DetectionSet(set) => {
+                    annotations.extend(set.detections.iter().map(|detection| {
+                        Annotation {
+                            id: AnnotationId::new(),
+                            image_id: set.image_id,
+                            task_id: task_id.clone(),
+                            label: detection
+                                .label
+                                .clone()
+                                .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                            value: annotagent_core::AnnotationValue::BoundingBox {
+                                rect: detection.rect,
+                            },
+                            attributes: BTreeMap::new(),
+                            confidence: Some(detection.confidence),
+                            source: AnnotationSource::ModelAndTool,
+                            review_status: status,
+                            provenance: AnnotationProvenance {
+                                model: Some(set.model_binding.clone()),
+                                tool_names: vec![set.reference.source_node.clone()],
+                                ..AnnotationProvenance::default()
+                            },
+                            created_at: Utc::now(),
+                        }
+                    }));
+                }
+                PipelineArtifact::ClassificationSet(set) => {
+                    annotations.extend(set.classifications.iter().map(|classification| {
+                        Annotation {
+                            id: AnnotationId::new(),
+                            image_id: set.image_id,
+                            task_id: task_id.clone(),
+                            label: Some(classification.label.clone()),
+                            value: annotagent_core::AnnotationValue::Classification {
+                                labels: vec![classification.label.clone()],
+                            },
+                            attributes: BTreeMap::new(),
+                            confidence: Some(classification.confidence),
+                            source: AnnotationSource::ModelAndTool,
+                            review_status: status,
+                            provenance: AnnotationProvenance {
+                                model: Some(set.model_binding.clone()),
+                                tool_names: vec![set.reference.source_node.clone()],
+                                ..AnnotationProvenance::default()
+                            },
+                            created_at: Utc::now(),
+                        }
+                    }));
+                }
+                PipelineArtifact::AnnotationCandidateSet(set) => {
+                    annotations.extend(set.candidates.iter().filter_map(|candidate| {
+                        candidate.value.as_ref().map(|value| Annotation {
+                            id: AnnotationId::new(),
+                            image_id: set.image_id,
+                            task_id: candidate.task_id.clone(),
+                            label: Some(candidate.label.clone()),
+                            value: value.as_annotation_value(),
+                            attributes: BTreeMap::new(),
+                            confidence: candidate.confidence,
+                            source: AnnotationSource::ModelAndTool,
+                            review_status: status,
+                            provenance: AnnotationProvenance {
+                                tool_names: vec![set.reference.source_node.clone()],
+                                ..AnnotationProvenance::default()
+                            },
+                            created_at: Utc::now(),
+                        })
+                    }));
+                }
+                PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+            }
+        }
+    }
+    annotations
 }
 
 fn runtime_issue(code: &str, message: &str, node_id: &str) -> ValidationIssue {

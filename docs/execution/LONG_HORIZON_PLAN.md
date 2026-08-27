@@ -67,7 +67,8 @@ evidence and a dedicated local commit.
     - Ship whole-image classification, detection, and crop-classification examples.
     - Prove shared detector execution once/image, classifier Replay without detector rerun, Dry Run
       isolation, 100-image batch, pause/resume/cancel, and active Run recovery.
-    - Status: pending.
+    - Status: completed locally; application-owned exact-version execution, typed checkpoint and
+      annotation persistence, three generic examples, and the 100-image Pipeline batch pass.
 14. **LP4 — Bounded Advisor and application APIs**
     - Make Advisor input target-Label aware and constrain output to real Registry nodes, Models,
       Validators, and Refiners.

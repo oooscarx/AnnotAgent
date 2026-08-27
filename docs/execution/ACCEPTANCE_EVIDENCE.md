@@ -307,23 +307,23 @@ primary blocker for this release.
 | # | Release blocker | Status after LP1 | Evidence / remaining work |
 | ---: | --- | --- | --- |
 | 1 | Generic Project runs without RoboCup Skill | PASS (foundation) | Existing generic Project/DAG tests remain green. |
-| 2 | Whole-image Classification Skill | PASS (Runtime) | Mock Image → Classification → Commit executes offline; application demo Project is LP3. |
+| 2 | Whole-image Classification Skill | PASS | Mock Image → Classification → Commit executes through the persisted application Run path. |
 | 3 | Crop Classification Skill | PASS (Runtime) | Shared Detection → Core Crop → Classification → Attach → Gate → Commit executes offline. |
 | 4 | Detection Skill outputs DetectionSet | PASS (Runtime) | Formal detection-only Skill emits scoped `DetectionSetArtifact`; mock and HTTP bindings pass. |
 | 5 | Crop outputs parent-linked CropSet | PASS | Core Crop executes fan-out and Trace preserves exact parent references. |
-| 6 | One shared detector serves three Labels once/image | PASS (compile) | `one_shared_detector_compiles_once_for_three_label_pipelines` proves one compiled node and three fan-out edges; execution count is LP3. |
+| 6 | One shared detector serves three Labels once/image | PASS | The compiler emits one shared node; the Runtime executes each compiled node once and the Replay test observes the detector call count remain one. |
 | 7 | Static type errors block publish | PASS (contract) | Label validator reports blocking typed paths; application publish integration is LP4. |
 | 8 | Advisor result is a Draft | PASS (foundation) | Existing bounded Advisor always returns Suggested/Editing Draft; target-Label output is LP4. |
 | 9 | Human edits Draft | PASS (foundation) | Existing persisted editor journey passes; Label Pipeline GUI is LP5. |
-| 10 | Dry Run writes no formal annotation | PASS (foundation) | Existing sandbox Dry Run passes; Label node execution is LP3/LP4. |
+| 10 | Dry Run writes no formal annotation | PASS (foundation) | Existing sandbox Dry Run is isolated; Label-specific API exposure remains LP4. |
 | 11 | Published Version is immutable | PASS | Snapshot hash now includes optional Label Pipeline composition. |
 | 12 | Run pins Workflow Version | PASS (foundation) | Existing image and Dataset exact-version tests pass. |
 | 13 | Node Inspector shows I/O/config/timing/error | INCOMPLETE | Flat trace holds these fields; typed Pipeline Artifact API/UI is LP4/LP5. |
 | 14 | Classifier Replay does not rerun detector | PASS (Runtime) | `crop_classification_replay_keeps_shared_detector_checkpoint` observes detector 1, classifier 2. |
-| 15 | Three mock demos pass offline | INCOMPLETE | LP3. |
-| 16 | 100 synthetic images pass | PASS (foundation) | Existing batch gate passes; Label Pipeline-specific batch gate is LP3. |
-| 17 | Pause/Resume/Cancel/active recovery | PASS (foundation) | Existing Runtime, batch, and application tests pass; Label Pipeline path is LP3. |
-| 18 | All Rust/Web checks pass | PARTIAL | LP2: 122 Rust tests and strict Clippy pass; Web unchanged and final full gate is LP5. |
+| 15 | Three mock demos pass offline | PASS | Three generic example schemas and executable whole-image, detection, and crop-classification flows pass offline. |
+| 16 | 100 synthetic images pass | PASS | Application test executes 100 synthetic images using one exact published Label Pipeline version. |
+| 17 | Pause/Resume/Cancel/active recovery | PASS | Label Pipeline uses the same durable coordinator; control, reconciliation, exclusion, and 100-image restart/recovery gates pass. |
+| 18 | All Rust/Web checks pass | PARTIAL | LP3: 124 Rust tests and strict Clippy pass; final Web/browser gate is LP5. |
 | 19 | Core contains no domain/implementation branches | PASS | Core scan for RoboCup, detector product names, and domain Labels is clean. |
 | 20 | No push/remote change/historical API key | PASS | Work remains local; no credential was read or used. |
 
@@ -404,3 +404,46 @@ Direct evidence:
     both remain green. No historical credential was read or used.
 
 LP2 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP3–LP5 pass.
+
+## Label Pipeline Alpha LP3 — persisted examples and lifecycle gates
+
+Implementation and evidence commit: recorded by the LP3 local commit containing this section.
+
+Acceptance commands:
+
+| Command | Exit | Evidence |
+| --- | ---: | --- |
+| `cargo test -p annotagent-application published_label_pipeline_executes_and_persists_typed_checkpoint` | 0 | Exact-version application execution, typed checkpoint/annotation persistence, and a 100-image Dataset batch pass. |
+| `cargo test -p annotagent-skill-yolo --test label_pipeline_runtime` | 0 | Four offline gates pass: three executable flows and all three generic example schemas. |
+| `cargo test --workspace --all-features` | 0 | 124 Rust tests pass; 0 fail; all doc tests pass. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | No warnings or lint suppression. |
+
+Direct evidence:
+
+1. `PublishedWorkflowRuntime` registers Core Pipeline nodes and formal Classification/Detection Skill
+   runners alongside the legacy generic runner. It materializes the selected Project image as an
+   `ImageArtifact` and executes only the frozen published snapshot.
+2. Every Pipeline node output is persisted inside the normal DAG checkpoint and emits an
+   `ArtifactCreated` event. Committed Detection, Classification, and candidate items are converted
+   to formal stored annotations with their originating node and Pipeline Artifact provenance.
+3. The application catalog registers mock classifier/detector Models and the real formal Skill/Core
+   node descriptors. Publication therefore validates real registry identities instead of bypassing
+   validation for examples.
+4. `examples/label-pipelines/` contains generic Project Schemas for whole-image classification,
+   YOLO-style detection, and shared detection → Crop → Classification. They do not enable RoboCup;
+   synthetic PNG inputs are generated by tests rather than committing opaque fixtures.
+5. `published_label_pipeline_executes_and_persists_typed_checkpoint` first proves one persisted
+   whole-image classification Run, then executes 100 generated images as Dataset children pinned to
+   the same immutable Workflow version. All 100 complete and store exactly one annotation.
+6. The typed crop-classification integration gate observes one detector call, one classifier call,
+   exact Detection → Crop → Classification parent references, and then replays the classifier. The
+   classifier count becomes two while the detector stays at one.
+7. Pipeline execution deliberately reuses the existing application coordinator, checkpoint, leases,
+   control token, active-Run reservation, and startup reconciliation. Existing pause/resume/cancel,
+   duplicate-start, stale-Run recovery, and persistent 100-image restart tests remain green.
+8. Non-mock detection does not pretend local YOLO weights exist. Without a configured versioned HTTP
+   detector binding, execution returns an explicit configuration error; no Rust weight loading or
+   fabricated live result is claimed.
+9. No conversation credential was read or used, and no remote or push operation occurred.
+
+LP3 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP4–LP5 pass.

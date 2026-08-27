@@ -12,7 +12,9 @@ annotagent-export = { path = "../annotagent-export" }
 annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-provider = { path = "../annotagent-provider" }
 annotagent-runtime = { path = "../annotagent-runtime" }
+annotagent-skill-classification = { path = "../annotagent-skill-classification" }
 annotagent-skill-robocup = { path = "../annotagent-skill-robocup" }
+annotagent-skill-yolo = { path = "../annotagent-skill-yolo" }
 annotagent-storage = { path = "../annotagent-storage" }
 anyhow.workspace = true
 async-trait.workspace = true
