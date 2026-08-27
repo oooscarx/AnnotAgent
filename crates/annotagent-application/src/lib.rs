@@ -493,6 +493,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     }
     for descriptor in [
         annotagent_skill_classification::node_descriptor(),
+        annotagent_skill_classification::verifier_node_descriptor(),
         annotagent_skill_vlm_detection::node_descriptor(),
         annotagent_skill_yolo::node_descriptor(),
         VisionNodeDescriptor {

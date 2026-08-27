@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M2 — complete. M3 Classification Capability Skill is next.
+M3 — complete. M4 Detection Skills and Core processing verification is next.
 
 ## Audited baseline
 
@@ -65,3 +65,14 @@ M2 — complete. M3 Classification Capability Skill is next.
 - model-visible tool results expose stable Artifact references while full geometry remains in the
   persisted result;
 - existing node timeout and provider/DAG cancellation tests are retained as protocol stop proofs.
+
+## M3 delivered
+
+- formal `classification` Capability Skill manifest, compact on-demand resource and
+  `classification.whole-image` template;
+- whole-image and CropSet subject handling with exact subject/parent references;
+- configurable single-label and multi-label Mock output;
+- OpenAI-compatible VLM and generic HTTP JSON model bindings through the versioned Pipeline Vision
+  Protocol;
+- deterministic `classification.verify` node with allow-list and confidence-to-review behavior;
+- runtime/catalog registration for both classifier and verifier nodes.

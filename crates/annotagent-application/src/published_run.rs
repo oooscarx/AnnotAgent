@@ -26,7 +26,8 @@ use annotagent_runtime::{
     ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
-    CLASSIFICATION_OPERATION, ClassificationSkillRunner, MockClassificationBackend,
+    CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
+    ClassificationVerifierRunner, MockClassificationBackend,
 };
 use annotagent_skill_vlm_detection::{VLM_DETECTION_OPERATION, VlmDetectionSkillRunner};
 use annotagent_skill_yolo::{MockYoloBackend, YOLO_DETECTION_OPERATION, YoloDetectionSkillRunner};
@@ -202,6 +203,13 @@ impl PublishedWorkflowRuntime {
                             request.model_image.clone(),
                         )?),
                         false,
+                    )?;
+                }
+                CLASSIFICATION_VERIFY_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ClassificationVerifierRunner),
+                        true,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {
@@ -774,6 +782,13 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             request.model_image.clone(),
                         )?),
                         false,
+                    )?;
+                }
+                CLASSIFICATION_VERIFY_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ClassificationVerifierRunner),
+                        true,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {

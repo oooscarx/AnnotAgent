@@ -6,6 +6,8 @@
   `DomainSkill` compatibility path until their milestone migrations.
 - Strong envelopes are materialized in Published DAG traces; legacy per-task storage continues to
   persist `VisionArtifact` payload rows for backward-compatible history import/export.
+- OpenAI-compatible and HTTP Classification are implemented and tested with local fixtures; an
+  external live request remains conditional on operator-owned configuration.
 - Workflow Advisor and Annotation Recovery are not yet the required iterative Agent loops.
 - RoboCup Ball is not yet isolated as its own Domain Skill inside a Pack.
 - Web and TUI do not yet expose the complete Agent sessions, tools and memory views.

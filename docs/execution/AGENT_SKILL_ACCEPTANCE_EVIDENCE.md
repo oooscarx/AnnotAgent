@@ -71,3 +71,21 @@ The DAG suite covers deterministic cache/replay, retry/fallback, timeout and can
 assertions validate strong output envelopes and exact Project scope. The protocol tests reject
 duplicate, missing, unexpected, wrong-order and nested tool results and verify geometry-reference
 hand-off.
+
+## M3 — Classification Capability Skill
+
+```text
+cargo test -p annotagent-skill-classification
+3 passed; 0 failed
+cargo test -p annotagent-provider pipeline_backends::tests
+4 passed; 0 failed
+cargo test -p annotagent-skill-yolo --test label_pipeline_runtime
+4 passed; 0 failed
+cargo test -p annotagent-application \
+  target_label_advisor_draft_is_editable_dry_runnable_and_publish_blocking
+1 passed; 0 failed
+```
+
+Evidence covers Capability manifest/template discovery, whole-image single/multi-label output,
+confidence verification, generic HTTP JSON, OpenAI-compatible subject bounding, crop parent
+lineage, Commit and classifier-only Replay without rerunning the detector.
