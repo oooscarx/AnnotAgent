@@ -102,6 +102,7 @@ export interface ProjectSummary {
   };
   annotation_schema: {
     id: string;
+    display_name: string;
     kind: string;
     labels: string[];
     required: boolean;
@@ -353,6 +354,16 @@ export interface WorkflowDryRunReport {
       issues: WorkflowValidationReport["issues"];
     }[];
   }[];
+  summary: {
+    image_count: number;
+    detection_count: number;
+    candidate_count: number;
+    auto_accepted_count: number;
+    needs_review_count: number;
+    failed_count: number;
+    input_tokens: number;
+    output_tokens: number;
+  };
   total_latency_ms: number;
   estimated_cost: string;
 }

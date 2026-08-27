@@ -324,8 +324,22 @@ pub struct WorkflowDryRunReport {
     pub sandbox: bool,
     pub validation: WorkflowValidationReport,
     pub samples: Vec<WorkflowDryRunSampleResult>,
+    #[serde(default)]
+    pub summary: WorkflowDryRunSummary,
     pub total_latency_ms: u64,
     pub estimated_cost: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WorkflowDryRunSummary {
+    pub image_count: usize,
+    pub detection_count: usize,
+    pub candidate_count: usize,
+    pub auto_accepted_count: usize,
+    pub needs_review_count: usize,
+    pub failed_count: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

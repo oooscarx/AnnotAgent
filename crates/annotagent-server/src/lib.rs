@@ -16,9 +16,9 @@ use annotagent_application::{
     ProjectSummary, Settings, WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
-    Annotation, AnnotationId, BatchId, CorrectionFeatures, CorrectionRecord, DatasetExporter,
-    ExportRequest, LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId, RunStatus,
-    SnapshotImage, UsageTotals, WorkflowConstraints, WorkflowDraft,
+    Annotation, AnnotationId, AttributeDefinition, BatchId, CorrectionFeatures, CorrectionRecord,
+    DatasetExporter, ExportRequest, LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId,
+    RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -306,6 +306,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/projects/{project_id}/schema/labels",
             post(add_project_label),
+        )
+        .route(
+            "/api/projects/{project_id}/schema/tasks",
+            post(add_project_task),
         )
         .route(
             "/api/projects/{project_id}/workflow-catalog",
@@ -1113,6 +1117,34 @@ async fn get_project(
 struct AddProjectLabelRequest {
     task_id: String,
     label: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddProjectTaskRequest {
+    display_name: String,
+    kind: TaskKind,
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
+    attributes: BTreeMap<String, AttributeDefinition>,
+}
+
+async fn add_project_task(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<AddProjectTaskRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let project = state
+        .application
+        .add_project_task(
+            &project_id,
+            &request.display_name,
+            request.kind,
+            request.labels,
+            request.attributes,
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(project))))
 }
 
 async fn add_project_label(
@@ -2899,6 +2931,31 @@ export:
                 .as_array()
                 .is_some_and(|labels| labels.contains(&json!("dawn")))
         );
+        let added_task = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/http-label/schema/tasks",
+                Some(json!({
+                    "display_name": "Object Quality",
+                    "kind": "classification",
+                    "labels": ["usable", "reject"],
+                    "attributes": {"occluded": {"type": "boolean", "required": false, "values": []}}
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            added_task["annotation_schema"]
+                .as_array()
+                .is_some_and(|tasks| {
+                    tasks.iter().any(|task| {
+                        task["id"] == json!("object_quality")
+                            && task["display_name"] == json!("Object Quality")
+                    })
+                })
+        );
 
         let suggestion = response_json(
             request(
@@ -2933,6 +2990,7 @@ export:
         .await;
         assert_eq!(dry_run["sandbox"], json!(true));
         assert_eq!(dry_run["validation"]["valid"], json!(true));
+        assert_eq!(dry_run["summary"]["image_count"], json!(1));
         assert!(
             dry_run["samples"][0]["nodes"]
                 .as_array()

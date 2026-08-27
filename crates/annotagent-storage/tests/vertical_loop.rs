@@ -208,6 +208,7 @@ fn project() -> ProjectSchema {
         },
         tasks: vec![TaskConfig {
             id: TaskId::from("objects"),
+            display_name: None,
             kind: TaskKind::BoundingBox,
             labels: vec!["target".to_owned()],
             required: true,
@@ -725,6 +726,7 @@ async fn required_success_and_optional_failure_produce_partial_run() {
     let mut project = project();
     project.tasks.push(TaskConfig {
         id: TaskId::from("optional_check"),
+        display_name: None,
         kind: TaskKind::BoundingBox,
         labels: vec!["target".to_owned()],
         required: false,

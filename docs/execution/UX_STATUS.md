@@ -7,7 +7,7 @@ Updated: 2026-08-27
 | 0 Baseline | Complete | Inventory and execution documents created; baseline checks pass. |
 | 1 Global IA | Complete | Five URL-driven entries; Pipeline is project-scoped; Models and Capabilities are Settings sections. |
 | 2 Project Workspace | Complete | Server-backed readiness, blockers, counts, versions, and active/last run drive a persistent Project overview. |
-| 3 Build Flow | Pending | Existing schema and workflow editors are separate surfaces. |
+| 3 Build Flow | Complete | URL-backed Data, Labels, Pipeline, and Test & Publish steps use real APIs and preserve server state. |
 | 4 Pipeline UX | Pending | Label pipeline UI exists; hierarchy and version focus need restructuring. |
 | 5 Run Workspace | Pending | Artifact Inspector is currently under Workflows. |
 | 6 Review Integration | Pending | Review does not preserve bidirectional run/node context. |
@@ -53,3 +53,12 @@ Updated: 2026-08-27
 - `cargo test -p annotagent-application --lib`: 14 passed.
 - `cargo test -p annotagent-server --lib`: 7 passed.
 - Web suite: 10 files, 21 tests passed; production build passed.
+
+## Milestone 3 verification
+
+- Data imports through the existing controlled workspace import API and reports imported/duplicate counts.
+- Labels create a real `TaskConfig`; Core persists display name, generated internal ID, kind, Labels, and attributes.
+- Pipeline Draft edits autosave after 800 ms and expose a saved-age indicator plus explicit discard.
+- Dry Run report DTO now includes real aggregate image, DetectionSet, AnnotationCandidateSet, gate, failure, token, duration, and cost data.
+- Test & Publish accepts 1–10 image indices, blocks Publish on invalid reports, and archives discarded drafts.
+- Application tests: 14 passed; Server tests: 7 passed; Web: 10 files/21 tests and production build passed.

@@ -303,16 +303,21 @@ export function App() {
               navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`)
             }
             onRefresh={refresh}
+            onNavigate={(step) =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
+            }
             onError={setError}
           />
         )}
         {route.kind === "build" && route.step !== "pipeline" && (
-          <BuildStepPlaceholder
+          <BuildWorkspace
             project={selectedProject}
             step={route.step}
             onNavigate={(step) =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
+            onRefresh={refresh}
+            onError={setError}
           />
         )}
         {route.kind === "runs" && <RunsPage runs={runs} />}
@@ -368,40 +373,265 @@ function Nav({
   );
 }
 
-function BuildStepPlaceholder({
+function BuildWorkspace({
   project,
   step,
   onNavigate,
+  onRefresh,
+  onError,
 }: {
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
   onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
 }) {
   return (
     <section className="page-stack">
-      <nav className="section-tabs" aria-label="Build steps">
-        {(["data", "labels", "pipeline", "test"] as const).map((item) => (
-          <button
-            key={item}
-            className={step === item ? "active" : ""}
-            aria-current={step === item ? "step" : undefined}
-            onClick={() => onNavigate(item)}
-          >
-            {item === "test" ? "Test & Publish" : item[0].toUpperCase() + item.slice(1)}
+      <BuildNavigation step={step} onNavigate={onNavigate} />
+      {!project ? (
+        <Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." />
+      ) : step === "data" ? (
+        <BuildData project={project} onRefresh={onRefresh} onError={onError} />
+      ) : step === "labels" ? (
+        <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
+      ) : (
+        <BuildTestPublish project={project} onRefresh={onRefresh} onError={onError} />
+      )}
+    </section>
+  );
+}
+
+function BuildNavigation({
+  step,
+  onNavigate,
+}: {
+  step: "data" | "labels" | "pipeline" | "test";
+  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+}) {
+  return (
+    <nav className="section-tabs build-steps" aria-label="Build steps">
+      {(["data", "labels", "pipeline", "test"] as const).map((item, index) => (
+        <button
+          key={item}
+          className={step === item ? "active" : ""}
+          aria-current={step === item ? "step" : undefined}
+          onClick={() => onNavigate(item)}
+        >
+          <span>{index + 1}</span>
+          {item === "test" ? "Test & Publish" : item[0].toUpperCase() + item.slice(1)}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function BuildData({
+  project,
+  onRefresh,
+  onError,
+}: {
+  project: ProjectSummary;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [source, setSource] = useState("");
+  const [result, setResult] = useState<{ imported: number; duplicates: number }>();
+  const [busy, setBusy] = useState(false);
+  const load = () =>
+    api.images(project.id).then((value) => setImages(value.images));
+  useEffect(() => {
+    void load().catch((error: Error) => onError(error.message));
+  }, [project.id]);
+  const importImages = () => {
+    if (!source.trim()) return onError("Choose a workspace-local image file or directory.");
+    setBusy(true);
+    void api
+      .importImages(project.id, source.trim())
+      .then((report) => {
+        setResult(report);
+        return Promise.all([load(), onRefresh()]);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <div className="metrics-grid">
+        <Metric label="Images" value={images.length} detail="Supported images in this Project" />
+        <Metric label="Duplicates" value={result?.duplicates ?? 0} detail="Skipped by the latest import" />
+        <Metric label="Imported" value={result?.imported ?? 0} detail="Added by the latest import" />
+      </div>
+      <Panel title="Import images" eyebrow="Build · Data">
+        <label>
+          Workspace-local file or directory
+          <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
+        </label>
+        <div className="button-row">
+          <button className="primary" disabled={busy || !source.trim()} onClick={importImages}>
+            {busy ? "Importing…" : "Add images"}
           </button>
-        ))}
-      </nav>
-      <Panel title={project?.name ?? "Project unavailable"} eyebrow={`Build · ${step}`}>
-        <p>
-          This guided step is being migrated from the existing Project surface.
-          Use Pipeline now; Data, Labels, and Test & Publish remain visibly
-          unavailable until their real server-backed controls are connected.
-        </p>
-        <button disabled title="Milestone 3 implementation pending">
-          Step unavailable in this milestone
+          <small>Files are copied into the Project dataset; duplicate content is skipped.</small>
+        </div>
+        <button disabled title="The current import API does not expose decode diagnostics yet">
+          Corrupt image report unavailable
         </button>
       </Panel>
-    </section>
+      <Panel title="Dataset scope" eyebrow={`${project.dataset.image_count} registered`}>
+        <Fact label="Root" value={project.dataset.root} />
+        <Fact label="Discovery" value={project.dataset.recursive ? "Recursive" : "Top level"} />
+        <TagGroup title="Include patterns" values={project.dataset.include} />
+      </Panel>
+    </>
+  );
+}
+
+function BuildLabels({
+  project,
+  onRefresh,
+  onError,
+}: {
+  project: ProjectSummary;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [kind, setKind] = useState("bounding_box");
+  const [labels, setLabels] = useState("");
+  const [attributeName, setAttributeName] = useState("");
+  const [attributeKind, setAttributeKind] = useState<"enum" | "string" | "number" | "boolean">("string");
+  const [busy, setBusy] = useState(false);
+  const create = () => {
+    const parsedLabels = labels.split(",").map((value) => value.trim()).filter(Boolean);
+    if (!displayName.trim() || parsedLabels.length === 0)
+      return onError("Enter a display name and at least one Label.");
+    setBusy(true);
+    const attributes = attributeName.trim()
+      ? { [attributeName.trim()]: { type: attributeKind, required: false, values: [] } }
+      : {};
+    void api
+      .addProjectTask(project.id, {
+        display_name: displayName.trim(),
+        kind,
+        labels: parsedLabels,
+        attributes,
+      })
+      .then(() => {
+        setDisplayName("");
+        setLabels("");
+        setAttributeName("");
+        return onRefresh();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="build-label-layout">
+      <Panel title="Define what to annotate" eyebrow="Build · Labels">
+        <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
+        <label>Annotation kind<select value={kind} onChange={(event) => setKind(event.target.value)}>
+          <option value="classification">Classification</option>
+          <option value="bounding_box">Bounding box</option>
+          <option value="keypoints">Keypoints</option>
+          <option value="polygon">Polygon</option>
+          <option value="semantic_mask">Semantic mask</option>
+        </select></label>
+        <label>Labels<input value={labels} onChange={(event) => setLabels(event.target.value)} placeholder="football, training_ball" /></label>
+        <details className="advanced-settings"><summary>Attributes and advanced</summary>
+          <div className="form-grid">
+            <label>Optional attribute<input value={attributeName} onChange={(event) => setAttributeName(event.target.value)} placeholder="occluded" /></label>
+            <label>Attribute type<select value={attributeKind} onChange={(event) => setAttributeKind(event.target.value as typeof attributeKind)}>
+              <option value="string">Text</option><option value="boolean">Boolean</option><option value="number">Number</option><option value="enum">Choice</option>
+            </select></label>
+          </div>
+          <small>The internal task ID is generated from the display name and validated by Core.</small>
+        </details>
+        <button className="primary" disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Creating…" : "Create Label group"}</button>
+      </Panel>
+      <Panel title="Project Schema" eyebrow={`${project.task_count} Label groups`}>
+        <div className="catalog-list">
+          {project.annotation_schema.map((task) => (
+            <article key={task.id}><span className="catalog-monogram">{task.kind.slice(0, 2).toUpperCase()}</span><span><strong>{task.display_name}</strong><small>{task.kind.replaceAll("_", " ")} · {task.labels.join(", ") || "No Labels"}</small><details><summary>Advanced</summary><code>{task.id}</code></details></span></article>
+          ))}
+        </div>
+        {project.annotation_schema.length === 0 && <Empty title="No Labels defined" detail="Create the first semantic Label group. Models and execution order belong in Pipeline." />}
+      </Panel>
+    </div>
+  );
+}
+
+function BuildTestPublish({
+  project,
+  onRefresh,
+  onError,
+}: {
+  project: ProjectSummary;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
+  const [draftId, setDraftId] = useState("");
+  const [sampleCount, setSampleCount] = useState(3);
+  const [report, setReport] = useState<WorkflowDryRunReport>();
+  const [busy, setBusy] = useState(false);
+  const load = () => api.workflowDrafts(project.id).then((value) => {
+    setDrafts(value.drafts);
+    setDraftId((current) => value.drafts.some((draft) => draft.id === current) ? current : (value.drafts[0]?.id ?? ""));
+  });
+  useEffect(() => { void load().catch((error: Error) => onError(error.message)); }, [project.id]);
+  const test = () => {
+    if (!draftId) return;
+    setBusy(true);
+    void api.dryRunWorkflow(draftId, Array.from({ length: sampleCount }, (_, index) => index))
+      .then(setReport)
+      .then(load)
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const publish = () => {
+    if (!draftId || !report?.validation.valid) return;
+    setBusy(true);
+    void api.publishWorkflow(draftId).then(() => Promise.all([load(), onRefresh()])).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+  };
+  const discard = () => {
+    if (!draftId) return;
+    setBusy(true);
+    void api.archiveWorkflowDraft(draftId).then(() => { setReport(undefined); return load(); }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+  };
+  const summary = report?.summary;
+  return (
+    <>
+      <div className="toolbar-panel">
+        <div><span className="eyebrow">Build · Test & Publish</span><h2>Test the result before publishing</h2><p>Dry Run executes 1–10 real Project images in a sandbox and never writes formal annotations.</p></div>
+        <div className="button-row">
+          <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => !["published", "archived"].includes(draft.status)).map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
+          <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
+          <button onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test"}</button>
+          <button className="primary" onClick={publish} disabled={busy || !report?.validation.valid}>Publish</button>
+          <button onClick={discard} disabled={busy || !draftId}>Discard changes</button>
+        </div>
+      </div>
+      {summary ? (
+        <>
+          <div className="metrics-grid dry-run-summary" aria-label="Dry Run result summary">
+            <Metric label="Images" value={summary.image_count} detail="Sandbox samples" />
+            <Metric label="Detections" value={summary.detection_count} detail="Detected subjects" />
+            <Metric label="Candidates" value={summary.candidate_count} detail="Annotation candidates" />
+            <Metric label="Auto accepted" value={summary.auto_accepted_count} detail="Passed automatic gates" />
+            <Metric label="Needs review" value={summary.needs_review_count} detail="Human decision required" />
+            <Metric label="Failed" value={summary.failed_count} detail="Images with node errors" />
+            <Metric label="Duration" value={`${report.total_latency_ms} ms`} detail="Sandbox wall time" />
+            <Metric label="Usage" value={(summary.input_tokens + summary.output_tokens).toLocaleString()} detail={`${report.estimated_cost} estimated cost`} />
+          </div>
+          <Panel title="Pipeline diagnostics" eyebrow={report.validation.valid ? "Ready to publish" : "Publication blocked"}>
+            {report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}
+            {!report.validation.issues.length && <p>No blocking static or execution issues.</p>}
+            <details><summary>Node trace</summary>{report.samples.map((sample) => <div key={sample.image_name}><strong>{sample.image_name}</strong><TagGroup title="Nodes" values={sample.nodes.map((node) => `${node.node_id}: ${node.status}`)} /></div>)}</details>
+          </Panel>
+        </>
+      ) : <Empty title="No Dry Run result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+    </>
   );
 }
 
@@ -1139,12 +1369,14 @@ function WorkflowsPage({
   activeProjectId,
   onActivate,
   onRefresh,
+  onNavigate,
   onError,
 }: {
   projects: ProjectSummary[];
   activeProjectId: string;
   onActivate: (id: string) => void;
   onRefresh: () => Promise<void>;
+  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
   onError: (value: string) => void;
 }) {
   const entries = projects.flatMap((project) =>
@@ -1184,10 +1416,16 @@ function WorkflowsPage({
   const [inspectedNodeId, setInspectedNodeId] = useState("");
   const [replay, setReplay] = useState<NodeReplayReport>();
   const [busy, setBusy] = useState(false);
+  const persistedDrafts = useRef(new Map<string, string>());
+  const autosaveTimer = useRef<number | undefined>(undefined);
+  const [savedAt, setSavedAt] = useState<Date>();
+  const [clock, setClock] = useState(() => Date.now());
   const refreshDrafts = () =>
     api
       .workflowDrafts(activeProjectId || undefined)
       .then((value) => {
+        for (const item of value.drafts)
+          persistedDrafts.current.set(item.id, JSON.stringify(item));
         setDrafts(value.drafts);
         setDraft(
           (current) =>
@@ -1196,6 +1434,28 @@ function WorkflowsPage({
         );
       })
       .catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!draft || draft.status === "published" || draft.status === "archived") return;
+    const snapshot = JSON.stringify(draft);
+    if (persistedDrafts.current.get(draft.id) === snapshot) return;
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = window.setTimeout(() => {
+      void api
+        .saveWorkflowDraft(draft)
+        .then((saved) => {
+          persistedDrafts.current.set(saved.id, JSON.stringify(saved));
+          setSavedAt(new Date());
+        })
+        .catch((error: Error) => onError(`Draft autosave failed: ${error.message}`));
+    }, 800);
+    return () => {
+      if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    };
+  }, [draft]);
   useEffect(() => {
     void refreshDrafts();
     if (activeProjectId) {
@@ -1282,6 +1542,12 @@ function WorkflowsPage({
       .finally(() => setBusy(false));
   };
   const save = () => draft && finish(api.saveWorkflowDraft(draft));
+  const discardChanges = () => {
+    if (!draft) return;
+    const persisted = persistedDrafts.current.get(draft.id);
+    if (persisted) setDraft(JSON.parse(persisted) as WorkflowDraft);
+    setReport(undefined);
+  };
   const dryRun = () =>
     draft &&
     (setBusy(true),
@@ -1400,6 +1666,7 @@ function WorkflowsPage({
     draft?.status === "published" || draft?.status === "archived";
   return (
     <section className="page-stack">
+      <BuildNavigation step="pipeline" onNavigate={onNavigate} />
       <div className="toolbar-panel">
         <div>
           <span className="eyebrow">Draft → validated → immutable version</span>
@@ -1411,6 +1678,9 @@ function WorkflowsPage({
           </p>
         </div>
         <div className="button-row">
+          <small className="save-indicator" aria-live="polite">
+            Saved {Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft?.updated_at ?? clock).getTime())) / 1000))} seconds ago
+          </small>
           <button
             onClick={() => create(false)}
             disabled={busy || !activeProjectId}
@@ -1502,6 +1772,9 @@ function WorkflowsPage({
             }
           >
             Save Draft
+          </button>
+          <button onClick={discardChanges} disabled={busy || !draft || immutable}>
+            Discard changes
           </button>
           <button
             onClick={dryRun}

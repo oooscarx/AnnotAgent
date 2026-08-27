@@ -9,23 +9,23 @@ use std::{
 };
 
 use annotagent_core::{
-    AdditionalUsage, Annotation, AnnotationSource, ArtifactKind, BatchBudgetLedger,
-    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
-    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
-    ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    AdditionalUsage, Annotation, AnnotationSource, ArtifactKind, AttributeDefinition,
+    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
+    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter,
+    DomainSkill, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, ModelBinding as PipelineModelBinding,
     ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
     PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
     PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
     ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    SharedWorkflowStage, SnapshotImage, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
     ToolDefinition, UsageSource, VisionCapability, VisionInferenceRequest, VisionInputType,
     VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
     VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
     WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
     WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowDryRunSampleResult, WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -159,6 +159,7 @@ pub struct ProjectDatasetSummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnnotationTaskSummary {
     pub id: String,
+    pub display_name: String,
     pub kind: String,
     pub labels: Vec<String>,
     pub required: bool,
@@ -1815,6 +1816,62 @@ impl LocalApplication {
         self.get_project(project_id)
     }
 
+    pub fn add_project_task(
+        &self,
+        project_id: &str,
+        display_name: &str,
+        kind: TaskKind,
+        labels: Vec<String>,
+        attributes: BTreeMap<String, AttributeDefinition>,
+    ) -> Result<ProjectSummary> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            bail!("Label group display name cannot be empty");
+        }
+        let path = self.project_path(project_id)?;
+        let (mut project, _) = load_project_schema_with_registry(&path, &self.skills)?;
+        let base = display_name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_owned();
+        let base = if base.is_empty() {
+            "label_task".to_owned()
+        } else {
+            base
+        };
+        let mut id = base.clone();
+        let mut suffix = 2;
+        while project.tasks.iter().any(|task| task.id.as_str() == id) {
+            id = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        project.tasks.push(TaskConfig {
+            id: TaskId::new(id),
+            display_name: Some(display_name.to_owned()),
+            kind,
+            labels,
+            required: true,
+            multi_label: false,
+            depends_on: Vec::new(),
+            validators: Vec::new(),
+            refiners: Vec::new(),
+            target_task: None,
+            target_labels: Vec::new(),
+            attributes,
+        });
+        resolve_project_skills(&project, &self.skills)?;
+        std::fs::write(&path, serde_yaml::to_string(&project)?)?;
+        self.get_project(project_id)
+    }
+
     pub fn get_project(&self, project_id: &str) -> Result<ProjectSummary> {
         let path = self.project_path(project_id)?;
         let (project, project_skills) = load_project_schema_with_registry(&path, &self.skills)?;
@@ -1991,6 +2048,10 @@ impl LocalApplication {
                 .iter()
                 .map(|task| AnnotationTaskSummary {
                     id: task.id.to_string(),
+                    display_name: task
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| task.id.to_string()),
                     kind: task_kind_name(task.kind),
                     labels: task.labels.clone(),
                     required: task.required,
@@ -2988,6 +3049,14 @@ impl LocalApplication {
         Ok(WorkflowDryRunReport {
             sandbox: true,
             validation,
+            summary: WorkflowDryRunSummary {
+                image_count: samples.len(),
+                failed_count: samples
+                    .iter()
+                    .filter(|sample| sample.nodes.iter().any(|node| !node.issues.is_empty()))
+                    .count(),
+                ..WorkflowDryRunSummary::default()
+            },
             samples,
             total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
             estimated_cost: "0".to_owned(),
@@ -3063,6 +3132,8 @@ impl LocalApplication {
             .to_path_buf();
         let mut samples = Vec::new();
         let mut execution_issues = Vec::new();
+        let mut summary = WorkflowDryRunSummary::default();
+        let mut total_cost = rust_decimal::Decimal::ZERO;
         for index in selected {
             let path = images
                 .get(*index)
@@ -3080,6 +3151,45 @@ impl LocalApplication {
                 model_image: Some(model_image),
             };
             let result = runtime.execute_sandbox(&request).await?;
+            summary.image_count += 1;
+            let mut sample_detections = 0;
+            let mut sample_candidates = 0;
+            let mut sample_failed = false;
+            for trace in &result.checkpoint.traces {
+                summary.input_tokens = summary
+                    .input_tokens
+                    .saturating_add(trace.usage.input_tokens);
+                summary.output_tokens = summary
+                    .output_tokens
+                    .saturating_add(trace.usage.output_tokens);
+                total_cost += trace.usage.cost;
+                sample_failed |= trace.error.is_some();
+                for artifact in &trace.output_pipeline_artifacts {
+                    match artifact {
+                        PipelineArtifact::DetectionSet(set) => {
+                            sample_detections = sample_detections.max(set.detections.len());
+                        }
+                        PipelineArtifact::AnnotationCandidateSet(set) => {
+                            sample_candidates = sample_candidates.max(set.candidates.len());
+                            for candidate in &set.candidates {
+                                match candidate.validation_state {
+                                    Some(annotagent_core::ArtifactValidationState::Valid) => {
+                                        summary.auto_accepted_count += 1;
+                                    }
+                                    Some(annotagent_core::ArtifactValidationState::NeedsReview) => {
+                                        summary.needs_review_count += 1;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            summary.detection_count += sample_detections;
+            summary.candidate_count += sample_candidates;
+            summary.failed_count += usize::from(sample_failed);
             let nodes = result
                 .checkpoint
                 .traces
@@ -3132,9 +3242,10 @@ impl LocalApplication {
                 issues: execution_issues,
                 execution_order,
             },
+            summary,
             samples,
             total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-            estimated_cost: "0".to_owned(),
+            estimated_cost: total_cost.to_string(),
         })
     }
 
@@ -4721,6 +4832,21 @@ export:
             .expect("hybrid draft");
         assert_eq!(draft.name, "Accurate hybrid");
         assert_eq!(draft.enabled_skills.get("robocup"), Some(&"1".to_owned()));
+        let updated = application
+            .add_project_task(
+                "robocup-demo",
+                "Quality Check",
+                TaskKind::Classification,
+                vec!["usable".to_owned(), "reject".to_owned()],
+                BTreeMap::new(),
+            )
+            .expect("guided Label group");
+        assert!(
+            updated
+                .annotation_schema
+                .iter()
+                .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
+        );
     }
 
     #[test]

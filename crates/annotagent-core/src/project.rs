@@ -292,6 +292,8 @@ const fn default_retries() -> u32 {
 #[serde(deny_unknown_fields)]
 pub struct TaskConfig {
     pub id: TaskId,
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub kind: TaskKind,
     #[serde(default)]
     pub labels: Vec<String>,
@@ -451,6 +453,7 @@ mod tests {
     fn task(id: &str, dependencies: &[&str]) -> TaskConfig {
         TaskConfig {
             id: TaskId::from(id),
+            display_name: None,
             kind: TaskKind::Classification,
             labels: vec!["label".to_owned()],
             required: false,

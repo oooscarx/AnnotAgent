@@ -1267,6 +1267,7 @@ mod tests {
             },
             tasks: vec![TaskConfig {
                 id: TaskId::from("objects"),
+                display_name: None,
                 kind: TaskKind::BoundingBox,
                 labels: vec![
                     "person".to_owned(),

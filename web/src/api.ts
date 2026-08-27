@@ -50,6 +50,11 @@ export const api = {
     }),
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
+  importImages: (projectId: string, source: string) =>
+    request<{ imported: number; duplicates: number }>(
+      `/api/projects/${projectId}/import`,
+      { method: "POST", body: JSON.stringify({ source }) },
+    ),
   startRun: (
     projectId: string,
     provider?: string,
@@ -140,6 +145,22 @@ export const api = {
     request<ProjectSummary>(`/api/projects/${projectId}/schema/labels`, {
       method: "POST",
       body: JSON.stringify({ task_id: taskId, label }),
+    }),
+  addProjectTask: (
+    projectId: string,
+    task: {
+      display_name: string;
+      kind: string;
+      labels: string[];
+      attributes: Record<
+        string,
+        { type: "enum" | "string" | "number" | "boolean"; required: boolean; values: string[] }
+      >;
+    },
+  ) =>
+    request<ProjectSummary>(`/api/projects/${projectId}/schema/tasks`, {
+      method: "POST",
+      body: JSON.stringify(task),
     }),
   pipelineArtifacts: (runId: string) =>
     request<RunNodeArtifactInspection>(

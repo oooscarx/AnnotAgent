@@ -2487,6 +2487,7 @@ mod tests {
     fn candidate_parser_rejects_wrong_task_kind() {
         let task = TaskConfig {
             id: TaskId::from("scene"),
+            display_name: None,
             kind: TaskKind::Classification,
             labels: vec!["normal".to_owned()],
             required: true,
