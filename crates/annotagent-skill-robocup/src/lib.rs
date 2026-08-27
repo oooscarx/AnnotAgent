@@ -1,6 +1,7 @@
 //! Production `RoboCup` perception skill for `AnnotAgent`.
 
 mod ball;
+mod ball_skill;
 mod evaluation;
 mod field;
 mod policy;
@@ -17,6 +18,7 @@ use annotagent_core::{
 };
 
 pub use ball::*;
+pub use ball_skill::*;
 pub use evaluation::*;
 pub use field::*;
 pub use policy::*;

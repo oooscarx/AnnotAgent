@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M5 — complete. M6 RoboCup Ball Domain Skill and Pack is next.
+M6 — complete. M7 correction memory and Annotation Recovery Agent is next.
 
 ## Audited baseline
 
@@ -103,3 +103,14 @@ M5 — complete. M6 RoboCup Ball Domain Skill and Pack is next.
   compatible suggestion payload;
 - SQLite migration v4 persists sessions by Project; cancellation and budget stops are explicit;
 - terminal success waits for human publish approval and creates no Workflow Version.
+
+## M6 delivered
+
+- `robocup` Pack manifest plus independent `robocup.ball` Domain Skill manifest;
+- Robot and Field extension directories are explicitly Roadmap-only;
+- `RoboCupBallHardNegativeValidator`, issue taxonomy and duplicate/geometry/footwear/point/line risk
+  evidence;
+- `RoboCupBallFieldRelationValidator` with inside/outside checks and safe missing-field warning;
+- two model-agnostic Ball templates using generic VLM/YOLO capability operations and Core nodes;
+- on-demand Ball summary and hard-negative resources with correction taxonomy;
+- existing broad RoboCup Skill and all previous hybrid tests remain intact.

@@ -124,3 +124,19 @@ cargo test -p annotagent-server \
 
 The application test asserts the complete 12-action loop, valid sandbox Dry Run, persisted session,
 cancelled session, `waiting_for_human` terminal state, and zero published versions.
+
+## M6 — RoboCup Ball Domain Skill and Pack
+
+```text
+cargo test -p annotagent-skill-robocup
+10 passed; 0 failed across unit and integration targets
+cargo test -p annotagent-runtime --test hybrid_workflow
+3 passed; 0 failed
+scripts/check-agent-skill-boundaries.sh
+passed
+```
+
+The tests prove Pack/Domain separation, two templates without concrete model bindings, safe
+resource rejection, structured white-shoe/penalty/memory issues, field inside/outside/missing
+evidence behavior, and backward-compatible hybrid execution. The generic Runtime/Core/Server/Web
+component boundary remains free of the forbidden RoboCup label terms.

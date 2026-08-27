@@ -1,0 +1,37 @@
+version: 1
+id: robocup.ball
+kind: domain
+skill_version: "1"
+display_name: RoboCup Ball
+description: Ball detection validation, review policy, recovery resources, and correction taxonomy
+rust_implementation: annotagent_skill_robocup::RoboCupBallSkill
+dependencies:
+  - id: vlm-detection
+    version: "1"
+capabilities:
+  - robocup_ball_validation
+nodes:
+  - robocup.ball.validate
+validators:
+  - ball_hard_negative
+  - robocup_ball_field_relation
+policies:
+  - robocup.ball.review
+templates:
+  - robocup.ball.vlm-bootstrap
+  - robocup.ball.detector-first
+summary_resources:
+  - ball/SKILL.md
+task_resources:
+  objects:
+    - ball/resources/hard-negatives.md
+correction_taxonomy:
+  - white_shoe_as_ball
+  - white_sock_as_ball
+  - penalty_mark_as_ball
+  - line_intersection_as_ball
+  - missed_small_ball
+  - duplicate_ball
+  - inaccurate_ball_bbox
+  - ball_outside_field
+  - other

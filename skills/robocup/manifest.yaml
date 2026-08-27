@@ -1,8 +1,18 @@
 version: 1
 id: robocup
+kind: pack
+skill_version: "1"
 display_name: RoboCup Perception
 description: RoboCup robot soccer perception dataset annotation and deterministic quality control
 rust_implementation: annotagent-skill-robocup
+dependencies:
+  - id: robocup.ball
+    version: "1"
+capabilities:
+  - robocup_perception_pack
+templates:
+  - robocup.ball.vlm-bootstrap
+  - robocup.ball.detector-first
 summary_resources:
   - SKILL.md
 task_resources:

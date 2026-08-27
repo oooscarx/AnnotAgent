@@ -13,6 +13,8 @@
 - The offline deterministic Advisor is the release-blocking iterative policy. The external
   OpenAI-compatible advisor adjustment remains live-conditional and still passes through the same
   registry validation and human publication boundary.
+- Robot and Field are compatibility/Roadmap areas, not independent layered Domain Skills in this
+  Alpha. They continue to supply optional evidence to Ball validation.
 - Workflow Advisor and Annotation Recovery are not yet the required iterative Agent loops.
 - RoboCup Ball is not yet isolated as its own Domain Skill inside a Pack.
 - Web and TUI do not yet expose the complete Agent sessions, tools and memory views.

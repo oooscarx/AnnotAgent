@@ -10,8 +10,9 @@ use annotagent_core::{
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_skill_robocup::{
     BallHardNegativeValidator, EvaluationGroundTruth, EvaluationPredictions, EvaluationThresholds,
-    FieldContainmentValidator, RoboCupFieldLineRefiner, RoboCupReviewPolicy, RoboCupSkill,
-    RobotAttributeValidator, TeamColorEvidenceTool, evaluate, evaluate_with_thresholds,
+    FieldContainmentValidator, RoboCupBallFieldRelationValidator, RoboCupFieldLineRefiner,
+    RoboCupReviewPolicy, RoboCupSkill, RobotAttributeValidator, TeamColorEvidenceTool, evaluate,
+    evaluate_with_thresholds,
 };
 use chrono::Utc;
 use serde_json::json;
@@ -159,6 +160,65 @@ fn white_shoe_and_penalty_mark_are_structured_ball_risks() {
         max_retries: 2,
     });
     assert!(matches!(exhausted, ReviewDecision::HumanReview { .. }));
+}
+
+#[test]
+fn ball_field_relation_is_safe_inside_outside_and_without_field_evidence() {
+    let validator = RoboCupBallFieldRelationValidator;
+    let inside = annotation(
+        "ball",
+        "objects",
+        AnnotationValue::BoundingBox {
+            rect: NormalizedRect::new(0.5, 0.5, 0.04, 0.04).expect("inside"),
+        },
+    );
+    let outside = annotation(
+        "ball",
+        "objects",
+        AnnotationValue::BoundingBox {
+            rect: NormalizedRect::new(0.0, 0.0, 0.005, 0.005).expect("outside"),
+        },
+    );
+    let fields = [full_field()];
+    let project = project();
+    assert!(
+        validator
+            .validate(&ValidationContext {
+                project: &project,
+                image: None,
+                candidate: &inside,
+                related_annotations: &fields,
+                correction_risk: 0.0,
+            })
+            .expect("inside relation")
+            .is_empty()
+    );
+    assert_eq!(
+        validator
+            .validate(&ValidationContext {
+                project: &project,
+                image: None,
+                candidate: &outside,
+                related_annotations: &fields,
+                correction_risk: 0.0,
+            })
+            .expect("outside relation")[0]
+            .code,
+        "ball_outside_field"
+    );
+    assert_eq!(
+        validator
+            .validate(&ValidationContext {
+                project: &project,
+                image: None,
+                candidate: &inside,
+                related_annotations: &[],
+                correction_risk: 0.0,
+            })
+            .expect("missing evidence warning")[0]
+            .code,
+        "missing_field_evidence"
+    );
 }
 
 fn candidate_bbox_center(annotation: &Annotation) -> NormalizedPoint {

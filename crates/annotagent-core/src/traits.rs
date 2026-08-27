@@ -252,6 +252,10 @@ pub trait Skill: Send + Sync {
         Vec::new()
     }
 
+    fn review_policies(&self) -> Vec<(String, Arc<dyn ReviewPolicy>)> {
+        Vec::new()
+    }
+
     fn workflow_templates(&self) -> Vec<crate::WorkflowTemplate> {
         Vec::new()
     }

@@ -6,14 +6,28 @@ use annotagent_image_tools::{color_statistics, point_segment_distance};
 
 use crate::field::measurements;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoboCupBallIssueCode {
+    PossibleWhiteShoe,
+    PossibleWhiteSock,
+    PossiblePenaltyMark,
+    PossibleFieldLineIntersection,
+    MissedSmallBall,
+    DuplicateBall,
+    InaccurateBoundingBox,
+    OutsideField,
+    MissingFieldEvidence,
+}
+
 #[derive(Debug, Clone)]
-pub struct BallHardNegativeValidator {
+pub struct RoboCupBallHardNegativeValidator {
     pub lower_body_margin: f32,
     pub point_distance: f32,
     pub line_distance: f32,
 }
 
-impl Default for BallHardNegativeValidator {
+impl Default for RoboCupBallHardNegativeValidator {
     fn default() -> Self {
         Self {
             lower_body_margin: 0.035,
@@ -23,7 +37,7 @@ impl Default for BallHardNegativeValidator {
     }
 }
 
-impl annotagent_core::AnnotationValidator for BallHardNegativeValidator {
+impl annotagent_core::AnnotationValidator for RoboCupBallHardNegativeValidator {
     fn id(&self) -> &str {
         "ball_hard_negative"
     }
@@ -75,6 +89,38 @@ impl annotagent_core::AnnotationValidator for BallHardNegativeValidator {
                     ("lower_body_risk", f64::from(lower_body_overlap)),
                     ("white_ratio", f64::from(white_ratio)),
                 ],
+            ));
+        }
+
+        let duplicate_overlap = context
+            .related_annotations
+            .iter()
+            .filter(|annotation| {
+                annotation
+                    .label
+                    .as_ref()
+                    .is_some_and(|label| label.as_str() == "ball")
+                    && annotation.id != context.candidate.id
+            })
+            .filter_map(|annotation| match annotation.value {
+                AnnotationValue::BoundingBox { rect: other } => {
+                    let intersection = rect.intersection_area(other);
+                    let union = rect.area() + other.area() - intersection;
+                    (union > f32::EPSILON).then_some(intersection / union)
+                }
+                _ => None,
+            })
+            .max_by(f32::total_cmp);
+        if duplicate_overlap.is_some_and(|overlap| overlap >= 0.65) {
+            issues.push(risk_issue(
+                context,
+                "duplicate_ball",
+                "candidate substantially overlaps an existing ball annotation",
+                "ball_candidate",
+                &[(
+                    "intersection_over_union",
+                    f64::from(duplicate_overlap.unwrap_or_default()),
+                )],
             ));
         }
 
@@ -157,6 +203,89 @@ impl annotagent_core::AnnotationValidator for BallHardNegativeValidator {
         }
         Ok(issues)
     }
+}
+
+/// Backward-compatible name used by the original broad RoboCup Skill.
+pub type BallHardNegativeValidator = RoboCupBallHardNegativeValidator;
+
+#[derive(Debug, Clone, Default)]
+pub struct RoboCupBallFieldRelationValidator;
+
+impl annotagent_core::AnnotationValidator for RoboCupBallFieldRelationValidator {
+    fn id(&self) -> &str {
+        "robocup_ball_field_relation"
+    }
+
+    fn validate(&self, context: &ValidationContext<'_>) -> CoreResult<Vec<ValidationIssue>> {
+        if context
+            .candidate
+            .label
+            .as_ref()
+            .is_none_or(|label| label.as_str() != "ball")
+        {
+            return Ok(Vec::new());
+        }
+        let AnnotationValue::BoundingBox { rect } = context.candidate.value else {
+            return Ok(Vec::new());
+        };
+        let field_ring = context
+            .related_annotations
+            .iter()
+            .find(|annotation| {
+                annotation
+                    .label
+                    .as_ref()
+                    .is_some_and(|label| label.as_str() == "field")
+            })
+            .and_then(|annotation| match &annotation.value {
+                AnnotationValue::Polygon { rings } => rings.first(),
+                _ => None,
+            });
+        let Some(field_ring) = field_ring else {
+            return Ok(vec![risk_issue(
+                context,
+                "missing_field_evidence",
+                "field geometry is unavailable; field relation remains unverified",
+                "field_relation",
+                &[],
+            )]);
+        };
+        if point_in_ring(rect.center(), field_ring) {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![risk_issue(
+                context,
+                "ball_outside_field",
+                "ball center lies outside the available field polygon",
+                "field_relation",
+                &[],
+            )])
+        }
+    }
+}
+
+fn point_in_ring(point: NormalizedPoint, ring: &[NormalizedPoint]) -> bool {
+    if ring.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = ring[ring.len() - 1];
+    for &current in ring {
+        let crosses = (current.y() > point.y()) != (previous.y() > point.y());
+        if crosses {
+            let denominator = previous.y() - current.y();
+            if denominator.abs() > f32::EPSILON {
+                let intersection_x = (previous.x() - current.x()) * (point.y() - current.y())
+                    / denominator
+                    + current.x();
+                if point.x() < intersection_x {
+                    inside = !inside;
+                }
+            }
+        }
+        previous = current;
+    }
+    inside
 }
 
 fn distance(left: NormalizedPoint, right: NormalizedPoint) -> f32 {

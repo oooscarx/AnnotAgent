@@ -1,5 +1,20 @@
 # RoboCup Skill
 
+## Agent + Skill Alpha structure
+
+`robocup` is now a `Pack` manifest. `robocup.ball` is the release-blocking `Domain` Skill and
+depends on generic Detection capability by ID/version. Robot and Field remain Roadmap-only Domain
+splits while the original broad `RoboCupSkill` stays available as a compatibility adapter.
+
+The Ball Skill owns only domain resources, correction taxonomy, hard-negative/field-relation
+Validators, review policy and two model-agnostic templates. Detection is supplied by
+`vlm-detection` or `yolo-detection`; Filter/Crop/Gates/Review/Commit are Core.
+
+The hard-negative validator covers white footwear, penalty-mark proximity, line support, duplicate
+overlap, unusual geometry and correction-memory risk. The field-relation validator reports a
+warning when field evidence is unavailable and an explicit issue when a candidate lies outside the
+known field polygon; it never panics on absent optional evidence.
+
 ## Workflows
 
 The Skill supplies this DAG while Runtime only executes dependencies:
