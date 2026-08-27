@@ -12,8 +12,8 @@ use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
     AnnotationSource, ArtifactKind, AttributeDefinition, BatchBudgetLedger, BatchBudgetLimits,
     BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
-    BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill, ImageId, ImportIssue,
-    ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
+    BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill, EnabledSkillConfig, ImageId,
+    ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
     LabelWorkflowComposition, ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry,
     ModelRequest, ModelRole, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
     PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
@@ -39,11 +39,11 @@ use annotagent_provider::{
 };
 use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
-    ImageRunRequest, ImageRunResult, RunControl, RuntimeStore, SkillRegistry,
+    ImageRunRequest, ImageRunResult, LayeredSkillRegistry, RunControl, RuntimeStore, SkillRegistry,
 };
 use annotagent_skill_robocup::{
     ROBOCUP_BALL_SKILL_ID, RoboCupBallRecoveryAgent, RoboCupBallRecoveryReport,
-    RoboCupBallRecoveryRequest, RoboCupSkill,
+    RoboCupBallRecoveryRequest, RoboCupBallSkill, RoboCupPackSkill, RoboCupSkill,
 };
 use annotagent_storage::{BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore};
 use anyhow::{Context, Result, anyhow, bail};
@@ -1540,6 +1540,7 @@ pub struct LocalApplication {
     database_path: PathBuf,
     store: Arc<SqliteStore>,
     skills: Arc<SkillRegistry>,
+    layered_skills: Arc<LayeredSkillRegistry>,
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
 }
@@ -1576,12 +1577,31 @@ impl LocalApplication {
         registry.register(Arc::new(
             RoboCupSkill::new().map_err(|error| anyhow!(error))?,
         ))?;
+        let mut layered_skills = LayeredSkillRegistry::new();
+        let classification =
+            Arc::new(annotagent_skill_classification::ClassificationCapabilitySkill::default());
+        registry.register_layered(classification.clone())?;
+        layered_skills.register(classification)?;
+        let vlm_detection =
+            Arc::new(annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill::default());
+        registry.register_layered(vlm_detection.clone())?;
+        layered_skills.register(vlm_detection)?;
+        let yolo = Arc::new(annotagent_skill_yolo::YoloCapabilitySkill::default());
+        registry.register_layered(yolo.clone())?;
+        layered_skills.register(yolo)?;
+        let ball = Arc::new(RoboCupBallSkill::new().map_err(|error| anyhow!(error))?);
+        registry.register_layered(ball.clone())?;
+        layered_skills.register(ball)?;
+        let pack = Arc::new(RoboCupPackSkill::new().map_err(|error| anyhow!(error))?);
+        registry.register_layered(pack.clone())?;
+        layered_skills.register(pack)?;
         let (event_sender, _) = broadcast::channel(1024);
         Ok(Self {
             workspace,
             database_path,
             store,
             skills: Arc::new(registry),
+            layered_skills: Arc::new(layered_skills),
             event_sender,
             active: Mutex::new(HashMap::new()),
         })
@@ -1836,6 +1856,45 @@ impl LocalApplication {
         self.skills.clone()
     }
 
+    #[must_use]
+    pub fn layered_skills(&self) -> Arc<LayeredSkillRegistry> {
+        self.layered_skills.clone()
+    }
+
+    pub fn list_agent_sessions(&self, project_id: &str) -> Result<Vec<AgentSession>> {
+        validate_project_id(project_id)?;
+        self.store
+            .list_agent_sessions(Some(project_id))
+            .map_err(anyhow::Error::from)
+    }
+
+    pub fn cancel_agent_session(&self, session_id: uuid::Uuid) -> Result<AgentSession> {
+        let mut session = self.store.get_agent_session(session_id)?;
+        if !matches!(
+            session.status,
+            AgentSessionStatus::Running | AgentSessionStatus::WaitingForHuman
+        ) {
+            bail!(
+                "Agent Session is already terminal with status {:?}",
+                session.status
+            );
+        }
+        session.cancel();
+        self.store.save_agent_session(&session)?;
+        Ok(session)
+    }
+
+    pub fn list_project_correction_memory(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<annotagent_core::CorrectionRecord>> {
+        let project_path = self.project_path(project_id)?;
+        let project_root = project_path.parent().unwrap_or(&self.workspace);
+        self.store
+            .list_project_corrections(stable_project_id(project_root), 200)
+            .map_err(anyhow::Error::from)
+    }
+
     pub fn active_run_for_project(&self, project_name: &str) -> Result<Option<RunId>> {
         Ok(self
             .active
@@ -1902,6 +1961,22 @@ impl LocalApplication {
         resolve_project_skills(&project, &self.skills)?;
         let yaml = serde_yaml::to_string(&project)?;
         std::fs::write(&path, yaml)?;
+        self.get_project(project_id)
+    }
+
+    pub fn set_project_enabled_skills(
+        &self,
+        project_id: &str,
+        enabled_skills: Vec<EnabledSkillConfig>,
+    ) -> Result<ProjectSummary> {
+        let path = self.project_path(project_id)?;
+        let yaml = std::fs::read_to_string(&path)?;
+        let mut project = ProjectSchema::from_yaml(&yaml).map_err(|error| anyhow!(error))?;
+        project.project.enabled_skills = enabled_skills;
+        project.project.skill.clear();
+        project.project.skill_version.clear();
+        resolve_project_skills(&project, &self.skills)?;
+        std::fs::write(&path, serde_yaml::to_string(&project)?)?;
         self.get_project(project_id)
     }
 
@@ -2146,19 +2221,19 @@ impl LocalApplication {
                     required: task.required,
                 })
                 .collect(),
-            enabled_skills: project_skills
-                .iter()
-                .map(|skill| EnabledSkill {
-                    id: skill.id().to_owned(),
-                    display_name: skill.manifest().display_name.clone(),
-                    version: project
-                        .project
-                        .enabled_skill_versions()
-                        .get(skill.id())
-                        .cloned()
-                        .unwrap_or_else(|| skill.manifest().version.to_string()),
+            enabled_skills: project
+                .project
+                .enabled_skill_versions()
+                .into_iter()
+                .map(|(id, version)| {
+                    let catalog = self.skills.catalog_entry(&id)?;
+                    Ok(EnabledSkill {
+                        id,
+                        display_name: catalog.display_name,
+                        version,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             workflows,
             active_workflow,
             available_workflow_versions,
@@ -2436,12 +2511,12 @@ impl LocalApplication {
         target_label: Option<&str>,
     ) -> Result<WorkflowAdvisorInput> {
         let project_path = self.project_path(project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
-        let enabled_skills = project_skills
-            .iter()
-            .map(|skill| skill.id().to_owned())
+        let enabled_skills = project
+            .project
+            .enabled_skill_versions()
+            .into_keys()
             .collect::<Vec<_>>();
         let extensions = self.skills.validation_catalog_for(&enabled_skills)?;
         let images = self.list_project_images(project_id)?;
@@ -2454,6 +2529,7 @@ impl LocalApplication {
         if let Some(image) = sample.as_ref() {
             mime_types.insert(image.metadata.mime_type.clone());
         }
+        let workflow_templates = workflow_templates_for(&self.skills, &enabled_skills)?;
         Ok(WorkflowAdvisorInput {
             project_id: project_id.to_owned(),
             project_schema: project,
@@ -2465,10 +2541,7 @@ impl LocalApplication {
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
             resource_ids: extensions.resources.into_iter().collect(),
-            workflow_templates: project_skills
-                .iter()
-                .flat_map(|skill| skill.workflow_templates())
-                .collect(),
+            workflow_templates,
             constraints,
             data_profile: WorkflowDataProfile {
                 image_count: images.len(),
@@ -2496,14 +2569,15 @@ impl LocalApplication {
         template_id: Option<&str>,
     ) -> Result<WorkflowDraft> {
         let project_path = self.project_path(project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let now = chrono::Utc::now();
         let draft = if let Some(template_id) = template_id {
-            let available = project_skills
-                .iter()
-                .flat_map(|skill| skill.workflow_templates())
+            let enabled_ids = project
+                .project
+                .enabled_skill_versions()
+                .into_keys()
                 .collect::<Vec<_>>();
+            let available = workflow_templates_for(&self.skills, &enabled_ids)?;
             let template = available
                 .iter()
                 .find(|template| template.id == template_id)
@@ -2517,9 +2591,10 @@ impl LocalApplication {
                 .suggest_workflow(
                     project_id,
                     &project,
-                    &project_skills
-                        .iter()
-                        .map(|skill| skill.id().to_owned())
+                    &project
+                        .project
+                        .enabled_skill_versions()
+                        .into_keys()
                         .collect::<Vec<_>>(),
                     &nodes,
                     &models,
@@ -2560,15 +2635,15 @@ impl LocalApplication {
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
         let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
             project_id,
             &project,
-            &project_skills
-                .iter()
-                .map(|skill| skill.id().to_owned())
+            &project
+                .project
+                .enabled_skill_versions()
+                .into_keys()
                 .collect::<Vec<_>>(),
             &nodes,
             &models,
@@ -3142,15 +3217,15 @@ impl LocalApplication {
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
         Ok(RegistryWorkflowAdvisor.suggest_workflow(
             project_id,
             &project,
-            &project_skills
-                .iter()
-                .map(|skill| skill.id().to_owned())
+            &project
+                .project
+                .enabled_skill_versions()
+                .into_keys()
                 .collect::<Vec<_>>(),
             &nodes,
             &models,
@@ -4348,10 +4423,18 @@ fn resolve_project_skills(
         .enabled_skill_versions()
         .into_keys()
         .collect::<Vec<_>>();
-    let project_skills = enabled_ids
-        .iter()
-        .map(|id| skills.get(id).map_err(anyhow::Error::from))
-        .collect::<Result<Vec<_>>>()?;
+    let enabled_versions = project.project.enabled_skill_versions();
+    if !enabled_ids.is_empty() && enabled_ids.iter().all(|id| skills.get(id).is_err()) {
+        skills.resolve_layered_enabled(&enabled_versions)?;
+    }
+    let mut project_skills = Vec::new();
+    for id in &enabled_ids {
+        if let Ok(skill) = skills.get(id) {
+            project_skills.push(skill);
+        } else {
+            skills.get_layered(id)?;
+        }
+    }
     let catalog = skills.validation_catalog_for(&enabled_ids)?;
     let issues = project.validate(&catalog);
     if !issues.is_empty() {
@@ -4365,6 +4448,21 @@ fn resolve_project_skills(
         );
     }
     Ok(project_skills)
+}
+
+fn workflow_templates_for(
+    skills: &SkillRegistry,
+    enabled_ids: &[String],
+) -> Result<Vec<annotagent_core::WorkflowTemplate>> {
+    let mut templates = Vec::new();
+    for id in enabled_ids {
+        if let Ok(skill) = skills.get(id) {
+            templates.extend(skill.workflow_templates());
+        } else {
+            templates.extend(skills.get_layered(id)?.workflow_templates());
+        }
+    }
+    Ok(templates)
 }
 
 fn find_or_generate_image(project_path: &Path, project: &ProjectSchema) -> Result<PathBuf> {

@@ -1,10 +1,10 @@
 # AnnotAgent Agent + Skill Status
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 ## Current milestone
 
-M7 — complete. M8 Web, TUI and Guided UX is next.
+M8 — complete. M9 demos, release matrix and final documentation are next.
 
 ## Audited baseline
 
@@ -128,3 +128,21 @@ M7 — complete. M8 Web, TUI and Guided UX is next.
 - budget and cancellation stop states that route unresolved high-risk candidates to Human Review;
 - an end-to-end two-run proof where the first uncertain candidate requires review and an exact
   scoped correction changes the second decision to rejection.
+
+## M8 delivered
+
+- one layered Skill catalog across Server and Web, grouped as Capability, Domain and Pack with
+  versions, contributions, requirements, templates and Project usage;
+- Project Build controls that persist enabled layered Skills, automatically include declared
+  dependencies and keep legacy Pack Projects compatible during migration;
+- visible persisted Workflow Advisor and Recovery Agent sessions, including observable tool input
+  and result data, validation, Dry Run, token/cost usage, stop reason and scoped cancellation;
+- Review-side Domain Skill selection from the Project's enabled correction taxonomies, so stored
+  Memory carries the exact Skill identity instead of an implicit global default;
+- Project-scoped Correction Memory display explaining how matching evidence can affect recovery;
+- TUI `/skills`, `/skills show`, `/advisor`, `/advisor cancel`, `/memory` and `/history` commands on
+  the same application/storage state as the GUI;
+- the exact TUI product title `AnnotAgent / Composable Annotation Agent Runtime` and generic empty
+  states that do not advertise a domain extension unless a Project enables it;
+- browser-verified Advisor waiting/cancellation transitions: cancellation clears pending human
+  action and never exposes hidden chain-of-thought.

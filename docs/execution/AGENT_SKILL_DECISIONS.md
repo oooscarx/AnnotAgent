@@ -35,3 +35,14 @@ budget is sent to Human Review.
 
 Rejected: global similarity memory, cross-Project fallback, prompt injection through notes, and
 turning an unfinished recovery into automatic acceptance.
+
+## D007 — Product views read the layered Registry and persisted Agent state
+
+Skills, Project configuration, Advisor traces, Recovery history and Correction Memory are views of
+the application registry/store rather than UI-owned fixtures. Project Skill edits persist manifest
+identifiers and declared dependencies. Review requires an enabled Skill that contributes a
+correction taxonomy. Agent cancellation is scoped to one persisted session and clears any pending
+human action when the session becomes terminal.
+
+Rejected: hard-coded domain cards, fabricated Agent steps, UI-only cancellation, implicit global
+correction ownership and exposing hidden model reasoning as a product trace.

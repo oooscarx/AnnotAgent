@@ -28,7 +28,9 @@ import {
   type ProductPage,
 } from "./productIdentity";
 import type {
+  AgentSession,
   Annotation,
+  CorrectionMemoryRecord,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -947,6 +949,8 @@ function ProjectPage({
   const [exporting, setExporting] = useState("");
   const [labelTaskId, setLabelTaskId] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [skillCatalog, setSkillCatalog] = useState<SkillDetail[]>([]);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   useEffect(() => {
     if (project)
       void api
@@ -969,7 +973,11 @@ function ProjectPage({
   useEffect(() => {
     setLabelTaskId(project?.annotation_schema[0]?.id ?? "");
     setNewLabel("");
+    setSelectedSkillIds(project?.enabled_skills.map((skill) => skill.id) ?? []);
   }, [project?.id]);
+  useEffect(() => {
+    void api.skills().then(setSkillCatalog).catch((error: Error) => onError(error.message));
+  }, []);
   if (!project)
     return (
       <section className="page-stack">
@@ -1083,6 +1091,36 @@ function ProjectPage({
         setNewLabel("");
         onRefresh();
       })
+      .catch((error: Error) => onError(error.message));
+  };
+  const saveSkills = () => {
+    const resolved = new Set(selectedSkillIds);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const id of [...resolved]) {
+        const skill = skillCatalog.find((item) => item.id === id);
+        const legacyPack =
+          skill?.kind === "pack" &&
+          project.enabled_skills.length === 1 &&
+          project.enabled_skills[0]?.id === id;
+        if (legacyPack) continue;
+        for (const requirement of skill?.capability_requirements ?? []) {
+          const dependency = requirement.split("@")[0];
+          if (!resolved.has(dependency)) {
+            resolved.add(dependency);
+            changed = true;
+          }
+        }
+      }
+    }
+    const enabled = [...resolved].sort().map((id) => {
+      const skill = skillCatalog.find((item) => item.id === id);
+      return { id, version: skill?.version ?? "1" };
+    });
+    void api
+      .setProjectSkills(project.id, enabled)
+      .then(onRefresh)
       .catch((error: Error) => onError(error.message));
   };
   const runPrimaryAction = () => {
@@ -1292,6 +1330,32 @@ function ProjectPage({
               detail="Stable schema and hash visuals remain available."
             />
           )}
+          <details className="advanced-settings">
+            <summary>Configure Capability and Domain Skills</summary>
+            <div className="skill-picker">
+              {skillCatalog.map((skill) => (
+                <label className="checkbox-line" key={skill.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSkillIds.includes(skill.id)}
+                    onChange={(event) =>
+                      setSelectedSkillIds((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, skill.id])]
+                          : current.filter((id) => id !== skill.id),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{skill.display_name}</strong>
+                    <small>{skill.kind} · {skill.id}@{skill.version}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <small>Required Capability Skills are added automatically. Rust Registry validation blocks missing or incompatible versions.</small>
+            <button onClick={saveSkills}>Save Project Skills</button>
+          </details>
         </Panel>
         <Panel title="Model Bindings" eyebrow="Node execution">
           {project.model_bindings.map((binding) => (
@@ -1408,6 +1472,7 @@ function ProjectPage({
           {importResult && <pre className="import-report" aria-live="polite">{importResult}</pre>}
         </Panel>
       </div>
+      <ProjectAgentActivity projectId={project.id} onError={onError} />
       <Panel title="Dataset images" eyebrow={`${images.length} visible`}>
         <div className="image-grid">
           {images.map((image) => (
@@ -1868,6 +1933,23 @@ function WorkflowsPage({
           <TagGroup title="Unresolved bindings" values={advisorProposal.unresolved_model_bindings} />
           <TagGroup title="Warnings" values={advisorProposal.warnings} />
           <TagGroup title="Alternatives" values={advisorProposal.alternatives} />
+          {advisorProposal.agent_session && (
+            <AgentSessionTrace
+              session={advisorProposal.agent_session}
+              validation={advisorProposal.agent_validation}
+              dryRun={advisorProposal.agent_dry_run}
+              onCancel={() =>
+                void api
+                  .cancelAgentSession(advisorProposal.agent_session!.id)
+                  .then(({ session }) =>
+                    setAdvisorProposal((current) =>
+                      current ? { ...current, agent_session: session } : current,
+                    ),
+                  )
+                  .catch((error: Error) => onError(error.message))
+              }
+            />
+          )}
           <div className="button-row">
             <button className="primary" onClick={() => setDraft(advisorProposal.draft)}>Apply to Draft</button>
             <button onClick={() => setAdvisorProposal(undefined)}>Dismiss proposal</button>
@@ -3763,6 +3845,7 @@ function ReviewPage({
   const [attributesText, setAttributesText] = useState("{}");
   const [reason, setReason] = useState("");
   const [reasonOptions, setReasonOptions] = useState<string[]>([]);
+  const [correctionSkillId, setCorrectionSkillId] = useState("");
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
   useEffect(() => setSelectedId(route.reviewItemId ?? ""), [route.reviewItemId]);
@@ -3804,9 +3887,11 @@ function ReviewPage({
       .skills()
       .then((skills) => {
         const ids = reviewProject?.enabled_skills.map((skill) => skill.id) ?? [];
-        const options =
-          skills.find((skill) => ids.includes(skill.id))?.correction_taxonomy ??
-          [];
+        const correctionSkill = skills.find(
+          (skill) => ids.includes(skill.id) && skill.correction_taxonomy.length,
+        );
+        const options = correctionSkill?.correction_taxonomy ?? [];
+        setCorrectionSkillId(correctionSkill?.id ?? "");
         setReasonOptions(options);
         setReason(options[0] || "manual_edit");
       })
@@ -3928,7 +4013,14 @@ function ReviewPage({
         "Select the Review item's Project before recording a decision.",
       );
     return api
-      .decide(selected.id, reviewProject.id, decision, reason, note)
+      .decide(
+        selected.id,
+        reviewProject.id,
+        decision,
+        reason,
+        note,
+        correctionSkillId || undefined,
+      )
       .then(refresh)
       .catch((error: Error) => onError(error.message));
   };
@@ -4117,6 +4209,13 @@ function ReviewPage({
                 placeholder="What changed, and why?"
               />
             </label>
+            {reasonOptions.includes(reason) && (
+              <div className="credential-notice" role="status">
+                Saving this decision records controlled Project-specific correction evidence.
+                Future recovery may use <strong>{reason.replaceAll("_", " ")}</strong> only for
+                the same Skill, task and Label; reviewer notes are never treated as instructions.
+              </div>
+            )}
             <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
             <div className="decision-row">
               <button className="primary" onClick={() => decide("accept")}>
@@ -4195,6 +4294,125 @@ function Trace({ events }: { events: RunEvent[] }) {
   );
 }
 
+function AgentSessionTrace({
+  session,
+  validation,
+  dryRun,
+  onCancel,
+}: {
+  session: AgentSession;
+  validation?: WorkflowDryRunReport["validation"];
+  dryRun?: WorkflowDryRunReport;
+  onCancel?: () => void;
+}) {
+  const cancellable = ["running", "waiting_for_human"].includes(session.status);
+  return (
+    <div className="agent-session-trace" aria-label={`${session.kind} Agent trace`}>
+      <div className="context-line">
+        <strong>{session.kind.replaceAll("_", " ")}</strong>
+        <Status status={session.status} />
+        <span>{session.usage.tool_calls} tool calls</span>
+        <span>{session.usage.input_tokens + session.usage.output_tokens} tokens</span>
+        <span>${session.usage.cost}</span>
+        {onCancel && (
+          <button className="danger" disabled={!cancellable} onClick={onCancel}>
+            Cancel Agent
+          </button>
+        )}
+      </div>
+      <div className="fact-grid">
+        <Fact
+          label="Validation issues"
+          value={validation?.issues.length ?? "Not recorded"}
+        />
+        <Fact
+          label="Dry Run"
+          value={dryRun ? `${dryRun.summary.image_count} image · ${dryRun.summary.failed_count} failed` : "Not run"}
+        />
+        <Fact label="Stop reason" value={session.stop_reason ?? "Running"} />
+        <Fact
+          label="Human action"
+          value={session.pending_human_action ?? "None"}
+        />
+      </div>
+      <ol className="agent-action-list">
+        {session.steps.map((step) => (
+          <li key={step.call_id}>
+            <strong>{step.sequence}. {step.tool_name.replaceAll("_", " ")}</strong>
+            <small>{step.success ? "Completed" : "Failed"}</small>
+            <details>
+              <summary>Observable inputs and result</summary>
+              <pre>{JSON.stringify({ arguments: step.arguments, result: step.result }, null, 2)}</pre>
+            </details>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ProjectAgentActivity({
+  projectId,
+  onError,
+}: {
+  projectId: string;
+  onError: (value: string) => void;
+}) {
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [memory, setMemory] = useState<CorrectionMemoryRecord[]>([]);
+  const load = () =>
+    Promise.all([api.agentSessions(projectId), api.correctionMemory(projectId)])
+      .then(([agentData, memoryData]) => {
+        setSessions(agentData.sessions);
+        setMemory(memoryData.records);
+      })
+      .catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    void load();
+  }, [projectId]);
+  if (!sessions.length && !memory.length) return null;
+  return (
+    <div className="split-grid agent-activity">
+      <Panel title="Agent activity" eyebrow="Advisor and recovery sessions">
+        {sessions.length ? (
+          sessions.slice(0, 5).map((session) => (
+            <AgentSessionTrace
+              key={session.id}
+              session={session}
+              onCancel={() =>
+                void api
+                  .cancelAgentSession(session.id)
+                  .then(load)
+                  .catch((error: Error) => onError(error.message))
+              }
+            />
+          ))
+        ) : (
+          <Empty title="No Agent sessions" detail="Deterministic Workflow execution remains the fast path." />
+        )}
+      </Panel>
+      <Panel title="Correction Memory" eyebrow="Project-scoped structured evidence">
+        {memory.length ? (
+          <div className="catalog-list">
+            {memory.map((record) => (
+              <article key={record.id}>
+                <span className="catalog-monogram">M</span>
+                <span>
+                  <strong>{record.reason_code.replaceAll("_", " ")}</strong>
+                  <small>{record.skill_id} · {record.task_id} · {record.predicted_label ?? "any Label"}</small>
+                  <small>This evidence can raise recovery risk for the same Project, Skill, task and Label.</small>
+                </span>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <Empty title="No correction evidence" detail="Human corrections will appear here after Review." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 function SkillsPage({ onError }: { onError: (value: string) => void }) {
   const [skills, setSkills] = useState<SkillDetail[]>([]);
   useEffect(() => {
@@ -4203,36 +4421,45 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
       .then(setSkills)
       .catch((error: Error) => onError(error.message));
   }, []);
+  const groups: { kind: SkillDetail["kind"]; title: string; detail: string }[] = [
+    { kind: "capability", title: "Capability Skills", detail: "Reusable model and processing abilities" },
+    { kind: "domain", title: "Domain Skills", detail: "Domain validation, policy, recovery and memory" },
+    { kind: "pack", title: "Skill Packs", detail: "Versioned collections of Domain and Capability Skills" },
+  ];
   return (
     <section className="page-stack">
       <div className="boundary-note">
         <span>AnnotAgent</span>
-        <i>DomainSkill registry boundary</i>
-        <span>Installed Skills</span>
+        <i>Tool · Core Node · Model · Skill</i>
+        <span>Layered Skill Registry</span>
       </div>
-      {skills.map((skill) => (
-        <Panel
-          key={skill.id}
-          title={`${skill.display_name} · v${skill.version}`}
-          eyebrow={skill.id}
-        >
-          <p className="lede">{skill.description}</p>
-          <div className="skill-columns">
-            <TagGroup
-              title="Node templates"
-              values={skill.tasks.map((task) => task.id)}
-            />
-            <TagGroup title="Registered tools" values={skill.tools} />
-            <TagGroup title="Validators" values={skill.validators} />
-            <TagGroup title="Refiners" values={skill.refiners} />
-            <TagGroup
-              title="Correction taxonomy"
-              values={skill.correction_taxonomy}
-            />
-            <TagGroup title="Prompt resources" values={skill.resources} />
-          </div>
-        </Panel>
-      ))}
+      {groups.map((group) => {
+        const items = skills.filter((skill) => skill.kind === group.kind);
+        if (!items.length) return null;
+        return (
+          <section className="skill-group" key={group.kind}>
+            <div><span className="eyebrow">{group.detail}</span><h2>{group.title}</h2></div>
+            {items.map((skill) => (
+              <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={`${skill.kind} · ${skill.id}`}>
+                <p className="lede">{skill.description}</p>
+                <div className="skill-columns">
+                  <TagGroup title="Provided Nodes" values={skill.nodes} />
+                  <TagGroup title="Registered tools" values={skill.tools} />
+                  <TagGroup title="Capabilities" values={skill.capabilities} />
+                  <TagGroup title="Capability requirements" values={skill.capability_requirements} />
+                  <TagGroup title="Validators" values={skill.validators} />
+                  <TagGroup title="Refiners" values={skill.refiners} />
+                  <TagGroup title="Policies" values={skill.policies} />
+                  <TagGroup title="Templates" values={skill.workflow_templates.map((template) => template.id)} />
+                  <TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} />
+                  <TagGroup title="Prompt resources" values={skill.resources} />
+                  <TagGroup title="Used by Projects" values={skill.projects} />
+                </div>
+              </Panel>
+            ))}
+          </section>
+        );
+      })}
       {skills.length === 0 && (
         <Empty
           title="No Skills installed"
@@ -4641,8 +4868,9 @@ function CreateProject({
       .skills()
       .then((items) => {
         setSkills(items);
-        setSkillId(items[0]?.id ?? "");
-        setYaml(items[0]?.project_template ?? "");
+        const starter = items.find((item) => item.project_template);
+        setSkillId(starter?.id ?? "");
+        setYaml(starter?.project_template ?? "");
       })
       .catch((error: Error) => onError(error.message));
   }, []);
@@ -4665,7 +4893,7 @@ function CreateProject({
             value={skillId}
             onChange={(event) => chooseSkill(event.target.value)}
           >
-            {skills.map((skill) => (
+            {skills.filter((skill) => skill.project_template).map((skill) => (
               <option key={skill.id} value={skill.id}>
                 {skill.display_name}
               </option>
@@ -4768,8 +4996,14 @@ function Status({ status }: { status: string }) {
                 ? "Valid"
                 : "Completed",
         }
-      : normalized === "completed_with_review" || normalized === "needs_review"
-        ? { tone: "needs-review", label: "Completed with review" }
+      : normalized === "completed_with_review" || normalized === "needs_review" || normalized === "waiting_for_human"
+        ? {
+            tone: "needs-review",
+            label:
+              normalized === "waiting_for_human"
+                ? "Waiting for human"
+                : "Completed with review",
+          }
         : normalized === "incomplete"
           ? { tone: "needs-review", label: "Incomplete" }
         : normalized === "configuration_issue"
@@ -4800,6 +5034,8 @@ function Status({ status }: { status: string }) {
                     tone: "running",
                     label: normalized === "paused" ? "Paused" : "Running",
                   }
+                : normalized === "succeeded"
+                  ? { tone: "auto-accepted", label: "Succeeded" }
                 : {
                     tone: "draft",
                     label: normalized === "pending" ? "Pending" : "Draft",

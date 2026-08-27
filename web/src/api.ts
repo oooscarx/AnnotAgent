@@ -1,5 +1,7 @@
 import type {
   Annotation,
+  AgentSession,
+  CorrectionMemoryRecord,
   DashboardData,
   HistoryRun,
   ImageItem,
@@ -141,6 +143,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ task_id: taskId, label }),
     }),
+  setProjectSkills: (
+    projectId: string,
+    enabledSkills: { id: string; version: string }[],
+  ) =>
+    request<ProjectSummary>(`/api/projects/${projectId}/skills`, {
+      method: "POST",
+      body: JSON.stringify({ enabled_skills: enabledSkills }),
+    }),
   addProjectTask: (
     projectId: string,
     task: {
@@ -222,6 +232,7 @@ export const api = {
     decision: "accept" | "reject" | "delete",
     reasonCode: string,
     note: string,
+    skillId?: string,
   ) =>
     request(`/api/reviews/${id}/decision`, {
       method: "POST",
@@ -230,11 +241,25 @@ export const api = {
         decision,
         reason_code: reasonCode,
         note,
+        skill_id: skillId,
       }),
     }),
   revisions: (id: string) =>
     request<{ revisions: unknown[] }>(`/api/annotations/${id}/revisions`),
   skills: () => request<SkillDetail[]>("/api/skills"),
+  agentSessions: (projectId: string) =>
+    request<{ sessions: AgentSession[] }>(
+      `/api/projects/${projectId}/agent-sessions`,
+    ),
+  cancelAgentSession: (sessionId: string) =>
+    request<{ session: AgentSession }>(
+      `/api/agent-sessions/${sessionId}/cancel`,
+      { method: "POST" },
+    ),
+  correctionMemory: (projectId: string) =>
+    request<{ records: CorrectionMemoryRecord[] }>(
+      `/api/projects/${projectId}/correction-memory`,
+    ),
   settings: () => request<Record<string, unknown>>("/api/settings"),
   saveSettings: (value: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/settings", {

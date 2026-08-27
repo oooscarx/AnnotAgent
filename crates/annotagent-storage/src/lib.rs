@@ -292,6 +292,22 @@ impl SqliteStore {
         })
     }
 
+    pub fn get_agent_session(&self, id: Uuid) -> Result<AgentSession, StorageError> {
+        self.with_connection(|connection| {
+            let json = connection
+                .query_row(
+                    "SELECT session_json FROM agent_sessions WHERE id = ?1",
+                    [id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!("Agent Session {id} was not found"))
+                })?;
+            serde_json::from_str(&json).map_err(StorageError::from)
+        })
+    }
+
     pub fn schema_tables(&self) -> Result<Vec<String>, StorageError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -1314,6 +1330,28 @@ impl SqliteStore {
                     ],
                     |row| row.get::<_, String>(0),
                 )?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    pub fn list_project_corrections(
+        &self,
+        project_id: ProjectId,
+        limit: usize,
+    ) -> Result<Vec<CorrectionRecord>, StorageError> {
+        let limit = i64::try_from(limit.clamp(1, 500)).unwrap_or(500);
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT record_json FROM correction_records
+                 WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(params![project_id.to_string(), limit], |row| {
+                    row.get::<_, String>(0)
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             rows.into_iter()
                 .map(|json| serde_json::from_str(&json).map_err(StorageError::from))

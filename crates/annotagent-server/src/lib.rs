@@ -17,9 +17,9 @@ use annotagent_application::{
 };
 use annotagent_core::{
     AgentBudget, Annotation, AnnotationId, AttributeDefinition, BatchId, CorrectionFeatures,
-    CorrectionRecord, DatasetExporter, ExportRequest, LabelId, ProjectSchema, ProjectSnapshot,
-    ReviewStatus, RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints,
-    WorkflowDraft,
+    CorrectionRecord, DatasetExporter, EnabledSkillConfig, ExportRequest, LabelId, ProjectSchema,
+    ProjectSnapshot, ReviewStatus, RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals,
+    WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -39,6 +39,7 @@ use futures::{Stream, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
@@ -313,6 +314,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(add_project_task),
         )
         .route(
+            "/api/projects/{project_id}/skills",
+            post(set_project_skills),
+        )
+        .route(
             "/api/projects/{project_id}/workflow-catalog",
             get(get_workflow_catalog),
         )
@@ -322,6 +327,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(import_annotations),
         )
         .route("/api/projects/{project_id}/images", get(list_images))
+        .route(
+            "/api/projects/{project_id}/agent-sessions",
+            get(list_project_agent_sessions),
+        )
+        .route(
+            "/api/projects/{project_id}/correction-memory",
+            get(list_project_correction_memory),
+        )
         .route(
             "/api/projects/{project_id}/images/{index}/content",
             get(image_content),
@@ -351,6 +364,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/reviews", get(list_reviews))
         .route("/api/reviews/{review_id}", get(get_review))
         .route("/api/reviews/{review_id}/decision", post(review_decision))
+        .route(
+            "/api/agent-sessions/{session_id}/cancel",
+            post(cancel_agent_session),
+        )
         .route("/api/annotations/{annotation_id}", patch(patch_annotation))
         .route(
             "/api/annotations/{annotation_id}/revisions",
@@ -405,29 +422,35 @@ struct SkillDetail {
     id: String,
     display_name: String,
     version: String,
+    kind: annotagent_core::SkillKind,
     description: String,
-    tasks: Vec<Value>,
+    nodes: Vec<String>,
     tools: Vec<String>,
     validators: Vec<String>,
     refiners: Vec<String>,
+    policies: Vec<String>,
+    capabilities: Vec<String>,
+    capability_requirements: Vec<String>,
     correction_taxonomy: Vec<String>,
     resources: Vec<String>,
     workflow_templates: Vec<Value>,
+    projects: Vec<String>,
     project_template: Option<String>,
 }
 
-fn skill_detail(skill: &dyn annotagent_core::DomainSkill) -> SkillDetail {
+fn skill_detail(
+    skill: &dyn annotagent_core::Skill,
+    projects: Vec<String>,
+    project_template: Option<String>,
+) -> SkillDetail {
     let manifest = skill.manifest();
     SkillDetail {
         id: skill.id().to_owned(),
         display_name: manifest.display_name.clone(),
-        version: manifest.version.to_string(),
+        version: manifest.skill_version.clone(),
+        kind: manifest.kind,
         description: manifest.description.clone(),
-        tasks: skill
-            .task_templates()
-            .into_iter()
-            .map(|task| json!({"id": task.id, "description": task.description}))
-            .collect(),
+        nodes: manifest.nodes.clone(),
         tools: skill
             .tool_factories()
             .into_iter()
@@ -442,6 +465,13 @@ fn skill_detail(skill: &dyn annotagent_core::DomainSkill) -> SkillDetail {
             .refiners()
             .into_iter()
             .map(|refiner| refiner.id().to_owned())
+            .collect(),
+        policies: manifest.policies.clone(),
+        capabilities: manifest.capabilities.clone(),
+        capability_requirements: manifest
+            .dependencies
+            .iter()
+            .map(|dependency| format!("{}@{}", dependency.id, dependency.version))
             .collect(),
         correction_taxonomy: skill
             .correction_taxonomy()
@@ -466,20 +496,40 @@ fn skill_detail(skill: &dyn annotagent_core::DomainSkill) -> SkillDetail {
                 })
             })
             .collect(),
-        project_template: skill.project_template().map(str::to_owned),
+        projects,
+        project_template,
     }
 }
 
-async fn list_skills(State(state): State<ServerState>) -> Json<Vec<SkillDetail>> {
-    Json(
+async fn list_skills(State(state): State<ServerState>) -> ApiResult<Json<Vec<SkillDetail>>> {
+    let projects = product_projects(&state).await?;
+    Ok(Json(
         state
             .application
-            .skills()
+            .layered_skills()
             .list()
             .iter()
-            .map(|skill| skill_detail(skill.as_ref()))
+            .map(|skill| {
+                let used_by = projects
+                    .iter()
+                    .filter(|project| {
+                        project
+                            .enabled_skills
+                            .iter()
+                            .any(|enabled| enabled.id == skill.id())
+                    })
+                    .map(|project| project.id.clone())
+                    .collect();
+                let project_template = state
+                    .application
+                    .skills()
+                    .get(skill.id())
+                    .ok()
+                    .and_then(|legacy| legacy.project_template().map(str::to_owned));
+                skill_detail(skill.as_ref(), used_by, project_template)
+            })
             .collect(),
-    )
+    ))
 }
 
 async fn get_skill(
@@ -488,10 +538,64 @@ async fn get_skill(
 ) -> ApiResult<Json<SkillDetail>> {
     let skill = state
         .application
-        .skills()
+        .layered_skills()
         .get(&skill_id)
         .map_err(ApiError::not_found)?;
-    Ok(Json(skill_detail(skill.as_ref())))
+    let projects = product_projects(&state)
+        .await?
+        .into_iter()
+        .filter(|project| {
+            project
+                .enabled_skills
+                .iter()
+                .any(|enabled| enabled.id == skill_id)
+        })
+        .map(|project| project.id)
+        .collect();
+    let project_template = state
+        .application
+        .skills()
+        .get(&skill_id)
+        .ok()
+        .and_then(|legacy| legacy.project_template().map(str::to_owned));
+    Ok(Json(skill_detail(
+        skill.as_ref(),
+        projects,
+        project_template,
+    )))
+}
+
+async fn list_project_agent_sessions(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let sessions = state
+        .application
+        .list_agent_sessions(&project_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!({"sessions": sessions})))
+}
+
+async fn cancel_agent_session(
+    State(state): State<ServerState>,
+    AxumPath(session_id): AxumPath<uuid::Uuid>,
+) -> ApiResult<Json<Value>> {
+    let session = state
+        .application
+        .cancel_agent_session(session_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"session": session})))
+}
+
+async fn list_project_correction_memory(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let records = state
+        .application
+        .list_project_correction_memory(&project_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!({"records": records})))
 }
 
 fn workspace_model_binding(settings: &Settings) -> ModelBinding {
@@ -792,14 +896,14 @@ async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value
     };
     let installed_skills = state
         .application
-        .skills()
-        .list()
+        .layered_skills()
+        .catalog()
         .iter()
         .map(|skill| {
             json!({
-                "id": skill.id(),
-                "display_name": skill.manifest().display_name,
-                "version": skill.manifest().version,
+                "id": skill.id,
+                "display_name": skill.display_name,
+                "version": skill.version,
             })
         })
         .collect::<Vec<_>>();
@@ -914,7 +1018,7 @@ async fn suggest_workflow(
                         &request.constraints,
                         target,
                         AgentBudget::default(),
-                        Default::default(),
+                        CancellationToken::default(),
                     )
                     .await
                     .map_err(ApiError::bad_request)?;
@@ -1140,6 +1244,11 @@ struct AddProjectLabelRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct SetProjectSkillsRequest {
+    enabled_skills: Vec<EnabledSkillConfig>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AddProjectTaskRequest {
     display_name: String,
     kind: TaskKind,
@@ -1175,6 +1284,18 @@ async fn add_project_label(
     let project = state
         .application
         .add_project_label(&project_id, &request.task_id, &request.label)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(project)))
+}
+
+async fn set_project_skills(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<SetProjectSkillsRequest>,
+) -> ApiResult<Json<Value>> {
+    let project = state
+        .application
+        .set_project_enabled_skills(&project_id, request.enabled_skills)
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(project)))
 }
@@ -1766,6 +1887,7 @@ async fn patch_annotation(
 struct ReviewDecisionRequest {
     decision: String,
     project_id: String,
+    skill_id: Option<String>,
     reason_code: String,
     note: Option<String>,
     corrected_label: Option<LabelId>,
@@ -1801,8 +1923,24 @@ async fn review_decision(
         .application
         .project_path(&request.project_id)
         .map_err(ApiError::bad_request)?;
-    let (project, _) =
-        annotagent_application::load_project(&project_path).map_err(ApiError::bad_request)?;
+    let project = ProjectSchema::from_yaml(
+        &std::fs::read_to_string(&project_path).map_err(ApiError::bad_request)?,
+    )
+    .map_err(ApiError::bad_request)?;
+    let configured_skills = project.project.enabled_skill_versions();
+    let skill_id = request
+        .skill_id
+        .or_else(|| {
+            (configured_skills.len() == 1)
+                .then(|| configured_skills.keys().next().cloned())
+                .flatten()
+        })
+        .filter(|id| configured_skills.contains_key(id))
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "Review correction must identify one Skill enabled by the Project",
+            )
+        })?;
     let record = CorrectionRecord {
         id: uuid::Uuid::new_v4(),
         project_id: stable_project_id(
@@ -1810,7 +1948,7 @@ async fn review_decision(
                 .parent()
                 .unwrap_or(state.application.workspace()),
         ),
-        skill_id: project.project.skill,
+        skill_id,
         task_id: annotation.task_id.clone(),
         predicted_label: original.label.clone(),
         corrected_label: annotation.label.clone(),
@@ -2698,6 +2836,18 @@ mod tests {
         )
         .await;
         assert_eq!(decision.status(), StatusCode::OK);
+        let memory = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/review-demo/correction-memory",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(memory["records"][0]["reason_code"], json!(reason_code));
+        assert!(memory["records"][0]["project_id"].is_string());
         let revisions = response_json(
             request(
                 &service,
@@ -3051,6 +3201,42 @@ export:
             suggestion["draft"]["label_pipeline"]["label_pipelines"][0]["target_label"],
             json!("day")
         );
+        assert_eq!(
+            suggestion["agent_session"]["kind"],
+            json!("workflow_advisor")
+        );
+        assert_eq!(
+            suggestion["agent_session"]["status"],
+            json!("waiting_for_human")
+        );
+        let sessions = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/agent-sessions",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            sessions["sessions"][0]["id"],
+            suggestion["agent_session"]["id"]
+        );
+        let advisor_session_id = sessions["sessions"][0]["id"]
+            .as_str()
+            .expect("Advisor Session id");
+        let cancelled = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/agent-sessions/{advisor_session_id}/cancel"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(cancelled["session"]["status"], json!("cancelled"));
         let draft_id = suggestion["draft"]["id"].as_str().expect("draft id");
         let dry_run = response_json(
             request(
@@ -3198,6 +3384,87 @@ export:
         )
         .await;
         assert_eq!(exported.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn skill_api_groups_layered_registry_contributions() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(application, Arc::new(MemorySecretStore::default())),
+            None,
+        );
+        let skills =
+            response_json(request(&service, axum::http::Method::GET, "/api/skills", None).await)
+                .await;
+        let entries = skills.as_array().expect("Skill catalog");
+        for kind in ["capability", "domain", "pack"] {
+            assert!(entries.iter().any(|entry| entry["kind"] == json!(kind)));
+        }
+        assert!(entries.iter().all(|entry| {
+            entry["nodes"].is_array()
+                && entry["policies"].is_array()
+                && entry["capabilities"].is_array()
+                && entry["projects"].is_array()
+        }));
+        let project_yaml = r"
+version: 1
+project:
+  name: Layered Project
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: targets
+    kind: bounding_box
+    labels: [target]
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        let created = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects",
+            Some(json!({"id": "layered", "yaml": project_yaml})),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let domain = entries
+            .iter()
+            .find(|entry| entry["kind"] == json!("domain"))
+            .expect("Domain Skill");
+        let mut enabled = vec![json!({
+            "id": domain["id"],
+            "version": domain["version"],
+        })];
+        for requirement in domain["capability_requirements"]
+            .as_array()
+            .expect("requirements")
+        {
+            let (id, version) = requirement
+                .as_str()
+                .expect("requirement")
+                .split_once('@')
+                .expect("versioned requirement");
+            enabled.push(json!({"id": id, "version": version}));
+        }
+        let configured = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/layered/skills",
+            Some(json!({"enabled_skills": enabled})),
+        )
+        .await;
+        assert_eq!(configured.status(), StatusCode::OK);
+        let configured = response_json(configured).await;
+        assert_eq!(
+            configured["enabled_skills"].as_array().map(Vec::len),
+            Some(2)
+        );
     }
 
     async fn request(

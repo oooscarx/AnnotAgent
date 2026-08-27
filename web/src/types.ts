@@ -300,6 +300,63 @@ export interface WorkflowSuggestion {
   unresolved_model_bindings: string[];
   warnings: string[];
   alternatives: string[];
+  agent_session?: AgentSession;
+  agent_validation?: WorkflowValidationReport;
+  agent_dry_run?: WorkflowDryRunReport;
+  approval_required?: boolean;
+}
+
+export interface AgentSession {
+  id: string;
+  project_id?: string;
+  run_id?: string;
+  kind: "workflow_advisor" | "annotation_recovery";
+  status:
+    | "running"
+    | "waiting_for_human"
+    | "succeeded"
+    | "failed"
+    | "budget_exceeded"
+    | "cancelled";
+  budget: {
+    max_steps: number;
+    max_tool_calls: number;
+    max_tokens?: number;
+    max_cost?: string;
+  };
+  usage: {
+    steps: number;
+    tool_calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    cost: string;
+  };
+  steps: {
+    sequence: number;
+    call_id: string;
+    tool_name: string;
+    arguments: Record<string, unknown>;
+    result: unknown;
+    success: boolean;
+    started_at: string;
+    finished_at: string;
+  }[];
+  stop_reason?: string;
+  pending_human_action?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CorrectionMemoryRecord {
+  id: string;
+  project_id: string;
+  skill_id: string;
+  task_id: string;
+  predicted_label?: string;
+  corrected_label?: string;
+  reason_code: string;
+  note?: string;
+  created_at: string;
 }
 
 export type PipelineArtifactType =
@@ -544,11 +601,15 @@ export interface SkillDetail {
   id: string;
   display_name: string;
   version: string;
+  kind: "capability" | "domain" | "pack";
   description: string;
-  tasks: { id: string; description: string }[];
+  nodes: string[];
   tools: string[];
   validators: string[];
   refiners: string[];
+  policies: string[];
+  capabilities: string[];
+  capability_requirements: string[];
   correction_taxonomy: string[];
   resources: string[];
   workflow_templates: {
@@ -557,5 +618,6 @@ export interface SkillDetail {
     description: string;
     node_count: number;
   }[];
+  projects: string[];
   project_template?: string;
 }

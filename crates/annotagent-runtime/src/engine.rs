@@ -2638,7 +2638,7 @@ mod tests {
             result.model_result["artifact_references"][0]["kind"],
             "bounding_box"
         );
-        assert!(result.model_result.to_string().find("rect").is_none());
+        assert!(!result.model_result.to_string().contains("rect"));
         assert!(result.persisted_result.to_string().contains("rect"));
     }
 }

@@ -171,6 +171,7 @@ impl AgentSession {
 
     pub fn cancel(&mut self) {
         self.status = AgentSessionStatus::Cancelled;
+        self.pending_human_action = None;
         self.stop_reason = Some("cancelled by operator".to_owned());
         self.updated_at = Utc::now();
     }
@@ -226,5 +227,8 @@ mod tests {
         let mut approval = AgentSession::start(AgentKind::WorkflowAdvisor, AgentBudget::default());
         approval.wait_for_human("publish_workflow");
         assert_eq!(approval.status, AgentSessionStatus::WaitingForHuman);
+        approval.cancel();
+        assert_eq!(approval.status, AgentSessionStatus::Cancelled);
+        assert!(approval.pending_human_action.is_none());
     }
 }

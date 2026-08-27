@@ -105,6 +105,11 @@ impl LayeredSkillRegistry {
             .ok_or_else(|| RegistryError::UnknownSkill(id.to_owned()))
     }
 
+    #[must_use]
+    pub fn list(&self) -> Vec<Arc<dyn Skill>> {
+        self.skills.values().cloned().collect()
+    }
+
     pub fn resolve_enabled(
         &self,
         enabled: &BTreeMap<String, String>,
@@ -189,6 +194,7 @@ impl LayeredSkillRegistry {
 #[derive(Default)]
 pub struct SkillRegistry {
     skills: BTreeMap<String, Arc<dyn DomainSkill>>,
+    layered: LayeredSkillRegistry,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -258,6 +264,48 @@ impl SkillRegistry {
         Ok(())
     }
 
+    pub fn register_layered(&mut self, skill: Arc<dyn Skill>) -> Result<(), RegistryError> {
+        self.layered.register(skill)
+    }
+
+    pub fn get_layered(&self, id: &str) -> Result<Arc<dyn Skill>, RegistryError> {
+        self.layered.get(id)
+    }
+
+    #[must_use]
+    pub fn layered_catalog(&self) -> Vec<SkillCatalogEntry> {
+        self.layered.catalog()
+    }
+
+    pub fn catalog_entry(&self, id: &str) -> Result<SkillCatalogEntry, RegistryError> {
+        if let Ok(skill) = self.layered.get(id) {
+            return Ok(SkillCatalogEntry {
+                id: skill.id().to_owned(),
+                version: skill.manifest().skill_version.clone(),
+                kind: skill.manifest().kind,
+                display_name: skill.manifest().display_name.clone(),
+                description: skill.manifest().description.clone(),
+                capabilities: skill.manifest().capabilities.clone(),
+            });
+        }
+        let skill = self.get(id)?;
+        Ok(SkillCatalogEntry {
+            id: skill.id().to_owned(),
+            version: skill.manifest().skill_version.clone(),
+            kind: skill.manifest().kind,
+            display_name: skill.manifest().display_name.clone(),
+            description: skill.manifest().description.clone(),
+            capabilities: skill.manifest().capabilities.clone(),
+        })
+    }
+
+    pub fn resolve_layered_enabled(
+        &self,
+        enabled: &BTreeMap<String, String>,
+    ) -> Result<Vec<Arc<dyn Skill>>, RegistryError> {
+        self.layered.resolve_enabled(enabled)
+    }
+
     pub fn get(&self, id: &str) -> Result<Arc<dyn DomainSkill>, RegistryError> {
         self.skills
             .get(id)
@@ -305,39 +353,17 @@ impl SkillRegistry {
         let mut catalog = ValidationCatalog::default();
         let use_namespace = enabled_skill_ids.len() > 1;
         for skill_id in enabled_skill_ids {
-            let skill = self.get(skill_id)?;
-            catalog
-                .validators
-                .extend(skill.validators().into_iter().map(|validator| {
-                    if use_namespace {
-                        format!("{skill_id}.{}", validator.id())
-                    } else {
-                        validator.id().to_owned()
-                    }
-                }));
-            catalog
-                .refiners
-                .extend(skill.refiners().into_iter().map(|refiner| {
-                    if use_namespace {
-                        format!("{skill_id}.{}", refiner.id())
-                    } else {
-                        refiner.id().to_owned()
-                    }
-                }));
-            catalog.resources.extend(
-                skill
-                    .manifest()
-                    .summary_resources
-                    .iter()
-                    .chain(skill.manifest().task_resources.values().flatten())
-                    .map(|resource| {
-                        if use_namespace {
-                            format!("{skill_id}.{resource}")
-                        } else {
-                            resource.clone()
-                        }
-                    }),
-            );
+            if let Ok(skill) = self.get(skill_id) {
+                extend_validation_catalog(&mut catalog, skill.as_ref(), skill_id, use_namespace);
+            } else {
+                let skill = self.get_layered(skill_id)?;
+                extend_layered_validation_catalog(
+                    &mut catalog,
+                    skill.as_ref(),
+                    skill_id,
+                    use_namespace,
+                );
+            }
         }
         Ok(catalog)
     }
@@ -406,6 +432,81 @@ impl SkillRegistry {
         }
         Ok(extensions)
     }
+}
+
+fn extend_validation_catalog(
+    catalog: &mut ValidationCatalog,
+    skill: &dyn DomainSkill,
+    skill_id: &str,
+    use_namespace: bool,
+) {
+    catalog
+        .validators
+        .extend(skill.validators().into_iter().map(|validator| {
+            if use_namespace {
+                format!("{skill_id}.{}", validator.id())
+            } else {
+                validator.id().to_owned()
+            }
+        }));
+    catalog
+        .refiners
+        .extend(skill.refiners().into_iter().map(|refiner| {
+            if use_namespace {
+                format!("{skill_id}.{}", refiner.id())
+            } else {
+                refiner.id().to_owned()
+            }
+        }));
+    extend_resources(catalog, skill.manifest(), skill_id, use_namespace);
+}
+
+fn extend_layered_validation_catalog(
+    catalog: &mut ValidationCatalog,
+    skill: &dyn Skill,
+    skill_id: &str,
+    use_namespace: bool,
+) {
+    catalog
+        .validators
+        .extend(skill.validators().into_iter().map(|validator| {
+            if use_namespace {
+                format!("{skill_id}.{}", validator.id())
+            } else {
+                validator.id().to_owned()
+            }
+        }));
+    catalog
+        .refiners
+        .extend(skill.refiners().into_iter().map(|refiner| {
+            if use_namespace {
+                format!("{skill_id}.{}", refiner.id())
+            } else {
+                refiner.id().to_owned()
+            }
+        }));
+    extend_resources(catalog, skill.manifest(), skill_id, use_namespace);
+}
+
+fn extend_resources(
+    catalog: &mut ValidationCatalog,
+    manifest: &annotagent_core::SkillManifest,
+    skill_id: &str,
+    use_namespace: bool,
+) {
+    catalog.resources.extend(
+        manifest
+            .summary_resources
+            .iter()
+            .chain(manifest.task_resources.values().flatten())
+            .map(|resource| {
+                if use_namespace {
+                    format!("{skill_id}.{resource}")
+                } else {
+                    resource.clone()
+                }
+            }),
+    );
 }
 
 fn ensure_unique(

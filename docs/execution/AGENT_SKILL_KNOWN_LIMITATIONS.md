@@ -15,8 +15,9 @@
   registry validation and human publication boundary.
 - Robot and Field are compatibility/Roadmap areas, not independent layered Domain Skills in this
   Alpha. They continue to supply optional evidence to Ball validation.
-- Web and TUI do not yet expose the complete Agent sessions, tools and memory views.
-- Review already persists structured corrections, while explicit layered-Skill selection for a
-  correction becomes a product control in M8; M7 proves the domain-scoped storage and adaptive
-  decision path directly at the application boundary.
+- Agent Session trace is persisted and visible in Web/TUI; correlating every deterministic Run
+  node and a conditional Recovery Session in one unified chronological canvas remains future UX.
+- Legacy broad `robocup` Projects remain on the compatibility adapter until an operator explicitly
+  enables the layered Pack/Domain dependencies; the product does not silently rewrite Project
+  semantics.
 - Real Qwen and real YOLO runs require operator-owned configuration and are live-conditional.

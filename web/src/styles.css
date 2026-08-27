@@ -350,6 +350,25 @@ main { min-width: 0; padding-bottom: 48px; }
 .crop-preview-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; margin-top: 12px; }
 .crop-preview-list svg { width: 100%; aspect-ratio: 1; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: #111; }
 .artifact-node-detail pre { max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.skill-group { display: grid; gap: 16px; }
+.skill-group > div:first-child h2 { margin: 4px 0 0; }
+.skill-group > .panel { margin: 0; }
+.skill-picker { display: grid; gap: 10px; margin-top: 12px; }
+.skill-picker label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
+.skill-picker label:has(input:checked) { border-color: color-mix(in srgb, var(--aa-accent) 58%, var(--aa-border)); background: color-mix(in srgb, var(--aa-surface) 90%, var(--aa-accent) 10%); }
+.skill-picker small { display: block; margin-top: 3px; color: var(--aa-text-muted); }
+.agent-activity { align-items: start; }
+.agent-session-trace { display: grid; gap: 13px; margin-top: 12px; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: color-mix(in srgb, var(--aa-surface) 95%, var(--aa-accent) 5%); }
+.agent-session-trace .context-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.agent-session-trace .context-line button { margin-left: auto; }
+.agent-session-trace .fact-grid { margin: 0; }
+.agent-action-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.agent-action-list li { padding: 10px 12px; border-left: 3px solid var(--aa-accent); background: var(--aa-surface); }
+.agent-action-list li > strong, .agent-action-list li > small { display: block; }
+.agent-action-list li > small { margin-top: 2px; color: var(--aa-text-muted); }
+.agent-action-list details { margin-top: 7px; }
+.agent-action-list summary { cursor: pointer; color: var(--aa-text-muted); font-size: 11px; }
+.agent-action-list pre { max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 @media (max-width: 1300px) {
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

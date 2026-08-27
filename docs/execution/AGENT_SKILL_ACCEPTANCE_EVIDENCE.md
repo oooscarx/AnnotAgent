@@ -177,3 +177,57 @@ Direct evidence:
    cancelled request similarly produces a cancelled session and never starts a new tool.
 7. The Project-local image loader canonicalizes the path and rejects paths outside the Project
    root before any evidence tool receives pixels.
+
+## M8 — Web, TUI and guided Agent/Skill UX
+
+```text
+cargo test -p annotagent-core agent
+1 passed; 0 failed
+cargo test -p annotagent-server skill_api_groups_layered_registry_contributions
+1 passed; 0 failed
+cargo test -p annotagent-server \
+  label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real
+1 passed; 0 failed
+cargo test -p annotagent-server \
+  project_sse_review_revision_and_budget_flow_works_over_http
+1 passed; 0 failed
+cargo test -p annotagent tui::tests
+5 passed; 0 failed
+cargo clippy -p annotagent-runtime -p annotagent-storage -p annotagent-application \
+  -p annotagent-server -p annotagent --all-targets -- -D warnings
+passed
+scripts/check-agent-skill-boundaries.sh
+passed
+cd web; npm run typecheck
+passed
+cd web; npm test -- --run
+10 files and 24 tests passed
+cd web; npm run build
+passed
+```
+
+Direct evidence:
+
+1. The Skill API exposes all three layered kinds and their nodes, tools, Validators, Refiners,
+   policies, capabilities, dependencies, resources, templates and consuming Projects. An API test
+   discovers a Domain Skill and its Capability dependency from the catalog, persists both into a
+   generic Project and makes no Core/Server branch on a concrete domain label.
+2. Project Build presents enabled Capability and Domain Skills as actual persisted controls. A
+   dependency is selected automatically from manifest data; a legacy Pack stays on its explicit
+   compatibility configuration until the operator chooses migration.
+3. The Advisor HTTP test verifies a persisted 12-step Agent Session, static validation, isolated
+   one-image Dry Run, explicit human publication boundary and cancellation. No Workflow Version is
+   created by the Advisor.
+4. Review accepts an explicit enabled Skill ID, rejects disabled Skills, persists a structured
+   reason code under that exact Skill and returns it through the Project Correction Memory API.
+5. TUI tests exercise `/skills`, `/skills show`, `/advisor cancel`, `/memory`, generic empty state,
+   responsive terminal layout and non-color-only state labels using the shared application store.
+6. On 2026-08-28 the in-app browser opened the real local product at
+   `http://127.0.0.1:8791/projects/qwen-live`. The Skills screen grouped Classification, VLM
+   Detection and YOLO as Capability Skills, RoboCup Ball as a Domain Skill and RoboCup as a Pack.
+7. A fresh GUI Advisor run showed `Waiting for human`, 12 observable tool steps, zero validation
+   issues, a one-image successful Dry Run, tokens/cost, explicit stop reason and
+   `publish_workflow`. Clicking `Cancel Agent` changed the persisted state to `Cancelled`, disabled
+   cancellation, set the stop reason to `cancelled by operator` and cleared Human action to `None`.
+8. Agent trace details are restricted to typed arguments and results. The UI explicitly states and
+   enforces that hidden chain-of-thought is not part of the trace.

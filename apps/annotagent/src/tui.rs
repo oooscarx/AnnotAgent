@@ -5,8 +5,10 @@ use std::{
     time::Duration,
 };
 
-use annotagent_application::{AnnotAgentApplication, LocalApplication};
-use annotagent_core::{RunEvent, RunEventPayload, RunStatus};
+use annotagent_application::{AnnotAgentApplication, LocalApplication, load_settings};
+use annotagent_core::{
+    AgentBudget, AgentSessionStatus, ProjectSchema, RunEvent, RunEventPayload, RunStatus,
+};
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -21,6 +23,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use crate::runner;
 
@@ -35,6 +38,7 @@ struct ActiveRun {
 
 #[derive(Debug, Clone)]
 struct ProjectContext {
+    id: String,
     name: String,
     workflow: String,
     skills: String,
@@ -42,11 +46,29 @@ struct ProjectContext {
 
 impl ProjectContext {
     fn load(path: &Path) -> Result<Self> {
-        let (project, skill) = runner::load_project(path)?;
+        let yaml = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read Project {}", path.display()))?;
+        let project = ProjectSchema::from_yaml(&yaml).map_err(|error| anyhow::anyhow!(error))?;
+        let skills = project
+            .project
+            .enabled_skill_versions()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
         Ok(Self {
+            id: path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(std::ffi::OsStr::to_str)
+                .context("Project directory has no usable id")?
+                .to_owned(),
             name: project.project.name,
             workflow: format!("Configured task graph@v{}", project.version),
-            skills: skill.manifest().display_name.clone(),
+            skills: if skills.is_empty() {
+                "None".to_owned()
+            } else {
+                skills.join(", ")
+            },
         })
     }
 }
@@ -390,11 +412,132 @@ impl TuiState {
                 for run in store.list_runs()?.into_iter().take(8) {
                     self.push(format!("{} {:?} {}", run.id, run.status, run.project_name));
                 }
+                if let Some(project) = &self.project_context {
+                    for session in self
+                        .application
+                        .list_agent_sessions(&project.id)?
+                        .into_iter()
+                        .take(8)
+                    {
+                        self.push(format!(
+                            "agent {} {:?} · tools {} · cost {} · stop {}",
+                            session.id,
+                            session.status,
+                            session.usage.tool_calls,
+                            session.usage.cost,
+                            session.stop_reason.as_deref().unwrap_or("running")
+                        ));
+                    }
+                }
                 Ok(())
             }
             "/inspect" => self.inspect_latest(),
             "/skills" => {
-                self.push("robocup · RoboCup Perception");
+                if parts.next() == Some("show") {
+                    let id = parts.next().context("usage: /skills show <skill-id>")?;
+                    let skill = self.application.layered_skills().get(id)?;
+                    let manifest = skill.manifest();
+                    self.push(format!(
+                        "Skill {}@{} · {:?} · {}",
+                        manifest.id, manifest.skill_version, manifest.kind, manifest.display_name
+                    ));
+                    self.push(format!(
+                        "nodes {} · validators {} · policies {} · resources {}",
+                        manifest.nodes.join(", "),
+                        manifest.validators.join(", "),
+                        manifest.policies.join(", "),
+                        manifest.summary_resources.join(", ")
+                    ));
+                } else {
+                    for skill in self.application.layered_skills().catalog() {
+                        self.push(format!(
+                            "{:?} · {}@{} · {}",
+                            skill.kind, skill.id, skill.version, skill.display_name
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            "/advisor" => {
+                let project_id = self
+                    .project_context
+                    .as_ref()
+                    .map(|project| project.id.clone())
+                    .context("open a Project before running Advisor")?;
+                if parts.next() == Some("cancel") {
+                    let session = self
+                        .application
+                        .list_agent_sessions(&project_id)?
+                        .into_iter()
+                        .find(|session| {
+                            session.kind == annotagent_core::AgentKind::WorkflowAdvisor
+                                && matches!(
+                                    session.status,
+                                    AgentSessionStatus::Running
+                                        | AgentSessionStatus::WaitingForHuman
+                                )
+                        })
+                        .context("no cancellable Advisor Session")?;
+                    let session = self.application.cancel_agent_session(session.id)?;
+                    self.push(format!(
+                        "Advisor {} cancelled · {}",
+                        session.id,
+                        session.stop_reason.as_deref().unwrap_or("cancelled")
+                    ));
+                    return Ok(());
+                }
+                self.push("Advisor started · registry-bounded Draft only");
+                let report = self
+                    .application
+                    .run_workflow_advisor_agent(
+                        &project_id,
+                        &load_settings(None)?,
+                        &annotagent_core::WorkflowConstraints::default(),
+                        None,
+                        AgentBudget::default(),
+                        CancellationToken::new(),
+                    )
+                    .await?;
+                for step in &report.session.steps {
+                    self.push(format!(
+                        "agent tool {} · {}",
+                        step.tool_name,
+                        if step.success { "completed" } else { "failed" }
+                    ));
+                }
+                self.push(format!(
+                    "Advisor {:?} · tokens {} · cost {} · stop {}",
+                    report.session.status,
+                    report.session.usage.input_tokens + report.session.usage.output_tokens,
+                    report.session.usage.cost,
+                    report.session.stop_reason.as_deref().unwrap_or("running")
+                ));
+                Ok(())
+            }
+            "/memory" => {
+                let project_id = self
+                    .project_context
+                    .as_ref()
+                    .map(|project| project.id.clone())
+                    .context("open a Project before viewing Memory")?;
+                let records = self
+                    .application
+                    .list_project_correction_memory(&project_id)?;
+                if records.is_empty() {
+                    self.push("No Project-scoped correction evidence.");
+                }
+                for record in records.into_iter().take(20) {
+                    self.push(format!(
+                        "memory {} · {} · task {} · Label {}",
+                        record.skill_id,
+                        record.reason_code,
+                        record.task_id,
+                        record
+                            .predicted_label
+                            .as_ref()
+                            .map_or("any", annotagent_core::LabelId::as_str)
+                    ));
+                }
                 Ok(())
             }
             "/gui" => {
@@ -407,7 +550,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /run /pause /resume /cancel /retry /history /trace /inspect /config /skills /gui /help /quit");
+                self.push("/open /init /skills /skills show <id> /advisor /advisor cancel /run /pause /resume /cancel /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -447,6 +590,8 @@ pub async fn run(project: Option<PathBuf>) -> Result<()> {
 fn project_workspace(path: &Path) -> Result<PathBuf> {
     ProjectContext::load(path)?;
     path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .parent()
         .unwrap_or_else(|| Path::new("."))
         .canonicalize()
         .with_context(|| format!("cannot access Project workspace for {}", path.display()))
@@ -528,7 +673,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
         Paragraph::new(vec![
             Line::from(Span::styled(" AnnotAgent", theme.title())),
             Line::from(Span::styled(
-                " Composable Annotation Workflow Runtime",
+                " Composable Annotation Agent Runtime",
                 theme.muted(),
             )),
         ])
@@ -626,7 +771,7 @@ fn draw_tiny(frame: &mut ratatui::Frame<'_>, state: &TuiState, theme: AnnotAgent
         Paragraph::new(vec![
             Line::from(Span::styled("AnnotAgent", theme.title())),
             Line::from(Span::styled(
-                "Composable Annotation Workflow Runtime",
+                "Composable Annotation Agent Runtime",
                 theme.muted(),
             )),
             Line::from(project_summary(state)),
@@ -749,6 +894,7 @@ mod tests {
             .collect::<String>();
         assert!(contents.contains("AnnotAgent"));
         assert!(contents.contains("No project opened"));
+        assert!(contents.contains("Composable Annotation Agent Runtime"));
         assert!(!contents.contains("RoboCup"));
     }
 
@@ -762,7 +908,7 @@ mod tests {
         let summary = project_summary(&state);
         assert!(summary.contains("Project:"));
         assert!(summary.contains("Workflow: Configured task graph@v1"));
-        assert!(summary.contains("Skills: RoboCup"));
+        assert!(summary.contains("Skills: robocup"));
     }
 
     #[test]
@@ -774,5 +920,73 @@ mod tests {
         );
         assert_eq!(status_label(RunStatus::Completed), "Completed");
         assert_eq!(status_label(RunStatus::Failed), "Failed");
+    }
+
+    #[tokio::test]
+    async fn skill_memory_and_advisor_cancel_commands_use_persisted_application_state() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let project_root = temporary.path().join("demo");
+        std::fs::create_dir_all(project_root.join("images")).expect("Project directory");
+        std::fs::write(
+            project_root.join("project.yaml"),
+            r"
+version: 1
+project:
+  name: Agent command demo
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+",
+        )
+        .expect("Project schema");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let mut session = annotagent_core::AgentSession::start(
+            annotagent_core::AgentKind::WorkflowAdvisor,
+            AgentBudget::default(),
+        )
+        .with_project("demo");
+        session.wait_for_human("publish_workflow");
+        application
+            .store()
+            .save_agent_session(&session)
+            .expect("Advisor Session");
+        let mut state = TuiState::new(Some(project_root.join("project.yaml")), application.clone())
+            .expect("TUI state");
+        state
+            .command("/skills show classification")
+            .await
+            .expect("Skill detail");
+        state.command("/memory").await.expect("Memory list");
+        state
+            .command("/advisor cancel")
+            .await
+            .expect("Advisor cancel");
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("Classification"))
+        );
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("No Project-scoped correction"))
+        );
+        assert_eq!(
+            application
+                .store()
+                .get_agent_session(session.id)
+                .expect("cancelled Session")
+                .status,
+            AgentSessionStatus::Cancelled
+        );
     }
 }
