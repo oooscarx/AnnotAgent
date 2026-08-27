@@ -8,16 +8,21 @@ steps:
           - label: ball
             value:
               kind: bounding_box
-              rect: [0.21, 0.61, 0.04, 0.03]
+              rect: [0.547, 0.75, 0.06, 0.01]
             attributes: {}
-            confidence: 0.94
+            confidence: 0.98
     usage: { input_tokens: 220, output_tokens: 55 }
   - expect_task: objects
-    expect_message_contains: possible_white_shoe
+    expect_message_contains: unlikely_ball_geometry
     response:
       type: tool_call
       name: submit_annotation_candidates
       arguments:
-        annotations: []
-    usage: { input_tokens: 260, output_tokens: 30 }
-
+        annotations:
+          - label: ball
+            value:
+              kind: bounding_box
+              rect: [0.547, 0.75, 0.038, 0.06]
+            attributes: {}
+            confidence: 0.98
+    usage: { input_tokens: 260, output_tokens: 45 }

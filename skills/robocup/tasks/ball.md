@@ -1,4 +1,5 @@
-# Ball and object candidates
+# Football candidates
 
-Submit bounding boxes for balls, robots, and people. A small white region beside a robot's lower body must be treated as a hard negative and locally rechecked. Also distinguish the ball from penalty marks and white-line intersections.
-
+Submit bounding boxes only for the football, using label `ball`. A small white region beside a
+robot's lower body is a hard negative and must be locally rechecked. Penalty marks, socks, shoes,
+robots, people and white-line intersections are context only and must never be emitted as labels.

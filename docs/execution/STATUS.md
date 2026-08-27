@@ -1,6 +1,22 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 18:05 CST
+Last updated: 2026-08-28 CST
+
+## Current scope reset — RoboCup Ball only
+
+The active RoboCup product surface is now deliberately narrow:
+
+- one annotation task: `objects`, with one output label: `ball`;
+- one Domain Skill: `robocup.ball`, plus generic VLM/YOLO detection capabilities;
+- two templates: VLM bootstrap and detector first;
+- white footwear, penalty marks and line intersections are hard-negative evidence only;
+- no field-region, field-line, penalty-mark, robot, person, team-color or robot-state annotation;
+- the active local workspace contains one `robocup-ball` Project with five B-Human images and a
+  fresh history database.
+
+The previous `qwen-live` and `robocup-demo` Projects, previous B-Human exports, pre-reset history,
+and `e2e-guided` test residue were removed from the active workspace and placed in the recoverable
+`workspace/.annotagent/deleted-projects/2026-08-28/` archive.
 
 ## Current milestone
 
@@ -20,9 +36,8 @@ The active release target is **AnnotAgent Label Pipeline Alpha**:
 - Dry Run, immutable publish, exact-version execution, Artifact inspection, and Replay are real
   Runtime capabilities rather than UI placeholders.
 
-The full RoboCup Workflow is now a non-blocking extension example and Roadmap item. Its existing
-implementation remains under regression tests, but it is not the primary Label Pipeline Alpha
-acceptance path.
+RoboCup Ball is the only current domain example. Earlier broad RoboCup algorithms remain internal
+regression fixtures where useful, but are not registered as product tasks, templates or resources.
 
 ## Completed
 
@@ -101,10 +116,12 @@ acceptance path.
   0.98 and normalized rect `[0.432, 0.356, 0.046, 0.046]`; Core produced one parent-linked Crop.
   Formal Run `367e9a0e-5fea-485a-adf7-b437502c2727` completed and its node artifacts were read back
   through the product Inspector API.
-- Current full regression: 131 Rust tests passed with all doc tests; strict workspace Clippy passed;
-  Web typecheck, production build, and all 15 Web tests passed.
+- Current full regression: 148 Rust tests passed with all doc tests; strict workspace Clippy passed;
+  Web typecheck, production build, and all 24 tests in 10 Web test files passed.
 - `./scripts/acceptance.sh`: passed end to end, including domain/secret scans, doctor, and offline
-  generic demo.
+  generic plus RoboCup Ball demos.
+- Final in-app browser smoke showed exactly one Project with five B-Human images, only the
+  `objects` / `ball` Schema, two RoboCup Ball templates, and the `ball_hard_negative` Validator.
 - Core domain scan for RoboCup/YOLO/domain Labels: clean.
 - No conversation credential was read, restored, logged, or used.
 

@@ -59,7 +59,10 @@ image path is replaced by the generic DAG executor.
 
 The implemented hybrid model boundary is described in [Hybrid vision execution](HYBRID_VISION.md). Auxiliary detectors and segmenters supply typed Artifacts; they do not bypass Runtime validation, provenance, review, or commit.
 
-The RoboCup Skill owns `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`. In the specialist templates, geometry is emitted by detector/segmenter/deterministic nodes. VLM nodes consume geometry read-only and emit classification or attributes. The shared hybrid executor aggregates Artifact output, trace, model-call/compute/latency usage, Validator issues, review routing, and safe Commit decisions.
+The RoboCup Ball Skill owns `robocup.ball.vlm-bootstrap` and
+`robocup.ball.detector-first`. Geometry is emitted by a generic detector; the Domain Skill adds
+ball-only hard-negative validation, recovery, review policy and Correction Memory. Field, robot and
+person annotations are not part of the current RoboCup product surface.
 
 ## State and persistence
 

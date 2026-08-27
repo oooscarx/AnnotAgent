@@ -2,37 +2,28 @@ version: 1
 id: robocup
 kind: pack
 skill_version: "1"
-display_name: RoboCup Perception
-description: RoboCup robot soccer perception dataset annotation and deterministic quality control
+display_name: RoboCup Ball
+description: Focused RoboCup football detection, validation, review, and correction memory
 rust_implementation: annotagent-skill-robocup
 dependencies:
   - id: robocup.ball
     version: "1"
 capabilities:
-  - robocup_perception_pack
+  - robocup_ball_annotation
 templates:
   - robocup.ball.vlm-bootstrap
   - robocup.ball.detector-first
 summary_resources:
   - SKILL.md
 task_resources:
-  field_region:
-    - tasks/field-region.md
-  field_line:
-    - tasks/field-line.md
   objects:
     - tasks/ball.md
-    - tasks/robot.md
-  penalty_mark:
-    - tasks/penalty-mark.md
 correction_taxonomy:
   - white_shoe_as_ball
+  - white_sock_as_ball
   - penalty_mark_as_ball
-  - field_line_on_robot
-  - field_line_outside_field
-  - wrong_team_color
-  - wrong_robot_state
-  - missed_object
-  - duplicate_object
-  - inaccurate_geometry
+  - line_intersection_as_ball
+  - missed_small_ball
+  - duplicate_ball
+  - inaccurate_ball_bbox
   - other

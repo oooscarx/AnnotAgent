@@ -67,9 +67,9 @@ cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_work
 The course deliverable contains more than a generic chat loop. Three concrete RoboCup Ball
 specializations are implemented and tested in Rust:
 
-1. deterministic white-shoe/white-sock, penalty-mark and line-intersection hard-negative evidence;
-2. field-region relation evidence with safe missing-evidence degradation;
-3. a bounded Recovery policy that selects crop evidence, Reject or Human Review and adapts to
+1. deterministic white-shoe and white-sock hard-negative evidence;
+2. penalty-mark, line-intersection, duplicate-box and unusual-geometry ball checks;
+3. a bounded Ball Recovery policy that selects crop evidence, Reject or Human Review and adapts to
    strictly scoped Correction Memory.
 
 The separate Workflow Advisor Agent iteratively inspects registry state, proposes a Draft, consumes

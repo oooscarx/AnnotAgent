@@ -347,45 +347,32 @@ fn required_robot_attributes_and_memory_change_review_decision() {
 }
 
 #[test]
-fn robocup_owns_three_semantically_bounded_workflow_templates() {
-    let templates = RoboCupSkill::new()
-        .expect("RoboCup Skill")
-        .workflow_templates();
+fn robocup_exposes_only_two_ball_workflow_templates() {
+    let skill = RoboCupSkill::new().expect("RoboCup Skill");
+    assert_eq!(skill.task_templates().len(), 1);
+    assert_eq!(skill.workflow().nodes.len(), 1);
+    assert_eq!(skill.tool_factories().len(), 1);
+    assert_eq!(skill.validators().len(), 1);
+    assert!(skill.refiners().is_empty());
+    let schema = ProjectSchema::from_yaml(skill.project_template().expect("Ball project template"))
+        .expect("Ball Project Schema");
+    assert_eq!(schema.tasks.len(), 1);
+    assert_eq!(schema.tasks[0].labels, ["ball"]);
+    let templates = skill.workflow_templates();
     assert_eq!(
         templates
             .iter()
             .map(|template| template.id.as_str())
             .collect::<Vec<_>>(),
-        ["vlm-bootstrap", "detector-first", "accurate-hybrid"]
+        ["robocup.ball.vlm-bootstrap", "robocup.ball.detector-first"]
     );
     for template in &templates {
         assert!(template.nodes.iter().any(|node| node.id == "review"));
         assert!(template.nodes.iter().any(|node| node.id == "commit"));
+        assert!(template.nodes.iter().all(|node| {
+            !node.id.contains("field") && !node.id.contains("robot") && !node.id.contains("penalty")
+        }));
     }
-    let hybrid = templates
-        .iter()
-        .find(|template| template.id == "accurate-hybrid")
-        .expect("accurate hybrid");
-    let verification = hybrid
-        .nodes
-        .iter()
-        .find(|node| node.id == "vlm_verification")
-        .expect("semantic verification node");
-    assert_eq!(
-        verification.inputs[0].artifact_type,
-        annotagent_core::ArtifactKind::BoundingBox
-    );
-    assert_eq!(
-        verification.outputs[0].artifact_type,
-        annotagent_core::ArtifactKind::Classification
-    );
-    assert_eq!(
-        verification.parameters["geometry_policy"],
-        "read_only; output semantic verification only"
-    );
-    assert!(hybrid.nodes.iter().any(|node| {
-        node.id == "field_line_refiner" && node.refiners == ["robocup_field_line_refiner"]
-    }));
 }
 
 #[test]

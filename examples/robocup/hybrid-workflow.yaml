@@ -1,53 +1,34 @@
 version: 1
 id: robocup-hybrid-v1
-name: RoboCup hybrid perception
-description: Example-only bindings; Core contains no RoboCup labels or concrete model dependencies.
+name: RoboCup Ball verification
+description: Ball-only example; the detector owns geometry and the VLM may only verify the crop.
 nodes:
-  - id: field_segmentation
-    node_type: semantic_segmentation
-    model_binding: field-segmenter
-    produces: [semantic_mask]
-    fallback: vlm-field-verification
   - id: object_detector
     node_type: object_detection
     model_binding: object-detector
-    depends_on: [field_segmentation]
     produces: [bounding_box]
   - id: vlm_verification
     node_type: vision_language
     model_binding: default-vision
     depends_on: [object_detector]
-    accepts: [bounding_box, semantic_mask]
+    accepts: [bounding_box]
     produces: [classification]
   - id: hard_negative_validator
     node_type: static_validator
     depends_on: [vlm_verification]
     validators: [ball_hard_negative]
-  - id: prompted_segmentation
-    node_type: prompted_segmentation
-    model_binding: prompted-segmenter
-    optional: true
-    depends_on: [hard_negative_validator]
-    accepts: [bounding_box]
-    produces: [instance_mask]
   - id: review_gate
     node_type: review_gate
-    depends_on: [hard_negative_validator, prompted_segmentation]
+    depends_on: [hard_negative_validator]
     policy: on_conflict_or_low_confidence
   - id: commit
     node_type: commit
     depends_on: [review_gate]
 
 model_bindings:
-  field-segmenter:
-    backend: http_json
-    capabilities: [semantic_segmentation]
   object-detector:
     backend: http_json
     capabilities: [object_detection]
   default-vision:
     backend: openai_compatible
     capabilities: [vision_language]
-  prompted-segmenter:
-    backend: http_json
-    capabilities: [prompted_segmentation]

@@ -66,18 +66,22 @@ A Skill contributes domain nodes, validators, refiners, prompt resources, Workfl
 
 Models select registered actions and may submit candidates or operate on stable Artifact references. Rust validation and review policy determine whether a candidate is committed, retried, completed empty, or queued. Human edits append revisions instead of overwriting history, and the trace exposes model/tool/Artifact events without hidden chain-of-thought.
 
-## 7. Example Application: RoboCup Perception
+## 7. Example Application: RoboCup Ball
 
-The bundled `robocup` Skill and `examples/robocup/project.yaml` demonstrate the extension boundary on robot-soccer perception. Domain labels, prompt resources, hard-negative checks, pixel refiners, correction taxonomy, badge, and label colors live in the Skill or example—not in Core or the global product shell.
+The bundled `robocup` Pack and `robocup.ball` Domain Skill solve one annotation problem: football
+bounding boxes. Robots, people, field geometry and penalty marks are visual context or hard
+negatives; they are not output labels. Domain resources, checks, correction taxonomy and the ball
+visual slot live outside Core.
 
 The deterministic demo needs no GPU or API key:
 
 ```bash
 cargo run -p annotagent -- demo generic-workflow
-cargo run -p annotagent -- demo robocup-hybrid
+cargo run -p annotagent -- demo robocup-ball
 ```
 
-The Generic demo has no RoboCup dependency. The RoboCup hybrid demo executes detector candidates, VLM semantic evidence, a real Skill Validator, Review Gate, and blocked Commit entirely offline.
+The Generic demo has no RoboCup dependency. The Ball demo covers the clean fast path, white-shoe
+rejection, penalty-mark review and a Correction Memory decision change entirely offline.
 
 The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
 
@@ -85,7 +89,9 @@ The Runtime extension test also registers an independent `DummySkill` without ch
 cargo test -p annotagent-runtime --test skill_extension
 ```
 
-RoboCup exposes three Workflow starters in the Workflow Designer: `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`. The latter keeps specialist geometry as typed Artifacts and uses the VLM only for verification and attributes.
+RoboCup exposes only two Ball starters: `robocup.ball.vlm-bootstrap` and
+`robocup.ball.detector-first`. Both keep detector geometry as typed Artifacts and route only risky
+ball candidates to Review.
 
 Run the ground-truth-backed synthetic evaluation (no key or external weights required):
 
@@ -93,8 +99,7 @@ Run the ground-truth-backed synthetic evaluation (no key or external weights req
 cargo run -p annotagent -- evaluate \
   --ground-truth examples/robocup/evaluation/ground-truth.synthetic.json \
   --predictions examples/robocup/evaluation/predictions.synthetic.json \
-  --bbox-iou-threshold 0.5 \
-  --minimum-field-region-iou 0.7
+  --bbox-iou-threshold 0.5
 ```
 
 Unlabelled real datasets are rejected as accuracy inputs; their run telemetry remains available separately.

@@ -6,9 +6,7 @@ use annotagent_core::{
     WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 
-use crate::{
-    RoboCupBallFieldRelationValidator, RoboCupBallHardNegativeValidator, RoboCupReviewPolicy,
-};
+use crate::{RoboCupBallHardNegativeValidator, RoboCupReviewPolicy};
 
 pub const ROBOCUP_PACK_ID: &str = "robocup";
 pub const ROBOCUP_BALL_SKILL_ID: &str = "robocup.ball";
@@ -77,17 +75,12 @@ impl Skill for RoboCupBallSkill {
     fn node_templates(&self) -> Vec<TaskTemplate> {
         vec![TaskTemplate {
             id: TaskId::from("robocup.ball.validate"),
-            description:
-                "Validate ball candidates against RoboCup hard negatives and field relation"
-                    .to_owned(),
+            description: "Validate ball candidates against RoboCup hard negatives".to_owned(),
         }]
     }
 
     fn validators(&self) -> Vec<Arc<dyn AnnotationValidator>> {
-        vec![
-            Arc::new(RoboCupBallHardNegativeValidator::default()),
-            Arc::new(RoboCupBallFieldRelationValidator),
-        ]
+        vec![Arc::new(RoboCupBallHardNegativeValidator::default())]
     }
 
     fn review_policies(&self) -> Vec<(String, Arc<dyn ReviewPolicy>)> {
@@ -235,10 +228,7 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                     vec![port("detections", ArtifactKind::DetectionSet)],
                     vec![port("detections", ArtifactKind::DetectionSet)],
                 );
-                validator.validators = vec![
-                    "ball_hard_negative".to_owned(),
-                    "robocup_ball_field_relation".to_owned(),
-                ];
+                validator.validators = vec!["ball_hard_negative".to_owned()];
                 validator
             },
             node(
@@ -299,7 +289,7 @@ mod tests {
         let ball = RoboCupBallSkill::new().expect("Ball Skill");
         assert_eq!(pack.manifest().kind, SkillKind::Pack);
         assert_eq!(ball.manifest().kind, SkillKind::Domain);
-        assert_eq!(ball.validators().len(), 2);
+        assert_eq!(ball.validators().len(), 1);
         let templates = ball.workflow_templates();
         assert_eq!(templates.len(), 2);
         assert!(

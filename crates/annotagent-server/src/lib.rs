@@ -2371,7 +2371,7 @@ mod tests {
         assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
         assert_eq!(
             catalog["workflow_templates"].as_array().map(Vec::len),
-            Some(3)
+            Some(2)
         );
         let hybrid_draft = response_json(
             request(
@@ -2380,13 +2380,13 @@ mod tests {
                 "/api/workflow-drafts",
                 Some(json!({
                     "project_id": "workflow-ui",
-                    "template_id": "accurate-hybrid"
+                    "template_id": "robocup.ball.vlm-bootstrap"
                 })),
             )
             .await,
         )
         .await;
-        assert_eq!(hybrid_draft["name"], json!("Accurate hybrid"));
+        assert_eq!(hybrid_draft["name"], json!("RoboCup Ball · VLM bootstrap"));
         assert_eq!(hybrid_draft["enabled_skills"]["robocup"], json!("1"));
 
         let suggestion = response_json(
@@ -2645,7 +2645,7 @@ mod tests {
             response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
                 .await;
         let project = &dashboard["projects"][0];
-        assert_eq!(project["name"], json!("RoboCup Demo Dataset"));
+        assert_eq!(project["name"], json!("RoboCup Ball Demo"));
         assert_eq!(project["enabled_skills"][0]["id"], json!("robocup"));
         assert_eq!(
             project["active_workflow"]["name"],

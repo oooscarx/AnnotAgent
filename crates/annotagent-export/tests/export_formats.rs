@@ -13,6 +13,28 @@ use annotagent_export::{
 };
 use chrono::Utc;
 
+const GENERIC_EXPORT_PROJECT: &str = r"
+version: 1
+project:
+  name: Generic mixed-shape export fixture
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [ball]
+  - id: field_region
+    kind: polygon
+    labels: [field]
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native, coco, yolo, labelme]
+";
+
 fn snapshot() -> ProjectSnapshot {
     let image_id = ImageId::new();
     let annotation = |label: &str, value| Annotation {
@@ -58,8 +80,7 @@ fn snapshot() -> ProjectSnapshot {
         created_at: Utc::now(),
     };
     ProjectSnapshot {
-        schema: ProjectSchema::from_yaml(include_str!("../../../examples/robocup/project.yaml"))
-            .expect("project"),
+        schema: ProjectSchema::from_yaml(GENERIC_EXPORT_PROJECT).expect("generic export project"),
         images: vec![SnapshotImage {
             id: image_id,
             relative_path: PathBuf::from("images/demo.png"),

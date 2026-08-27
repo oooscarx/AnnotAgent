@@ -4530,8 +4530,7 @@ fn mock_steps(task: &str) -> Vec<MockStep> {
             scripted_submission(
                 task,
                 &json!([
-                    {"label":"robot","value":{"kind":"bounding_box","rect":[0.225,0.445,0.07,0.2]},"attributes":{},"confidence":0.98},
-                    {"label":"ball","value":{"kind":"bounding_box","rect":[0.219,0.615,0.036,0.03]},"attributes":{},"confidence":0.97}
+                    {"label":"ball","value":{"kind":"bounding_box","rect":[0.547,0.75,0.06,0.01]},"attributes":{},"confidence":0.98}
                 ]),
             ),
             scripted_submission(
@@ -5564,7 +5563,10 @@ export:
             )
             .expect("Project summary");
 
-        assert_eq!(summary.name, "RoboCup Demo Dataset");
+        assert_eq!(summary.name, "RoboCup Ball Demo");
+        assert_eq!(summary.annotation_schema.len(), 1);
+        assert_eq!(summary.annotation_schema[0].id, "objects");
+        assert_eq!(summary.annotation_schema[0].labels, ["ball"]);
         assert_eq!(summary.readiness, ProjectReadiness::Incomplete);
         assert_eq!(summary.task_count, summary.annotation_schema.len());
         assert_eq!(summary.review_count, 0);
@@ -5577,35 +5579,30 @@ export:
         assert!(summary.default_workflow_version.is_some());
         assert_eq!(summary.enabled_skills.len(), 1);
         assert_eq!(summary.enabled_skills[0].id, "robocup");
-        assert_eq!(summary.enabled_skills[0].display_name, "RoboCup Perception");
+        assert_eq!(summary.enabled_skills[0].display_name, "RoboCup Ball");
         assert_eq!(summary.active_workflow.name, "Configured task graph");
         assert_eq!(summary.active_workflow.status, WorkflowStatus::Published);
         assert_eq!(
             summary.workflows[0].node_count,
             summary.annotation_schema.len()
         );
-        assert!(
-            summary
-                .active_workflow
-                .nodes
-                .iter()
-                .any(|node| { node.id == "field_line" && node.depends_on == ["field_region"] })
-        );
+        assert_eq!(summary.active_workflow.nodes.len(), 1);
+        assert_eq!(summary.active_workflow.nodes[0].id, "objects");
         assert!(summary.model_bindings.is_empty());
         let settings = load_settings(None).expect("settings");
         let catalog = application
             .workflow_advisor_input("robocup-demo", &settings, WorkflowConstraints::default())
             .expect("RoboCup catalog");
-        assert_eq!(catalog.workflow_templates.len(), 3);
+        assert_eq!(catalog.workflow_templates.len(), 2);
         let draft = application
             .create_workflow_draft_with_template(
                 "robocup-demo",
                 &settings,
                 false,
-                Some("accurate-hybrid"),
+                Some("robocup.ball.vlm-bootstrap"),
             )
-            .expect("hybrid draft");
-        assert_eq!(draft.name, "Accurate hybrid");
+            .expect("Ball draft");
+        assert_eq!(draft.name, "RoboCup Ball · VLM bootstrap");
         assert_eq!(draft.enabled_skills.get("robocup"), Some(&"1".to_owned()));
         let updated = application
             .add_project_task(

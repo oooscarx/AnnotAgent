@@ -14,7 +14,6 @@ nodes:
   - robocup.ball.validate
 validators:
   - ball_hard_negative
-  - robocup_ball_field_relation
 policies:
   - robocup.ball.review
 templates:
@@ -33,5 +32,4 @@ correction_taxonomy:
   - missed_small_ball
   - duplicate_ball
   - inaccurate_ball_bbox
-  - ball_outside_field
   - other

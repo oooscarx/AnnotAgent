@@ -21,7 +21,7 @@ const labelVisuals = Object.fromEntries(
 
 export const robocupVisualProfile: SkillVisualProfile = {
   skillId: "robocup",
-  displayName: "RoboCup Perception",
+  displayName: "RoboCup Ball",
   icon: "/brand/skills/robocup/skill-badge.svg",
   labelVisuals,
 };

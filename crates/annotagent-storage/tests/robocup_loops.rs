@@ -1,34 +1,30 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use annotagent_core::{
-    AnnotationSource, AnnotationValue, Budget, CorrectionFeatures, CorrectionRecord, LabelId,
-    PricingConfig, ProjectId, ProjectSchema, RunEventKind, RunId, RunStatus, TaskId, TaskRunStatus,
+    Budget, PricingConfig, ProjectId, ProjectSchema, RunEventKind, RunId, RunStatus, TaskRunStatus,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_provider::{
     MockResponseSpec, MockScript, MockStep, MockToolCall, MockUsage, MockVisionProvider,
 };
-use annotagent_runtime::{AgentLoopConfig, AgentRuntime, ImageRunRequest, RuntimeStore};
+use annotagent_runtime::{AgentLoopConfig, AgentRuntime, ImageRunRequest};
 use annotagent_skill_robocup::RoboCupSkill;
 use annotagent_storage::SqliteStore;
-use chrono::Utc;
 use serde_json::json;
 
-fn project_for(task_id: &str) -> ProjectSchema {
-    let mut project =
-        ProjectSchema::from_yaml(include_str!("../../../examples/robocup/project.yaml"))
-            .expect("example project");
-    project.tasks.retain(|task| task.id.as_str() == task_id);
-    project.tasks[0].depends_on.clear();
-    if task_id == "objects" {
-        project.tasks[0].validators = vec!["ball_hard_negative".to_owned()];
-    }
-    if task_id == "field_line" {
-        project.tasks[0].validators = vec![
-            "white_line_appearance".to_owned(),
-            "polyline_continuity".to_owned(),
-        ];
-    }
+fn project() -> ProjectSchema {
+    let project = ProjectSchema::from_yaml(include_str!("../../../examples/robocup/project.yaml"))
+        .expect("ball-only example project");
+    assert_eq!(project.tasks.len(), 1);
+    assert_eq!(project.tasks[0].id.as_str(), "objects");
+    assert_eq!(
+        project.tasks[0]
+            .labels
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["ball"]
+    );
     project
 }
 
@@ -41,16 +37,8 @@ fn fixture() -> (tempfile::TempDir, Arc<annotagent_core::ImageFrame>) {
 }
 
 fn runtime(provider: Arc<MockVisionProvider>, store: Arc<SqliteStore>) -> AgentRuntime {
-    runtime_with_steps(provider, store, 4)
-}
-
-fn runtime_with_steps(
-    provider: Arc<MockVisionProvider>,
-    store: Arc<SqliteStore>,
-    max_model_turns_per_task: u32,
-) -> AgentRuntime {
     AgentRuntime::new(
-        Arc::new(RoboCupSkill::new().expect("RoboCup skill")),
+        Arc::new(RoboCupSkill::new().expect("RoboCup Ball skill")),
         provider,
         store,
         PricingConfig::default(),
@@ -59,41 +47,68 @@ fn runtime_with_steps(
             ..Budget::default()
         },
         AgentLoopConfig {
-            max_model_turns_per_task,
+            max_model_turns_per_task: 4,
             max_retries: 2,
             ..AgentLoopConfig::default()
         },
     )
 }
 
+async fn run(
+    provider: Arc<MockVisionProvider>,
+    store: Arc<SqliteStore>,
+) -> annotagent_runtime::ImageRunResult {
+    let (temporary, image) = fixture();
+    runtime(provider, store)
+        .run_image(ImageRunRequest {
+            run_id: RunId::new(),
+            project_id: ProjectId::new(),
+            project_root: temporary.path().to_path_buf(),
+            project: Arc::new(project()),
+            image_id: annotagent_core::ImageId::new(),
+            image,
+            model_image: None,
+        })
+        .await
+        .expect("ball run")
+}
+
+fn step(response: MockResponseSpec) -> MockStep {
+    MockStep {
+        expect_task: Some("objects".to_owned()),
+        expect_message_contains: None,
+        response,
+        usage: MockUsage {
+            input_tokens: 100,
+            output_tokens: 30,
+        },
+    }
+}
+
+fn ball_submission(rect: [f64; 4]) -> MockResponseSpec {
+    MockResponseSpec::ToolCall {
+        name: "submit_annotation_candidates".to_owned(),
+        arguments: json!({"annotations": [{
+            "label": "ball",
+            "value": {"kind": "bounding_box", "rect": rect},
+            "attributes": {},
+            "confidence": 0.98
+        }]}),
+    }
+}
+
 #[tokio::test]
-async fn qwen_compatible_tool_result_is_followed_by_model_submit_and_commit() {
+async fn ball_evidence_reaches_the_model_before_submission() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
-            MockStep {
-                expect_task: Some("objects".to_owned()),
-                expect_message_contains: None,
-                response: MockResponseSpec::ToolCall {
-                    name: "evaluate_ball_hard_negative".to_owned(),
-                    arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
-                },
-                usage: MockUsage {
-                    input_tokens: 100,
-                    output_tokens: 20,
-                },
-            },
+            step(MockResponseSpec::ToolCall {
+                name: "evaluate_ball_hard_negative".to_owned(),
+                arguments: json!({"bbox": [0.547, 0.75, 0.038, 0.06]}),
+            }),
             MockStep {
                 expect_task: Some("objects".to_owned()),
                 expect_message_contains: Some("white_ratio".to_owned()),
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": [{
-                        "label": "robot",
-                        "value": {"kind": "bounding_box", "rect": [0.4, 0.25, 0.15, 0.4]},
-                        "attributes": {},
-                        "confidence": 0.97
-                    }]}),
-                },
+                response: ball_submission([0.547, 0.75, 0.038, 0.06]),
                 usage: MockUsage {
                     input_tokens: 140,
                     output_tokens: 35,
@@ -102,25 +117,26 @@ async fn qwen_compatible_tool_result_is_followed_by_model_submit_and_commit() {
         ],
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
     let run_id = RunId::new();
+    let (temporary, image) = fixture();
     let result = runtime(provider, store.clone())
         .run_image(ImageRunRequest {
             run_id,
             project_id: ProjectId::new(),
             project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("objects")),
+            project: Arc::new(project()),
             image_id: annotagent_core::ImageId::new(),
             image,
             model_image: None,
         })
         .await
         .expect("evidence then submit");
+
     assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
     assert_eq!(result.committed.len(), 1);
     assert_eq!(result.usage.requests, 2);
     let history = store.history(run_id).expect("history");
-    let first_assistant = history
+    let assistant_index = history
         .model_messages
         .iter()
         .position(|entry| {
@@ -131,97 +147,61 @@ async fn qwen_compatible_tool_result_is_followed_by_model_submit_and_commit() {
                 .any(|call| call.name == "evaluate_ball_hard_negative")
         })
         .expect("evidence tool call");
-    let tool_result = &history.model_messages[first_assistant + 1].message;
+    let tool_result = &history.model_messages[assistant_index + 1].message;
     assert_eq!(tool_result.role, annotagent_core::ModelRole::Tool);
     assert!(tool_result.content.contains("white_ratio"));
-    assert!(
-        history.model_messages[first_assistant + 2..]
-            .iter()
-            .any(|entry| entry
-                .message
-                .tool_calls
-                .iter()
-                .any(|call| call.name == "submit_annotation_candidates"))
-    );
 }
 
 #[tokio::test]
-async fn absent_penalty_mark_is_a_succeeded_empty_task_and_run_completes() {
+async fn absent_ball_is_a_succeeded_empty_task() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
-        steps: vec![MockStep {
-            expect_task: Some("penalty_mark".to_owned()),
-            expect_message_contains: None,
-            response: MockResponseSpec::ToolCall {
-                name: "finish_task".to_owned(),
-                arguments: json!({}),
-            },
-            usage: MockUsage {
-                input_tokens: 60,
-                output_tokens: 5,
-            },
-        }],
+        steps: vec![step(MockResponseSpec::ToolCall {
+            name: "finish_task".to_owned(),
+            arguments: json!({}),
+        })],
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
     let run_id = RunId::new();
+    let (temporary, image) = fixture();
     let result = runtime(provider, store.clone())
         .run_image(ImageRunRequest {
             run_id,
             project_id: ProjectId::new(),
             project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("penalty_mark")),
+            project: Arc::new(project()),
             image_id: annotagent_core::ImageId::new(),
             image,
             model_image: None,
         })
         .await
         .expect("valid empty task");
+
     assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
     assert!(result.committed.is_empty());
-    let task_runs = store.list_task_runs(run_id).expect("task status");
-    assert_eq!(task_runs.len(), 1);
-    assert_eq!(task_runs[0].status, TaskRunStatus::SucceededEmpty);
+    assert_eq!(
+        store.list_task_runs(run_id).expect("task status")[0].status,
+        TaskRunStatus::SucceededEmpty
+    );
 }
 
 #[tokio::test]
-async fn identical_deterministic_tool_call_reuses_cached_result() {
+async fn identical_ball_evidence_call_reuses_cached_result() {
+    let evidence_call = MockToolCall {
+        name: "evaluate_ball_hard_negative".to_owned(),
+        arguments: json!({"bbox": [0.547, 0.75, 0.038, 0.06]}),
+    };
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
-            MockStep {
-                expect_task: Some("objects".to_owned()),
-                expect_message_contains: None,
-                response: MockResponseSpec::ToolCalls {
-                    calls: vec![
-                        MockToolCall {
-                            name: "evaluate_ball_hard_negative".to_owned(),
-                            arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
-                        },
-                        MockToolCall {
-                            name: "evaluate_ball_hard_negative".to_owned(),
-                            arguments: json!({"bbox": [0.2, 0.3, 0.2, 0.2]}),
-                        },
-                    ],
-                    content: None,
-                },
-                usage: MockUsage {
-                    input_tokens: 100,
-                    output_tokens: 30,
-                },
-            },
+            step(MockResponseSpec::ToolCalls {
+                calls: vec![evidence_call.clone(), evidence_call],
+                content: None,
+            }),
             MockStep {
                 expect_task: Some("objects".to_owned()),
                 expect_message_contains: Some(
                     "identical deterministic tool call reused".to_owned(),
                 ),
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": [{
-                        "label": "robot",
-                        "value": {"kind": "bounding_box", "rect": [0.4, 0.25, 0.15, 0.4]},
-                        "attributes": {},
-                        "confidence": 0.97
-                    }]}),
-                },
+                response: ball_submission([0.547, 0.75, 0.038, 0.06]),
                 usage: MockUsage {
                     input_tokens: 140,
                     output_tokens: 35,
@@ -230,22 +210,10 @@ async fn identical_deterministic_tool_call_reuses_cached_result() {
         ],
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
-    let run_id = RunId::new();
-    let result = runtime(provider, store.clone())
-        .run_image(ImageRunRequest {
-            run_id,
-            project_id: ProjectId::new(),
-            project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("objects")),
-            image_id: annotagent_core::ImageId::new(),
-            image,
-            model_image: None,
-        })
-        .await
-        .expect("cached tool loop");
+    let result = run(provider, store.clone()).await;
+
     assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
-    let history = store.history(run_id).expect("history");
+    let history = store.history(result.run_id).expect("history");
     assert!(history.tool_calls.iter().any(|call| {
         call.result
             .as_ref()
@@ -254,171 +222,36 @@ async fn identical_deterministic_tool_call_reuses_cached_result() {
 }
 
 #[tokio::test]
-async fn structured_tool_data_reaches_the_model_before_submission() {
-    let provider = Arc::new(MockVisionProvider::new(MockScript {
-        steps: vec![MockStep {
-            expect_task: Some("field_line".to_owned()),
-            expect_message_contains: None,
-            response: MockResponseSpec::ToolCall {
-                name: "refine_robocup_field_line".to_owned(),
-                arguments: json!({"points": [[0.08, 0.47], [0.92, 0.47]]}),
-            },
-            usage: MockUsage {
-                input_tokens: 120,
-                output_tokens: 30,
-            },
-        }],
-    }));
-    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
-    let run_id = RunId::new();
-    let result = runtime_with_steps(provider, store.clone(), 2)
-        .run_image(ImageRunRequest {
-            run_id,
-            project_id: ProjectId::new(),
-            project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("field_line")),
-            image_id: annotagent_core::ImageId::new(),
-            image,
-            model_image: None,
-        })
-        .await
-        .expect("artifact-producing tool completes the task");
-
-    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
-    assert_eq!(result.usage.requests, 1);
-    assert_eq!(result.committed.len(), 1);
-    let history = store.history(run_id).expect("history");
-    assert_eq!(history.artifacts.len(), 2);
-    let assistant_index = history
-        .model_messages
-        .iter()
-        .position(|entry| !entry.message.tool_calls.is_empty())
-        .expect("assistant tool-call message");
-    let assistant = &history.model_messages[assistant_index].message;
-    let tool = &history.model_messages[assistant_index + 1].message;
-    assert_eq!(tool.role, annotagent_core::ModelRole::Tool);
-    assert_eq!(
-        tool.tool_call_id.as_ref(),
-        Some(&assistant.tool_calls[0].id)
-    );
-    assert!(tool.content.contains("artifact_references"));
-    assert!(tool.content.contains("pixel_support"));
-    assert!(!tool.content.contains("points"));
-    assert!(
-        history
-            .events
-            .iter()
-            .any(|event| { event.kind == RunEventKind::ArtifactCommitted })
-    );
-}
-
-#[tokio::test]
-async fn white_shoe_candidate_is_detected_retried_and_removed() {
+async fn unusual_ball_geometry_is_retried_and_corrected() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
+            step(ball_submission([0.547, 0.75, 0.06, 0.01])),
             MockStep {
                 expect_task: Some("objects".to_owned()),
-                expect_message_contains: None,
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": [
-                        {
-                            "label": "robot",
-                            "value": {"kind": "bounding_box", "rect": [0.225, 0.445, 0.07, 0.2]},
-                            "attributes": {}, "confidence": 0.97
-                        },
-                        {
-                            "label": "ball",
-                            "value": {"kind": "bounding_box", "rect": [0.218, 0.615, 0.04, 0.03]},
-                            "attributes": {}, "confidence": 0.94
-                        }
-                    ]}),
-                },
+                expect_message_contains: Some("unlikely_ball_geometry".to_owned()),
+                response: ball_submission([0.547, 0.75, 0.038, 0.06]),
                 usage: MockUsage {
-                    input_tokens: 200,
-                    output_tokens: 60,
-                },
-            },
-            MockStep {
-                expect_task: Some("objects".to_owned()),
-                expect_message_contains: Some("possible_white_shoe".to_owned()),
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": []}),
-                },
-                usage: MockUsage {
-                    input_tokens: 240,
-                    output_tokens: 20,
+                    input_tokens: 140,
+                    output_tokens: 35,
                 },
             },
         ],
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let project_id = ProjectId::new();
-    for _ in 0..4 {
-        store
-            .save_correction(&CorrectionRecord {
-                id: uuid::Uuid::new_v4(),
-                project_id,
-                skill_id: "robocup".to_owned(),
-                task_id: TaskId::from("objects"),
-                predicted_label: Some(LabelId::from("ball")),
-                corrected_label: None,
-                reason_code: "white_shoe_as_ball".to_owned(),
-                original_annotation: None,
-                corrected_annotation: None,
-                note: None,
-                image_features: CorrectionFeatures {
-                    geometry: BTreeMap::new(),
-                    colors: BTreeMap::new(),
-                },
-                created_at: Utc::now(),
-            })
-            .expect("save correction");
-    }
-    assert!(
-        store
-            .correction_risk(
-                project_id,
-                "robocup",
-                &TaskId::from("objects"),
-                Some(&LabelId::from("ball"))
-            )
-            .await
-            .expect("correction risk")
-            >= 0.2
-    );
-    let (temporary, image) = fixture();
-    let run_id = RunId::new();
-    let result = runtime(provider, store.clone())
-        .run_image(ImageRunRequest {
-            run_id,
-            project_id,
-            project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("objects")),
-            image_id: annotagent_core::ImageId::new(),
-            image,
-            model_image: None,
-        })
-        .await
-        .expect("hard-negative loop");
-    assert_eq!(result.status, RunStatus::Completed);
+    let result = run(provider, store.clone()).await;
+
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    assert_eq!(result.committed.len(), 1);
     assert_eq!(result.usage.requests, 2);
     assert!(
         result
             .issues
             .iter()
-            .any(|issue| issue.code == "possible_white_shoe")
-    );
-    assert_eq!(result.committed.len(), 1);
-    assert_eq!(
-        result.committed[0].label.as_ref().map(LabelId::as_str),
-        Some("robot")
+            .any(|issue| issue.code == "unlikely_ball_geometry")
     );
     assert!(
         store
-            .list_events(run_id)
+            .list_events(result.run_id)
             .expect("events")
             .iter()
             .any(|event| event.kind == RunEventKind::RetryScheduled)
@@ -426,155 +259,51 @@ async fn white_shoe_candidate_is_detected_retried_and_removed() {
 }
 
 #[tokio::test]
-async fn coarse_field_line_is_refined_validated_committed_and_revisioned() {
+async fn multiple_ball_tool_calls_are_persisted_and_answered_in_order() {
+    let calls = [
+        [0.20, 0.30, 0.04, 0.04],
+        [0.40, 0.50, 0.04, 0.04],
+        [0.547, 0.75, 0.038, 0.06],
+    ]
+    .map(|bbox| MockToolCall {
+        name: "evaluate_ball_hard_negative".to_owned(),
+        arguments: json!({"bbox": bbox}),
+    })
+    .to_vec();
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
+            step(MockResponseSpec::ToolCalls {
+                calls,
+                content: None,
+            }),
             MockStep {
-                expect_task: Some("field_line".to_owned()),
-                expect_message_contains: Some("Rust pixel refiner".to_owned()),
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": [{
-                        "label": "white_field_line",
-                        "value": {"kind": "polyline", "points": [[0.08, 0.47], [0.92, 0.47]]},
-                        "attributes": {}, "confidence": 0.96
-                    }]}),
-                },
-                usage: MockUsage {
-                    input_tokens: 180,
-                    output_tokens: 44,
-                },
-            },
-            MockStep {
-                expect_task: Some("field_line".to_owned()),
-                expect_message_contains: None,
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": []}),
-                },
-                usage: MockUsage {
-                    input_tokens: 50,
-                    output_tokens: 10,
-                },
-            },
-        ],
-    }));
-    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
-    let run_id = RunId::new();
-    let result = runtime(provider, store.clone())
-        .run_image(ImageRunRequest {
-            run_id,
-            project_id: ProjectId::new(),
-            project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("field_line")),
-            image_id: annotagent_core::ImageId::new(),
-            image,
-            model_image: None,
-        })
-        .await
-        .expect("field-line loop");
-    assert_eq!(result.status, RunStatus::Completed);
-    assert_eq!(result.usage.requests, 1);
-    assert_eq!(result.committed.len(), 1, "issues: {:#?}", result.issues);
-    assert_eq!(result.committed[0].source, AnnotationSource::ModelAndTool);
-    let AnnotationValue::Polyline { points } = &result.committed[0].value else {
-        panic!("committed annotation is a polyline");
-    };
-    let average_y = points.iter().map(|point| point.y()).sum::<f32>() / points.len() as f32;
-    assert!((average_y - 0.5).abs() < 0.02);
-    assert_eq!(
-        store
-            .list_revisions(result.committed[0].id)
-            .expect("revisions")
-            .len(),
-        1
-    );
-    let event_kinds: Vec<_> = store
-        .list_events(run_id)
-        .expect("events")
-        .into_iter()
-        .map(|event| event.kind)
-        .collect();
-    assert!(event_kinds.contains(&RunEventKind::RefinementStarted));
-    assert!(event_kinds.contains(&RunEventKind::RefinementCompleted));
-    let artifacts = store.list_artifacts(run_id).expect("persisted artifacts");
-    let original = artifacts
-        .iter()
-        .find(|artifact| artifact.revision == 1)
-        .expect("original artifact revision");
-    let refined = artifacts
-        .iter()
-        .find(|artifact| artifact.revision == 2)
-        .expect("refined artifact revision");
-    assert_eq!(refined.replaces_artifact_id, Some(original.id));
-    assert!(refined.provenance.input_artifact_ids.contains(&original.id));
-}
-
-#[tokio::test]
-async fn multiple_tool_calls_are_persisted_and_answered_in_order() {
-    let provider = Arc::new(MockVisionProvider::new(MockScript {
-        steps: vec![
-            MockStep {
-                expect_task: Some("field_line".to_owned()),
-                expect_message_contains: None,
-                response: MockResponseSpec::ToolCalls {
-                    calls: vec![
-                        MockToolCall {
-                            name: "refine_robocup_field_line".to_owned(),
-                            arguments: json!({"points": [[0.08, 0.47], [0.92, 0.47]]}),
-                        },
-                        MockToolCall {
-                            name: "refine_robocup_field_line".to_owned(),
-                            arguments: json!({"points": [[0.1, 0.45], [0.9, 0.45]]}),
-                        },
-                        MockToolCall {
-                            name: "refine_robocup_field_line".to_owned(),
-                            arguments: json!({"points": [[0.1, 0.55], [0.9, 0.55]]}),
-                        },
-                    ],
-                    content: None,
-                },
-                usage: MockUsage {
-                    input_tokens: 120,
-                    output_tokens: 80,
-                },
-            },
-            MockStep {
-                expect_task: Some("field_line".to_owned()),
-                expect_message_contains: Some("pixel_support".to_owned()),
-                response: MockResponseSpec::ToolCall {
-                    name: "submit_annotation_candidates".to_owned(),
-                    arguments: json!({"annotations": [{
-                        "label": "white_field_line",
-                        "value": {"kind": "polyline", "points": [[0.08, 0.47], [0.92, 0.47]]},
-                        "attributes": {}, "confidence": 0.96
-                    }]}),
-                },
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: Some("white_ratio".to_owned()),
+                response: ball_submission([0.547, 0.75, 0.038, 0.06]),
                 usage: MockUsage {
                     input_tokens: 140,
-                    output_tokens: 30,
+                    output_tokens: 35,
                 },
             },
         ],
     }));
     let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
-    let (temporary, image) = fixture();
     let run_id = RunId::new();
+    let (temporary, image) = fixture();
     let result = runtime(provider, store.clone())
         .run_image(ImageRunRequest {
             run_id,
             project_id: ProjectId::new(),
             project_root: temporary.path().to_path_buf(),
-            project: Arc::new(project_for("field_line")),
+            project: Arc::new(project()),
             image_id: annotagent_core::ImageId::new(),
             image,
             model_image: None,
         })
         .await
-        .expect("multi-tool field-line loop");
-    assert_eq!(result.status, RunStatus::Completed);
-    assert_eq!(result.committed.len(), 1);
+        .expect("multi-tool ball loop");
+
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
     let messages = store.history(run_id).expect("history").model_messages;
     let assistant_index = messages
         .iter()

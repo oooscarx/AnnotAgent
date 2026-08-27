@@ -16,6 +16,7 @@ impl ReviewPolicy for RoboCupReviewPolicy {
                     "possible_white_shoe"
                         | "possible_penalty_mark"
                         | "possible_field_line_intersection"
+                        | "unlikely_ball_geometry"
                         | "weak_pixel_support"
                 )
         });

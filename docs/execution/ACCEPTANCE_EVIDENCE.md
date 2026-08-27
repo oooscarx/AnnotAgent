@@ -567,3 +567,32 @@ Direct evidence:
    modified, and no conversation credential was read, printed, or persisted by this work.
 
 Live VLM Detection and Crop smoke status: `PASS`.
+
+## RoboCup Ball-only scope reset — 2026-08-28
+
+The earlier broad RoboCup template evidence above is retained as historical execution evidence but
+is no longer the current product contract. The active contract now requires:
+
+1. `examples/robocup/project.yaml` contains exactly one bounding-box task and only label `ball`;
+2. the compatibility Skill graph contains exactly one `objects` node;
+3. the layered Domain Skill contributes exactly one Ball Validator and two Ball templates;
+4. no current RoboCup template contains field, robot or penalty annotation nodes;
+5. the visual label map contains only `ball`;
+6. the active local workspace contains only the five-image `robocup-ball` Project, with a fresh
+   database; removed Projects/history/test residue remain in a recoverable hidden archive.
+
+Final verification:
+
+| Command / journey | Exit | Evidence |
+| --- | ---: | --- |
+| `./scripts/acceptance.sh` | 0 | Domain and secret scans, fmt, strict Clippy, all Rust tests/builds, all Web checks/build, doctor, and all three offline demos passed. |
+| `cargo test --workspace --all-features` | 0 | 148 Rust unit/integration tests passed; 0 failed; all doc tests passed. |
+| Web typecheck/test/build | 0 | TypeScript passed; 10 files / 24 tests passed; Vite production build succeeded. |
+| In-app browser smoke on port 8791 | 0-equivalent | Home showed one Project and five images; Project Schema showed only `objects` / `ball`; Workflow Designer showed only the two RoboCup Ball templates and `ball_hard_negative`. |
+
+The previous `qwen-live`, `robocup-demo`, B-Human legacy exports, pre-reset history database, and
+`e2e-guided` test residue are stored under
+`workspace/.annotagent/deleted-projects/2026-08-28/`. No live provider request was made during the
+final smoke, and the temporary GUI server was stopped after inspection.
+
+RoboCup Ball-only scope reset status: `PASS`.

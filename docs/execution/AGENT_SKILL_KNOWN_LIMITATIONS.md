@@ -13,13 +13,13 @@
 - The offline deterministic Advisor is the release-blocking iterative policy. The external
   OpenAI-compatible advisor adjustment remains live-conditional and still passes through the same
   registry validation and human publication boundary.
-- Robot and Field are compatibility/Roadmap areas, not independent layered Domain Skills in this
-  Alpha. They continue to supply optional evidence to Ball validation.
+- Field and robot algorithms retained for historical regression are not registered product Skills,
+  templates, resources or annotation tasks. The current Ball path does not require field-region
+  annotation.
 - Agent Session trace is persisted and visible in Web/TUI; correlating every deterministic Run
   node and a conditional Recovery Session in one unified chronological canvas remains future UX.
-- Legacy broad `robocup` Projects remain on the compatibility adapter until an operator explicitly
-  enables the layered Pack/Domain dependencies; the product does not silently rewrite Project
-  semantics.
+- The legacy `robocup` ID remains as a one-task compatibility adapter for CLI/Project loading; it
+  exposes the same Ball-only Schema and templates as `robocup.ball`.
 - Real Qwen and real YOLO runs require operator-owned configuration and are live-conditional.
 - The required five-image real Qwen sequence was not run in this effort because no operator-owned
   credential was read or used. No live result is claimed. Mock, local HTTP protocol, timeout,

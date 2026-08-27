@@ -1,4 +1,5 @@
 # Expected offline behavior
 
-The generated fixture contains a true ball, two colored robots, a white shoe hard negative, painted field lines, and a penalty-mark hard negative. The deterministic demo trace must show a white-shoe warning and a field-line before/after refinement.
-
+The generated fixture contains a true ball plus white-shoe, field-line and penalty-mark hard
+negatives. Only the ball may be emitted as an annotation. The deterministic demo trace must show
+that the white-shoe candidate cannot auto-commit.

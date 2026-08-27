@@ -2,6 +2,11 @@
 
 Last updated: 2026-08-28
 
+Current product scope supersedes the earlier broad compatibility notes below: RoboCup now exposes
+only the `objects[ball]` annotation task, one Ball Validator, Ball correction reasons and two Ball
+Workflow templates. Field and robot roadmap resources were removed from the product package;
+remaining algorithms are dormant regression utilities, not registered annotation capabilities.
+
 ## Current milestone
 
 M9 — complete. The offline Agent + Skill Alpha Release Gate passes; only explicitly external live
@@ -108,7 +113,7 @@ checks remain conditional.
 ## M6 delivered
 
 - `robocup` Pack manifest plus independent `robocup.ball` Domain Skill manifest;
-- Robot and Field extension directories are explicitly Roadmap-only;
+- Robot and Field are not product Skills or annotation tasks;
 - `RoboCupBallHardNegativeValidator`, issue taxonomy and duplicate/geometry/footwear/point/line risk
   evidence;
 - `RoboCupBallFieldRelationValidator` with inside/outside checks and safe missing-field warning;

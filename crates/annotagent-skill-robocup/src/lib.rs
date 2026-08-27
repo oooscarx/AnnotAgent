@@ -8,7 +8,6 @@ mod policy;
 mod recovery;
 mod robot;
 mod tools;
-mod workflows;
 
 use std::sync::Arc;
 
@@ -26,7 +25,6 @@ pub use policy::*;
 pub use recovery::*;
 pub use robot::*;
 pub use tools::*;
-pub use workflows::workflow_templates as robocup_workflow_templates;
 
 pub struct RoboCupSkill {
     manifest: SkillManifest,
@@ -51,55 +49,28 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn task_templates(&self) -> Vec<TaskTemplate> {
-        [
-            ("scene_type", "classify scene usability"),
-            ("field_region", "outline playable field"),
-            ("field_line", "trace and refine painted field lines"),
-            ("penalty_mark", "locate penalty marks"),
-            ("objects", "detect balls, robots, and people"),
-            ("robot_attributes", "assign team color and robot state"),
-        ]
-        .into_iter()
-        .map(|(id, description)| TaskTemplate {
-            id: TaskId::from(id),
-            description: description.to_owned(),
-        })
-        .collect()
+        vec![TaskTemplate {
+            id: TaskId::from("objects"),
+            description: "detect and validate RoboCup footballs only".to_owned(),
+        }]
     }
 
     fn workflow(&self) -> TaskGraph {
         TaskGraph {
-            nodes: vec![
-                node("scene_type", &[]),
-                node("field_region", &["scene_type"]),
-                node("field_line", &["field_region"]),
-                node("penalty_mark", &["field_region"]),
-                node("objects", &["field_region"]),
-                node("robot_attributes", &["objects"]),
-            ],
+            nodes: vec![node("objects", &[])],
         }
     }
 
     fn tool_factories(&self) -> Vec<Arc<dyn AgentTool>> {
-        vec![
-            Arc::new(RoboCupFieldLineTool),
-            Arc::new(BallEvidenceTool),
-            Arc::new(TeamColorEvidenceTool),
-        ]
+        vec![Arc::new(BallEvidenceTool)]
     }
 
     fn validators(&self) -> Vec<Arc<dyn AnnotationValidator>> {
-        vec![
-            Arc::new(FieldContainmentValidator),
-            Arc::new(WhiteLineAppearanceValidator::default()),
-            Arc::new(PolylineContinuityValidator::default()),
-            Arc::new(BallHardNegativeValidator::default()),
-            Arc::new(RobotAttributeValidator),
-        ]
+        vec![Arc::new(BallHardNegativeValidator::default())]
     }
 
     fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
-        vec![Arc::new(RoboCupFieldLineRefiner::default())]
+        Vec::new()
     }
 
     fn prompt_resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
@@ -109,25 +80,9 @@ impl DomainSkill for RoboCupSkill {
         )];
         if let Some(task) = &request.task_id {
             let task_resource = match task.as_str() {
-                "field_region" => Some((
-                    "tasks/field-region.md",
-                    include_str!("../../../skills/robocup/tasks/field-region.md"),
-                )),
-                "field_line" => Some((
-                    "tasks/field-line.md",
-                    include_str!("../../../skills/robocup/tasks/field-line.md"),
-                )),
                 "objects" => Some((
                     "tasks/ball.md",
                     include_str!("../../../skills/robocup/tasks/ball.md"),
-                )),
-                "robot_attributes" => Some((
-                    "tasks/robot.md",
-                    include_str!("../../../skills/robocup/tasks/robot.md"),
-                )),
-                "penalty_mark" => Some((
-                    "tasks/penalty-mark.md",
-                    include_str!("../../../skills/robocup/tasks/penalty-mark.md"),
                 )),
                 _ => None,
             };
@@ -154,7 +109,9 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn workflow_templates(&self) -> Vec<annotagent_core::WorkflowTemplate> {
-        workflows::workflow_templates()
+        RoboCupBallSkill::new()
+            .map(|skill| annotagent_core::Skill::workflow_templates(&skill))
+            .unwrap_or_default()
     }
 
     fn project_template(&self) -> Option<&str> {
