@@ -74,7 +74,9 @@ export function App() {
   const [reviewQueue, setReviewQueue] = useState(0);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
+  const pageTitleRef = useRef<HTMLHeadingElement>(null);
 
   const navigate = (path: string, replace = false) => {
     if (replace) window.history.replaceState({}, "", path);
@@ -114,8 +116,12 @@ export function App() {
         setRuns(data.runs);
         setModels(data.models);
         setReviewQueue(data.review_queue);
+        setLoaded(true);
       })
-      .catch((reason: Error) => setError(reason.message));
+      .catch((reason: Error) => {
+        setLoaded(true);
+        setError(reason.message);
+      });
 
   useEffect(() => {
     void refresh();
@@ -152,6 +158,9 @@ export function App() {
       ),
     [],
   );
+  useEffect(() => {
+    pageTitleRef.current?.focus();
+  }, [route.canonicalPath]);
 
   const projectId =
     route.kind === "project" || route.kind === "build"
@@ -224,12 +233,13 @@ export function App() {
       </aside>
       <main
         id="main-content"
+        aria-busy={!loaded}
         className={page === "review" ? "review-main" : undefined}
       >
         <header className="topbar">
           <div>
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
-            <h1>{PAGE_TITLES[page]}</h1>
+            <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
           </div>
           <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
@@ -272,6 +282,7 @@ export function App() {
             </button>
           </div>
         )}
+        {!loaded && <div className="loading-banner" role="status">Loading workspace state…</div>}
         {route.kind === "home" && (
           <Dashboard
             projects={projects}
@@ -3023,10 +3034,19 @@ function PipelineNodeDrawer({
   onClose: () => void;
   onChange: (step: PipelineStep) => void;
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [parameters, setParameters] = useState(() =>
     JSON.stringify(step.parameters, null, 2),
   );
   useEffect(() => setParameters(JSON.stringify(step.parameters, null, 2)), [step.id]);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
   const updateNumber = (name: string, value: number) =>
     onChange({ ...step, parameters: { ...step.parameters, [name]: value } });
   return (
@@ -3034,7 +3054,7 @@ function PipelineNodeDrawer({
       <aside className="node-drawer" role="dialog" aria-modal="true" aria-labelledby="node-drawer-title">
         <header>
           <div><span className="eyebrow">Pipeline node</span><h2 id="node-drawer-title">{step.node_type}</h2><code>{step.id}</code></div>
-          <button onClick={onClose} aria-label="Close node configuration">Close</button>
+          <button ref={closeRef} onClick={onClose} aria-label="Close node configuration">Close</button>
         </header>
         <Fact label="Status" value={immutable ? "Published · read only" : "Draft · editable"} />
         <label>Input<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
@@ -4571,6 +4591,13 @@ function CreateProject({
   const [skillId, setSkillId] = useState("");
   const [yaml, setYaml] = useState("");
   useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
+  useEffect(() => {
     void api
       .skills()
       .then((items) => {
@@ -4586,12 +4613,12 @@ function CreateProject({
   };
   return (
     <div className="modal-backdrop">
-      <div className="modal">
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="create-project-title">
         <span className="eyebrow">Validated Project schema</span>
-        <h2>Create Project</h2>
+        <h2 id="create-project-title">Create Project</h2>
         <label>
           Workspace ID
-          <input value={id} onChange={(event) => setId(event.target.value)} />
+          <input autoFocus value={id} onChange={(event) => setId(event.target.value)} />
         </label>
         <label>
           Starter Skill

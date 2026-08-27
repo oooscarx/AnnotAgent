@@ -12,7 +12,7 @@ Updated: 2026-08-27
 | 5 Run Workspace | Complete | `/runs/:runId` combines run controls, image context, visual Artifact preview, node timeline, detail, deep links, and Replay. |
 | 6 Review Integration | Complete | Review source context, bidirectional deep links, labeled bbox/crop lineage, notes and decisions are connected. |
 | 7 Reliability | Complete | URL/popstate restoration, SSE refetch/reconnect state, active Run/Batch locking, and retry recovery are implemented. |
-| 8 Usability | Pending | Existing accessibility primitives need a full guided-workspace pass. |
+| 8 Usability | Complete | Route focus, dialogs, keyboard selection, loading/retry, responsive breakpoints, zoom, and reduced motion pass browser checks. |
 | 9 Acceptance | Pending | Full release checks and manual tasks remain. |
 
 ## Existing capability inventory
@@ -99,3 +99,13 @@ Updated: 2026-08-27
 - Errors keep prior data visible and provide Retry plus Dismiss.
 - Status types are separated into Project Readiness, Workflow, Run, and Review unions.
 - Server 7 tests passed; Web 10 files/24 tests and production build passed.
+
+## Milestone 8 verification
+
+- Route changes focus the H1; skip link and named global/Build navigations remain available.
+- Node Drawer and Create Project dialog focus safely, expose dialog semantics, and close with Escape.
+- bbox/crop results cycle with arrow keys; Review retains undo/redo keyboard support.
+- First load and SSE state use live status text; request errors expose Retry and Dismiss.
+- In-app browser at 1024×768: `scrollWidth === innerWidth === 1024`.
+- In-app browser at 720×700 (desktop 200% zoom equivalent): `scrollWidth === innerWidth === 720`; sidebar becomes static top navigation.
+- Web 10 files/24 tests and production build passed.

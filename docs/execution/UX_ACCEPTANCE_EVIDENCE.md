@@ -39,6 +39,9 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 18 — PASS: Project state is refetched on initial load, SSE transitions, and SSE reconnect.
 - 19 — PASS: `deriveProjectRunView` locks Start for both active Run and active Batch; 2 tests pass.
 - 24 — PASS: distinct TypeScript unions and DTO fields represent Project, Workflow, Run, and Review state.
+- 25 — PASS: browser-measured 1024px document width has no horizontal overflow.
+- 26 — PASS: browser-measured 720px effective viewport (200% desktop zoom equivalent) has no horizontal overflow and keeps guided controls available.
+- 27 — PASS: route focus, skip link, native controls, dialog Escape, bbox arrows, and Review shortcuts cover the primary keyboard path.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -85,6 +88,13 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - `runState.test.ts` verifies backend Run and Batch restoration and duplicate-Start lock.
 - SSE lifecycle refetches authoritative `/api/projects` state on reconnect and open.
 - Server: 7 tests passed. Web: 10 files/24 tests and production build passed.
+
+## Milestone 8 — Usability and accessibility
+
+- Browser at 1024×768: five named navigation links, focused Home H1, no document overflow.
+- Browser at 720×700: static top navigation, no document overflow, Project → Build → Data remains operable.
+- Build DOM exposes four named step buttons and disabled corrupt-image reporting honestly.
+- Web: 10 files/24 tests and production build passed.
 
 ## Manual tasks
 
