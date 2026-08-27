@@ -15,6 +15,7 @@ import type {
   WorkflowCatalog,
   WorkflowDryRunReport,
   WorkflowVersionComparison,
+  WorkflowSuggestion,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -124,13 +125,7 @@ export const api = {
     advisor: "mock" | "llm" = "mock",
     target?: { task_id: string; label: string },
   ) =>
-    request<{
-      draft: WorkflowDraft;
-      rationale: string[];
-      warnings: string[];
-      alternatives: string[];
-      unresolved_model_bindings: string[];
-    }>("/api/workflow-drafts/suggest", {
+    request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
       body: JSON.stringify({
         project_id: projectId,

@@ -24,6 +24,10 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 19 — PASS at logic level: active server work produces `Open active run` and existing `deriveProjectRunView` locks Start; browser verification remains.
 - 6 — PASS: Build routes and shared navigation implement Data → Labels → Pipeline → Test & Publish.
 - 9 — PASS: Test & Publish first renders eight real result metrics before diagnostics and node traces.
+- 7 — PASS: default Pipeline view renders Shared Stages and independent Label Pipeline lanes.
+- 8 — PASS: each Shared Stage labels run frequency and Label reuse count.
+- 20 — PASS: Published Versions render read-only; editing is exposed only through Clone Version to Draft.
+- 21 — PASS: Historical Drafts and Version History are closed `<details>` by default.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -44,6 +48,12 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - Dry Run HTTP assertion verifies `summary.image_count`; label pipeline runtime derives Detection/Candidate/gate/usage totals from real trace artifacts.
 - Draft autosave uses the existing PATCH endpoint; Test, Publish, and Discard use existing persisted APIs.
 - Rust: application 14 and server 7 tests passed. Web: 10 files/21 tests and production build passed.
+
+## Milestone 4 — Pipeline UX
+
+- `WorkflowSuggestion` carries and serializes real controlled-Draft estimates; application assertions pass.
+- Advisor UI presents compare delta, rationale, bindings, estimates, warnings, unresolved items, and alternatives before Apply.
+- Core: 26 tests passed. Application: 14 tests passed. Web: 10 files/21 tests and production build passed.
 
 ## Manual tasks
 

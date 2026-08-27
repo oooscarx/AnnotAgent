@@ -2525,6 +2525,11 @@ impl LocalApplication {
             now,
         );
         draft.status = WorkflowDraftStatus::Suggested;
+        let estimated_model_calls_per_image = draft
+            .nodes
+            .iter()
+            .filter(|node| node.model_binding.is_some())
+            .count();
         Ok(WorkflowSuggestion {
             draft,
             rationale: vec![
@@ -2534,6 +2539,16 @@ impl LocalApplication {
                 "Shared model stages are compiled once and referenced by Label Pipelines rather than duplicated."
                     .to_owned(),
             ],
+            estimated_model_calls_per_image,
+            estimated_latency_ms: Some(estimated_model_calls_per_image as u64 * 1_200),
+            estimated_cost_tier: if estimated_model_calls_per_image <= 1 {
+                "low"
+            } else if estimated_model_calls_per_image <= 3 {
+                "medium"
+            } else {
+                "high"
+            }
+            .to_owned(),
             unresolved_model_bindings: Vec::new(),
             warnings: vec![
                 "This suggestion is an editable Draft. Dry Run and static validation are required before publish."
@@ -4568,6 +4583,12 @@ export:
             )
             .expect("controlled Label Pipeline suggestion");
         assert_eq!(suggestion.draft.status, WorkflowDraftStatus::Suggested);
+        assert!(suggestion.estimated_model_calls_per_image > 0);
+        assert!(suggestion.estimated_latency_ms.is_some());
+        assert!(matches!(
+            suggestion.estimated_cost_tier.as_str(),
+            "low" | "medium" | "high"
+        ));
         let composition = suggestion
             .draft
             .label_pipeline

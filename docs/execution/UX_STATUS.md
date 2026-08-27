@@ -8,7 +8,7 @@ Updated: 2026-08-27
 | 1 Global IA | Complete | Five URL-driven entries; Pipeline is project-scoped; Models and Capabilities are Settings sections. |
 | 2 Project Workspace | Complete | Server-backed readiness, blockers, counts, versions, and active/last run drive a persistent Project overview. |
 | 3 Build Flow | Complete | URL-backed Data, Labels, Pipeline, and Test & Publish steps use real APIs and preserve server state. |
-| 4 Pipeline UX | Pending | Label pipeline UI exists; hierarchy and version focus need restructuring. |
+| 4 Pipeline UX | Complete | Guided shared/Label lanes, node Drawer, controlled Advisor proposal, same-definition graph, and focused versions are implemented. |
 | 5 Run Workspace | Pending | Artifact Inspector is currently under Workflows. |
 | 6 Review Integration | Pending | Review does not preserve bidirectional run/node context. |
 | 7 Reliability | Pending | URL and active-run restoration are incomplete. |
@@ -62,3 +62,12 @@ Updated: 2026-08-27
 - Dry Run report DTO now includes real aggregate image, DetectionSet, AnnotationCandidateSet, gate, failure, token, duration, and cost data.
 - Test & Publish accepts 1–10 image indices, blocks Publish on invalid reports, and archives discarded drafts.
 - Application tests: 14 passed; Server tests: 7 passed; Web: 10 files/21 tests and production build passed.
+
+## Milestone 4 verification
+
+- Shared stages say “runs once per image” and compute their Label use count from the same composition.
+- Node cards expose binding, typed input/output, threshold and state; complete configuration is in a modal Drawer.
+- Advanced graph serializes the same `label_pipeline` object used by guided lanes.
+- Advisor server DTO includes per-image model calls, estimated latency, and cost tier; UI requires explicit Apply to Draft.
+- Current Draft and Default Published Version are primary; Historical Drafts and Version History are collapsed.
+- Core 26 tests, Application 14 tests, Web 10 files/21 tests, and production build passed.

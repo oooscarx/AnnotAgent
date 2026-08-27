@@ -273,6 +273,17 @@ export interface WorkflowDraft {
   updated_at: string;
 }
 
+export interface WorkflowSuggestion {
+  draft: WorkflowDraft;
+  rationale: string[];
+  estimated_model_calls_per_image: number;
+  estimated_latency_ms?: number;
+  estimated_cost_tier: "low" | "medium" | "high" | string;
+  unresolved_model_bindings: string[];
+  warnings: string[];
+  alternatives: string[];
+}
+
 export type PipelineArtifactType =
   | "image"
   | "detection_set"

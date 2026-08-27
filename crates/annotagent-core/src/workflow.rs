@@ -251,6 +251,9 @@ pub struct WorkflowValidationReport {
 pub struct WorkflowSuggestion {
     pub draft: WorkflowDraft,
     pub rationale: Vec<String>,
+    pub estimated_model_calls_per_image: usize,
+    pub estimated_latency_ms: Option<u64>,
+    pub estimated_cost_tier: String,
     pub unresolved_model_bindings: Vec<String>,
     pub warnings: Vec<String>,
     pub alternatives: Vec<String>,
@@ -639,6 +642,10 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
             Vec::new()
         };
         let now = Utc::now();
+        let estimated_model_calls_per_image = nodes
+            .iter()
+            .filter(|node| node.model_binding.is_some())
+            .count();
         WorkflowSuggestion {
             draft: WorkflowDraft {
                 schema_version: WORKFLOW_SCHEMA_VERSION,
@@ -663,6 +670,16 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                     enabled_skills.join(", ")
                 ),
             ],
+            estimated_model_calls_per_image,
+            estimated_latency_ms: Some(estimated_model_calls_per_image as u64 * 1_200),
+            estimated_cost_tier: if estimated_model_calls_per_image <= 1 {
+                "low"
+            } else if estimated_model_calls_per_image <= 3 {
+                "medium"
+            } else {
+                "high"
+            }
+            .to_owned(),
             unresolved_model_bindings,
             warnings,
             alternatives: vec![

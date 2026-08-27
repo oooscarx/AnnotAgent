@@ -42,6 +42,7 @@ import type {
   WorkflowDryRunReport,
   WorkflowVersion,
   WorkflowVersionComparison,
+  WorkflowSuggestion,
 } from "./types";
 
 const PAGE_TITLES: Record<ProductPage | "project" | "build", string> = {
@@ -1403,6 +1404,7 @@ function WorkflowsPage({
   const [report, setReport] = useState<WorkflowDryRunReport>();
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [comparison, setComparison] = useState<WorkflowVersionComparison>();
+  const [advisorProposal, setAdvisorProposal] = useState<WorkflowSuggestion>();
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
@@ -1500,18 +1502,23 @@ function WorkflowsPage({
           ),
         )
       : onError("Select a Project before creating a Workflow.");
-  const suggest = () =>
-    activeProjectId
-      ? finish(api.suggestWorkflow(activeProjectId, advisorKind))
-      : onError("Select a Project before suggesting a Workflow.");
+  const runAdvisor = (target?: { task_id: string; label: string }) => {
+    if (!activeProjectId)
+      return onError("Select a Project before suggesting a Pipeline.");
+    setBusy(true);
+    void api
+      .suggestWorkflow(activeProjectId, advisorKind, target)
+      .then((proposal) => {
+        setAdvisorProposal(proposal);
+        return refreshDrafts();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const suggest = () => runAdvisor();
   const suggestLabelPipeline = () =>
-    activeProjectId && targetTaskId && targetLabel
-      ? finish(
-          api.suggestWorkflow(activeProjectId, advisorKind, {
-            task_id: targetTaskId,
-            label: targetLabel,
-          }),
-        )
+    targetTaskId && targetLabel
+      ? runAdvisor({ task_id: targetTaskId, label: targetLabel })
       : onError("Choose a Project task and target Label first.");
   const targetTask = activeProject?.annotation_schema.find(
     (task) => task.id === targetTaskId,
@@ -1812,6 +1819,36 @@ function WorkflowsPage({
           </button>
         </div>
       </div>
+      {advisorProposal && (
+        <Panel title="Proposed changes" eyebrow="Advisor output · Draft only">
+          <div className="advisor-proposal-grid">
+            <div>
+              <h3>Suggested steps</h3>
+              <ol>
+                {advisorProposal.draft.nodes.map((node) => (
+                  <li key={node.id}>{node.node_type} <small>{node.model_binding ?? "Core"}</small></li>
+                ))}
+              </ol>
+            </div>
+            <div className="fact-grid">
+              <Fact label="Model calls / image" value={advisorProposal.estimated_model_calls_per_image} />
+              <Fact label="Estimated latency" value={advisorProposal.estimated_latency_ms ? `${advisorProposal.estimated_latency_ms} ms` : "Unresolved"} />
+              <Fact label="Cost tier" value={advisorProposal.estimated_cost_tier} />
+              <Fact label="Compared with current" value={draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
+            </div>
+          </div>
+          <TagGroup title="Why" values={advisorProposal.rationale} />
+          <TagGroup title="Unresolved bindings" values={advisorProposal.unresolved_model_bindings} />
+          <TagGroup title="Warnings" values={advisorProposal.warnings} />
+          <TagGroup title="Alternatives" values={advisorProposal.alternatives} />
+          <div className="button-row">
+            <button className="primary" onClick={() => setDraft(advisorProposal.draft)}>Apply to Draft</button>
+            <button onClick={() => setAdvisorProposal(undefined)}>Dismiss proposal</button>
+          </div>
+        </Panel>
+      )}
+      <details className="panel version-history">
+        <summary>Version History</summary>
       <div className="toolbar-panel">
         <div>
           <span className="eyebrow">Version comparison</span>
@@ -1863,39 +1900,47 @@ function WorkflowsPage({
           </small>
         )}
       </div>
+      </details>
       <div className="workflow-layout">
         <aside className="panel workflow-list">
-          <span className="eyebrow">Workflow Drafts</span>
-          <h2>{drafts.length} drafts</h2>
-          {drafts.map((item) => (
+          <span className="eyebrow">Current Draft</span>
+          <h2>{draft ? draft.name : "No Current Draft"}</h2>
+          {draft && (
             <button
-              key={item.id}
-              className={draft?.id === item.id ? "active" : ""}
-              onClick={() => {
-                setDraft(item);
-                setReport(undefined);
-              }}
+              key={draft.id}
+              className="active"
             >
               <span>
-                <strong>{item.name}</strong>
+                <strong>{draft.name}</strong>
                 <small>
-                  {projects.find((project) => project.id === item.project_id)
-                    ?.name ?? item.project_id}
+                  {projects.find((project) => project.id === draft.project_id)
+                    ?.name ?? draft.project_id}
                 </small>
               </span>
-              <Status status={item.status} />
+              <Status status={draft.status} />
             </button>
-          ))}
+          )}
           {drafts.length === 0 && (
             <Empty
               title="No drafts"
               detail="Create a blank Draft, use a template, or ask the registry-bound Advisor."
             />
           )}
+          {drafts.length > 1 && (
+            <details className="draft-history">
+              <summary>Historical Drafts ({drafts.filter((item) => item.id !== draft?.id).length})</summary>
+              {drafts.filter((item) => item.id !== draft?.id).map((item) => (
+                <button key={item.id} onClick={() => { setDraft(item); setReport(undefined); }}>
+                  <span><strong>{item.name}</strong><small>{item.updated_at}</small></span>
+                  <Status status={item.status} />
+                </button>
+              ))}
+            </details>
+          )}
           <span className="eyebrow workflow-published-title">
-            Published Workflow Versions
+            Default Published Version
           </span>
-          {entries.map(({ project, workflow }) => (
+          {entries.filter(({ workflow }) => workflow.is_default).map(({ project, workflow }) => (
             <button
               key={`${project.id}-${workflow.workflow_id}-${workflow.version}`}
               onClick={() => {
@@ -2336,6 +2381,10 @@ function LabelPipelineEditor({
     composition?.label_pipelines[0]?.id ?? "",
   );
   const [catalogNode, setCatalogNode] = useState("core.crop");
+  const [drawer, setDrawer] = useState<
+    | { scope: "shared"; stageIndex: number; stepIndex: number }
+    | { scope: "label"; pipelineId: string; stepIndex: number }
+  >();
   if (!composition) return null;
   const selected =
     composition.label_pipelines.find((pipeline) => pipeline.id === pipelineId) ??
@@ -2677,6 +2726,7 @@ function LabelPipelineEditor({
         <section className="pipeline-lane shared" key={stage.id}>
           <header>
             <strong>{stage.name}</strong>
+            <span>Runs once per image · used by {composition.label_pipelines.filter((pipeline) => JSON.stringify(pipeline.steps).includes(stage.id) || JSON.stringify(pipeline.steps).includes(stage.steps[0]?.id ?? "")).length || composition.label_pipelines.length} Labels</span>
             <code>{stage.id}</code>
           </header>
           <div className="pipeline-step-row">
@@ -2687,6 +2737,7 @@ function LabelPipelineEditor({
                 catalog={catalog}
                 immutable={immutable}
                 shared
+                onConfigure={() => setDrawer({ scope: "shared", stageIndex, stepIndex })}
                 onChange={(next) => updateSharedStep(stageIndex, stepIndex, next)}
               />
             ))}
@@ -2781,6 +2832,7 @@ function LabelPipelineEditor({
                 step={step}
                 catalog={catalog}
                 immutable={immutable}
+                onConfigure={() => setDrawer({ scope: "label", pipelineId: pipeline.id, stepIndex })}
                 onChange={(next) =>
                   updatePipelineStep(pipeline.id, stepIndex, next)
                 }
@@ -2790,6 +2842,28 @@ function LabelPipelineEditor({
           </div>
         </section>
       ))}
+      <details className="advanced-graph">
+        <summary>Advanced graph</summary>
+        <p>This typed graph is rendered directly from the same Current Draft used by the guided lanes.</p>
+        <pre>{JSON.stringify(composition, null, 2)}</pre>
+      </details>
+      {drawer && (() => {
+        const step = drawer.scope === "shared"
+          ? composition.shared_stages[drawer.stageIndex]?.steps[drawer.stepIndex]
+          : composition.label_pipelines.find((pipeline) => pipeline.id === drawer.pipelineId)?.steps[drawer.stepIndex];
+        if (!step) return null;
+        return (
+          <PipelineNodeDrawer
+            step={step}
+            catalog={catalog}
+            immutable={immutable}
+            onClose={() => setDrawer(undefined)}
+            onChange={(next) => drawer.scope === "shared"
+              ? updateSharedStep(drawer.stageIndex, drawer.stepIndex, next)
+              : updatePipelineStep(drawer.pipelineId, drawer.stepIndex, next)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -2801,6 +2875,7 @@ function PipelineStepCard({
   shared = false,
   onChange,
   onRemove,
+  onConfigure,
 }: {
   step: PipelineStep;
   catalog?: WorkflowCatalog;
@@ -2808,6 +2883,7 @@ function PipelineStepCard({
   shared?: boolean;
   onChange: (step: PipelineStep) => void;
   onRemove?: () => void;
+  onConfigure: () => void;
 }) {
   const parameterNumber = (name: string) =>
     typeof step.parameters[name] === "number"
@@ -2827,6 +2903,12 @@ function PipelineStepCard({
         {" → "}
         {Object.values(step.outputs).join(", ") || "terminal"}
       </small>
+      <div className="pipeline-card-summary">
+        <span>Model <strong>{step.model_binding?.model_id ?? "Core"}</strong></span>
+        <span>Threshold <strong>{String(step.parameters.threshold ?? step.parameters.minimum_confidence ?? "—")}</strong></span>
+        <Status status={immutable ? "published" : "valid"} />
+      </div>
+      <button onClick={onConfigure}>{immutable ? "Inspect node" : "Configure node"}</button>
       {Object.entries(step.inputs).map(([inputName, source]) => (
         <div className="form-grid" key={inputName}>
           <label>
@@ -2990,6 +3072,59 @@ function PipelineStepCard({
         </button>
       )}
     </article>
+  );
+}
+
+function PipelineNodeDrawer({
+  step,
+  catalog,
+  immutable,
+  onClose,
+  onChange,
+}: {
+  step: PipelineStep;
+  catalog?: WorkflowCatalog;
+  immutable: boolean;
+  onClose: () => void;
+  onChange: (step: PipelineStep) => void;
+}) {
+  const [parameters, setParameters] = useState(() =>
+    JSON.stringify(step.parameters, null, 2),
+  );
+  useEffect(() => setParameters(JSON.stringify(step.parameters, null, 2)), [step.id]);
+  const updateNumber = (name: string, value: number) =>
+    onChange({ ...step, parameters: { ...step.parameters, [name]: value } });
+  return (
+    <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <aside className="node-drawer" role="dialog" aria-modal="true" aria-labelledby="node-drawer-title">
+        <header>
+          <div><span className="eyebrow">Pipeline node</span><h2 id="node-drawer-title">{step.node_type}</h2><code>{step.id}</code></div>
+          <button onClick={onClose} aria-label="Close node configuration">Close</button>
+        </header>
+        <Fact label="Status" value={immutable ? "Published · read only" : "Draft · editable"} />
+        <label>Input<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
+        <label>Output<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
+        {step.model_binding && (
+          <label>Model binding<select value={step.model_binding.model_id} disabled={immutable} onChange={(event) => onChange({ ...step, model_binding: { ...step.model_binding!, model_id: event.target.value } })}>
+            {(catalog?.model_registry ?? []).filter((model) => model.capabilities.includes(step.model_binding!.capability)).map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
+          </select></label>
+        )}
+        {step.node_type === "core.confidence_gate" && <label>Confidence threshold<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.threshold ?? 0)} disabled={immutable} onChange={(event) => updateNumber("threshold", Number(event.target.value))} /></label>}
+        {step.node_type === "core.filter" && <label>Minimum confidence<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.minimum_confidence ?? 0)} disabled={immutable} onChange={(event) => updateNumber("minimum_confidence", Number(event.target.value))} /></label>}
+        {step.node_type === "core.crop" && <label>Crop padding<input type="number" min="0" max="0.5" step="0.01" value={Number(step.parameters.padding ?? 0)} disabled={immutable} onChange={(event) => updateNumber("padding", Number(event.target.value))} /></label>}
+        <label>Fallback<input value={step.fallback ?? ""} disabled={immutable} placeholder="No fallback" onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
+        <label>Parameters and class mapping<textarea value={parameters} disabled={immutable} onChange={(event) => {
+          setParameters(event.target.value);
+          try { onChange({ ...step, parameters: JSON.parse(event.target.value) as Record<string, unknown> }); } catch { /* Keep editing until JSON is valid. */ }
+        }} /></label>
+        <details><summary>Advanced execution</summary>
+          <Fact label="Kind" value={step.kind} />
+          <Fact label="Retries" value={step.retry_policy.max_attempts} />
+          <Fact label="Validators" value={step.validators.join(", ") || "None"} />
+          <Fact label="Refiners" value={step.refiners.join(", ") || "None"} />
+        </details>
+      </aside>
+    </div>
   );
 }
 
