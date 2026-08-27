@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   artifactCrops,
+  artifactCropMarks,
+  artifactDetectionMarks,
   artifactRects,
   pipelineNodeKind,
   pipelineNodeOutput,
@@ -53,5 +55,49 @@ describe("Label Pipeline product helpers", () => {
     expect(artifactCrops([crop])).toEqual([
       { x: 0.05, y: 0.1, width: 0.5, height: 0.6 },
     ]);
+  });
+
+  it("keeps bbox labels, confidence, and Crop parent linkage", () => {
+    const detection: PipelineArtifact = {
+      kind: "detection_set",
+      artifact: {
+        reference: { artifact_id: "set-1", source_node: "detector" },
+        detections: [
+          {
+            id: "ball-1",
+            class_id: "football",
+            label: "football",
+            confidence: 0.93,
+            rect: [0.1, 0.2, 0.3, 0.4],
+          },
+        ],
+      },
+    };
+    const crop: PipelineArtifact = {
+      kind: "crop_set",
+      artifact: {
+        reference: { artifact_id: "crops-1", source_node: "crop" },
+        crops: [
+          {
+            id: "crop:ball-1",
+            parent: { artifact_id: "set-1", item_id: "ball-1" },
+            rect: [0.1, 0.2, 0.3, 0.4],
+          },
+        ],
+      },
+    };
+    const detections = artifactDetectionMarks([detection]);
+    expect(detections[0]).toMatchObject({
+      id: "ball-1",
+      label: "football",
+      confidence: 0.93,
+      sourceNode: "detector",
+    });
+    expect(artifactCropMarks([crop], detections)[0]).toMatchObject({
+      parentId: "ball-1",
+      parentArtifact: "set-1",
+      label: "football",
+      sourceNode: "crop",
+    });
   });
 });

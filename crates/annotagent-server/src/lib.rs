@@ -1624,6 +1624,11 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
         .list_projects()
         .map_err(ApiError::internal)?;
     for run in state.application.list_runs().map_err(ApiError::internal)? {
+        let summary = run_summary(state, run.clone())?;
+        let inspection = state
+            .application
+            .inspect_run_pipeline_artifacts(run.id)
+            .ok();
         let project_id = projects.iter().find_map(|project| {
             let path = state.application.project_path(&project.id).ok()?;
             (Some(stable_project_id(path.parent()?)) == run.project_id)
@@ -1636,12 +1641,32 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
             .map_err(ApiError::internal)?
         {
             if annotation.review_status == ReviewStatus::NeedsReview {
+                let source_artifact_id = annotation.provenance.artifact_ids.first().copied();
+                let source_node = inspection.as_ref().and_then(|inspection| {
+                    inspection.nodes.iter().find_map(|node| {
+                        node.outputs
+                            .iter()
+                            .any(|artifact| {
+                                source_artifact_id.is_some_and(|id| {
+                                    artifact.reference().artifact_id == id.to_string()
+                                })
+                            })
+                            .then_some(node.node_id.as_str())
+                    })
+                });
                 reviews.push(json!({
                     "id": annotation.id,
                     "run_id": run.id,
                     "project_id": project_id,
                     "project_name": run.project_name,
-                    "annotation": annotation
+                    "annotation": annotation,
+                    "workflow_id": inspection.as_ref().map(|value| value.workflow_id.as_str()),
+                    "workflow_version": inspection.as_ref().map(|value| value.workflow_version).unwrap_or_else(|| summary.workflow_version.parse().unwrap_or_default()),
+                    "source_node": source_node.or(summary.current_node.as_deref()),
+                    "source_artifact_id": source_artifact_id,
+                    "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !summary.validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
+                    "confidence": annotation.confidence,
+                    "validation_issues": summary.validation_issue_codes,
                 }));
             }
         }
@@ -1662,15 +1687,11 @@ async fn get_review(
     AxumPath(review_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
     let id = parse_annotation_id(&review_id)?;
-    let (run_id, annotation) = state
-        .application
-        .store()
-        .find_annotation(id)
-        .map_err(ApiError::internal)?
+    let item = reviews(&state)?
+        .into_iter()
+        .find(|item| item["id"] == json!(id))
         .ok_or_else(|| ApiError::not_found("review was not found"))?;
-    Ok(Json(
-        json!({"id": id, "run_id": run_id, "annotation": annotation}),
-    ))
+    Ok(Json(item))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2525,6 +2546,10 @@ mod tests {
             response_json(request(&service, axum::http::Method::GET, "/api/reviews", None).await)
                 .await;
         let review_id = reviews["reviews"][0]["id"].as_str().expect("review id");
+        assert_eq!(reviews["reviews"][0]["run_id"], json!(run_id));
+        assert!(reviews["reviews"][0]["workflow_version"].is_number());
+        assert!(reviews["reviews"][0]["review_reason"].is_string());
+        assert!(reviews["reviews"][0]["validation_issues"].is_array());
         let import_directory = temp.path().join("review-demo/import");
         std::fs::create_dir_all(&import_directory).expect("import directory");
         let import_file = import_directory.join("labels.json");

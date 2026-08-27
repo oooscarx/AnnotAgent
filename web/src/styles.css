@@ -84,6 +84,18 @@ code, pre { font-family: var(--aa-font-mono); }
 .crop-preview-list.enlarged { min-height: 360px; align-content: start; overflow: auto; }
 .crop-preview-list.enlarged svg { transform-origin: top left; transition: transform .16s ease; }
 .artifact-choice { margin-top: 16px; }
+.bbox-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.bbox-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+.bbox-legend i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--aa-border); }
+.artifact-image-stage svg g { cursor: pointer; }
+.artifact-image-stage svg g rect { fill: transparent; stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+.artifact-image-stage svg g.selected rect { fill: color-mix(in srgb, var(--aa-primary) 16%, transparent); stroke-width: 4; }
+.artifact-image-stage svg text { fill: white; stroke: rgba(0, 0, 0, .8); stroke-width: .55px; paint-order: stroke; font-size: 3.2px; font-weight: 800; pointer-events: none; }
+.crop-preview-list.enlarged button { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(110px, .7fr); gap: 10px; text-align: left; overflow: hidden; }
+.crop-preview-list.enlarged button.selected { border-color: var(--aa-primary); box-shadow: 0 0 0 2px var(--aa-primary-soft); }
+.crop-preview-list.enlarged button svg { width: 100%; min-height: 150px; }
+.crop-preview-list.enlarged button > span { display: grid; align-content: start; gap: 4px; }
+.review-source-context { display: grid; gap: 8px; padding: 12px; margin-bottom: 14px; border: 1px solid var(--aa-border); border-radius: 10px; background: var(--aa-surface-raised); }
 .sidebar-foot { margin-top: auto; border-top: 1px solid var(--aa-border); padding: 18px 10px 4px; color: var(--aa-text-muted); font: 500 11px var(--aa-font-sans); }
 .sidebar-foot small { display: block; margin-top: 8px; color: var(--aa-text-muted); text-transform: none; overflow: hidden; text-overflow: ellipsis; }
 .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--aa-success); box-shadow: 0 0 0 4px var(--aa-success-soft); margin-right: 8px; }

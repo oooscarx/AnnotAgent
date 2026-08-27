@@ -11,6 +11,7 @@ import {
   isCatalogModel,
 } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
+import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
 import { deriveProjectNextAction } from "./projectWorkspace";
 import {
@@ -340,6 +341,8 @@ export function App() {
             project={selectedProject}
             projects={projects}
             events={events}
+            route={route}
+            onNavigate={navigate}
             onError={setError}
           />
         )}
@@ -3445,6 +3448,7 @@ function RunDetailWorkspace({
   const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
   const [replay, setReplay] = useState<NodeReplayReport>();
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [runReview, setRunReview] = useState<ReviewItem>();
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -3461,6 +3465,7 @@ function RunDetailWorkspace({
       }).catch((error: Error) => onError(error.message));
     if (project)
       void api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
+    void api.reviews().then((value) => setRunReview(value.reviews.find((review) => review.run_id === run.id))).catch((error: Error) => onError(error.message));
   }, [run.id, project?.id]);
   const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
   const selectedArtifacts = selectedNode
@@ -3493,13 +3498,13 @@ function RunDetailWorkspace({
       <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← All runs</button>
       <div className="toolbar-panel run-detail-header">
         <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{run.artifact_count} Artifacts</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
-        <div className="button-row"><button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
+        <div className="button-row">{runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Open review item</button>}<button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
       </div>
       <div className="run-workspace">
         <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
           <div>{visibleImages.filter((image) => inspection?.image_index === undefined || image.index === inspection.image_index).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setContext({ image: image.index })}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{run.status}</small></span></button>)}</div>
         </aside>
-        <main className="panel run-visual-workspace"><span className="eyebrow">Result preview</span>{inspection && selectedNode ? <RunArtifactCanvas inspection={inspection} artifacts={selectedArtifacts.length ? selectedArtifacts : selectedNode.outputs} imageIndex={selectedImageIndex} /> : <Empty title="No replayable Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint." : "This Run has no Pipeline checkpoint."} />}</main>
+        <main className="panel run-visual-workspace"><span className="eyebrow">Result preview</span>{inspection && selectedNode ? <RunArtifactCanvas inspection={inspection} project={project} artifacts={[...selectedNode.inputs, ...(selectedArtifacts.length ? selectedArtifacts : selectedNode.outputs)]} imageIndex={selectedImageIndex} /> : <Empty title="No replayable Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint." : "This Run has no Pipeline checkpoint."} />}</main>
         <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong>{node.operation}</strong><small>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
       </div>
       {selectedNode && (
@@ -3526,19 +3531,138 @@ function pipelineArtifactIdentity(artifact: PipelineArtifact, index: number): st
   return `${artifact.kind}-${index}`;
 }
 
-function RunArtifactCanvas({ inspection, artifacts, imageIndex }: { inspection: RunNodeArtifactInspection; artifacts: PipelineArtifact[]; imageIndex: number }) {
+type ArtifactMark = ArtifactRect & {
+  id: string;
+  label: string;
+  confidence?: number;
+  color: string;
+  parentId?: string;
+  parentArtifact?: string;
+  sourceNode?: string;
+};
+
+function artifactVisualContext(project?: ProjectSummary) {
+  const schemaVisuals: Record<string, LabelVisualMapping> = {};
+  project?.annotation_schema.flatMap((task) => task.labels).forEach((label, index) => {
+    schemaVisuals[label] = { slot: ((index % 8) + 1) as LabelVisualMapping["slot"] };
+  });
+  return {
+    projectOverrides: project?.annotation_visuals as
+      | Record<string, LabelVisualMapping>
+      | undefined,
+    skillProfiles: visualProfilesForSkills(project?.enabled_skills.map((skill) => skill.id) ?? []),
+    schemaVisuals,
+  };
+}
+
+function markColor(label: string, project?: ProjectSummary): string {
+  const visual = annotationVisual(
+    {
+      id: "preview",
+      image_id: "preview",
+      task_id: label,
+      label,
+      value: { kind: "bounding_box", rect: [0, 0, 1, 1] },
+      attributes: {},
+      source: "model",
+      review_status: "draft",
+      provenance: {},
+      created_at: "",
+    },
+    artifactVisualContext(project),
+  );
+  return annotationColor(visual.slot);
+}
+
+export function artifactDetectionMarks(
+  artifacts: PipelineArtifact[],
+  project?: ProjectSummary,
+): ArtifactMark[] {
+  return artifacts.flatMap((artifact) => {
+    if (artifact.kind !== "detection_set") return [];
+    const detections = artifact.artifact.detections;
+    const reference = artifact.artifact.reference as Record<string, unknown> | undefined;
+    if (!Array.isArray(detections)) return [];
+    return detections.flatMap((value, index) => {
+      if (!value || typeof value !== "object") return [];
+      const detection = value as Record<string, unknown>;
+      const rect = parseArtifactRect(detection.rect);
+      if (!rect) return [];
+      const label = typeof detection.label === "string"
+        ? detection.label
+        : typeof detection.class_id === "string"
+          ? detection.class_id
+          : "detection";
+      return [{
+        ...rect,
+        id: typeof detection.id === "string" ? detection.id : `detection-${index}`,
+        label,
+        confidence: typeof detection.confidence === "number" ? detection.confidence : undefined,
+        color: markColor(label, project),
+        parentArtifact: typeof reference?.artifact_id === "string" ? reference.artifact_id : undefined,
+        sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,
+      }];
+    });
+  });
+}
+
+export function artifactCropMarks(
+  artifacts: PipelineArtifact[],
+  detections: ArtifactMark[],
+): ArtifactMark[] {
+  return artifacts.flatMap((artifact) => {
+    if (artifact.kind !== "crop_set") return [];
+    const crops = artifact.artifact.crops;
+    const reference = artifact.artifact.reference as Record<string, unknown> | undefined;
+    if (!Array.isArray(crops)) return [];
+    return crops.flatMap((value, index) => {
+      if (!value || typeof value !== "object") return [];
+      const crop = value as Record<string, unknown>;
+      const rect = parseArtifactRect(crop.rect);
+      if (!rect) return [];
+      const parent = crop.parent as Record<string, unknown> | undefined;
+      const parentId = typeof parent?.item_id === "string" ? parent.item_id : undefined;
+      const detection = detections.find((item) => item.id === parentId);
+      return [{
+        ...rect,
+        id: typeof crop.id === "string" ? crop.id : `crop-${index}`,
+        parentId,
+        label: detection?.label ?? "crop",
+        confidence: detection?.confidence,
+        color: detection?.color ?? markColor("crop"),
+        parentArtifact: typeof parent?.artifact_id === "string" ? parent.artifact_id : undefined,
+        sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,
+      }];
+    });
+  });
+}
+
+function RunArtifactCanvas({ inspection, project, artifacts, imageIndex }: { inspection: RunNodeArtifactInspection; project?: ProjectSummary; artifacts: PipelineArtifact[]; imageIndex: number }) {
   const imageUrl = `/api/projects/${inspection.project_id}/images/${imageIndex}/content`;
-  const rects = artifactRects(artifacts);
-  const crops = artifactCrops(artifacts);
+  const detections = artifactDetectionMarks(artifacts, project);
+  const crops = artifactCropMarks(artifacts, detections);
   const [mode, setMode] = useState<"image" | "crops">("image");
   const [zoom, setZoom] = useState(1);
+  const [selectedId, setSelectedId] = useState(detections[0]?.id ?? crops[0]?.parentId ?? "");
+  useEffect(() => {
+    if (![...detections.map((item) => item.id), ...crops.map((item) => item.parentId)].includes(selectedId))
+      setSelectedId(detections[0]?.id ?? crops[0]?.parentId ?? "");
+  }, [artifacts]);
+  const selectOffset = (offset: number) => {
+    const ids = detections.map((item) => item.id);
+    if (!ids.length) return;
+    const current = Math.max(0, ids.indexOf(selectedId));
+    setSelectedId(ids[(current + offset + ids.length) % ids.length]);
+  };
+  const legend = [...new Map(detections.map((item) => [item.label, item])).values()];
   return (
-    <div className="run-artifact-canvas">
+    <div className="run-artifact-canvas" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle"><button className={mode === "image" ? "active" : ""} onClick={() => setMode("image")}>Image</button><button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crops ({crops.length})</button><label>Zoom <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label><span>{Math.round(zoom * 100)}%</span></div>
+      {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
       {mode === "image" ? (
-        <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt="Original Run input" /><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{rects.map((rect, index) => <rect key={`${rect.x}-${rect.y}-${index}`} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} />)}</svg></div></div>
+        <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt="Original Run input" /><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label} ${rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)} percent`}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label} {rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)}%`}</text></g>)}</svg></div></div>
       ) : (
-        <div className="crop-preview-list enlarged">{crops.map((crop, index) => <svg style={{ transform: `scale(${zoom})` }} key={`${crop.x}-${crop.y}-${index}`} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg>)}</div>
+        <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? "Unknown"}</small><small>Source: {crop.sourceNode ?? "Unknown"}</small></span></button>)}</div>
       )}
     </div>
   );
@@ -3548,15 +3672,19 @@ function ReviewPage({
   project,
   projects,
   events,
+  route,
+  onNavigate,
   onError,
 }: {
   project?: ProjectSummary;
   projects: ProjectSummary[];
   events: RunEvent[];
+  route: Extract<WorkspaceRoute, { kind: "review" }>;
+  onNavigate: (path: string, replace?: boolean) => void;
   onError: (value: string) => void;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(route.reviewItemId ?? "");
   const [draft, setDraft] = useState<Annotation>();
   const [past, setPast] = useState<Annotation[]>([]);
   const [future, setFuture] = useState<Annotation[]>([]);
@@ -3567,6 +3695,7 @@ function ReviewPage({
   const [reasonOptions, setReasonOptions] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
+  useEffect(() => setSelectedId(route.reviewItemId ?? ""), [route.reviewItemId]);
   const visibleReviews = project
     ? reviews.filter(
         (review) =>
@@ -3594,7 +3723,7 @@ function ReviewPage({
             )
           : value.reviews[0];
         if (!value.reviews.some((review) => review.id === selectedId) && first)
-          setSelectedId(first.id);
+          onNavigate(`/review/${first.id}`, true);
       })
       .catch((error: Error) => onError(error.message));
   useEffect(() => {
@@ -3751,7 +3880,10 @@ function ReviewPage({
               key={review.id}
               aria-pressed={selected?.id === review.id}
               className={selected?.id === review.id ? "active" : ""}
-              onClick={() => setSelectedId(review.id)}
+              onClick={() => {
+                setSelectedId(review.id);
+                onNavigate(`/review/${review.id}`);
+              }}
             >
               <span aria-hidden="true">
                 {review.annotation.label?.slice(0, 2).toUpperCase() ?? "?"}
@@ -3844,6 +3976,17 @@ function ReviewPage({
         <h2>{draft?.label ?? "No selection"}</h2>
         {draft && (
           <>
+            {selected && (
+              <div className="review-source-context">
+                <Fact label="Source Run" value={selected.run_id.slice(0, 8)} />
+                <Fact label="Workflow Version" value={selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`} />
+                <Fact label="Source Node" value={selected.source_node ?? "Unknown"} />
+                <Fact label="Review reason" value={selected.review_reason} />
+                <Fact label="Confidence" value={`${Math.round((selected.confidence ?? selected.annotation.confidence ?? 0) * 100)}%`} />
+                <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
+                <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+              </div>
+            )}
             <label>
               Label
               <input

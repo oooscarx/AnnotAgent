@@ -31,6 +31,10 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 10 — PASS: Artifact inspection is rendered only inside Run Detail (and later Review context), not Workflow.
 - 11 — PASS: opening a Run loads its checkpoint; there is no manual Run-ID field.
 - 16 — PASS at route level: image/node/artifact query parsing has unit coverage; browser refresh verification remains Milestone 7.
+- 12 — PASS: SVG bbox groups visibly render Label and confidence text.
+- 13 — PASS: `artifactDetectionMarks` and `artifactCropMarks` join on parent item identity; UI shares selection both directions.
+- 14 — PASS: Review `Open run context` includes source node and Artifact.
+- 15 — PASS: Run Detail fetches matching queue item and exposes `Open review item`.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -63,6 +67,13 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - `navigation.test.ts` restores `/runs/:runId?image=&node=&artifact=` context.
 - Run Detail exposes real status/version/duration/usage/cost, image browser, overlay/crop modes, zoom, node timeline, error, input/output/config, model usage, controls, and Replay.
 - Server artifact/Replay suite: 7 tests passed. Web: 10 files/22 tests and production build passed.
+
+## Milestone 6 — Review Integration
+
+- HTTP Review assertions cover source Run, Workflow Version, reason, and validation issue array.
+- `labelPipelineUi.test.ts` verifies label/confidence/source and Crop parent/source linkage from real DTO shapes.
+- Review edits, reviewer note, reason, accept/reject/delete continue using persisted revision and decision APIs.
+- Server: 7 tests passed. Web: 10 files/23 tests and production build passed.
 
 ## Manual tasks
 

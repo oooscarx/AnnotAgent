@@ -124,6 +124,10 @@ export interface ProjectSummary {
     message: string;
     next_step: "data" | "labels" | "pipeline" | "test";
   }[];
+  annotation_visuals?: Record<
+    string,
+    { slot: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8; pattern?: string }
+  >;
   default_workflow_version?: WorkflowVersion;
   active_batch?: {
     id: string;
@@ -503,6 +507,13 @@ export interface ReviewItem {
   project_id?: string;
   project_name: string;
   annotation: Annotation;
+  workflow_id?: string;
+  workflow_version: number;
+  source_node?: string;
+  source_artifact_id?: string;
+  review_reason: string;
+  confidence?: number;
+  validation_issues: string[];
 }
 
 export interface RunEvent {

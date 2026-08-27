@@ -10,7 +10,7 @@ Updated: 2026-08-27
 | 3 Build Flow | Complete | URL-backed Data, Labels, Pipeline, and Test & Publish steps use real APIs and preserve server state. |
 | 4 Pipeline UX | Complete | Guided shared/Label lanes, node Drawer, controlled Advisor proposal, same-definition graph, and focused versions are implemented. |
 | 5 Run Workspace | Complete | `/runs/:runId` combines run controls, image context, visual Artifact preview, node timeline, detail, deep links, and Replay. |
-| 6 Review Integration | Pending | Review does not preserve bidirectional run/node context. |
+| 6 Review Integration | Complete | Review source context, bidirectional deep links, labeled bbox/crop lineage, notes and decisions are connected. |
 | 7 Reliability | Pending | URL and active-run restoration are incomplete. |
 | 8 Usability | Pending | Existing accessibility primitives need a full guided-workspace pass. |
 | 9 Acceptance | Pending | Full release checks and manual tasks remain. |
@@ -80,3 +80,12 @@ Updated: 2026-08-27
 - Image, node, and Artifact identities are encoded in the URL; zoom and image/crop modes operate on persisted geometry.
 - Pause/Resume/Cancel and Replay call real control/runtime endpoints.
 - Server 7 tests passed; Web 10 files/22 tests and production build passed.
+
+## Milestone 6 verification
+
+- Review API includes source Run, Workflow ID/version, source Node/Artifact, reason, confidence, and validation issue codes.
+- Review Detail opens exact Run/Node/Artifact context; Run Detail exposes the matching Review item.
+- Detection overlays render label, confidence, color legend, and non-color text cues.
+- Detection and Crop marks join by stable `parent.item_id`; either click updates one selection and arrow keys cycle it.
+- Crop cards expose parent Artifact and source Node and support enlarged preview.
+- Server 7 tests passed; Web 10 files/23 tests and production build passed.
