@@ -22,8 +22,13 @@ describe("Label Pipeline product helpers", () => {
       port: "detections",
       type: "detection_set",
     });
+    expect(pipelineNodeOutput("vlm_detection.detect")).toEqual({
+      port: "detections",
+      type: "detection_set",
+    });
     expect(pipelineNodeKind("core.crop")).toBe("transform");
     expect(pipelineNodeKind("yolo_detection.detect")).toBe("vision_model");
+    expect(pipelineNodeKind("vlm_detection.detect")).toBe("vision_model");
     expect(pipelineNodeParameters("core.crop", "person")).toEqual({
       padding: 0.05,
     });

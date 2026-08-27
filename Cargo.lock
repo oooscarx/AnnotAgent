@@ -98,6 +98,7 @@ dependencies = [
  "annotagent-runtime",
  "annotagent-skill-classification",
  "annotagent-skill-robocup",
+ "annotagent-skill-vlm-detection",
  "annotagent-skill-yolo",
  "annotagent-storage",
  "anyhow",
@@ -250,6 +251,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "annotagent-skill-vlm-detection"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-runtime",
+ "async-trait",
+ "rust_decimal",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

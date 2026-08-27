@@ -1,6 +1,6 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 16:46 CST
+Last updated: 2026-08-27 18:05 CST
 
 ## Current milestone
 
@@ -79,6 +79,13 @@ acceptance path.
   Classification → Attach Result → Confidence Gate → Commit; Crop is never placed in the detector.
 - The Node Artifact Inspector renders the original image, Detection bbox overlays, Crop previews,
   typed JSON inputs/outputs, full configuration, timing/error/usage, and real Replay results.
+- A formal `vlm_detection.detect` Skill now provides registry-bounded Image → DetectionSet visual
+  grounding without detector weights. Its OpenAI-compatible adapter keeps the image and prompt in
+  one multimodal message, supports tool-call and constrained-JSON responses, parses content parts,
+  and normalizes Qwen's native 0–1000 xyxy coordinates at the provider boundary.
+- The product template `VLM Football Detect & Crop` composes the VLM detector → Core Filter → Core
+  Crop/Artifact Cache plus Confidence Gate → Commit. The B-Human demo Project contains five local
+  sample images and defaults to the most recently published immutable Workflow.
 
 ## LP5 verification
 
@@ -90,6 +97,12 @@ acceptance path.
 - `cargo test --workspace --all-features`: 126 Rust tests passed, 0 failed; doc tests passed.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
 - Web typecheck/build passed; 8 files and 15 tests passed.
+- Live Qwen grounding on `color_771292.png` completed with one football Detection at confidence
+  0.98 and normalized rect `[0.432, 0.356, 0.046, 0.046]`; Core produced one parent-linked Crop.
+  Formal Run `367e9a0e-5fea-485a-adf7-b437502c2727` completed and its node artifacts were read back
+  through the product Inspector API.
+- Current full regression: 131 Rust tests passed with all doc tests; strict workspace Clippy passed;
+  Web typecheck, production build, and all 15 Web tests passed.
 - `./scripts/acceptance.sh`: passed end to end, including domain/secret scans, doctor, and offline
   generic demo.
 - Core domain scan for RoboCup/YOLO/domain Labels: clean.

@@ -2161,6 +2161,103 @@ function LabelPipelineEditor({
       ),
     });
   };
+  const applyVlmDetectCropTemplate = () => {
+    if (!selected) return;
+    const sharedDetector = composition.shared_stages
+      .flatMap((stage) => stage.steps)
+      .find((step) => Object.values(step.outputs).includes("detection_set"));
+    const filter = selected.steps.find((step) => step.node_type === "core.filter");
+    const gate = selected.steps.find((step) => step.node_type === "core.confidence_gate");
+    const commit = selected.steps.find((step) => step.kind === "commit");
+    if (!sharedDetector || !filter || !gate || !commit) return;
+    const vlmDetector: PipelineStep = {
+      ...sharedDetector,
+      node_type: "vlm_detection.detect",
+      kind: "vision_model",
+      model_binding: pipelineModelBinding("vlm_detection.detect", catalog),
+      parameters: {
+        labels: [selected.target_label],
+        object_description:
+          "A round soccer ball used in RoboCup, usually white with red, blue, or black panel markings, on or near the green playing field. It may be small in the image. Exclude white shoes, penalty marks, line intersections, and robot body parts.",
+        instruction:
+          "Scan the complete field and foreground. In these B-Human images, box each visible soccer ball tightly even when it occupies only a small region.",
+        coordinate_format: "qwen_0_1000_xyxy",
+        max_detections: 10,
+      },
+    };
+    const crop: PipelineStep = {
+      id: `${selected.id}.crop`,
+      node_type: "core.crop",
+      kind: "transform",
+      inputs: {
+        image: { source: "image" },
+        detections: {
+          source: "step",
+          step_id: filter.id,
+          port: Object.keys(filter.outputs)[0],
+          artifact_type: "detection_set",
+        },
+      },
+      outputs: { crops: "crop_set" },
+      parameters: { padding: 0.08 },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    const cache: PipelineStep = {
+      id: `${selected.id}.crop_cache`,
+      node_type: "core.artifact_cache",
+      kind: "export",
+      inputs: {
+        crops: {
+          source: "step",
+          step_id: crop.id,
+          port: "crops",
+          artifact_type: "crop_set",
+        },
+      },
+      outputs: {},
+      parameters: { purpose: "bbox_and_crop_preview" },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    replaceComposition({
+      ...composition,
+      shared_stages: composition.shared_stages.map((stage) => ({
+        ...stage,
+        steps: stage.steps.map((step) =>
+          step.id === sharedDetector.id ? vlmDetector : step,
+        ),
+      })),
+      label_pipelines: composition.label_pipelines.map((pipeline) =>
+        pipeline.id === selected.id
+          ? {
+              ...pipeline,
+              steps: [
+                ...pipeline.steps.filter(
+                  (step) =>
+                    step.id !== gate.id &&
+                    step.id !== commit.id &&
+                    step.node_type !== "core.crop" &&
+                    step.node_type !== "core.artifact_cache" &&
+                    step.node_type !== "classification.classify" &&
+                    step.node_type !== "core.attach_result",
+                ),
+                crop,
+                cache,
+                gate,
+                commit,
+              ],
+            }
+          : pipeline,
+      ),
+    });
+  };
   return (
     <div className="label-pipeline-editor">
       <div className="pipeline-section-heading">
@@ -2222,6 +2319,8 @@ function LabelPipelineEditor({
                   "core.attach_attribute",
                   "core.confidence_gate",
                   "classification.classify",
+                  "vlm_detection.detect",
+                  "yolo_detection.detect",
                 ].includes(node.id),
               )
               .map((node) => (
@@ -2244,6 +2343,21 @@ function LabelPipelineEditor({
             title="Internal graph: detector → filter → Crop → classifier → Attach Result"
           >
             Apply Detect &amp; Crop template
+          </button>
+          <button
+            onClick={applyVlmDetectCropTemplate}
+            disabled={
+              immutable ||
+              !selected ||
+              !composition.shared_stages.some((stage) =>
+                stage.steps.some((step) =>
+                  Object.values(step.outputs).includes("detection_set"),
+                ),
+              )
+            }
+            title="VLM DetectionSet → Filter → Core Crop; bbox Commit remains on the filtered DetectionSet"
+          >
+            Apply VLM Football Detect &amp; Crop
           </button>
         </div>
       </div>
@@ -2503,11 +2617,19 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
   if (nodeType === "core.confidence_gate") return { threshold: 0.9 };
   if (nodeType === "classification.classify")
     return { labels: [label], mock_label: label };
+  if (nodeType === "vlm_detection.detect")
+    return {
+      labels: [label],
+      object_description: `Locate every visible ${label} and return a tight normalized bounding box.`,
+      max_detections: 20,
+    };
   return {};
 }
 
 function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
-  const capability = nodeType.includes("classify")
+  const capability = nodeType === "vlm_detection.detect"
+    ? "vision_language"
+    : nodeType.includes("classify")
     ? "classification"
     : nodeType.includes("detect")
       ? "object_detection"
@@ -2517,7 +2639,13 @@ function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
     candidate.capabilities.includes(capability),
   );
   return {
-    model_id: model?.id ?? (capability === "classification" ? "mock-classifier" : "mock-detector"),
+    model_id:
+      model?.id ??
+      (capability === "classification"
+        ? "mock-classifier"
+        : capability === "vision_language"
+          ? "default-vision"
+          : "mock-detector"),
     capability,
     configuration: {},
   };

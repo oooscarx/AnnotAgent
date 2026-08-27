@@ -471,6 +471,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     }
     for descriptor in [
         annotagent_skill_classification::node_descriptor(),
+        annotagent_skill_vlm_detection::node_descriptor(),
         annotagent_skill_yolo::node_descriptor(),
         VisionNodeDescriptor {
             id: annotagent_core::IMAGE_INPUT_OPERATION.to_owned(),
@@ -478,6 +479,14 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             required_capabilities: Vec::new(),
             accepts: Vec::new(),
             produces: vec![ArtifactKind::Image],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_ARTIFACT_CACHE.to_owned(),
+            display_name: "Artifact Cache".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: all_artifact_kinds().to_vec(),
+            produces: all_artifact_kinds().to_vec(),
             deterministic: true,
         },
         VisionNodeDescriptor {
@@ -2744,6 +2753,17 @@ impl LocalApplication {
         settings: &Settings,
         image_indices: &[usize],
     ) -> Result<WorkflowDryRunReport> {
+        self.dry_run_workflow_samples_with_api_key(draft_id, settings, image_indices, None)
+            .await
+    }
+
+    pub async fn dry_run_workflow_samples_with_api_key(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+        temporary_api_key: Option<String>,
+    ) -> Result<WorkflowDryRunReport> {
         let started = std::time::Instant::now();
         let mut validation = self.dry_run_workflow(draft_id, settings)?;
         let draft = self.store.get_workflow_draft(draft_id)?;
@@ -2755,7 +2775,14 @@ impl LocalApplication {
         };
         if draft.label_pipeline.is_some() && validation.valid {
             return self
-                .dry_run_label_pipeline_samples(draft, settings, &images, &selected, started)
+                .dry_run_label_pipeline_samples(
+                    draft,
+                    settings,
+                    &images,
+                    &selected,
+                    started,
+                    temporary_api_key,
+                )
                 .await;
         }
         let (nodes, models) = workflow_catalog(settings)?;
@@ -2888,6 +2915,7 @@ impl LocalApplication {
         images: &[PathBuf],
         selected: &[usize],
         started: std::time::Instant,
+        temporary_api_key: Option<String>,
     ) -> Result<WorkflowDryRunReport> {
         let project_path = self.project_path(&draft.project_id)?;
         let (project, project_skills) =
@@ -2937,7 +2965,7 @@ impl LocalApplication {
             published,
             &settings.default_provider,
             settings,
-            None,
+            temporary_api_key,
             self.store.clone(),
             validators,
             refiners,

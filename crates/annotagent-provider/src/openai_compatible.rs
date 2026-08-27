@@ -112,15 +112,32 @@ impl OpenAiCompatibleProvider {
     fn request_body(&self, request: &ModelRequest) -> Value {
         let mut messages: Vec<Value> = request.messages.iter().map(message_json).collect();
         if !request.images.is_empty() {
-            let mut content =
-                vec![json!({"type": "text", "text": "Attached controlled image inputs."})];
-            content.extend(request.images.iter().map(|image| {
+            let image_parts = request.images.iter().map(|image| {
                 json!({
                     "type": "image_url",
                     "image_url": {"url": format!("data:{};base64,{}", image.mime_type, image.data_base64)}
                 })
-            }));
-            messages.push(json!({"role": "user", "content": content}));
+            });
+            if let Some(user_message) = messages
+                .iter_mut()
+                .rev()
+                .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            {
+                let text = user_message
+                    .get_mut("content")
+                    .map(Value::take)
+                    .and_then(|content| content.as_str().map(str::to_owned))
+                    .unwrap_or_default();
+                let mut content = vec![json!({"type": "text", "text": text})];
+                content.extend(image_parts);
+                user_message["content"] = Value::Array(content);
+            } else {
+                let mut content = vec![
+                    json!({"type": "text", "text": "Inspect the attached controlled image inputs."}),
+                ];
+                content.extend(image_parts);
+                messages.push(json!({"role": "user", "content": content}));
+            }
         }
         let mut body = serde_json::Map::new();
         body.insert("model".to_owned(), json!(request.model));
@@ -161,7 +178,9 @@ impl OpenAiCompatibleProvider {
                 }),
             );
         }
-        if let Some(mode) = &self.config.reasoning_mode {
+        if let Some(mode) = &self.config.reasoning_mode
+            && !request.extra.contains_key("enable_thinking")
+        {
             body.insert("reasoning_effort".to_owned(), json!(mode));
         }
         for (key, value) in &self.config.extra_request_fields {
@@ -459,10 +478,7 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
     let message = value
         .pointer("/choices/0/message")
         .ok_or_else(|| CoreError::Provider("response lacks choices[0].message".to_owned()))?;
-    let content = message
-        .get("content")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let content = parse_message_content(message.get("content"));
     let tool_calls = message
         .get("tool_calls")
         .and_then(Value::as_array)
@@ -520,6 +536,30 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
     })
 }
 
+fn parse_message_content(content: Option<&Value>) -> Option<String> {
+    let content = content?;
+    let text = match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        Value::Object(part) => part
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| part.get("content").and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_owned(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => String::new(),
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
 fn truncate(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
@@ -572,6 +612,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_openai_content_part_arrays() {
+        let response = parse_chat_response(
+            &json!({
+                "choices": [{"message": {"content": [
+                    {"type": "output_text", "text": "{\"detections\":"},
+                    {"type": "output_text", "text": "[]} "}
+                ]}}]
+            }),
+            None,
+        )
+        .expect("valid response");
+        assert_eq!(response.content.as_deref(), Some("{\"detections\":[]} "));
+    }
+
+    #[test]
     fn serializes_assistant_tool_call_history_for_follow_up_turns() {
         let message = ModelMessage {
             role: ModelRole::Assistant,
@@ -591,6 +646,106 @@ mod tests {
             value["tool_calls"][0]["function"]["arguments"],
             json!({"points": [[0.1, 0.2], [0.8, 0.2]]}).to_string()
         );
+    }
+
+    #[test]
+    fn attaches_images_to_the_grounding_prompt_user_message() {
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint: "https://provider.invalid/v1".to_owned(),
+                api_key_env: "UNUSED_TEST_KEY".to_owned(),
+                model: "vision".to_owned(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 1,
+                max_output_tokens: 100,
+                temperature: 0.0,
+                reasoning_mode: None,
+                supports_tool_calls: true,
+                supports_json_schema: false,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::new(),
+                max_retries: 0,
+            },
+            Some("not-sent".to_owned()),
+        )
+        .expect("provider");
+        let body = provider.request_body(&ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("grounding"),
+            messages: vec![
+                ModelMessage {
+                    role: ModelRole::System,
+                    content: "system".to_owned(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                },
+                ModelMessage {
+                    role: ModelRole::User,
+                    content: "locate the football".to_owned(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                },
+            ],
+            images: vec![annotagent_core::ModelImage {
+                id: "image-1".to_owned(),
+                mime_type: "image/png".to_owned(),
+                data_base64: "aW1hZ2U=".to_owned(),
+            }],
+            tools: Vec::new(),
+            max_output_tokens: 100,
+            temperature: 0.0,
+            extra: BTreeMap::new(),
+        });
+        assert_eq!(body["messages"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            body["messages"][1]["content"][0]["text"],
+            "locate the football"
+        );
+        assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
+        assert_eq!(
+            body["messages"][1]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,aW1hZ2U="
+        );
+    }
+
+    #[test]
+    fn request_level_thinking_switch_suppresses_conflicting_reasoning_effort() {
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint: "https://provider.invalid/v1".to_owned(),
+                api_key_env: "UNUSED_TEST_KEY".to_owned(),
+                model: "vision".to_owned(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 1,
+                max_output_tokens: 100,
+                temperature: 0.0,
+                reasoning_mode: Some("medium".to_owned()),
+                supports_tool_calls: true,
+                supports_json_schema: false,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::new(),
+                max_retries: 0,
+            },
+            Some("not-sent".to_owned()),
+        )
+        .expect("provider");
+        let body = provider.request_body(&ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("grounding"),
+            messages: vec![ModelMessage {
+                role: ModelRole::User,
+                content: "return JSON".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+            images: Vec::new(),
+            tools: Vec::new(),
+            max_output_tokens: 100,
+            temperature: 0.0,
+            extra: BTreeMap::from([("enable_thinking".to_owned(), json!(false))]),
+        });
+        assert_eq!(body["enable_thinking"], false);
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]

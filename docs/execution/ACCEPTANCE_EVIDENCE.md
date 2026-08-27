@@ -539,3 +539,31 @@ Direct evidence:
     used.
 
 LP5 status: `PASS`. AnnotAgent Label Pipeline Alpha passes all 20 offline Release Blocking gates.
+
+## Live VLM Detection and Crop product smoke
+
+Date: 2026-08-27 CST.
+
+Direct evidence:
+
+1. `annotagent-skill-vlm-detection` defines one formal Image → DetectionSet operation. It owns no
+   filtering, cropping, review, or commit behavior.
+2. The OpenAI-compatible request adapter places the grounding prompt and Base64 image in the same
+   user content, accepts legacy string and content-part responses, and prevents a node-level
+   `enable_thinking=false` switch from conflicting with a saved global `reasoning_effort` value.
+3. Qwen grounding uses its documented 0–1000 xyxy coordinate convention. The adapter validates
+   labels, confidence, bounds, and geometry before normalizing the box into Core's `NormalizedRect`.
+4. One-image Dry Run on B-Human `color_771292.png` executed Image Input → VLM Detection → Filter →
+   Core Crop → Artifact Cache and Confidence Gate → Commit with no issues.
+5. Immutable Workflow `6095280f-9c7c-45ce-908d-9980ee8c77fe@1` produced formal Run
+   `367e9a0e-5fea-485a-adf7-b437502c2727`. The Run completed with exactly one `football` detection,
+   confidence `0.98`, normalized rect `[0.432, 0.356, 0.046, 0.046]`, and exactly one Crop retaining
+   the detection item as its parent reference.
+6. A final product-named clone, `VLM Football Detect & Crop`, is the most recently published and
+   therefore default Workflow for Project `bhuman-vlm-football`. The GUI server remains available
+   at `http://127.0.0.1:8787` for click-to-run use.
+7. `cargo test --workspace --all-features` passes 131 Rust tests plus doc tests; strict workspace
+   Clippy and Web tests/typecheck/build also pass. No detector weights were loaded, no remote was
+   modified, and no conversation credential was read, printed, or persisted by this work.
+
+Live VLM Detection and Crop smoke status: `PASS`.

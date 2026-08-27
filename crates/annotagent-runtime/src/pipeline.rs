@@ -19,6 +19,7 @@ pub const CORE_MAP_LABEL: &str = "core.map_label";
 pub const CORE_ATTACH_RESULT: &str = "core.attach_result";
 pub const CORE_ATTACH_ATTRIBUTE: &str = "core.attach_attribute";
 pub const CORE_CONFIDENCE_GATE: &str = "core.confidence_gate";
+pub const CORE_ARTIFACT_CACHE: &str = "core.artifact_cache";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CorePipelineRunner;
@@ -33,6 +34,11 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_ATTACH_RESULT => run_attach_result(&context),
             CORE_ATTACH_ATTRIBUTE => run_attach_attribute(&context),
             CORE_CONFIDENCE_GATE => run_confidence_gate(&context),
+            CORE_ARTIFACT_CACHE => Ok(DagNodeOutput {
+                pipeline_artifacts: context.input_pipeline_artifacts,
+                metadata: BTreeMap::from([("cached".to_owned(), serde_json::json!(true))]),
+                ..DagNodeOutput::default()
+            }),
             operation => Err(DagNodeFailure::terminal(
                 "unsupported_core_pipeline_node",
                 format!("Core Pipeline runner does not implement {operation:?}"),

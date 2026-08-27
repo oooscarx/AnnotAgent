@@ -1,0 +1,18 @@
+[package]
+name = "annotagent-skill-vlm-detection"
+description = "Registry-bound structured VLM object-detection Skill for AnnotAgent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+annotagent-runtime = { path = "../annotagent-runtime" }
+async-trait.workspace = true
+rust_decimal.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -12,18 +12,20 @@ use annotagent_core::{
     VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowNodeKind,
 };
 use annotagent_provider::{
-    OpenAiCompatiblePipelineClassifier, OpenAiCompatibleProvider, OpenAiVisionBackend,
+    OpenAiCompatiblePipelineClassifier, OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider,
+    OpenAiVisionBackend,
 };
 use annotagent_runtime::{
-    AgentRuntime, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT, CORE_CONFIDENCE_GATE, CORE_CROP,
-    CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner, DagCheckpoint, DagExecutionRequest,
-    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
-    DagRunResult, DagRunStatus, ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl,
-    RunRecord, RuntimeStore,
+    AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
+    CORE_CONFIDENCE_GATE, CORE_CROP, CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner,
+    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
+    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, ImageRunRequest,
+    ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, ClassificationSkillRunner, MockClassificationBackend,
 };
+use annotagent_skill_vlm_detection::{VLM_DETECTION_OPERATION, VlmDetectionSkillRunner};
 use annotagent_skill_yolo::{MockYoloBackend, YOLO_DETECTION_OPERATION, YoloDetectionSkillRunner};
 use annotagent_storage::SqliteStore;
 use anyhow::{Result, anyhow, bail};
@@ -150,7 +152,8 @@ impl PublishedWorkflowRuntime {
                 continue;
             }
             match node.node_type.as_str() {
-                CORE_CROP
+                CORE_ARTIFACT_CACHE
+                | CORE_CROP
                 | CORE_FILTER
                 | CORE_MAP_LABEL
                 | CORE_ATTACH_RESULT
@@ -167,9 +170,10 @@ impl PublishedWorkflowRuntime {
                         if node.model_binding.as_deref() != Some("mock-classifier")
                             && let Some(provider) = &self.pipeline_provider
                         {
-                            Arc::new(OpenAiCompatiblePipelineClassifier::new(
+                            Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
                                 "workspace-openai-compatible-classifier",
                                 provider.clone(),
+                                self.model_name.clone(),
                             ))
                         } else {
                             Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
@@ -181,6 +185,28 @@ impl PublishedWorkflowRuntime {
                             node.model_binding
                                 .clone()
                                 .unwrap_or_else(|| self.model_name.clone()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                VLM_DETECTION_OPERATION => {
+                    let provider = self.pipeline_provider.as_ref().ok_or_else(|| {
+                        anyhow!(
+                            "VLM Detection requires a configured OpenAI-compatible vision provider"
+                        )
+                    })?;
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(VlmDetectionSkillRunner::new(
+                            Arc::new(OpenAiCompatiblePipelineDetector::new(
+                                "workspace-openai-compatible-vlm-detector",
+                                provider.clone(),
+                                self.model_name.clone(),
+                            )),
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| "default-vision".to_owned()),
                             request.model_image.clone(),
                         )?),
                         false,
@@ -681,7 +707,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 continue;
             }
             match node.node_type.as_str() {
-                CORE_CROP
+                CORE_ARTIFACT_CACHE
+                | CORE_CROP
                 | CORE_FILTER
                 | CORE_MAP_LABEL
                 | CORE_ATTACH_RESULT
@@ -698,9 +725,10 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         if node.model_binding.as_deref() != Some("mock-classifier")
                             && let Some(provider) = &self.pipeline_provider
                         {
-                            Arc::new(OpenAiCompatiblePipelineClassifier::new(
+                            Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
                                 "workspace-openai-compatible-classifier",
                                 provider.clone(),
+                                self.model_name.clone(),
                             ))
                         } else {
                             Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
@@ -712,6 +740,28 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             node.model_binding
                                 .clone()
                                 .unwrap_or_else(|| self.model_name.clone()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                VLM_DETECTION_OPERATION => {
+                    let provider = self.pipeline_provider.as_ref().ok_or_else(|| {
+                        anyhow!(
+                            "VLM Detection requires a configured OpenAI-compatible vision provider"
+                        )
+                    })?;
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(VlmDetectionSkillRunner::new(
+                            Arc::new(OpenAiCompatiblePipelineDetector::new(
+                                "workspace-openai-compatible-vlm-detector",
+                                provider.clone(),
+                                self.model_name.clone(),
+                            )),
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| "default-vision".to_owned()),
                             request.model_image.clone(),
                         )?),
                         false,

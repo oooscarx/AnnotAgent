@@ -1,0 +1,21 @@
+version: 1
+project:
+  name: B-Human VLM Football Crop
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 2
+  max_retries: 1
+  task_timeout_seconds: 120
+tasks:
+  - id: footballs
+    kind: bounding_box
+    labels: [football]
+    required: true
+    multi_label: true
+review:
+  auto_accept_confidence: 0.85
+  force_review_below: 0.5
+export:
+  formats: [native, coco, yolo]

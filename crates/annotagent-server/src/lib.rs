@@ -971,10 +971,16 @@ async fn dry_run_workflow(
     payload: Option<Json<DryRunWorkflowRequest>>,
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
+    let temporary_api_key = state.api_key.read().await.clone();
     let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
     let report = state
         .application
-        .dry_run_workflow_samples(&draft_id, &settings, &image_indices)
+        .dry_run_workflow_samples_with_api_key(
+            &draft_id,
+            &settings,
+            &image_indices,
+            temporary_api_key,
+        )
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(report)))

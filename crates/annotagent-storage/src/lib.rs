@@ -688,12 +688,12 @@ impl SqliteStore {
         self.with_connection(|connection| {
             let (sql, parameter) = project_id.map_or(
                 (
-                    "SELECT version_json FROM workflow_versions ORDER BY project_id, workflow_id, version",
+                    "SELECT version_json FROM workflow_versions ORDER BY project_id, published_at, workflow_id, version",
                     None,
                 ),
                 |project_id| {
                     (
-                        "SELECT version_json FROM workflow_versions WHERE project_id = ?1 ORDER BY workflow_id, version",
+                        "SELECT version_json FROM workflow_versions WHERE project_id = ?1 ORDER BY published_at, workflow_id, version",
                         Some(project_id),
                     )
                 },
@@ -1977,13 +1977,12 @@ mod tests {
                 .len(),
             2
         );
-        assert_eq!(
-            store
-                .list_published_workflow_versions(Some("multi-workflow-project"))
-                .expect("versions")
-                .len(),
-            2
-        );
+        let versions = store
+            .list_published_workflow_versions(Some("multi-workflow-project"))
+            .expect("versions");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].workflow_id, "workflow-a");
+        assert_eq!(versions[1].workflow_id, "workflow-b");
     }
 
     #[test]
