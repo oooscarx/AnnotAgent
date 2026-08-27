@@ -1,3 +1,4 @@
+mod demo;
 mod runner;
 mod tui;
 
@@ -197,7 +198,7 @@ async fn main() -> Result<()> {
             minimum_field_region_iou,
         ),
         Command::Doctor => doctor(),
-        Command::Demo { name } => demo(&name).await,
+        Command::Demo { name } => demo::run(&name).await,
     }
 }
 
@@ -322,6 +323,16 @@ fn import_images(project_path: &Path, images: &Path) -> Result<()> {
     let canonical_source = images
         .canonicalize()
         .with_context(|| format!("cannot access {}", images.display()))?;
+    if canonical_source.is_file()
+        && canonical_source
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
+        bail!(
+            "ZIP image import is not supported; archives are rejected before extraction to prevent path traversal"
+        );
+    }
     let mut imported = 0_u64;
     let mut duplicates = 0_u64;
     let mut known_hashes = std::collections::BTreeSet::new();
@@ -627,20 +638,6 @@ fn doctor() -> Result<()> {
     };
     println!("port 127.0.0.1:8787: {port_status}");
     Ok(())
-}
-
-async fn demo(name: &str) -> Result<()> {
-    if name != "robocup" {
-        bail!("unknown demo {name:?}; available demo: robocup");
-    }
-    println!("AnnotAgent RoboCup example (deterministic Mock Provider)");
-    run_command(&RunArgs {
-        project: PathBuf::from("examples/robocup/project.yaml"),
-        provider: "mock".to_owned(),
-        config: None,
-        limit: Some(1),
-    })
-    .await
 }
 
 async fn serve_command(workspace: &Path, port: u16, open: bool) -> Result<()> {

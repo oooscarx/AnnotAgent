@@ -233,6 +233,116 @@ impl TuiState {
         }
     }
 
+    fn inspect_latest(&mut self) -> Result<()> {
+        let run_id = self
+            .active
+            .as_ref()
+            .map(|active| active.run_id)
+            .or_else(|| {
+                self.application
+                    .store()
+                    .list_runs()
+                    .ok()
+                    .and_then(|runs| runs.into_iter().next().map(|run| run.id))
+            });
+        let Some(run_id) = run_id else {
+            self.push("No Run history is available to inspect.");
+            return Ok(());
+        };
+        let history = self.application.store().history(run_id)?;
+        let snapshot = history
+            .run
+            .workflow_snapshot_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+        let workflow = snapshot
+            .as_ref()
+            .and_then(|value| value.pointer("/selected_workflow"))
+            .map_or_else(
+                || "Configured task graph".to_owned(),
+                |value| {
+                    format!(
+                        "{}@v{}",
+                        value["workflow_id"].as_str().unwrap_or("configured"),
+                        value["version"].as_u64().unwrap_or(1)
+                    )
+                },
+            );
+        let checkpoint = snapshot
+            .as_ref()
+            .and_then(|value| value.pointer("/checkpoint"));
+        let fallback = checkpoint
+            .and_then(|value| value["activated_fallbacks"].as_array())
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|nodes| !nodes.is_empty())
+            .unwrap_or_else(|| "none".to_owned());
+        let current = history.task_runs.last();
+        let issue_codes = history
+            .events
+            .iter()
+            .filter_map(|event| match &event.payload {
+                RunEventPayload::Validation { issue_codes, .. } => Some(issue_codes.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let retries = history.usage.iter().fold(0_u32, |total, usage| {
+            total.saturating_add(usage.retry_count)
+        });
+        let timed_out = history.events.iter().any(|event| match &event.payload {
+            RunEventPayload::ProviderFailure { error_code, .. }
+            | RunEventPayload::TaskFailure { error_code, .. } => {
+                error_code.to_ascii_lowercase().contains("timeout")
+            }
+            _ => false,
+        });
+        let review_suspended = history.run.status == RunStatus::AwaitingReview
+            || history
+                .task_runs
+                .iter()
+                .any(|task| task.status == annotagent_core::TaskRunStatus::NeedsReview);
+        let lines = vec![
+            format!(
+                "inspect {} · Project {} · Workflow {} · status {:?}",
+                run_id, history.run.project_name, workflow, history.run.status
+            ),
+            format!(
+                "node {} · status {} · Artifacts {} · issues {}",
+                current.map_or_else(|| "none".to_owned(), |task| task.task_id.to_string()),
+                current.map_or_else(
+                    || "not started".to_owned(),
+                    |task| format!("{:?}", task.status).to_ascii_lowercase()
+                ),
+                history.artifacts.len(),
+                if issue_codes.is_empty() {
+                    "none".to_owned()
+                } else {
+                    issue_codes.into_iter().collect::<Vec<_>>().join(", ")
+                }
+            ),
+            format!(
+                "model {}/{} · retries {} · fallback {} · timeout {}",
+                history.run.provider, history.run.model, retries, fallback, timed_out
+            ),
+            format!(
+                "checkpoint {} · review suspension {}",
+                checkpoint.is_some(),
+                review_suspended
+            ),
+        ];
+        for line in lines {
+            self.push(line);
+        }
+        Ok(())
+    }
+
     async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
@@ -282,6 +392,7 @@ impl TuiState {
                 }
                 Ok(())
             }
+            "/inspect" => self.inspect_latest(),
             "/skills" => {
                 self.push("robocup · RoboCup Perception");
                 Ok(())
@@ -296,7 +407,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /run /pause /resume /cancel /retry /history /trace /config /skills /gui /help /quit");
+                self.push("/open /init /run /pause /resume /cancel /retry /history /trace /inspect /config /skills /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {

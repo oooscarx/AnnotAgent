@@ -607,6 +607,24 @@ function ProjectPage({
       .catch((error: Error) => onError(error.message))
       .finally(() => setStarting(false));
   };
+  const startBatch = () => {
+    setStarting(true);
+    void api
+      .startBatch(
+        project.id,
+        undefined,
+        undefined,
+        selectedWorkflow.source.startsWith("published draft")
+          ? {
+              workflow_id: selectedWorkflow.workflow_id,
+              version: Number(selectedWorkflow.version),
+            }
+          : undefined,
+      )
+      .then(onRefresh)
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setStarting(false));
+  };
   const control = (action: "pause" | "resume" | "cancel") =>
     activeRun &&
     api
@@ -676,6 +694,17 @@ function ProjectPage({
             onClick={start}
           >
             {starting ? "Starting…" : "Start image run"}
+          </button>
+          <button
+            disabled={restoredRun.startDisabled || starting}
+            title={
+              activeRun
+                ? "This Project already has an active Run or Dataset Batch"
+                : undefined
+            }
+            onClick={startBatch}
+          >
+            {starting ? "Starting…" : "Start dataset batch"}
           </button>
           <button
             disabled={!activeRun || visibleStatus !== "running"}
@@ -1799,8 +1828,9 @@ function RunsPage({ runs }: { runs: HistoryRun[] }) {
           <span className="eyebrow">Immutable execution history</span>
           <h2>Runs</h2>
           <p>
-            Each summary exposes its Project, compatibility Workflow version,
-            Skill versions, model binding, usage, cost, and status.
+            Each summary exposes its Project, immutable Workflow Version, node
+            state, typed Artifacts, validation, recovery, model, usage, cost,
+            timeout, checkpoint, and review suspension.
           </p>
         </div>
       </div>
@@ -1816,10 +1846,24 @@ function RunsPage({ runs }: { runs: HistoryRun[] }) {
                   {run.skill_versions.join(", ")}
                 </small>
                 <code>
-                  {run.model_bindings
-                    .map((binding) => `${binding.id}: ${binding.model}`)
-                    .join(", ")}
+                  {run.model_identity} · {run.artifact_count} Artifact
+                  {run.artifact_count === 1 ? "" : "s"}
                 </code>
+                <small>
+                  Node {run.current_node ?? "none"} · {run.current_node_status ?? "not started"}
+                  {` · retries ${run.retry_count}`}
+                  {run.fallback_nodes.length
+                    ? ` · fallback ${run.fallback_nodes.join(", ")}`
+                    : " · no fallback"}
+                </small>
+                <small>
+                  {run.validation_issue_codes.length
+                    ? `Issues: ${run.validation_issue_codes.join(", ")}`
+                    : "No validation issues"}
+                  {run.timed_out ? " · timed out" : " · no timeout"}
+                  {run.checkpoint_present ? " · checkpoint saved" : " · no checkpoint"}
+                  {run.review_suspended ? " · review suspended" : ""}
+                </small>
                 {run.terminal_reason && (
                   <small className="run-reason">{run.terminal_reason}</small>
                 )}

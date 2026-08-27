@@ -314,6 +314,11 @@ impl ModelRegistry {
                     .to_owned(),
             ));
         }
+        if let Some(path) = secret_configuration_path(&model.configuration) {
+            return Err(CoreError::Validation(format!(
+                "model configuration {path:?} may contain secret material; use secret_reference"
+            )));
+        }
         let supported = backend.capabilities();
         if let Some(capability) = model
             .capabilities
@@ -360,6 +365,44 @@ impl ModelRegistry {
         })?;
         Ok((model, backend.clone()))
     }
+}
+
+fn secret_configuration_path(fields: &BTreeMap<String, serde_json::Value>) -> Option<String> {
+    fn is_secret_name(value: &str) -> bool {
+        let normalized = value.to_ascii_lowercase().replace(['-', '_'], "");
+        matches!(
+            normalized.as_str(),
+            "authorization"
+                | "proxyauthorization"
+                | "apikey"
+                | "accesstoken"
+                | "secrettoken"
+                | "password"
+        )
+    }
+    fn visit(value: &serde_json::Value, path: &str) -> Option<String> {
+        match value {
+            serde_json::Value::Object(object) => object.iter().find_map(|(key, value)| {
+                let nested = format!("{path}.{key}");
+                is_secret_name(key)
+                    .then_some(nested.clone())
+                    .or_else(|| visit(value, &nested))
+            }),
+            serde_json::Value::Array(values) => values
+                .iter()
+                .enumerate()
+                .find_map(|(index, value)| visit(value, &format!("{path}[{index}]"))),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => None,
+        }
+    }
+    fields.iter().find_map(|(key, value)| {
+        is_secret_name(key)
+            .then_some(key.clone())
+            .or_else(|| visit(value, key))
+    })
 }
 
 const fn capability_output_type(capability: VisionCapability) -> Option<ArtifactKind> {

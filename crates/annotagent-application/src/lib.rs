@@ -1,5 +1,7 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
+mod published_run;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -45,6 +47,8 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
+use published_run::{ApplicationImageRuntime, PublishedWorkflowRuntime};
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
     #[serde(default = "default_provider_kind")]
@@ -81,10 +85,21 @@ fn default_provider_kind() -> String {
     "mock".to_owned()
 }
 
+pub fn validate_settings(settings: &Settings) -> Result<()> {
+    if !matches!(
+        settings.default_provider.as_str(),
+        "mock" | "openai_compatible"
+    ) {
+        bail!("default_provider must be either \"mock\" or \"openai_compatible\"");
+    }
+    OpenAiCompatibleProvider::new(settings.provider.clone()).map_err(|error| anyhow!(error))?;
+    Ok(())
+}
+
 pub struct PreparedRun {
-    pub runtime: Arc<AgentRuntime>,
-    pub request: ImageRunRequest,
-    pub image_path: PathBuf,
+    runtime: Arc<dyn ApplicationImageRuntime>,
+    request: ImageRunRequest,
+    image_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -486,6 +501,17 @@ impl<'a> DatasetCoordinator<'a> {
         config_path: Option<&Path>,
         limit: Option<usize>,
     ) -> Result<BatchRecord> {
+        self.create_with_workflow(project_path, provider, config_path, limit, None)
+    }
+
+    pub fn create_with_workflow(
+        &self,
+        project_path: &Path,
+        provider: &str,
+        config_path: Option<&Path>,
+        limit: Option<usize>,
+        workflow: Option<(&str, u32)>,
+    ) -> Result<BatchRecord> {
         let project_path = project_path.canonicalize()?;
         ensure_within(&self.application.workspace, &project_path)?;
         let (project, project_skills) =
@@ -517,14 +543,47 @@ impl<'a> DatasetCoordinator<'a> {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        let workflow = compatibility_workflow(&project, &project_skills);
-        let now = chrono::Utc::now();
         let project_id = project_path
             .parent()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             .unwrap_or("project")
             .to_owned();
+        let published_workflow = workflow
+            .map(|(workflow_id, version)| {
+                let published = self
+                    .application
+                    .store
+                    .get_published_workflow_version(workflow_id, version)?;
+                if published.project_id != project_id {
+                    bail!(
+                        "published workflow {workflow_id:?} version {version} belongs to project {:?}, not {project_id:?}",
+                        published.project_id
+                    );
+                }
+                Ok(published)
+            })
+            .transpose()?;
+        let compatibility = compatibility_workflow(&project, &project_skills);
+        let workflow_version = published_workflow.as_ref().map_or_else(
+            || compatibility.version.clone(),
+            |published| format!("{}@{}", published.workflow_id, published.version),
+        );
+        let workflow_snapshot = published_workflow.as_ref().map_or_else(
+            || {
+                json!({
+                    "workflow": compatibility,
+                    "settings": settings,
+                })
+            },
+            |published| {
+                json!({
+                    "published_workflow": published,
+                    "settings": settings,
+                })
+            },
+        );
+        let now = chrono::Utc::now();
         if self
             .application
             .store
@@ -556,11 +615,8 @@ impl<'a> DatasetCoordinator<'a> {
             status: BatchStatus::Pending,
             max_concurrency: u32::try_from(project.runtime.max_parallel_images.max(1))
                 .unwrap_or(u32::MAX),
-            workflow_version: workflow.version.clone(),
-            workflow_snapshot: json!({
-                "workflow": workflow,
-                "settings": settings,
-            }),
+            workflow_version,
+            workflow_snapshot,
             project_snapshot: serde_json::to_value(&project)?,
             budget_limits: batch_budget_limits(&settings.budget, now),
             budget_ledger: BatchBudgetLedger::default(),
@@ -590,6 +646,13 @@ impl<'a> DatasetCoordinator<'a> {
                 .cloned()
                 .context("batch snapshot lacks settings")?,
         )?;
+        let published_workflow = stored
+            .workflow_snapshot
+            .get("published_workflow")
+            .cloned()
+            .map(serde_json::from_value::<PublishedWorkflowVersion>)
+            .transpose()
+            .context("batch snapshot contains an invalid Published Workflow Version")?;
         let project_path = self.application.workspace.join(&stored.project_path);
         let owner = format!("worker-{}", uuid::Uuid::new_v4());
         let batch = self.application.store.acquire_batch_lease(
@@ -630,6 +693,7 @@ impl<'a> DatasetCoordinator<'a> {
                     &project_path,
                     &settings,
                     temporary_api_key.clone(),
+                    published_workflow.clone(),
                 )
             })
             .buffer_unordered(concurrency)
@@ -716,6 +780,7 @@ impl<'a> DatasetCoordinator<'a> {
         project_path: &Path,
         settings: &Settings,
         temporary_api_key: Option<String>,
+        published_workflow: Option<PublishedWorkflowVersion>,
     ) -> Result<Vec<DatasetImageResult>> {
         let reservation = batch_image_reservation(settings);
         let mut completed = Vec::new();
@@ -744,7 +809,7 @@ impl<'a> DatasetCoordinator<'a> {
                 &self.application.skills,
                 Some(&image_path),
                 Some(image.image_id),
-                None,
+                published_workflow.clone(),
             );
             let prepared = match prepared {
                 Ok(prepared) => prepared,
@@ -2093,6 +2158,7 @@ impl LocalApplication {
         let canonical_source = source
             .canonicalize()
             .with_context(|| format!("cannot access import source {}", source.display()))?;
+        reject_archive_source(&canonical_source)?;
         ensure_within(&self.workspace, &canonical_source).context(
             "HTTP imports may only reference workspace files; use the CLI for controlled external copies",
         )?;
@@ -2206,7 +2272,7 @@ impl LocalApplication {
             .with_context(|| format!("cannot access {}", project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
         self.ensure_no_active_batch(&canonical)?;
-        let workflow_snapshot = workflow
+        let published_workflow = workflow
             .map(|(workflow_id, version)| {
                 let published = self
                     .store
@@ -2219,12 +2285,7 @@ impl LocalApplication {
                 if published.project_id != project_id {
                     bail!("selected Workflow Version belongs to a different Project");
                 }
-                Ok(serde_json::to_string(&json!({
-                    "workflow_id": published.workflow_id,
-                    "version": published.version,
-                    "content_hash": published.content_hash,
-                    "snapshot": published.snapshot,
-                }))?)
+                Ok(published)
             })
             .transpose()?;
         let prepared = prepare_run_with_settings(
@@ -2236,7 +2297,7 @@ impl LocalApplication {
             &self.skills,
             None,
             None,
-            workflow_snapshot,
+            published_workflow,
         )?;
         self.start_prepared(prepared, true, idempotency_key)
     }
@@ -2315,7 +2376,7 @@ impl LocalApplication {
                 }
             }
         }
-        let mut events = prepared.runtime.event_bus().subscribe();
+        let mut events = prepared.runtime.subscribe();
         let event_sender = self.event_sender.clone();
         tokio::spawn(async move {
             while let Ok(event) = events.recv().await {
@@ -2565,75 +2626,105 @@ fn prepare_run_with_settings(
     skills: &SkillRegistry,
     image_override: Option<&Path>,
     image_id_override: Option<ImageId>,
-    workflow_snapshot_override: Option<String>,
+    published_workflow: Option<PublishedWorkflowVersion>,
 ) -> Result<PreparedRun> {
-    let (project, skill) = load_project_with_registry(project_path, skills)?;
+    let (project, project_skills) = load_project_schema_with_registry(project_path, skills)?;
     let image_path = image_override.map_or_else(
         || find_or_generate_image(project_path, &project),
         |path| Ok(path.to_path_buf()),
     )?;
     let image = Arc::new(load_image(&image_path, 40_000_000).map_err(|error| anyhow!(error))?);
     let model_image = to_model_image("full-image", &image, 1280).map_err(|error| anyhow!(error))?;
-    let provider: Arc<dyn VisionModelProvider> = match provider_kind {
-        "mock" => Arc::new(MockVisionProvider::new(mock_script(
-            &project,
-            skill.as_ref(),
-        )?)),
-        "openai_compatible" => Arc::new(
-            OpenAiCompatibleProvider::new_with_api_key(
-                settings.provider.clone(),
-                temporary_api_key,
-            )
-            .map_err(|error| anyhow!(error))?,
-        ),
-        other => bail!("unknown provider {other:?}; choose mock or openai_compatible"),
-    };
-    // Milestone 2 still executes the compatibility agent loop. Record that exact immutable graph
-    // rather than falsely attributing execution to a published DAG (the DAG executor arrives in M3).
-    let mut compatibility_snapshot = serde_json::json!({
-        "schema_version": 1,
-        "engine": "legacy_agent_runtime",
-        "workflow": skill.workflow(),
-        "skill_manifest": skill.manifest(),
-        "project": &project,
-        "model_binding": {
-            "provider": provider.name(),
-            "model": &settings.provider.model,
+    let runtime: Arc<dyn ApplicationImageRuntime> = if let Some(published) = published_workflow {
+        let use_namespace = project_skills.len() > 1;
+        let mut validators = BTreeMap::new();
+        let mut refiners = BTreeMap::new();
+        for skill in &project_skills {
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
         }
-    });
-    if let Some(selected_workflow) = workflow_snapshot_override {
-        compatibility_snapshot["selected_workflow"] = serde_json::from_str(&selected_workflow)?;
-        compatibility_snapshot["execution_note"] = json!(
-            "the immutable Workflow Version was selected and audited; this compatibility Run still executes the registered Skill task graph"
-        );
-    }
-    let workflow_snapshot_json = Some(serde_json::to_string(&compatibility_snapshot)?);
-    let runtime = Arc::new(
-        AgentRuntime::new(
-            skill,
-            provider,
+        Arc::new(PublishedWorkflowRuntime::new(
+            published,
+            provider_kind,
+            &settings,
+            temporary_api_key,
             store,
-            settings.pricing,
-            settings.budget,
-            AgentLoopConfig {
-                model: settings.provider.model,
-                max_model_turns_per_task: project.runtime.max_model_turns_per_task,
-                max_tool_calls_per_task: project.runtime.max_tool_calls_per_task,
-                max_recovery_turns_per_task: project.runtime.max_recovery_turns_per_task,
-                task_timeout: std::time::Duration::from_secs(project.runtime.task_timeout_seconds),
-                provider_request_timeout: std::time::Duration::from_secs(
-                    project
-                        .runtime
-                        .provider_request_timeout_seconds
-                        .min(settings.provider.request_timeout_seconds),
-                ),
-                max_retries: project.runtime.max_retries,
-                max_output_tokens: settings.provider.max_output_tokens,
-                temperature: settings.provider.temperature,
-            },
+            validators,
+            refiners,
+        )?)
+    } else {
+        if project_skills.len() != 1 {
+            bail!("Projects with zero or multiple Skills must select a Published Workflow Version");
+        }
+        let skill = project_skills[0].clone();
+        let provider: Arc<dyn VisionModelProvider> = match provider_kind {
+            "mock" => Arc::new(MockVisionProvider::new(mock_script(
+                &project,
+                skill.as_ref(),
+            )?)),
+            "openai_compatible" => Arc::new(
+                OpenAiCompatibleProvider::new_with_api_key(
+                    settings.provider.clone(),
+                    temporary_api_key,
+                )
+                .map_err(|error| anyhow!(error))?,
+            ),
+            other => bail!("unknown provider {other:?}; choose mock or openai_compatible"),
+        };
+        let compatibility_snapshot = serde_json::json!({
+            "schema_version": 1,
+            "engine": "legacy_agent_runtime",
+            "workflow": skill.workflow(),
+            "skill_manifest": skill.manifest(),
+            "project": &project,
+            "model_binding": {
+                "provider": provider.name(),
+                "model": &settings.provider.model,
+            }
+        });
+        Arc::new(
+            AgentRuntime::new(
+                skill,
+                provider,
+                store,
+                settings.pricing,
+                settings.budget,
+                AgentLoopConfig {
+                    model: settings.provider.model,
+                    max_model_turns_per_task: project.runtime.max_model_turns_per_task,
+                    max_tool_calls_per_task: project.runtime.max_tool_calls_per_task,
+                    max_recovery_turns_per_task: project.runtime.max_recovery_turns_per_task,
+                    task_timeout: std::time::Duration::from_secs(
+                        project.runtime.task_timeout_seconds,
+                    ),
+                    provider_request_timeout: std::time::Duration::from_secs(
+                        project
+                            .runtime
+                            .provider_request_timeout_seconds
+                            .min(settings.provider.request_timeout_seconds),
+                    ),
+                    max_retries: project.runtime.max_retries,
+                    max_output_tokens: settings.provider.max_output_tokens,
+                    temperature: settings.provider.temperature,
+                },
+            )
+            .with_workflow_snapshot_json(Some(serde_json::to_string(&compatibility_snapshot)?)),
         )
-        .with_workflow_snapshot_json(workflow_snapshot_json),
-    );
+    };
     let project_root = project_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -2842,6 +2933,20 @@ fn ensure_within(workspace: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn reject_archive_source(path: &Path) -> Result<()> {
+    if path.is_file()
+        && path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
+        bail!(
+            "ZIP image import is not supported; archives are rejected before extraction to prevent path traversal"
+        );
+    }
+    Ok(())
+}
+
 fn unique_target(directory: &Path, name: &std::ffi::OsStr) -> PathBuf {
     let first = directory.join(name);
     if !first.exists() {
@@ -2907,6 +3012,26 @@ export:
   formats: [json]
 ";
 
+    const GENERIC_BBOX_PROJECT: &str = r"
+version: 1
+project:
+  name: Generic component inspection
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: components
+    kind: bounding_box
+    labels: [component]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native, coco]
+";
+
     #[test]
     fn generic_project_and_workflow_need_no_robocup_skill() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
@@ -2940,6 +3065,147 @@ export:
         assert!(!encoded.to_ascii_lowercase().contains("robocup"));
     }
 
+    #[tokio::test]
+    async fn selected_published_workflow_executes_the_generic_dag_and_persists_checkpoint() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("generic-dag", GENERIC_BBOX_PROJECT)
+            .expect("generic Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("generic-dag/images/component.png"),
+        )
+        .expect("generic image");
+        let settings = load_settings(None).expect("settings");
+        let suggestion = application
+            .suggest_workflow(
+                "generic-dag",
+                &settings,
+                &WorkflowConstraints {
+                    require_review_gate: false,
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect("generic suggestion");
+        let validation = application
+            .dry_run_workflow(&suggestion.draft.id, &settings)
+            .expect("validation");
+        assert!(validation.valid, "{:#?}", validation.issues);
+        let published = application
+            .publish_workflow(&suggestion.draft.id, &settings)
+            .expect("published Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("generic-dag/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("generic-published-dag"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("selected Published Workflow Run");
+        let result = application.wait_run(started.run_id).await.expect("DAG Run");
+        assert_eq!(result.status, RunStatus::Completed, "{:#?}", result.issues);
+        assert_eq!(result.committed.len(), 1);
+        let history = application
+            .store
+            .history(started.run_id)
+            .expect("persisted history");
+        assert_eq!(history.artifacts.len(), 1);
+        assert_eq!(history.annotations.len(), 1);
+        let snapshot: serde_json::Value = serde_json::from_str(
+            history
+                .run
+                .workflow_snapshot_json
+                .as_deref()
+                .expect("Workflow snapshot"),
+        )
+        .expect("snapshot JSON");
+        assert_eq!(snapshot["engine"], json!("published_dag_runtime"));
+        assert!(!snapshot["checkpoint"].is_null());
+        assert!(!snapshot.to_string().contains("legacy_agent_runtime"));
+        assert!(
+            history
+                .events
+                .iter()
+                .any(|event| event.kind == RunEventKind::ArtifactCommitted
+                    || event.kind == RunEventKind::ArtifactCreated)
+        );
+    }
+
+    #[tokio::test]
+    async fn dataset_batch_executes_the_exact_published_workflow_for_every_child_run() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("generic-batch", GENERIC_BBOX_PROJECT)
+            .expect("generic Project");
+        let image_root = temporary.path().join("generic-batch/images");
+        for name in ["component-one.png", "component-two.png"] {
+            annotagent_image_tools::generate_synthetic_inspection(&image_root.join(name))
+                .expect("generic image");
+        }
+        let settings = load_settings(None).expect("settings");
+        let suggestion = application
+            .suggest_workflow(
+                "generic-batch",
+                &settings,
+                &WorkflowConstraints {
+                    require_review_gate: false,
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect("generic suggestion");
+        let published = application
+            .publish_workflow(&suggestion.draft.id, &settings)
+            .expect("Published Workflow");
+        let coordinator = DatasetCoordinator::new(&application);
+        let batch = coordinator
+            .create_with_workflow(
+                &temporary.path().join("generic-batch/project.yaml"),
+                "mock",
+                None,
+                None,
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("Published Workflow Batch");
+        assert_eq!(
+            batch.workflow_version,
+            format!("{}@{}", published.workflow_id, published.version)
+        );
+        assert_eq!(
+            batch.workflow_snapshot["published_workflow"]["content_hash"],
+            json!(published.content_hash)
+        );
+
+        let execution = coordinator
+            .execute(batch.id, None)
+            .await
+            .expect("Dataset Batch execution");
+        assert_eq!(execution.batch.status, BatchStatus::Completed);
+        assert_eq!(execution.results.len(), 2);
+        for result in execution.results {
+            let history = application
+                .store
+                .history(result.result.run_id)
+                .expect("child Run history");
+            let snapshot: serde_json::Value = serde_json::from_str(
+                history
+                    .run
+                    .workflow_snapshot_json
+                    .as_deref()
+                    .expect("child Workflow snapshot"),
+            )
+            .expect("child snapshot JSON");
+            assert_eq!(snapshot["engine"], json!("published_dag_runtime"));
+            assert_eq!(
+                snapshot["selected_workflow"]["content_hash"],
+                json!(published.content_hash)
+            );
+            assert!(!snapshot["checkpoint"].is_null());
+        }
+    }
+
     #[test]
     fn workspace_rejects_traversal_and_symlink_escape() {
         let temp = tempfile::tempdir().expect("temp");
@@ -2948,6 +3214,32 @@ export:
         let app = LocalApplication::new(&workspace).expect("app");
         assert!(app.project_path("../outside").is_err());
         assert!(app.project_path("a/b").is_err());
+
+        #[cfg(unix)]
+        {
+            let outside = temp.path().join("outside");
+            std::fs::create_dir(&outside).expect("outside");
+            std::fs::write(outside.join("project.yaml"), GENERIC_PROJECT).expect("outside project");
+            std::os::unix::fs::symlink(&outside, workspace.join("linked-project"))
+                .expect("project symlink");
+            assert!(app.project_path("linked-project").is_err());
+        }
+    }
+
+    #[test]
+    fn image_import_rejects_zip_archives_before_extraction() {
+        let temp = tempfile::tempdir().expect("temp");
+        let workspace = temp.path().join("workspace");
+        let app = LocalApplication::new(&workspace).expect("app");
+        app.create_project("generic", GENERIC_PROJECT)
+            .expect("project");
+        let archive = workspace.join("malicious.zip");
+        std::fs::write(&archive, b"PK\x03\x04../outside.png").expect("fake archive fixture");
+        let error = app
+            .import_images("generic", &archive)
+            .expect_err("ZIP import must be rejected");
+        assert!(error.to_string().contains("path traversal"));
+        assert!(!temp.path().join("outside.png").exists());
     }
 
     #[test]
@@ -3264,7 +3556,9 @@ export:
         let snapshot = history.run.workflow_snapshot_json.expect("snapshot");
         assert!(snapshot.contains(&published.workflow_id));
         assert!(snapshot.contains("selected_workflow"));
-        assert!(snapshot.contains("legacy_agent_runtime"));
+        assert!(snapshot.contains("published_dag_runtime"));
+        assert!(snapshot.contains("checkpoint"));
+        assert!(!snapshot.contains("legacy_agent_runtime"));
 
         let archived = application
             .archive_workflow_draft(&blank.id)

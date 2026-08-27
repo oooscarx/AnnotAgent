@@ -554,8 +554,8 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
             "static_validator",
             WorkflowNodeKind::Validator,
             task_ids.clone(),
-            validation_inputs,
-            Vec::new(),
+            validation_inputs.clone(),
+            validation_inputs.clone(),
         ));
 
         let mut commit_dependency = "validate_candidates".to_owned();
@@ -565,19 +565,33 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 "review_gate",
                 WorkflowNodeKind::HumanReview,
                 vec![commit_dependency.clone()],
-                Vec::new(),
-                Vec::new(),
+                validation_inputs.clone(),
+                validation_inputs.clone(),
             ));
+            edges.extend(validation_inputs.iter().map(|port| WorkflowEdge {
+                from_node: "validate_candidates".to_owned(),
+                from_port: port.id.clone(),
+                to_node: "review_gate".to_owned(),
+                to_port: port.id.clone(),
+                route: None,
+            }));
             "review_gate".clone_into(&mut commit_dependency);
         }
         nodes.push(system_node(
             "commit",
             "commit",
             WorkflowNodeKind::Commit,
-            vec![commit_dependency],
-            Vec::new(),
+            vec![commit_dependency.clone()],
+            validation_inputs.clone(),
             Vec::new(),
         ));
+        edges.extend(validation_inputs.into_iter().map(|port| WorkflowEdge {
+            from_node: commit_dependency.clone(),
+            from_port: port.id.clone(),
+            to_node: "commit".to_owned(),
+            to_port: port.id,
+            route: None,
+        }));
 
         let mut warnings = Vec::new();
         if let Some(max_nodes) = constraints.max_nodes
@@ -1479,6 +1493,20 @@ mod tests {
             })
             .expect_err("plaintext secret must be rejected");
         assert!(error.to_string().contains("never secret material"));
+
+        let error = models
+            .register_model(VisionModelDescriptor {
+                id: "unsafe-configuration".to_owned(),
+                backend_id: "classification-backend".to_owned(),
+                capabilities: vec![VisionCapability::Classification],
+                configuration: BTreeMap::from([(
+                    "transport".to_owned(),
+                    serde_json::json!({"api_key": "plaintext-secret"}),
+                )]),
+                ..VisionModelDescriptor::default()
+            })
+            .expect_err("secret configuration must be rejected");
+        assert!(error.to_string().contains("secret_reference"));
     }
 
     #[test]

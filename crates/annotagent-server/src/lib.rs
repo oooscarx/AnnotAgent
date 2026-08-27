@@ -13,7 +13,7 @@ use std::{
 
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, LocalApplication, ModelBinding,
-    ProjectSummary, Settings, WorkflowVersion, stable_project_id,
+    ProjectSummary, Settings, WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
     Annotation, AnnotationId, BatchId, CorrectionFeatures, CorrectionRecord, DatasetExporter,
@@ -77,7 +77,7 @@ impl ServerState {
         } else {
             annotagent_application::load_settings(None)?
         };
-        validate_provider_kind(&settings.default_provider)?;
+        validate_settings(&settings)?;
         let secret_account = format!("workspace-{}", stable_project_id(application.workspace()));
         let (api_key, api_key_persisted, credential_store_error) =
             match secret_store.load(&secret_account) {
@@ -540,6 +540,16 @@ struct RunSummary {
     input_tokens: u64,
     output_tokens: u64,
     cost: String,
+    current_node: Option<String>,
+    current_node_status: Option<String>,
+    artifact_count: usize,
+    validation_issue_codes: Vec<String>,
+    retry_count: u32,
+    fallback_nodes: Vec<String>,
+    model_identity: String,
+    timed_out: bool,
+    checkpoint_present: bool,
+    review_suspended: bool,
     terminal_reason: Option<String>,
     created_at: String,
     updated_at: String,
@@ -574,27 +584,135 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
             .as_ref()
             .map_or_else(|| "legacy".to_owned(), |schema| schema.version.to_string())
     };
-    let skill_version = project.as_ref().map_or_else(
-        || "unknown".to_owned(),
-        |schema| schema.project.skill_version.clone(),
-    );
-    let usage = state
+    let skill_versions = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| {
+            snapshot
+                .pointer("/selected_workflow/snapshot/enabled_skills")
+                .and_then(Value::as_object)
+        })
+        .map(|skills| {
+            skills
+                .iter()
+                .map(|(id, version)| format!("{id}@{}", version.as_str().unwrap_or("unknown")))
+                .collect::<Vec<_>>()
+        })
+        .filter(|skills| !skills.is_empty())
+        .unwrap_or_else(|| {
+            project.as_ref().map_or_else(
+                || vec!["unknown".to_owned()],
+                |schema| {
+                    if run.skill_id == "none" || run.skill_id.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![format!("{}@{}", run.skill_id, schema.project.skill_version)]
+                    }
+                },
+            )
+        });
+    let history = state
         .application
         .store()
         .history(run.id)
-        .map_err(ApiError::internal)?
-        .usage;
+        .map_err(ApiError::internal)?;
     let mut totals = UsageTotals::default();
-    for record in &usage {
+    let mut retry_count = 0_u32;
+    for record in &history.usage {
         totals.add(record);
+        retry_count = retry_count.saturating_add(record.retry_count);
     }
+    let current_task = history.task_runs.last();
+    let current_node = current_task.map(|task| task.task_id.to_string());
+    let current_node_status =
+        current_task.map(|task| format!("{:?}", task.status).to_ascii_lowercase());
+    let mut validation_issue_codes = history
+        .events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            annotagent_core::RunEventPayload::Validation { issue_codes, .. } => {
+                Some(issue_codes.as_slice())
+            }
+            _ => None,
+        })
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    validation_issue_codes.sort();
+    validation_issue_codes.dedup();
+    let fallback_nodes = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.pointer("/checkpoint/activated_fallbacks"))
+        .and_then(Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let checkpoint_present = workflow_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| !snapshot["checkpoint"].is_null());
+    let timed_out = run
+        .terminal_reason
+        .as_deref()
+        .is_some_and(|reason| reason.to_ascii_lowercase().contains("timeout"))
+        || history.events.iter().any(|event| match &event.payload {
+            annotagent_core::RunEventPayload::ProviderFailure { error_code, .. }
+            | annotagent_core::RunEventPayload::TaskFailure { error_code, .. } => {
+                error_code.to_ascii_lowercase().contains("timeout")
+            }
+            _ => false,
+        });
+    let review_suspended = run.status == RunStatus::AwaitingReview
+        || history
+            .task_runs
+            .iter()
+            .any(|task| task.status == annotagent_core::TaskRunStatus::NeedsReview);
+    let terminal_reason = if run
+        .terminal_reason
+        .as_deref()
+        .is_some_and(|reason| reason == "run reached a terminal condition")
+    {
+        history
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.payload {
+                annotagent_core::RunEventPayload::ProviderFailure { summary, .. }
+                | annotagent_core::RunEventPayload::TaskFailure { summary, .. } => {
+                    Some(summary.clone())
+                }
+                _ => None,
+            })
+            .or_else(|| {
+                (!validation_issue_codes.is_empty()).then(|| {
+                    format!(
+                        "Run ended with validation issues: {}",
+                        validation_issue_codes.join(", ")
+                    )
+                })
+            })
+            .or_else(|| {
+                matches!(run.status, RunStatus::Failed | RunStatus::Interrupted).then(|| {
+                    format!(
+                        "Legacy {:?} history has no structured terminal failure; inspect its persisted events",
+                        run.status
+                    )
+                })
+            })
+    } else {
+        run.terminal_reason.clone()
+    };
     let controllable = state.application.is_run_controllable(run.id);
+    let model_identity = format!("{}/{}", run.provider, run.model);
     Ok(RunSummary {
         id: run.id,
         project_name: run.project_name,
         workflow_name,
         workflow_version,
-        skill_versions: vec![format!("{}@{}", run.skill_id, skill_version)],
+        skill_versions,
         model_bindings: vec![ModelBinding {
             id: "default-vision".to_owned(),
             provider: run.provider.clone(),
@@ -606,7 +724,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
             } else {
                 "unknown".to_owned()
             },
-            health_detail: run.terminal_reason.clone(),
+            health_detail: terminal_reason.clone(),
         }],
         provider: run.provider,
         model: run.model,
@@ -615,7 +733,17 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
         input_tokens: totals.input_tokens,
         output_tokens: totals.output_tokens,
         cost: totals.cost.to_string(),
-        terminal_reason: run.terminal_reason,
+        current_node,
+        current_node_status,
+        artifact_count: history.artifacts.len(),
+        validation_issue_codes,
+        retry_count,
+        fallback_nodes,
+        model_identity,
+        timed_out,
+        checkpoint_present,
+        review_suspended,
+        terminal_reason,
         created_at: run.created_at,
         updated_at: run.updated_at,
     })
@@ -1111,6 +1239,8 @@ async fn start_run(
 struct StartBatchRequest {
     provider: Option<String>,
     limit: Option<usize>,
+    workflow_id: Option<String>,
+    version: Option<u32>,
 }
 
 async fn start_batch(
@@ -1139,6 +1269,8 @@ async fn start_batch(
         StartBatchRequest {
             provider: None,
             limit: None,
+            workflow_id: None,
+            version: None,
         },
         |Json(value)| value,
     );
@@ -1147,6 +1279,12 @@ async fn start_batch(
             "batch limit must be greater than zero",
         ));
     }
+    if request.workflow_id.is_some() != request.version.is_some() {
+        return Err(ApiError::bad_request(
+            "workflow_id and version must be selected together",
+        ));
+    }
+    let selected_workflow = request.workflow_id.as_deref().zip(request.version);
     let settings = state.settings.read().await.clone();
     let provider = request
         .provider
@@ -1157,7 +1295,13 @@ async fn start_batch(
         .is_file()
         .then_some(state.settings_path.as_path());
     let batch = DatasetCoordinator::new(state.application.as_ref())
-        .create(&project_path, &provider, config_path, request.limit)
+        .create_with_workflow(
+            &project_path,
+            &provider,
+            config_path,
+            request.limit,
+            selected_workflow,
+        )
         .map_err(ApiError::bad_request)?;
     let application = state.application.clone();
     let api_key = state.api_key.read().await.clone();
@@ -1666,7 +1810,7 @@ async fn put_settings(
         ));
     }
     let validated = serde_json::from_value::<Settings>(settings).map_err(ApiError::bad_request)?;
-    validate_provider_kind(&validated.default_provider).map_err(ApiError::bad_request)?;
+    validate_settings(&validated).map_err(ApiError::bad_request)?;
 
     let settings_path = state.settings_path.clone();
     let saved_settings = validated.clone();
@@ -2048,6 +2192,73 @@ mod tests {
         }
         assert_eq!(run["workflow_name"], published["draft"]["name"]);
         assert_eq!(run["workflow_version"], json!(version.to_string()));
+        assert!(
+            run["artifact_count"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert_eq!(run["checkpoint_present"], json!(true));
+        assert_eq!(run["model_identity"], json!("mock/vision-model"));
+        assert!(run["current_node"].as_str().is_some());
+        assert!(run["current_node_status"].as_str().is_some());
+        assert!(run["validation_issue_codes"].as_array().is_some());
+        assert!(run["fallback_nodes"].as_array().is_some());
+
+        let batch_started = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/workflow-ui/batches",
+                Some(json!({
+                    "provider": "mock",
+                    "workflow_id": workflow_id,
+                    "version": version
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            batch_started["batch"]["workflow_version"],
+            json!(format!("{workflow_id}@{version}"))
+        );
+        assert_eq!(
+            batch_started["batch"]["workflow_snapshot"]["published_workflow"]["content_hash"],
+            published["content_hash"]
+        );
+        let batch_id = batch_started["batch"]["id"].as_str().expect("batch id");
+        for _ in 0..100 {
+            let detail = response_json(
+                request(
+                    &service,
+                    axum::http::Method::GET,
+                    &format!("/api/batches/{batch_id}"),
+                    None,
+                )
+                .await,
+            )
+            .await;
+            if detail["batch"]["status"]
+                .as_str()
+                .is_some_and(|status| !matches!(status, "pending" | "running"))
+            {
+                assert_eq!(detail["progress"]["completed_images"], json!(1));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let runs =
+            response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
+                .await;
+        assert_eq!(
+            runs["runs"]
+                .as_array()
+                .expect("Run summaries")
+                .iter()
+                .filter(|run| run["checkpoint_present"] == json!(true))
+                .count(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -2316,6 +2527,22 @@ mod tests {
         let mut settings =
             response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)
                 .await;
+        let mut unsafe_settings = settings.clone();
+        unsafe_settings["provider"]["custom_headers"] =
+            json!({"Authorization": "Bearer must-not-be-persisted"});
+        let rejected = request(
+            &service,
+            axum::http::Method::PUT,
+            "/api/settings",
+            Some(unsafe_settings),
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            !temp.path().join(".annotagent/settings.toml").exists(),
+            "invalid secret-bearing provider metadata must be rejected before writing settings"
+        );
+
         settings["default_provider"] = json!("openai_compatible");
         settings["provider"]["endpoint"] = json!("https://provider.example/v1");
         settings["provider"]["model"] = json!("persisted-vision-model");

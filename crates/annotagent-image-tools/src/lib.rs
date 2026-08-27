@@ -309,6 +309,18 @@ pub fn generate_synthetic_robocup(path: &Path) -> CoreResult<()> {
         .map_err(|error| CoreError::InvalidGeometry(format!("cannot save fixture: {error}")))
 }
 
+pub fn generate_synthetic_inspection(path: &Path) -> CoreResult<()> {
+    let mut image: RgbImage = ImageBuffer::from_pixel(160, 100, Rgb([24, 28, 34]));
+    for y in 28..72 {
+        for x in 48..112 {
+            image.put_pixel(x, y, Rgb([224, 190, 72]));
+        }
+    }
+    image
+        .save(path)
+        .map_err(|error| CoreError::InvalidGeometry(format!("cannot save fixture: {error}")))
+}
+
 fn draw_robot(image: &mut RgbImage, x: u32, y: u32, torso: Rgb<u8>) {
     for row in y..y + 72 {
         for column in x..x + 42 {
@@ -373,5 +385,15 @@ mod tests {
             NormalizedPoint::new(0.5, 0.5).expect("point"),
             &ring
         ));
+    }
+
+    #[test]
+    fn decode_limit_is_checked_before_full_image_decode() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("bounded.png");
+        let image = RgbImage::from_pixel(11, 10, Rgb([0, 0, 0]));
+        image.save(&path).expect("fixture image");
+        let error = load_image(&path, 100).expect_err("110 pixels must exceed limit");
+        assert!(error.to_string().contains("exceeding configured limit 100"));
     }
 }

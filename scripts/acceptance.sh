@@ -10,6 +10,18 @@ run() {
 
 cd "$repo_root"
 
+if rg -n -i 'robocup|field_line|penalty_mark|team_color|\bball\b|\brobot\b' \
+  crates/annotagent-core/src; then
+  printf '\nCore domain-boundary scan failed.\n' >&2
+  exit 1
+fi
+
+if git grep -n -E 'sk-ws-|sk-[A-Za-z0-9_-]{20,}' -- . \
+  ':!docs/execution/ACCEPTANCE_EVIDENCE.md' ':!scripts/acceptance.sh'; then
+  printf '\nRepository secret-prefix scan failed.\n' >&2
+  exit 1
+fi
+
 run cargo fmt --all -- --check
 run cargo clippy --workspace --all-targets --all-features -- -D warnings
 run cargo test --workspace --all-features
@@ -18,5 +30,7 @@ run npm --prefix "$repo_root/web" run typecheck
 run npm --prefix "$repo_root/web" run test
 run npm --prefix "$repo_root/web" run build
 run cargo run -p annotagent -- doctor
+run cargo run -p annotagent -- demo generic-workflow
+run cargo run -p annotagent -- demo robocup-hybrid
 
-printf '\nBaseline acceptance completed successfully.\n'
+printf '\nWorkflow Alpha acceptance completed successfully.\n'

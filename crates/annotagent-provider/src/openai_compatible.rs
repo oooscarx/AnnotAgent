@@ -74,6 +74,7 @@ impl OpenAiCompatibleProvider {
         config: OpenAiCompatibleConfig,
         temporary_api_key: Option<String>,
     ) -> CoreResult<Self> {
+        validate_openai_config(&config)?;
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .build()
@@ -171,6 +172,88 @@ impl OpenAiCompatibleProvider {
         }
         Value::Object(body)
     }
+}
+
+fn validate_openai_config(config: &OpenAiCompatibleConfig) -> CoreResult<()> {
+    let endpoint = reqwest::Url::parse(&config.endpoint)
+        .map_err(|error| CoreError::Validation(format!("invalid provider endpoint: {error}")))?;
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+    {
+        return Err(CoreError::Validation(
+            "provider endpoint must be an http(s) URL without embedded credentials".to_owned(),
+        ));
+    }
+    if !valid_environment_name(&config.api_key_env) {
+        return Err(CoreError::Validation(
+            "api_key_env must be a valid environment variable name".to_owned(),
+        ));
+    }
+    if let Some(name) = config
+        .custom_headers
+        .keys()
+        .find(|name| secret_key_name(name))
+    {
+        return Err(CoreError::Validation(format!(
+            "custom header {name:?} may contain credentials; use the write-only API key field"
+        )));
+    }
+    if let Some(path) = find_secret_key(&config.extra_request_fields) {
+        return Err(CoreError::Validation(format!(
+            "extra request field {path:?} may contain secret material"
+        )));
+    }
+    Ok(())
+}
+
+fn valid_environment_name(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn secret_key_name(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace(['-', '_'], "");
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "proxyauthorization"
+            | "apikey"
+            | "accesstoken"
+            | "secrettoken"
+            | "password"
+    )
+}
+
+fn find_secret_key(fields: &BTreeMap<String, Value>) -> Option<String> {
+    fn visit(value: &Value, path: &str) -> Option<String> {
+        match value {
+            Value::Object(object) => object.iter().find_map(|(key, value)| {
+                let nested = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                secret_key_name(key)
+                    .then_some(nested.clone())
+                    .or_else(|| visit(value, &nested))
+            }),
+            Value::Array(values) => values
+                .iter()
+                .enumerate()
+                .find_map(|(index, value)| visit(value, &format!("{path}[{index}]"))),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+        }
+    }
+    fields.iter().find_map(|(key, value)| {
+        secret_key_name(key)
+            .then_some(key.clone())
+            .or_else(|| visit(value, key))
+    })
 }
 
 fn message_json(message: &ModelMessage) -> Value {
@@ -516,6 +599,40 @@ mod tests {
             redact_secrets(&json!({"Authorization": "Bearer secret", "data_base64": "huge"}));
         assert_eq!(value["Authorization"], "[REDACTED]");
         assert_eq!(value["data_base64"], "[BINARY OMITTED]");
+    }
+
+    #[test]
+    fn provider_configuration_rejects_credential_bearing_metadata_and_urls() {
+        let base = OpenAiCompatibleConfig {
+            endpoint: "https://provider.example/v1".to_owned(),
+            api_key_env: "ANNOTAGENT_API_KEY".to_owned(),
+            model: "vision".to_owned(),
+            protocol: OpenAiProtocol::ChatCompletions,
+            request_timeout_seconds: 1,
+            max_output_tokens: 100,
+            temperature: 0.0,
+            reasoning_mode: None,
+            supports_tool_calls: true,
+            supports_json_schema: false,
+            custom_headers: BTreeMap::new(),
+            extra_request_fields: BTreeMap::new(),
+            max_retries: 0,
+        };
+        let mut header = base.clone();
+        header
+            .custom_headers
+            .insert("Authorization".to_owned(), "Bearer plaintext".to_owned());
+        assert!(OpenAiCompatibleProvider::new(header).is_err());
+
+        let mut extra = base.clone();
+        extra
+            .extra_request_fields
+            .insert("vendor".to_owned(), json!({"access_token": "plaintext"}));
+        assert!(OpenAiCompatibleProvider::new(extra).is_err());
+
+        let mut embedded = base;
+        embedded.endpoint = "https://user:pass@provider.example/v1".to_owned();
+        assert!(OpenAiCompatibleProvider::new(embedded).is_err());
     }
 
     #[test]

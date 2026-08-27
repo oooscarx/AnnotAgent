@@ -126,6 +126,20 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    pub fn update_run_workflow_snapshot(
+        &self,
+        run_id: RunId,
+        snapshot_json: &str,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE runs SET workflow_snapshot_json = ?2, updated_at = ?3 WHERE id = ?1",
+                params![run_id.to_string(), snapshot_json, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let connection = Connection::open(path)?;
         let store = Self {

@@ -64,6 +64,23 @@ export const api = {
       headers: { "idempotency-key": idempotencyKey },
       body: JSON.stringify({ ...(provider ? { provider } : {}), ...workflow }),
     }),
+  startBatch: (
+    projectId: string,
+    provider?: string,
+    limit?: number,
+    workflow?: { workflow_id: string; version: number },
+  ) =>
+    request<{ batch: { id: string; status: string } }>(
+      `/api/projects/${projectId}/batches`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(provider ? { provider } : {}),
+          ...(limit ? { limit } : {}),
+          ...workflow,
+        }),
+      },
+    ),
   control: (runId: string, action: "pause" | "resume" | "cancel") =>
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),
   runEvents: (runId: string) =>

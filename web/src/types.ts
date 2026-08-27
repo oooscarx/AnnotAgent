@@ -25,6 +25,16 @@ export interface HistoryRun {
   input_tokens: number;
   output_tokens: number;
   cost: string;
+  current_node?: string;
+  current_node_status?: string;
+  artifact_count: number;
+  validation_issue_codes: string[];
+  retry_count: number;
+  fallback_nodes: string[];
+  model_identity: string;
+  timed_out: boolean;
+  checkpoint_present: boolean;
+  review_suspended: boolean;
   terminal_reason?: string;
   created_at: string;
   updated_at: string;
