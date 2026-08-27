@@ -11,6 +11,14 @@ export type RunStatus =
   | "failed"
   | "interrupted";
 
+export type ProjectReadiness = "incomplete" | "ready" | "configuration_issue";
+export type ReviewStatus =
+  | "needs_review"
+  | "auto_accepted"
+  | "human_accepted"
+  | "rejected"
+  | "draft";
+
 export interface HistoryRun {
   id: string;
   project_name: string;
@@ -40,7 +48,13 @@ export interface HistoryRun {
   updated_at: string;
 }
 
-export type WorkflowStatus = "draft" | "valid" | "published" | "archived";
+export type WorkflowStatus =
+  | "draft"
+  | "invalid"
+  | "valid"
+  | "tested"
+  | "published"
+  | "archived";
 
 export interface EnabledSkill {
   id: string;
@@ -118,7 +132,7 @@ export interface ProjectSummary {
   image_count: number;
   task_count: number;
   review_count: number;
-  readiness: "incomplete" | "ready" | "configuration_issue";
+  readiness: ProjectReadiness;
   blocking_issues: {
     code: string;
     message: string;
@@ -496,7 +510,7 @@ export interface Annotation {
   attributes: Record<string, unknown>;
   confidence?: number;
   source: string;
-  review_status: string;
+  review_status: ReviewStatus;
   provenance: Record<string, unknown>;
   created_at: string;
 }

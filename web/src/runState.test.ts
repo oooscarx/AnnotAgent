@@ -23,4 +23,16 @@ describe("Project navigation run restore", () => {
     expect(restored.activeStatus).toBe("running");
     expect(restored.startDisabled).toBe(true);
   });
+
+  it("also locks Start for a persisted active Dataset Batch", () => {
+    const project = {
+      active_batch: { id: "batch-1", status: "paused" },
+    } as ProjectSummary;
+    expect(deriveProjectRunView(project)).toMatchObject({
+      activeRunId: "",
+      activeBatchId: "batch-1",
+      activeStatus: "paused",
+      startDisabled: true,
+    });
+  });
 });

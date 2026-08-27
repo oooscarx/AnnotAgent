@@ -11,7 +11,7 @@ Updated: 2026-08-27
 | 4 Pipeline UX | Complete | Guided shared/Label lanes, node Drawer, controlled Advisor proposal, same-definition graph, and focused versions are implemented. |
 | 5 Run Workspace | Complete | `/runs/:runId` combines run controls, image context, visual Artifact preview, node timeline, detail, deep links, and Replay. |
 | 6 Review Integration | Complete | Review source context, bidirectional deep links, labeled bbox/crop lineage, notes and decisions are connected. |
-| 7 Reliability | Pending | URL and active-run restoration are incomplete. |
+| 7 Reliability | Complete | URL/popstate restoration, SSE refetch/reconnect state, active Run/Batch locking, and retry recovery are implemented. |
 | 8 Usability | Pending | Existing accessibility primitives need a full guided-workspace pass. |
 | 9 Acceptance | Pending | Full release checks and manual tasks remain. |
 
@@ -89,3 +89,13 @@ Updated: 2026-08-27
 - Detection and Crop marks join by stable `parent.item_id`; either click updates one selection and arrow keys cycle it.
 - Crop cards expose parent Artifact and source Node and support enlarged preview.
 - Server 7 tests passed; Web 10 files/23 tests and production build passed.
+
+## Milestone 7 verification
+
+- Route parsing initializes from location, `popstate` restores it, and canonicalization runs after each route change.
+- SSE `error` marks reconnecting and refetches server state; `open` marks connected and refetches again.
+- Active Run and active Dataset Batch are restored exclusively from Project Summary and both lock Start.
+- Run, Review, Project, and Build selection survive refresh through path/query state.
+- Errors keep prior data visible and provide Retry plus Dismiss.
+- Status types are separated into Project Readiness, Workflow, Run, and Review unions.
+- Server 7 tests passed; Web 10 files/24 tests and production build passed.

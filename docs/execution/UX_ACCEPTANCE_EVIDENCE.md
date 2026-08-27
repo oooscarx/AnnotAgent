@@ -35,6 +35,10 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 13 — PASS: `artifactDetectionMarks` and `artifactCropMarks` join on parent item identity; UI shares selection both directions.
 - 14 — PASS: Review `Open run context` includes source node and Artifact.
 - 15 — PASS: Run Detail fetches matching queue item and exposes `Open review item`.
+- 17 — PASS at implementation/unit level: `popstate` reparses full location; browser exercise remains Milestone 9.
+- 18 — PASS: Project state is refetched on initial load, SSE transitions, and SSE reconnect.
+- 19 — PASS: `deriveProjectRunView` locks Start for both active Run and active Batch; 2 tests pass.
+- 24 — PASS: distinct TypeScript unions and DTO fields represent Project, Workflow, Run, and Review state.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -74,6 +78,13 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - `labelPipelineUi.test.ts` verifies label/confidence/source and Crop parent/source linkage from real DTO shapes.
 - Review edits, reviewer note, reason, accept/reject/delete continue using persisted revision and decision APIs.
 - Server: 7 tests passed. Web: 10 files/23 tests and production build passed.
+
+## Milestone 7 — Reliability
+
+- `navigation.test.ts` covers durable build and Run/Artifact links; browser history is handled through `popstate`.
+- `runState.test.ts` verifies backend Run and Batch restoration and duplicate-Start lock.
+- SSE lifecycle refetches authoritative `/api/projects` state on reconnect and open.
+- Server: 7 tests passed. Web: 10 files/24 tests and production build passed.
 
 ## Manual tasks
 

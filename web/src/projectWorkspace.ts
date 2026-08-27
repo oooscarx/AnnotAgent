@@ -3,15 +3,17 @@ import type { ProjectSummary } from "./types";
 export type ProjectNextAction =
   | { kind: "build"; step: "data" | "labels" | "pipeline" | "test"; label: string }
   | { kind: "active_run"; runId: string; label: "Open active run" }
+  | { kind: "active_batch"; label: "View active batch" }
   | { kind: "review"; label: "Review results" }
   | { kind: "start"; label: "Start run" };
 
 export function deriveProjectNextAction(
   project: ProjectSummary,
 ): ProjectNextAction {
-  const activeId = project.active_batch?.id ?? project.active_run?.id;
-  if (activeId)
-    return { kind: "active_run", runId: activeId, label: "Open active run" };
+  if (project.active_run)
+    return { kind: "active_run", runId: project.active_run.id, label: "Open active run" };
+  if (project.active_batch)
+    return { kind: "active_batch", label: "View active batch" };
   if (project.image_count === 0)
     return { kind: "build", step: "data", label: "Add images" };
   if (

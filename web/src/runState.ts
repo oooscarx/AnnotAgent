@@ -2,6 +2,7 @@ import type { ProjectSummary } from "./types";
 
 export interface ProjectRunView {
   activeRunId: string;
+  activeBatchId: string;
   activeStatus?: string;
   startDisabled: boolean;
 }
@@ -10,7 +11,8 @@ export interface ProjectRunView {
 export function deriveProjectRunView(project?: ProjectSummary): ProjectRunView {
   return {
     activeRunId: project?.active_run?.id ?? "",
-    activeStatus: project?.active_run?.status,
-    startDisabled: Boolean(project?.active_run),
+    activeBatchId: project?.active_batch?.id ?? "",
+    activeStatus: project?.active_run?.status ?? project?.active_batch?.status,
+    startDisabled: Boolean(project?.active_run || project?.active_batch),
   };
 }

@@ -74,6 +74,7 @@ export function App() {
   const [reviewQueue, setReviewQueue] = useState(0);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState("");
+  const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
 
   const navigate = (path: string, replace = false) => {
     if (replace) window.history.replaceState({}, "", path);
@@ -103,7 +104,7 @@ export function App() {
     const current = `${window.location.pathname}${window.location.search}`;
     if (route.canonicalPath !== current || window.location.hash)
       navigate(route.canonicalPath, true);
-  }, []);
+  }, [route.canonicalPath]);
 
   const refresh = () =>
     api
@@ -141,6 +142,11 @@ export function App() {
             void refresh();
         },
         () => {
+          setConnection("reconnecting");
+          void refresh();
+        },
+        () => {
+          setConnection("connected");
           void refresh();
         },
       ),
@@ -210,7 +216,7 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <span className="live-dot" aria-hidden="true" /> SSE connected
+          <span className={`live-dot ${connection}`} aria-hidden="true" /> SSE {connection}
           <small>
             {events.at(-1)?.kind.replaceAll("_", " ") ?? "waiting for events"}
           </small>
@@ -258,6 +264,9 @@ export function App() {
         {error && (
           <div className="error-banner" role="alert">
             <span>{error}</span>
+            <button onClick={() => { setError(""); void refresh(); }}>
+              Retry
+            </button>
             <button aria-label="Dismiss error" onClick={() => setError("")}>
               Dismiss
             </button>
@@ -1052,6 +1061,8 @@ function ProjectPage({
   };
   const runPrimaryAction = () => {
     if (primaryAction.kind === "active_run") return onOpenRun(primaryAction.runId);
+    if (primaryAction.kind === "active_batch")
+      return document.getElementById("project-active-run")?.scrollIntoView();
     if (primaryAction.kind === "build") return onOpenBuild(primaryAction.step);
     if (primaryAction.kind === "review") return onOpenReview();
     return start();
@@ -1138,7 +1149,7 @@ function ProjectPage({
           </button>
         </div>
       </div>
-      <div className="run-state-grid">
+      <div className="run-state-grid" id="project-active-run">
         <Panel title="Active Run" eyebrow="Server-owned state">
           {project.active_batch ? (
             <>

@@ -19,6 +19,12 @@ describe("Project Workspace next action", () => {
         active_run: { id: "run-1" },
       } as ProjectSummary),
     ).toEqual({ kind: "active_run", runId: "run-1", label: "Open active run" });
+    expect(
+      deriveProjectNextAction({
+        ...project,
+        active_batch: { id: "batch-1" },
+      } as ProjectSummary),
+    ).toEqual({ kind: "active_batch", label: "View active batch" });
   });
 
   it("guides incomplete setup in order", () => {

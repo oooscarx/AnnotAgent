@@ -273,6 +273,7 @@ export const api = {
 export function subscribeEvents(
   onEvent: (event: RunEvent) => void,
   onReconnect: () => void,
+  onOpen?: () => void,
 ): () => void {
   const source = new EventSource("/api/events");
   const kinds = [
@@ -310,5 +311,6 @@ export function subscribeEvents(
     });
   }
   source.onerror = () => onReconnect();
+  source.onopen = () => onOpen?.();
   return () => source.close();
 }
