@@ -29,4 +29,19 @@ describe("guided workspace routing", () => {
       canonicalPath: "/projects/demo/build/labels",
     });
   });
+
+  it("restores Run artifact context from the URL", () => {
+    expect(
+      parseWorkspaceRoute(
+        "/runs/run-1",
+        "?image=3&node=detector&artifact=det-1",
+      ),
+    ).toMatchObject({
+      kind: "runs",
+      runId: "run-1",
+      imageId: "3",
+      nodeId: "detector",
+      artifactId: "det-1",
+    });
+  });
 });

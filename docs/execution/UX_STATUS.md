@@ -9,7 +9,7 @@ Updated: 2026-08-27
 | 2 Project Workspace | Complete | Server-backed readiness, blockers, counts, versions, and active/last run drive a persistent Project overview. |
 | 3 Build Flow | Complete | URL-backed Data, Labels, Pipeline, and Test & Publish steps use real APIs and preserve server state. |
 | 4 Pipeline UX | Complete | Guided shared/Label lanes, node Drawer, controlled Advisor proposal, same-definition graph, and focused versions are implemented. |
-| 5 Run Workspace | Pending | Artifact Inspector is currently under Workflows. |
+| 5 Run Workspace | Complete | `/runs/:runId` combines run controls, image context, visual Artifact preview, node timeline, detail, deep links, and Replay. |
 | 6 Review Integration | Pending | Review does not preserve bidirectional run/node context. |
 | 7 Reliability | Pending | URL and active-run restoration are incomplete. |
 | 8 Usability | Pending | Existing accessibility primitives need a full guided-workspace pass. |
@@ -71,3 +71,12 @@ Updated: 2026-08-27
 - Advisor server DTO includes per-image model calls, estimated latency, and cost tier; UI requires explicit Apply to Draft.
 - Current Draft and Default Published Version are primary; Historical Drafts and Version History are collapsed.
 - Core 26 tests, Application 14 tests, Web 10 files/21 tests, and production build passed.
+
+## Milestone 5 verification
+
+- Workflow page no longer renders an Artifact Inspector.
+- Run history opens a Run directly; the user never enters or copies a Run ID.
+- Run Detail loads its persisted checkpoint, project image, first node, and exact typed outputs.
+- Image, node, and Artifact identities are encoded in the URL; zoom and image/crop modes operate on persisted geometry.
+- Pause/Resume/Cancel and Replay call real control/runtime endpoints.
+- Server 7 tests passed; Web 10 files/22 tests and production build passed.

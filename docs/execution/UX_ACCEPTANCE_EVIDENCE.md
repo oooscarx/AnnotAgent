@@ -28,6 +28,9 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 8 — PASS: each Shared Stage labels run frequency and Label reuse count.
 - 20 — PASS: Published Versions render read-only; editing is exposed only through Clone Version to Draft.
 - 21 — PASS: Historical Drafts and Version History are closed `<details>` by default.
+- 10 — PASS: Artifact inspection is rendered only inside Run Detail (and later Review context), not Workflow.
+- 11 — PASS: opening a Run loads its checkpoint; there is no manual Run-ID field.
+- 16 — PASS at route level: image/node/artifact query parsing has unit coverage; browser refresh verification remains Milestone 7.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -54,6 +57,12 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - `WorkflowSuggestion` carries and serializes real controlled-Draft estimates; application assertions pass.
 - Advisor UI presents compare delta, rationale, bindings, estimates, warnings, unresolved items, and alternatives before Apply.
 - Core: 26 tests passed. Application: 14 tests passed. Web: 10 files/21 tests and production build passed.
+
+## Milestone 5 — Run Workspace
+
+- `navigation.test.ts` restores `/runs/:runId?image=&node=&artifact=` context.
+- Run Detail exposes real status/version/duration/usage/cost, image browser, overlay/crop modes, zoom, node timeline, error, input/output/config, model usage, controls, and Replay.
+- Server artifact/Replay suite: 7 tests passed. Web: 10 files/22 tests and production build passed.
 
 ## Manual tasks
 

@@ -13,7 +13,11 @@ import {
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { deriveProjectRunView } from "./runState";
 import { deriveProjectNextAction } from "./projectWorkspace";
-import { parseWorkspaceRoute, type SettingsSection } from "./navigation";
+import {
+  parseWorkspaceRoute,
+  type SettingsSection,
+  type WorkspaceRoute,
+} from "./navigation";
 import {
   NO_PROJECT_MESSAGE,
   PRIMARY_NAVIGATION,
@@ -321,7 +325,16 @@ export function App() {
             onError={setError}
           />
         )}
-        {route.kind === "runs" && <RunsPage runs={runs} />}
+        {route.kind === "runs" && (
+          <RunsPage
+            runs={runs}
+            projects={projects}
+            route={route}
+            onNavigate={navigate}
+            onRefresh={refresh}
+            onError={setError}
+          />
+        )}
         {route.kind === "review" && (
           <ReviewPage
             project={selectedProject}
@@ -1412,11 +1425,6 @@ function WorkflowsPage({
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const [targetTaskId, setTargetTaskId] = useState("");
   const [targetLabel, setTargetLabel] = useState("");
-  const [inspectableRuns, setInspectableRuns] = useState<HistoryRun[]>([]);
-  const [inspectRunId, setInspectRunId] = useState("");
-  const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
-  const [inspectedNodeId, setInspectedNodeId] = useState("");
-  const [replay, setReplay] = useState<NodeReplayReport>();
   const [busy, setBusy] = useState(false);
   const persistedDrafts = useRef(new Map<string, string>());
   const autosaveTimer = useRef<number | undefined>(undefined);
@@ -1472,18 +1480,6 @@ function WorkflowsPage({
     setSelectedPublishedKey("");
     setTargetTaskId(activeProject?.annotation_schema[0]?.id ?? "");
     setTargetLabel(activeProject?.annotation_schema[0]?.labels[0] ?? "");
-    setInspection(undefined);
-    setReplay(undefined);
-    void api
-      .runs()
-      .then((value) => {
-        const projectRuns = value.runs.filter(
-          (run) => run.project_name === activeProject?.name && run.checkpoint_present,
-        );
-        setInspectableRuns(projectRuns);
-        setInspectRunId(projectRuns[0]?.id ?? "");
-      })
-      .catch((error: Error) => onError(error.message));
   }, [activeProjectId]);
   const finish = (promise: Promise<unknown>) => {
     setBusy(true);
@@ -1523,31 +1519,6 @@ function WorkflowsPage({
   const targetTask = activeProject?.annotation_schema.find(
     (task) => task.id === targetTaskId,
   );
-  const inspectRun = () => {
-    if (!inspectRunId) return;
-    setBusy(true);
-    void api
-      .pipelineArtifacts(inspectRunId)
-      .then((value) => {
-        setInspection(value);
-        setInspectedNodeId(value.nodes[0]?.node_id ?? "");
-        setReplay(undefined);
-      })
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setBusy(false));
-  };
-  const replayNode = () => {
-    if (!inspection || !inspectedNodeId) return;
-    setBusy(true);
-    void api
-      .replayNode(inspection.run_id, inspectedNodeId)
-      .then((value) => {
-        setReplay(value);
-        setInspection(value.inspection);
-      })
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setBusy(false));
-  };
   const save = () => draft && finish(api.saveWorkflowDraft(draft));
   const discardChanges = () => {
     if (!draft) return;
@@ -2311,56 +2282,6 @@ function WorkflowsPage({
           )}
         </div>
       </div>
-      <Panel title="Node Artifact Inspector" eyebrow="Persisted checkpoint · exact Replay">
-        <div className="button-row">
-          <select
-            aria-label="Inspectable Run"
-            value={inspectRunId}
-            onChange={(event) => setInspectRunId(event.target.value)}
-          >
-            <option value="">Choose a completed Pipeline Run…</option>
-            {inspectableRuns.map((run) => (
-              <option key={run.id} value={run.id}>
-                {run.id.slice(0, 8)} · {run.workflow_name}@v{run.workflow_version}
-              </option>
-            ))}
-          </select>
-          <button onClick={inspectRun} disabled={busy || !inspectRunId}>
-            Load Artifacts
-          </button>
-          <select
-            aria-label="Inspected node"
-            value={inspectedNodeId}
-            disabled={!inspection}
-            onChange={(event) => setInspectedNodeId(event.target.value)}
-          >
-            {(inspection?.nodes ?? []).map((node) => (
-              <option key={node.node_id} value={node.node_id}>
-                {node.node_id} · {node.status}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={replayNode}
-            disabled={busy || !inspection || !inspectedNodeId}
-            title="Replay this node and descendants while preserving upstream checkpoint outputs"
-          >
-            Replay from node
-          </button>
-        </div>
-        {inspection ? (
-          <PipelineArtifactInspector
-            inspection={inspection}
-            nodeId={inspectedNodeId}
-            replay={replay}
-          />
-        ) : (
-          <Empty
-            title="No checkpoint loaded"
-            detail="Run a published Label Pipeline, then load its per-node typed Artifacts here."
-          />
-        )}
-      </Panel>
     </section>
   );
 }
@@ -3457,73 +3378,169 @@ function ModelsPage({
   );
 }
 
-function RunsPage({ runs }: { runs: HistoryRun[] }) {
+function RunsPage({
+  runs,
+  projects,
+  route,
+  onNavigate,
+  onRefresh,
+  onError,
+}: {
+  runs: HistoryRun[];
+  projects: ProjectSummary[];
+  route: Extract<WorkspaceRoute, { kind: "runs" }>;
+  onNavigate: (path: string, replace?: boolean) => void;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const run = runs.find((item) => item.id === route.runId);
+  if (route.runId && run)
+    return (
+      <RunDetailWorkspace
+        run={run}
+        project={projects.find((item) => item.name === run.project_name)}
+        route={route}
+        onNavigate={onNavigate}
+        onRefresh={onRefresh}
+        onError={onError}
+      />
+    );
   return (
     <section className="page-stack">
-      <div className="toolbar-panel">
-        <div>
-          <span className="eyebrow">Immutable execution history</span>
-          <h2>Runs</h2>
-          <p>
-            Each summary exposes its Project, immutable Workflow Version, node
-            state, typed Artifacts, validation, recovery, model, usage, cost,
-            timeout, checkpoint, and review suspension.
-          </p>
-        </div>
-      </div>
+      <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
       <Panel title="Run history" eyebrow={`${runs.length} recorded`}>
         <div className="runs-table">
-          {runs.map((run) => (
-            <article key={run.id}>
+          {runs.map((item) => (
+            <article key={item.id} className="clickable-run" onClick={() => onNavigate(`/runs/${item.id}`)}>
               <span className="event-rail" />
-              <div>
-                <strong>{run.project_name}</strong>
-                <small>
-                  {run.workflow_name}@v{run.workflow_version} ·{" "}
-                  {run.skill_versions.join(", ")}
-                </small>
-                <code>
-                  {run.model_identity} · {run.artifact_count} Artifact
-                  {run.artifact_count === 1 ? "" : "s"}
-                </code>
-                <small>
-                  Node {run.current_node ?? "none"} · {run.current_node_status ?? "not started"}
-                  {` · retries ${run.retry_count}`}
-                  {run.fallback_nodes.length
-                    ? ` · fallback ${run.fallback_nodes.join(", ")}`
-                    : " · no fallback"}
-                </small>
-                <small>
-                  {run.validation_issue_codes.length
-                    ? `Issues: ${run.validation_issue_codes.join(", ")}`
-                    : "No validation issues"}
-                  {run.timed_out ? " · timed out" : " · no timeout"}
-                  {run.checkpoint_present ? " · checkpoint saved" : " · no checkpoint"}
-                  {run.review_suspended ? " · review suspended" : ""}
-                </small>
-                {run.terminal_reason && (
-                  <small className="run-reason">{run.terminal_reason}</small>
-                )}
-              </div>
-              <div className="run-usage">
-                <span>
-                  {(run.input_tokens + run.output_tokens).toLocaleString()}{" "}
-                  tokens
-                </span>
-                <span>${run.cost}</span>
-              </div>
-              <Status status={run.status} />
+              <div><strong>{item.project_name}</strong><small>{item.workflow_name}@v{item.workflow_version}</small><code>{item.model_identity} · {item.artifact_count} Artifacts</code>{item.terminal_reason && <small className="run-reason">{item.terminal_reason}</small>}</div>
+              <div className="run-usage"><span>{(item.input_tokens + item.output_tokens).toLocaleString()} tokens</span><span>${item.cost}</span></div>
+              <Status status={item.status} />
+              <button onClick={(event) => { event.stopPropagation(); onNavigate(`/runs/${item.id}`); }}>Open</button>
             </article>
           ))}
-          {runs.length === 0 && (
-            <Empty
-              title="No runs recorded"
-              detail="Start a Project run to create auditable history."
-            />
-          )}
+          {runs.length === 0 && <Empty title="No runs recorded" detail="Start a Project Run to create auditable history." />}
         </div>
       </Panel>
+      {route.runId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
     </section>
+  );
+}
+
+function RunDetailWorkspace({
+  run,
+  project,
+  route,
+  onNavigate,
+  onRefresh,
+  onError,
+}: {
+  run: HistoryRun;
+  project?: ProjectSummary;
+  route: Extract<WorkspaceRoute, { kind: "runs" }>;
+  onNavigate: (path: string, replace?: boolean) => void;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
+  const [replay, setReplay] = useState<NodeReplayReport>();
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setInspection(undefined);
+    setReplay(undefined);
+    if (run.checkpoint_present)
+      void api.pipelineArtifacts(run.id).then((value) => {
+        setInspection(value);
+        if (!route.nodeId && value.nodes[0]) {
+          const image = value.image_index === undefined ? "" : `image=${value.image_index}`;
+          const query = [image, `node=${encodeURIComponent(value.nodes[0].node_id)}`].filter(Boolean).join("&");
+          onNavigate(`/runs/${run.id}?${query}`, true);
+        }
+      }).catch((error: Error) => onError(error.message));
+    if (project)
+      void api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
+  }, [run.id, project?.id]);
+  const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
+  const selectedArtifacts = selectedNode
+    ? selectedNode.outputs.filter(
+        (artifact, index) =>
+          !route.artifactId || pipelineArtifactIdentity(artifact, index) === route.artifactId,
+      )
+    : [];
+  const selectedImageIndex = Number(route.imageId ?? inspection?.image_index ?? 0);
+  const visibleImages = images.filter((image) => image.name.toLowerCase().includes(search.toLowerCase()));
+  const setContext = (context: { image?: number; node?: string; artifact?: string }) => {
+    const params = new URLSearchParams();
+    params.set("image", String(context.image ?? selectedImageIndex));
+    if (context.node ?? selectedNode?.node_id) params.set("node", context.node ?? selectedNode!.node_id);
+    if (context.artifact) params.set("artifact", context.artifact);
+    onNavigate(`/runs/${run.id}?${params.toString()}`);
+  };
+  const control = (action: "pause" | "resume" | "cancel") => {
+    setBusy(true);
+    void api.control(run.id, action).then(onRefresh).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+  };
+  const replayNode = () => {
+    if (!selectedNode) return;
+    setBusy(true);
+    void api.replayNode(run.id, selectedNode.node_id).then((value) => { setReplay(value); setInspection(value.inspection); }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+  };
+  const duration = Math.max(0, new Date(run.updated_at).getTime() - new Date(run.created_at).getTime());
+  return (
+    <section className="page-stack run-detail-page">
+      <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← All runs</button>
+      <div className="toolbar-panel run-detail-header">
+        <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{run.artifact_count} Artifacts</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
+        <div className="button-row"><button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
+      </div>
+      <div className="run-workspace">
+        <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
+          <div>{visibleImages.filter((image) => inspection?.image_index === undefined || image.index === inspection.image_index).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setContext({ image: image.index })}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{run.status}</small></span></button>)}</div>
+        </aside>
+        <main className="panel run-visual-workspace"><span className="eyebrow">Result preview</span>{inspection && selectedNode ? <RunArtifactCanvas inspection={inspection} artifacts={selectedArtifacts.length ? selectedArtifacts : selectedNode.outputs} imageIndex={selectedImageIndex} /> : <Empty title="No replayable Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint." : "This Run has no Pipeline checkpoint."} />}</main>
+        <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong>{node.operation}</strong><small>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
+      </div>
+      {selectedNode && (
+        <Panel title={selectedNode.node_id} eyebrow="Selected Artifact and node detail">
+          <div className="button-row"><Status status={selectedNode.status} /><Fact label="Duration" value={`${selectedNode.latency_ms} ms`} /><Fact label="Model usage" value={`${selectedNode.usage.input_tokens + selectedNode.usage.output_tokens} tokens · $${selectedNode.usage.cost}`} /><button disabled={busy} onClick={replayNode}>Replay from node</button></div>
+          <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}>{artifact.kind.replaceAll("_", " ")} <code>{id.slice(0, 8)}</code></button>; })}</div>
+          {selectedNode.error && <div className="error-banner"><span>{selectedNode.error.code}: {selectedNode.error.summary}</span></div>}
+          <details><summary>Input · {selectedNode.inputs.length}</summary><pre>{JSON.stringify(selectedNode.inputs, null, 2)}</pre></details>
+          <details open><summary>Output · {selectedNode.outputs.length}</summary><pre>{JSON.stringify(selectedNode.outputs, null, 2)}</pre></details>
+          <details><summary>Configuration</summary><pre>{JSON.stringify(selectedNode.configuration, null, 2)}</pre></details>
+          {replay?.replayed_from === selectedNode.node_id && <div className="validation-report valid"><strong>Sandbox Replay completed</strong><small>Preserved upstream: {replay.preserved_upstream_nodes.join(", ") || "None"}</small><small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small></div>}
+        </Panel>
+      )}
+    </section>
+  );
+}
+
+function pipelineArtifactIdentity(artifact: PipelineArtifact, index: number): string {
+  const reference = artifact.artifact.reference;
+  if (reference && typeof reference === "object") {
+    const id = (reference as Record<string, unknown>).artifact_id;
+    if (typeof id === "string") return id;
+  }
+  return `${artifact.kind}-${index}`;
+}
+
+function RunArtifactCanvas({ inspection, artifacts, imageIndex }: { inspection: RunNodeArtifactInspection; artifacts: PipelineArtifact[]; imageIndex: number }) {
+  const imageUrl = `/api/projects/${inspection.project_id}/images/${imageIndex}/content`;
+  const rects = artifactRects(artifacts);
+  const crops = artifactCrops(artifacts);
+  const [mode, setMode] = useState<"image" | "crops">("image");
+  const [zoom, setZoom] = useState(1);
+  return (
+    <div className="run-artifact-canvas">
+      <div className="preview-toggle"><button className={mode === "image" ? "active" : ""} onClick={() => setMode("image")}>Image</button><button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crops ({crops.length})</button><label>Zoom <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label><span>{Math.round(zoom * 100)}%</span></div>
+      {mode === "image" ? (
+        <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt="Original Run input" /><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{rects.map((rect, index) => <rect key={`${rect.x}-${rect.y}-${index}`} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} />)}</svg></div></div>
+      ) : (
+        <div className="crop-preview-list enlarged">{crops.map((crop, index) => <svg style={{ transform: `scale(${zoom})` }} key={`${crop.x}-${crop.y}-${index}`} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg>)}</div>
+      )}
+    </div>
   );
 }
 

@@ -11,7 +11,14 @@ export type WorkspaceRoute =
       projectId: string;
       step: BuildStep;
     }
-  | { kind: "runs"; canonicalPath: string; runId?: string }
+  | {
+      kind: "runs";
+      canonicalPath: string;
+      runId?: string;
+      imageId?: string;
+      nodeId?: string;
+      artifactId?: string;
+    }
   | { kind: "review"; canonicalPath: string; reviewItemId?: string }
   | {
       kind: "settings";
@@ -100,12 +107,22 @@ export function parseWorkspaceRoute(
     };
   }
   const run = clean.match(/^\/runs(?:\/([^/]+))?$/);
-  if (run)
+  if (run) {
+    const context = new URLSearchParams();
+    for (const key of ["image", "node", "artifact"] as const) {
+      const value = params.get(key);
+      if (value) context.set(key, value);
+    }
+    const suffix = context.size ? `?${context.toString()}` : "";
     return {
       kind: "runs",
       runId: run[1] ? decodeURIComponent(run[1]) : undefined,
-      canonicalPath: run[1] ? `/runs/${run[1]}` : "/runs",
+      imageId: params.get("image") ?? undefined,
+      nodeId: params.get("node") ?? undefined,
+      artifactId: params.get("artifact") ?? undefined,
+      canonicalPath: run[1] ? `/runs/${run[1]}${suffix}` : "/runs",
     };
+  }
   const review = clean.match(/^\/review(?:\/([^/]+))?$/);
   if (review)
     return {
