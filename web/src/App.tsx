@@ -156,7 +156,10 @@ export function App() {
           </small>
         </div>
       </aside>
-      <main id="main-content">
+      <main
+        id="main-content"
+        className={page === "review" ? "review-main" : undefined}
+      >
         <header className="topbar">
           <div>
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
@@ -246,6 +249,7 @@ export function App() {
         {page === "review" && (
           <ReviewPage
             project={selectedProject}
+            projects={projects}
             events={events}
             onError={setError}
           />
@@ -1892,10 +1896,12 @@ function RunsPage({ runs }: { runs: HistoryRun[] }) {
 
 function ReviewPage({
   project,
+  projects,
   events,
   onError,
 }: {
   project?: ProjectSummary;
+  projects: ProjectSummary[];
   events: RunEvent[];
   onError: (value: string) => void;
 }) {
@@ -1920,6 +1926,11 @@ function ReviewPage({
     : reviews;
   const selected =
     visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
+  const reviewProject = project ?? projects.find(
+    (candidate) =>
+      candidate.id === selected?.project_id ||
+      (!selected?.project_id && candidate.name === selected?.project_name),
+  );
   const refresh = () =>
     api
       .reviews()
@@ -1943,7 +1954,7 @@ function ReviewPage({
     void api
       .skills()
       .then((skills) => {
-        const ids = project?.enabled_skills.map((skill) => skill.id) ?? [];
+        const ids = reviewProject?.enabled_skills.map((skill) => skill.id) ?? [];
         const options =
           skills.find((skill) => ids.includes(skill.id))?.correction_taxonomy ??
           [];
@@ -1951,15 +1962,15 @@ function ReviewPage({
         setReason(options[0] || "manual_edit");
       })
       .catch((error: Error) => onError(error.message));
-  }, [project?.id]);
+  }, [reviewProject?.id]);
   useEffect(() => {
-    if (project)
+    if (reviewProject)
       void api
-        .images(project.id)
+        .images(reviewProject.id)
         .then((value) => setImages(value.images))
         .catch((error: Error) => onError(error.message));
     else setImages([]);
-  }, [project?.id]);
+  }, [reviewProject?.id]);
   useEffect(() => {
     setDraft(selected?.annotation);
     setAttributesText(JSON.stringify(selected?.annotation.attributes ?? {}, null, 2));
@@ -2030,7 +2041,7 @@ function ReviewPage({
   };
   const createShape = (kind: "bounding_box" | "keypoints" | "polyline" | "polygon") => {
     if (!selected) return onError("Select a review item before creating an annotation.");
-    const task = project?.annotation_schema.find((candidate) => candidate.kind === kind);
+    const task = reviewProject?.annotation_schema.find((candidate) => candidate.kind === kind);
     if (!task)
       return onError(`This Project has no ${kind.replace("_", " ")} task.`);
     const label = task.labels[0];
@@ -2063,18 +2074,18 @@ function ReviewPage({
     setIsNew(true);
   };
   const decide = (decision: "accept" | "reject" | "delete") => {
-    if (!selected || !project)
+    if (!selected || !reviewProject)
       return onError(
         "Select the Review item's Project before recording a decision.",
       );
     return api
-      .decide(selected.id, project.id, decision, reason, note)
+      .decide(selected.id, reviewProject.id, decision, reason, note)
       .then(refresh)
       .catch((error: Error) => onError(error.message));
   };
   const visualContext = {
     skillProfiles: visualProfilesForSkills(
-      project?.enabled_skills.map((skill) => skill.id) ?? [],
+      reviewProject?.enabled_skills.map((skill) => skill.id) ?? [],
     ),
   };
   return (
@@ -2100,6 +2111,7 @@ function ReviewPage({
                   {review.annotation.label ?? review.annotation.task_id}
                 </strong>
                 <small>
+                  {!project && `${review.project_name} · `}
                   {review.annotation.task_id} ·{" "}
                   {Math.round((review.annotation.confidence ?? 0) * 100)}%
                 </small>
@@ -2120,19 +2132,19 @@ function ReviewPage({
           <button onClick={redo} disabled={!future.length} aria-label="Redo annotation edit">Redo</button>
           <button
             onClick={() => createShape("bounding_box")}
-            disabled={!project?.annotation_schema.some((task) => task.kind === "bounding_box")}
+            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "bounding_box")}
           >New box</button>
           <button
             onClick={() => createShape("keypoints")}
-            disabled={!project?.annotation_schema.some((task) => task.kind === "keypoints")}
+            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "keypoints")}
           >New keypoint</button>
           <button
             onClick={() => createShape("polyline")}
-            disabled={!project?.annotation_schema.some((task) => task.kind === "polyline")}
+            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "polyline")}
           >New polyline</button>
           <button
             onClick={() => createShape("polygon")}
-            disabled={!project?.annotation_schema.some((task) => task.kind === "polygon")}
+            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "polygon")}
           >New polygon</button>
           <select
             aria-label="Before and after comparison"
@@ -2144,7 +2156,9 @@ function ReviewPage({
             <option value="split">Before / after</option>
           </select>
         </div>
-        <div className={compareMode === "split" ? "review-canvas-compare" : undefined}>
+        <div
+          className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
+        >
           {(compareMode === "before" || compareMode === "split") && (
             <div><small>Before</small><AnnotationCanvas
               imageUrl={images[0]?.url}
