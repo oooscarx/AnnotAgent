@@ -35,14 +35,14 @@ Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
 | Typed Artifact persistence | PASS | All nine required shapes, revision/replacement lineage, SQLite/history persistence, direct field-line validation, and imported-reference remapping are tested. |
 | Run/Task state semantics | PASS | Empty, partial, duplicate start, active restore, stale reconciliation, distinct review suspension, and structured timeout/provider/task visibility are tested. |
 | Strongly typed Workflow ports/edges | PASS | Workflow v2 defines generic node kinds, typed ports/edges/policies/resources, precise static checks, immutable published snapshots, and migration evidence. |
-| Published snapshot DAG execution | PASS | Generic runtime tests execute an immutable published snapshot with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, and replayable I/O trace. Product version-selection UI remains M6 scope. |
+| Published snapshot DAG execution | PASS | Runtime and product tests execute the exact immutable version with parallel scheduling, branch/review/resume, retry/fallback/timeout/cancel, cache, usage, replayable trace, persisted checkpoint, and exact selection for image and Dataset child Runs. |
 | Checkpoint/restart resume/global budget | PASS | SQLite v3 batches persist full checkpoints, leases, exact consumed/reserved budgets, and monotonic events; the concurrency-4 100-image pause/restart/resume gate completes with no duplicate child Run. |
 | Mixed model backends | PASS | Complete registry metadata, mock/OpenAI-compatible/HTTP JSON/deterministic CV adapters, worker discovery protocol, strict JSON-only fallback, structured errors, secret references, and GUI health are tested. Live weights remain conditional. |
 | Workflow Advisor/editor | PASS | Registry-bounded Mock/live Advisor paths, full persisted edit lifecycle, selected-image sandbox Dry Run, compare/publish/clone/archive, explicit Run version selection, HTTP journey, and real browser journey pass. Live Qwen advice remains conditional. |
-| RoboCup hybrid release example | INCOMPLETE | Domain algorithms and an example foundation exist; required templates/evaluation CLI/complete generic DAG execution do not. |
-| Review geometry editing | INCOMPLETE | Existing revision UI is not the full bbox/keypoint/polyline/polygon editor with undo/redo and before/after. |
-| Annotation import/export round trips | INCOMPLETE | Export tests exist; Native/COCO/LabelMe imports and round-trip reports do not. |
-| Security release gate | UNVERIFIED | Existing path/symlink and secret-redaction tests are partial; ZIP traversal, pixel limit, backend endpoint/path control, and full history/export secret scans remain. |
+| RoboCup hybrid release example | PASS | Three Skill-owned templates, labelled evaluation, real hard-negative validation, typed detector/VLM evidence, Review Gate/Commit, and the stable offline hybrid demo pass. |
+| Review geometry editing | PASS | Bbox move/resize, keypoint/vertex drag/add/delete, empty-canvas creation, attributes, correction reason, undo/redo, revision persistence, and split before/after are tested and browser-verified. |
+| Annotation import/export round trips | PASS | Native exact/provenance/revision, representable COCO/LabelMe/YOLO, lossy warnings, dry-run/mapping, and corrupt-record isolation pass. |
+| Security release gate | PASS | Path/symlink containment, ZIP rejection-before-extraction, pre-decode pixel limit, endpoint/credential metadata validation, output scope checks, image-text prompt boundary, redaction/history scans, and rejection-before-write are tested. |
 | Real Qwen smoke | LIVE-CONDITIONAL | No environment key was available during baseline; no live success is claimed. |
 | Real external model inference | LIVE-CONDITIONAL | No model weights/path were configured; no live success is claimed. |
 
@@ -263,3 +263,37 @@ Gate evidence:
 7. Exporters continue to return explicit skipped/warning records for incompatible shapes. Native round-trip equality includes annotations, provenance, and revisions; representable COCO/LabelMe/YOLO geometry round trips within the normalized contract.
 
 Milestone 8 status: `PASS`.
+
+## Milestone 9 — hardening, observability, product DAG execution, and release
+
+Implementation commit: `b3ba536 feat(release): complete Workflow Alpha execution and hardening`
+
+Final acceptance command:
+
+| Command group | Exit | Evidence |
+| --- | ---: | --- |
+| Core domain boundary + repository secret-prefix scans | 0 | Domain vocabulary is absent from `annotagent-core`; no live-key prefix is present in repository content. |
+| `cargo fmt --all -- --check` | 0 | No formatting diff. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | No warning or lint suppression. |
+| `cargo test --workspace --all-features` | 0 | 113 Rust unit/integration tests pass; 0 fail; all doc tests pass. |
+| `cargo build --workspace --all-features` | 0 | Complete workspace dev build succeeds. |
+| Web typecheck/test/build | 0 | TypeScript passes; 7 files / 13 tests pass; Vite production build succeeds. |
+| `cargo run -p annotagent -- doctor` | 0 | Workspace is writable; 28 SQLite tables and migrations pass; mock mode remains available. Port 8787 was occupied by the intentional local browser-test server. |
+| `cargo run -p annotagent -- demo generic-workflow` | 0 | `completed`; 2 Artifacts, 2 commits, no review, 2 mock model calls across detector/segmenter/Validator/Gate/Commit trace. |
+| `cargo run -p annotagent -- demo robocup-hybrid` | 0 | `completed_with_review`; 3 Artifacts, 0 unsafe commits, 2 mock model calls, real `possible_white_shoe` Validator evidence and Review routing. |
+| `./scripts/acceptance.sh` | 0 | Executes every command above as one fail-fast release gate. |
+
+Release evidence:
+
+1. `selected_published_workflow_executes_the_generic_dag_and_persists_checkpoint` creates a zero-Skill Generic bbox Project, publishes a valid Workflow, starts the exact version, commits through `published_dag_runtime`, persists its selected content hash, typed Artifact/annotation, node events, and checkpoint, and contains no legacy engine claim.
+2. `dataset_batch_executes_the_exact_published_workflow_for_every_child_run` freezes one Published Version into a two-image Batch and asserts both child Runs use the same content hash, generic DAG engine, and checkpoint. The HTTP editor journey repeats version selection through `/api/projects/{id}/batches`.
+3. The pre-existing 100-image gate still runs at concurrency four, observes intermediate progress, pauses, drops the original application owner, reopens SQLite, resumes, and finishes with exactly 100 child Runs and matching consumed/history totals.
+4. Settings reject an `Authorization` custom header before writing `.annotagent/settings.toml`. Provider/registry tests reject credential-bearing URLs, nested API-key-like metadata, invalid environment references, and non-HTTP worker endpoints. API keys remain write-only and outside TOML/SQLite/history.
+5. Project traversal and a real symlink escape are rejected. ZIP imports are rejected before extraction, removing the traversal surface. Image header pixel limits are checked before full decode. HTTP output must match protocol/model/image/task/type/label scope before persistence.
+6. OpenAI-compatible system/backend prompts state that image text is untrusted visual data and never an instruction. Redaction tests remove Authorization and inline base64; history export tests assert secrets are absent.
+7. Run summaries now expose Project, immutable Workflow, current node/status, Artifact count, validation codes, retries/fallbacks, model identity, token/cost, timeout, checkpoint, review suspension, active/last state, and terminal reason. TUI `/inspect` exposes the same durable facts.
+8. In-app browser release verification on the rebuilt local server confirmed `Start dataset batch`, the exact Published Workflow selector, server-owned active/last panels, all Runs observability fields, and absence of `run reached a terminal condition`; legacy gaps render an explicit evidence-limitation message instead.
+
+Live Qwen and configured external-weight inference remain `LIVE-CONDITIONAL`. No conversation credential was read or used, and no fixture output is presented as live inference.
+
+Milestone 9 status: `PASS`. AnnotAgent Workflow Alpha passes the complete offline Release Gate.

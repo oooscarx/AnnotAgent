@@ -19,11 +19,11 @@ CLI ───────────┘             │                │
 
 ## 2. Project
 
-A Project is one concrete annotation effort. It owns a Dataset and Annotation Schema and selects Skills, Workflow versions, model bindings, review policy, and exports. The current schema supports one configured Skill and one compatibility Workflow derived from its task graph; the product DTO is intentionally broader so Project, Skill, and Workflow are no longer conflated.
+A Project is one concrete annotation effort. It owns a Dataset and Annotation Schema and selects zero or more Skills, immutable Workflow versions, model bindings, review policy, Runs, imports, and exports. Generic Projects require no RoboCup Skill; multi-Skill extension IDs are namespaced and visual precedence is deterministic.
 
 ## 3. Workflow
 
-A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static Dry Run validation, and immutable published snapshots. The generic hybrid executor can run registered model backends, validators, review gates, and commits; the existing Project task graph remains the default production Run definition until a published Draft is explicitly selected in a future version.
+A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static validation, selected-image Dry Run, and immutable publication. An exact Published Version can be selected for an image Run or Dataset Batch; the product executes that DAG, persists typed Artifacts and node trace, and stores its restart checkpoint. Legacy single-Skill Projects retain an explicitly labelled compatibility path when no version is selected.
 
 ## 4. Model
 
@@ -44,8 +44,11 @@ The bundled `robocup` Skill and `examples/robocup/project.yaml` demonstrate the 
 The deterministic demo needs no GPU or API key:
 
 ```bash
-cargo run -p annotagent -- demo robocup
+cargo run -p annotagent -- demo generic-workflow
+cargo run -p annotagent -- demo robocup-hybrid
 ```
+
+The Generic demo has no RoboCup dependency. The RoboCup hybrid demo executes detector candidates, VLM semantic evidence, a real Skill Validator, Review Gate, and blocked Commit entirely offline.
 
 The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
 
@@ -113,7 +116,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Design](docs/DESIGN.md), [Core and Skills](docs/CORE_AND_SKILLS.md), [Hybrid vision execution](docs/HYBRID_VISION.md), [Vision worker protocol](docs/VISION_WORKER_PROTOCOL.md), [API](docs/API.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 
@@ -125,6 +128,9 @@ cargo build --workspace --all-features
 npm --prefix web run typecheck
 npm --prefix web test -- --run
 npm --prefix web run build
+cargo run -p annotagent -- doctor
+cargo run -p annotagent -- demo generic-workflow
+cargo run -p annotagent -- demo robocup-hybrid
 ```
 
 Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.

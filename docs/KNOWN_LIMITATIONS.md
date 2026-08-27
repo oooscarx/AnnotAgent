@@ -1,18 +1,14 @@
 # Known Limitations
 
-These are real gaps, not roadmap claims:
+These are current implementation boundaries, not hidden release claims:
 
-- Project schema v1 configures exactly one Skill. The product DTO permits `enabled_skills: []` or multiple entries for forward compatibility, but persistence, project creation, and Runtime do not yet execute zero-Skill or multi-Skill Projects.
-- Runtime derives one compatibility Workflow from Project tasks and the active Skill graph. Multiple Workflow drafts, immutable published snapshots, default-version selection, arbitrary typed mixed graphs, Run-time Workflow selection, LLM suggestion, human graph editing, static draft validation endpoints, dry run, and publish are not implemented.
-- Existing Run history does not persist a first-class Workflow snapshot/version or per-node model binding. API summaries report the compatibility Workflow version and the saved provider/model truthfully.
-- Dataset Coordinator has bounded concurrency but no persisted dataset checkpoint/auto-resume record, shared global budget ledger, or batch-wide pause/cancel handle. Import deduplicates by hash; enumeration does not re-hash duplicates.
-- HTTP starts one image Run. Multi-image coordination is CLI-only when `--limit 1` is omitted.
-- Folder image import exists; AnnotAgent Native, COCO, and LabelMe annotation import do not.
-- The GUI edits existing bbox, keypoint, polyline, polygon, and polygon-mask geometry and can append vertices. It cannot yet delete individual vertices, resize bbox corners, draw from an empty canvas, compare overlays side by side, or apply advanced queue filters.
-- TUI starts and controls a Run and shows trace/usage/history. `/init` provides the real CLI invocation rather than creating files inside the TUI; `/export`, panel focus/navigation, and two-step cancel confirmation remain CLI/manual operations.
-- Failed provider HTTP attempts cannot always record full usage when the remote returns none. JSON-only fallback for compatible providers without tool calling is absent.
-- Thumbnail/crop operations have bounds but no durable cross-process cache.
-- Server CORS is permissive and there is no login; deployment is loopback single-user only.
-- COCO RLE is represented/exported but not generally drawable/editable in the GUI.
-- A real Qwen-compatible smoke test reached authenticated vision/tool/retry/persistence/review behavior but a complete six-task provider run has not been verified.
-- Dynamic plugins, WASM, MCP, distributed workers, cloud storage, video, training loops, vector search, and a second production Skill are outside the current implementation.
+- The local server is a trusted loopback, single-user application. It has permissive development CORS and no login, authorization, multi-user isolation, cloud object storage, or distributed scheduler.
+- The product Runtime executes an exact selected Published Workflow for image and Dataset Batch starts. Starting without a selected version retains the legacy single-Skill AgentRuntime for compatibility; zero- or multi-Skill Projects must select a Published Workflow.
+- Executor-level HumanReview checkpoints can be approved and resumed without rerunning completed nodes. In the product image path, review candidates are currently persisted as `NeedsReview` and the image Run becomes terminal `CompletedWithReview`; a later Review decision does not resume that same Run to its Commit node.
+- The Model Registry, capability checks, OpenAI-compatible/HTTP/mock/deterministic adapters, and external worker contract are implemented. The Settings GUI configures one workspace VLM binding; it is not a full CRUD interface for an arbitrary collection of HTTP/ONNX model entries. General ONNX inference is not bundled.
+- Published product DAG model nodes currently use the selected workspace OpenAI-compatible backend or typed mock behavior. The three-category hybrid path is fully executable through the shared hybrid runtime/demo, while per-node selection among multiple live HTTP workers in one GUI-started Run still requires application-side registration/integration.
+- A real Qwen-compatible smoke is live-conditional. No credential from conversation history is read or reused. External detector/segmenter inference is also conditional on configured endpoints or model weights; the reference worker reports `weights_unavailable` rather than fabricating success.
+- ZIP image import is deliberately rejected before extraction in Workflow Alpha. This provides a smaller safe boundary than accepting archives; users extract an archive themselves and import a workspace-local folder. There is no archive unpacker whose traversal behavior is implied to be safe.
+- COCO string RLE can be represented and exported but is not generally drawable or editable in the Web canvas. COCO, LabelMe, and YOLO cannot express every Native provenance, relation, attribute, mask, or revision field, so their compatibility reports list losses.
+- TUI can start/control legacy Project Runs and inspect Project, Workflow, node, Artifact, validation, recovery, model, usage, timeout, checkpoint, and review state from history. Workflow authoring, exact Published Version selection, Batch creation, and annotation geometry editing remain GUI/HTTP/CLI operations.
+- Thumbnail/crop operations are bounded but have no durable cross-process cache. Dynamic plugins, training loops, video, mobile, Tauri packaging, and automatic execution of generated code are outside Workflow Alpha.

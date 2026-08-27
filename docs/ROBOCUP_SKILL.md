@@ -1,6 +1,6 @@
 # RoboCup Skill
 
-## Workflow
+## Workflows
 
 The Skill supplies this DAG while Runtime only executes dependencies:
 
@@ -10,7 +10,19 @@ scene_type → field_region ┬→ field_line
                           └→ objects → robot_attributes
 ```
 
-Task markdown is loaded only when its task is active. The Skill manifest is the source of UI correction reasons and resource listings.
+Task markdown is loaded only when its task is active. The Skill manifest is the source of UI correction reasons and resource listings. The Workflow Designer also exposes three Skill-owned typed starters: `vlm-bootstrap`, `detector-first`, and `accurate-hybrid`. They are visible only to Projects that enable `robocup`.
+
+The release hybrid path is:
+
+```text
+detector candidates
++ VLM semantic verification
+→ RoboCup hard-negative Validator
+→ Review Gate
+→ Commit
+```
+
+Specialist geometry remains in its original Artifact. The VLM contributes classification/attributes and never rewrites detector or refined coordinates.
 
 ## Field containment
 
@@ -22,7 +34,7 @@ Task markdown is loaded only when its task is active. The Skill manifest is the 
 
 ## Ball hard negatives
 
-`BallHardNegativeValidator` combines geometry and pixels: overlap or lower-body proximity to a robot, aspect/relative size, local white ratio, distance to a penalty keypoint, distance to a field line, original confidence, and project correction risk. It emits explainable codes including white-shoe, penalty-mark, and line-intersection risks. In the offline demo, the first shoe candidate triggers a retry and only the real ball is accepted.
+`BallHardNegativeValidator` combines geometry and pixels: overlap or lower-body proximity to a robot, aspect/relative size, local white ratio, distance to a penalty keypoint, distance to a field line, original confidence, and project correction risk. It emits explainable codes including white-shoe, penalty-mark, and line-intersection risks. In the Workflow Alpha hybrid demo, the white-shoe candidate is prevented from auto-Commit and routed to Review.
 
 ## Robot evidence
 
@@ -37,5 +49,11 @@ Human decisions store project/Skill/task/labels/reason, before/after snapshots, 
 ```bash
 cargo test -p annotagent-skill-robocup --test robocup_algorithms
 cargo test -p annotagent-storage --test robocup_loops
-cargo run -p annotagent -- demo robocup
+cargo run -p annotagent -- demo robocup-hybrid
+cargo run -p annotagent -- evaluate \
+  --ground-truth examples/robocup/evaluation/ground-truth.synthetic.json \
+  --predictions examples/robocup/evaluation/predictions.synthetic.json \
+  --minimum-field-region-iou 0.7
 ```
+
+Synthetic labelled evaluation covers geometry and operational metrics. Accuracy is refused for unlabelled real data. Real Qwen and external worker smoke remain live-conditional and are never inferred from fixture output.

@@ -4,11 +4,11 @@
 
 AnnotAgent is the product shell for composable annotation workflows for vision data. Projects are concrete data efforts, Skills are reusable domain extensions, Workflows are typed execution definitions, Models are bound resources, and Runs pin the configuration they execute. The bundled RoboCup implementation is one Skill and example Project, not the product identity.
 
-The current Project schema still names one Skill and Runtime derives one task graph from it. The application/API/frontend compatibility DTO exposes `EnabledSkill`, `WorkflowSummary`, `WorkflowVersion`, `WorkflowStatus`, and `ModelBinding` without pretending that arbitrary multi-Skill or multi-Workflow execution is complete. The active Workflow shown in the UI is built from the actual configured tasks and dependencies.
+Project schema accepts zero, one, or multiple enabled Skills. The application/API/frontend expose independent Project, Skill, Workflow, Model, Run, Batch, and Review contracts. An unselected legacy single-Skill Project can still derive its compatibility graph; exact Published Workflow selection uses the generic DAG Runtime.
 
 ## Workflow lifecycle and the LLM boundary
 
-A target Workflow lifecycle is Draft → Valid → Published → Archived. Published versions are intended to be immutable and every Run must pin a Workflow version, Skill versions, and model bindings.
+The Workflow lifecycle is Draft → Valid → Published → Archived. Published versions are immutable and exact-version Runs pin Workflow, Skill, model, and prompt/resource snapshots.
 
 An LLM may only suggest a constrained Workflow Draft from registered data:
 
@@ -25,7 +25,7 @@ Project Schema
 → Execute
 ```
 
-The LLM cannot invent or execute code, shell commands, unknown models, or unregistered nodes. Suggestion, editing, dry run, publishing, immutable snapshot persistence, and general graph execution remain roadmap work; the UI keeps those controls disabled. Rust static validation and human approval are mandatory boundaries before future publication and execution.
+The LLM cannot invent or execute code, Shell commands, unknown models, or unregistered nodes. Suggestion, editing, Dry Run, publication, immutable snapshot persistence, and general graph execution are implemented. Rust static validation and explicit human Publish remain mandatory boundaries.
 
 ## Checked geometry
 
@@ -37,11 +37,11 @@ The model cannot commit directly. It submits typed candidates. Runtime parses th
 
 ## Task-scoped tools and context
 
-Runtime exposes generic tools plus Skill tools applicable to the current task. A task may spend one evidence/refinement call before it must submit. Prompt resources are loaded per task rather than injecting a whole Skill corpus.
+Runtime exposes generic tools plus Skill tools applicable to the current task. Model turns, tool calls, recovery turns, Provider timeout, task timeout, and retry are separate bounded budgets. Repeated deterministic calls can reuse cached Artifacts; available actions narrow according to state without permanently forcing submit after the first tool call.
 
 ## Persistence
 
-SQLite provides local transactions and exportable audit history. Revision records append before/after snapshots. Money uses `rust_decimal::Decimal`. Existing Run history stores the Project snapshot, provider/model, Skill id, usage, annotations, and events; durable Workflow-version snapshots are not implemented yet.
+SQLite provides local transactions and exportable audit history. Revision records append before/after snapshots. Money uses `rust_decimal::Decimal`. Run history stores Project and immutable Workflow snapshots, provider/model identity, node/task state, typed Artifacts, usage, annotations, validation, events, and checkpoint. Dataset Batches add a durable queue, leases, monotonic events, and exact consumed/reserved budget ledger.
 
 ## Frontends
 

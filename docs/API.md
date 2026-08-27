@@ -18,7 +18,8 @@ annotagent history import <file>
 annotagent export --project <project.yaml> --format <native|coco|yolo|yolo_segmentation|labelme> --output <directory>
 annotagent evaluate --ground-truth <labels.json> --predictions <outputs.json> [--bbox-iou-threshold 0.5] [--minimum-field-region-iou 0.7] [--output report.json]
 annotagent doctor
-annotagent demo robocup
+annotagent demo generic-workflow
+annotagent demo robocup-hybrid
 ```
 
 ## HTTP
@@ -42,12 +43,12 @@ All paths are relative to the local Axum server.
 | POST | `/api/workflows/{id}/versions/{version}/clone` | Clone an immutable version to a new editable Draft |
 | POST | `/api/workflows/compare` | Compare two immutable Workflow Versions |
 | GET | `/api/models` | Saved workspace Model Binding |
-| GET | `/api/runs` | Cross-Project Run summaries with Workflow/Skill/model context and usage |
+| GET | `/api/runs` | Cross-Project summaries with Workflow, current node/status, Artifact/validation/recovery/model/usage/checkpoint/review context |
 | POST | `/api/projects/{id}/import` | Controlled workspace-folder image import |
 | GET | `/api/projects/{id}/images` | Ordered image list |
 | GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
 | POST | `/api/projects/{id}/runs` | Start one image run; optional `workflow_id` + `version` select an immutable version together |
-| POST | `/api/projects/{id}/batches` | Create and asynchronously execute a durable dataset batch |
+| POST | `/api/projects/{id}/batches` | Create and execute a durable batch; optional `workflow_id` + `version` pin every child Run |
 | GET | `/api/batches` | List active and terminal dataset batches |
 | GET | `/api/batches/{batch}` | Durable checkpoint, progress summary, budget ledger, and ordered events |
 | POST | `/api/batches/{batch}/pause` | Stop new image/node claims and persist resumable state |
@@ -79,7 +80,7 @@ When a dataset batch is active, Project responses also include `active_batch` an
 restarted server can render Pending, Running, Paused, or Awaiting Review state before the
 operator resumes work.
 
-Run list summaries derive the selected immutable Workflow name/version, Skill version, provider/model binding, usage, cost, and status from persisted history. The current image Runtime records both the selected immutable version and the compatibility Skill graph it actually executes; it does not claim that the selected generic DAG replaced the compatibility executor.
+Run list summaries derive immutable Workflow name/version, Skill versions, current node/status, Artifact count, validation issues, retry/fallback, provider/model identity, usage/cost, timeout, checkpoint, review suspension, and terminal reason from persisted history. Exact-version image and Batch starts execute `published_dag_runtime`; only an unselected legacy single-Skill start records `legacy_agent_runtime`.
 
 Batch mutation is lease-guarded and transactional. Budget reservations include already
 consumed and concurrently reserved usage before an image is claimed. Batch events use a

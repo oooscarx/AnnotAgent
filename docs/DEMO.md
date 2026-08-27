@@ -1,52 +1,58 @@
-# Five-minute Demo
+# Workflow Alpha Demo
 
-## Preparation
+Both release demos are stable, offline, and need no API key, GPU, or external model weights.
+
+## Generic Workflow
 
 ```bash
-cargo build --workspace --all-features
-npm --prefix web install
-npm --prefix web run build
-cargo run -p annotagent -- init workspace/robocup-demo --skill robocup
+cargo run -p annotagent -- demo generic-workflow
 ```
 
-Keep two terminals available. Start the GUI in one:
+This has no RoboCup Skill dependency. It publishes and executes a typed graph containing detector and prompted-segmentation model categories, a generic shape Validator, Review Gate, and Commit. Expected stable result:
+
+```text
+status=completed artifacts=2 committed=2 review=false model_calls=2
+```
+
+The trace names candidate, specialist/semantic, validation, review, and Commit nodes and reports each node's typed Artifact count.
+
+## RoboCup Hybrid
 
 ```bash
+cargo run -p annotagent -- demo robocup-hybrid
+```
+
+This runs detector candidates plus VLM semantic evidence through the real RoboCup hard-negative Validator, Review Gate, and Commit. The offline fixture deliberately includes a white-shoe false positive. Expected stable result:
+
+```text
+status=completed_with_review artifacts=3 committed=0 review=true model_calls=2
+validation possible_white_shoe
+```
+
+This is not a fake successful detector: mock model use is named in the command, while the Skill Validator and DAG routing are real. A configured live Provider can use the same OpenAI-compatible contract; a real external detector/segmenter uses the shared HTTP worker protocol. Live results are reported only when current credentials/weights are explicitly configured.
+
+## Product journey
+
+Build and launch:
+
+```bash
+npm --prefix web install
+npm --prefix web run build
 cargo run -p annotagent -- serve --workspace ./workspace --open
 ```
 
-## Script
+In the GUI:
 
-**0:00–0:30 — Problem.** Show the synthetic image. Explain the RoboCup failure modes: white shoe/penalty hard negatives, pixel-accurate field lines, local team-color evidence, and mixed geometry types.
+1. Create a Generic Project and import or add workspace images.
+2. Open Workflows, create or suggest a Draft, edit nodes/edges/bindings/retry/fallback/review, and inspect exact validation issues.
+3. run a selected-image Dry Run, publish, and select the immutable version.
+4. choose **Start image run** or **Start dataset batch**. Navigate away and return; active/last state comes from the server.
+5. inspect Runs for node/Artifact/validation/recovery/model/usage/checkpoint evidence.
+6. edit or create annotations in Review, compare before/after, record a correction reason, and save a revision.
+7. import/export Native, COCO, LabelMe, or YOLO and read compatibility warnings.
 
-**0:30–1:00 — Core + Skill.** Open the Skills page. Point out that tools, validators, refiners, task DAG, correction taxonomy and resources come from the registered Skill; Core remains domain-neutral.
-
-**1:00–2:00 — Start offline Agent.** In the second terminal run:
-
-```bash
-cargo run -p annotagent -- demo robocup
-```
-
-Show that it uses Mock Provider yet records seven requests, input/output tokens, exact cost, typed events and SQLite history.
-
-**2:00–2:40 — White shoe.** Highlight `possible_white_shoe` and `policy_retry` in output/history: the first false ball candidate overlaps the robot lower body and has strong white evidence; Runtime retries and the corrected ball is committed.
-
-**2:40–3:20 — Field line.** Open the trace/history for `field_line`. Show refinement-started/completed and the revision before/after. The coarse `y≈0.47` line is moved toward the actual white pixels around `y≈0.50`.
-
-**3:20–4:10 — Human review.** Start a configured low-confidence/real run if available, or use the server integration fixture. In Review, drag a shape/vertex, save the revision, select a Skill-provided correction reason, and accept/reject. Show revision history and the correction record’s influence on later review risk.
-
-**4:10–4:35 — Audit and cost.** Show Agent Trace (visible messages/actions only), live SSE, model/tool/validator events, usage source, requests, token totals and exact decimal cost. Pause/resume/cancel from Project or TUI.
-
-**4:35–4:50 — Export.** Run COCO or YOLO export and show `ExportReport`, including explicit skips/warnings for incompatible task kinds.
+Run the complete release gate with:
 
 ```bash
-cargo run -p annotagent -- export \
-  --project examples/robocup/project.yaml \
-  --format coco --output ./exports/coco
+./scripts/acceptance.sh
 ```
-
-**4:50–5:00 — Close.** Summarize: typed Agent Loop, deterministic RoboCup evidence, human revision/correction memory, offline repeatability, and a truthful Core/Skill boundary.
-
-## Fallback
-
-If the network provider is unavailable, do not change the story or use unrecorded output. Use `demo robocup`; it is deterministic, needs no GPU/key, and exercises both domain cases with Mock usage marked as such.

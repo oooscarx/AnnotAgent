@@ -17,9 +17,11 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
 1. **M0 — Baseline and execution ledger**
    - Capture Git and complete Rust/Web baseline.
    - Maintain the five execution documents and `scripts/acceptance.sh`.
+   - Status: completed in `9a19176`; acceptance evidence recorded.
 2. **M1 — Protocol, Artifact, and state semantics audit**
    - Close remaining typed Artifact shapes and observable structured failures.
    - Prove all tool-call replay and Run/Task state gates.
+   - Status: completed in `309d31a`; acceptance evidence recorded.
 3. **M2 — Versioned strongly typed Workflow**
    - Add typed nodes, ports, edges, policies, resource requirements, precise validation, migrations, multi-Skill composition, and immutable snapshots.
    - Status: completed in `684ce6f`; acceptance evidence recorded.
@@ -43,10 +45,11 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
    - Status: completed in `3636e0f`; acceptance evidence recorded.
 10. **M9 — Hardening and release acceptance**
     - Complete security tests, observability, required docs, two offline demos, API/browser smoke, and the complete blocking matrix.
+    - Status: completed in `b3ba536`; 113 Rust and 13 Web tests plus browser acceptance pass.
 
 ## Working sequence
 
-The active order is protocol/state correctness → Artifact → Workflow model → DAG Runtime → Model backends → batch checkpoint → Advisor/editor → RoboCup example → Review/import/export → hardening. Model-specific integrations and visual canvas work cannot jump ahead of scheduling and persistence correctness.
+The completed implementation order was protocol/state correctness → Artifact → Workflow model → DAG Runtime → Model backends → batch checkpoint → Advisor/editor → RoboCup example → Review/import/export → hardening.
 
 ## Completion rule
 

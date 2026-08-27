@@ -50,7 +50,7 @@ This file records work and commands actually performed in the implementation ses
 - `npm --prefix web run build` — passed; Vite production assets generated.
 - `cargo run -p annotagent -- doctor` — passed; config, writable workspace, 17 SQLite tables, migration, Skill, key presence check, example, Web build and port check reported.
 - Project validation — passed for six tasks.
-- `cargo run -p annotagent -- demo robocup` — completed with 7 committed annotations, 0 reviews, 2 recorded retry issues, 1,260 input / 315 output Mock tokens, 7 requests, cost `0.00252`.
+- Historical pre-Workflow-Alpha `demo robocup` — completed with 7 committed annotations, 0 reviews, 2 recorded retry issues, 1,260 input / 315 output Mock tokens, 7 requests, cost `0.00252`. The current release commands are `demo generic-workflow` and `demo robocup-hybrid`; see `docs/DEMO.md`.
 - Mock run without `--limit` — completed through `DatasetCoordinator` with the same per-image result.
 - History show/export/import — succeeded; import remapped conflicting IDs and emitted a missing-image warning.
 - COCO export — exported 5 annotations and explicitly skipped 2 incompatible values with warnings.

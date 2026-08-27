@@ -42,6 +42,8 @@ When a colliding Run import receives new IDs, all typed references are remapped 
 
 ## D-009 — Compatibility Runs identify themselves honestly
 
+Historical decision, still applicable only when no Published Workflow is selected. Superseded for exact-version starts by D-021.
+
 Until Milestone 3 executes a published DAG, the existing Agent Runtime persists a complete `legacy_agent_runtime` snapshot containing the actual Skill manifest, task graph, Project schema, and model binding. It does not attach the latest published Workflow merely because one exists; that would make history claim execution semantics that did not occur.
 
 ## D-010 — Multi-Skill collisions are namespaced and visual precedence is explicit
@@ -92,6 +94,8 @@ already-published/running Workflow.
 
 ## D-018 — Run selection and execution attribution are recorded separately
 
+Historical Milestone-6 boundary, superseded by D-021.
+
 An image Run may select an immutable Workflow Version and history presents that exact name and
 version. Until the product image path is wired to the generic DAG executor, the same snapshot also
 records `legacy_agent_runtime`, the actual Skill graph/model binding, and an explicit compatibility
@@ -125,3 +129,30 @@ cannot represent.
 
 Rejected: aborting a whole dataset on one malformed record, silently dropping unsupported fields,
 or importing annotations directly as accepted ground truth.
+
+## D-021 — Exact product version selection executes the generic DAG
+
+An image or Dataset Batch that selects a `PublishedWorkflowVersion` constructs
+`PublishedWorkflowRuntime`, executes the frozen graph with `PublishedDagExecutor`, persists typed
+Artifacts and per-node trace, and adds the executor checkpoint to the same immutable Run snapshot.
+The Batch snapshot carries the exact content hash into every child Run. Only an unselected legacy
+single-Skill start uses `legacy_agent_runtime`.
+
+Rejected: recording a selected Workflow beside a compatibility execution, or dropping the selected
+version when a Dataset worker starts a child Run.
+
+## D-022 — Archive safety is rejection, not an unimplemented extractor
+
+Workflow Alpha rejects ZIP image imports before extraction. This makes traversal impossible within
+the product because there is no archive extraction surface. Folder imports remain canonicalized and
+workspace-confined, including symlink targets.
+
+Rejected: adding a partially hardened ZIP extractor solely to satisfy a feature-shaped security
+test; users can explicitly extract an archive and import the resulting workspace-local directory.
+
+## D-023 — Offline demos must exercise real routing outcomes
+
+The Generic demo commits validated typed Artifacts without a domain Skill. The RoboCup hybrid demo
+uses mock model nodes but the real Skill Validator, Review Gate, and Commit policy and intentionally
+ends `CompletedWithReview` on `possible_white_shoe`. Fixture model calls are named mock and never
+presented as live Qwen or external-model inference.
