@@ -284,7 +284,7 @@ main { min-width: 0; padding-bottom: 48px; }
 .artifact-image-stage { position: relative; overflow: hidden; margin-top: 10px; border-radius: var(--aa-radius-md); background: #111; }
 .artifact-image-stage img { display: block; width: 100%; height: auto; }
 .artifact-image-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.artifact-image-stage rect { fill: color-mix(in srgb, var(--aa-accent) 12%, transparent); stroke: var(--aa-accent); stroke-width: 0.65; vector-effect: non-scaling-stroke; }
+.artifact-image-stage rect { fill: color-mix(in srgb, var(--aa-annotation-5) 12%, transparent); stroke: var(--aa-annotation-5); stroke-width: 2.5; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 1px rgba(255, 255, 255, .95)); }
 .crop-preview-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; margin-top: 12px; }
 .crop-preview-list svg { width: 100%; aspect-ratio: 1; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: #111; }
 .artifact-node-detail pre { max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
