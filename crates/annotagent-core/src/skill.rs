@@ -6,18 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ConfigIssue, TaskId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillKind {
     Capability,
+    #[default]
     Domain,
     Pack,
-}
-
-impl Default for SkillKind {
-    fn default() -> Self {
-        Self::Domain
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

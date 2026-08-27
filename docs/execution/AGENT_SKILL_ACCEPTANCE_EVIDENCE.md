@@ -140,3 +140,40 @@ The tests prove Pack/Domain separation, two templates without concrete model bin
 resource rejection, structured white-shoe/penalty/memory issues, field inside/outside/missing
 evidence behavior, and backward-compatible hybrid execution. The generic Runtime/Core/Server/Web
 component boundary remains free of the forbidden RoboCup label terms.
+
+## M7 — Correction Memory and adaptive Annotation Recovery
+
+```text
+cargo test -p annotagent-skill-robocup recovery
+1 passed; 0 failed
+cargo test -p annotagent-storage correction_memory_isolated_by_project_skill_task_and_label
+1 passed; 0 failed
+cargo test -p annotagent-application \
+  recovery_uses_scoped_memory_persists_trace_and_keeps_clean_fast_path
+1 passed; 0 failed
+cargo clippy -p annotagent-skill-robocup -p annotagent-application \
+  -p annotagent-storage --all-targets -- -D warnings
+passed
+scripts/check-agent-skill-boundaries.sh
+passed
+```
+
+Direct evidence:
+
+1. `SqliteStore::query_corrections` requires the exact Project UUID, Skill ID, Task ID and optional
+   Label. A five-record fixture differing in each dimension returns only the one exact match.
+2. A clean candidate returns `Accept` through `fast_path` and creates no Agent Session. Risky
+   candidates run the separate Recovery loop and persist only observable tool names, arguments and
+   results—never hidden reasoning.
+3. The loop explicitly loads the declared hard-negative resource, inspects candidate/parent and
+   Validator issue data, queries structured Memory, optionally runs the actual bounded
+   `BallEvidenceTool`, compares evidence, and chooses accept, reject or Human Review.
+4. The application test first receives Human Review for an uncertain candidate. After a scoped
+   operator correction with reason `white_shoe_as_ball`, the same candidate is rejected and
+   `memory_changed_decision` is true. Both risky sessions are persisted under the product Project.
+5. Memory traces expose only controlled reason codes and timestamps. The operator note is not
+   promoted into tool instructions or the session trace.
+6. A zero-step/tool budget stops with `AgentSessionStatus::BudgetExceeded` and Human Review. A
+   cancelled request similarly produces a cancelled session and never starts a new tool.
+7. The Project-local image loader canonicalizes the path and rejects paths outside the Project
+   root before any evidence tool receives pixels.

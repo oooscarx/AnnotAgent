@@ -252,7 +252,7 @@ impl DagNodeRunner for ClassificationVerifierRunner {
                 ArtifactValidationState::NeedsReview
             };
             set.reference.source_node.clone_from(&context.node.id);
-            set.reference.port = "classifications".to_owned();
+            "classifications".clone_into(&mut set.reference.port);
             set.validate()
                 .map_err(|error| DagNodeFailure::terminal("invalid_classification_set", error))?;
             outputs.push(PipelineArtifact::ClassificationSet(set));

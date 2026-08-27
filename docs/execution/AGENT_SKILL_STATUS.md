@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M6 — complete. M7 correction memory and Annotation Recovery Agent is next.
+M7 — complete. M8 Web, TUI and Guided UX is next.
 
 ## Audited baseline
 
@@ -114,3 +114,17 @@ M6 — complete. M7 correction memory and Annotation Recovery Agent is next.
 - two model-agnostic Ball templates using generic VLM/YOLO capability operations and Core nodes;
 - on-demand Ball summary and hard-negative resources with correction taxonomy;
 - existing broad RoboCup Skill and all previous hybrid tests remain intact.
+
+## M7 delivered
+
+- strict Correction Memory lookup by exact Project UUID, Skill, Task and Label, with a bounded
+  result count and no cross-Project fallback;
+- a separate `RoboCupBallRecoveryAgent` that is entered only for Validator risk or matching
+  Memory, while clean candidates bypass Agent Session creation entirely;
+- observable bounded actions for resource loading, candidate inspection, Memory query, real crop
+  statistics, evidence comparison and the final accept/reject/human-review decision;
+- application composition that safely resolves an optional Project-local image, runs Recovery,
+  rewrites the session to the product Project identity and persists its full trace;
+- budget and cancellation stop states that route unresolved high-risk candidates to Human Review;
+- an end-to-end two-run proof where the first uncertain candidate requires review and an exact
+  scoped correction changes the second decision to rejection.

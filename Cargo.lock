@@ -234,6 +234,7 @@ dependencies = [
  "async-trait",
  "rust_decimal",
  "serde_json",
+ "tokio",
  "tokio-util",
  "uuid",
 ]
@@ -251,6 +252,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -261,6 +263,7 @@ dependencies = [
  "annotagent-runtime",
  "async-trait",
  "rust_decimal",
+ "serde_json",
  "tokio-util",
  "uuid",
 ]

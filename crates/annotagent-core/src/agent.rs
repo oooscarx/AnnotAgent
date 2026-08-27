@@ -1,4 +1,4 @@
-//! Shared, auditable session state for bounded AnnotAgent loops.
+//! Shared, auditable session state for bounded `AnnotAgent` loops.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;

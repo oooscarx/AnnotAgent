@@ -41,7 +41,10 @@ use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
     ImageRunRequest, ImageRunResult, RunControl, RuntimeStore, SkillRegistry,
 };
-use annotagent_skill_robocup::RoboCupSkill;
+use annotagent_skill_robocup::{
+    ROBOCUP_BALL_SKILL_ID, RoboCupBallRecoveryAgent, RoboCupBallRecoveryReport,
+    RoboCupBallRecoveryRequest, RoboCupSkill,
+};
 use annotagent_storage::{BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore};
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -105,6 +108,15 @@ pub struct PreparedRun {
     runtime: Arc<dyn ApplicationImageRuntime>,
     request: ImageRunRequest,
     image_path: PathBuf,
+}
+
+pub struct BallRecoveryInput {
+    pub candidate: Annotation,
+    pub related_annotations: Vec<Annotation>,
+    pub issues: Vec<annotagent_core::ValidationIssue>,
+    pub image_path: Option<PathBuf>,
+    pub budget: AgentBudget,
+    pub cancellation: CancellationToken,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1588,6 +1600,73 @@ impl LocalApplication {
     #[must_use]
     pub fn store(&self) -> Arc<SqliteStore> {
         self.store.clone()
+    }
+
+    /// Runs bounded domain recovery for one risky candidate. Correction records are selected only
+    /// from the candidate's exact Project, Skill, task and Label scope. A clean candidate returns
+    /// through the fast path without creating or persisting an Agent Session.
+    pub async fn recover_ball_candidate(
+        &self,
+        project_id: &str,
+        input: BallRecoveryInput,
+    ) -> Result<RoboCupBallRecoveryReport> {
+        let BallRecoveryInput {
+            candidate,
+            related_annotations,
+            issues,
+            image_path,
+            budget,
+            cancellation,
+        } = input;
+        let project_path = self.project_path(project_id)?;
+        let project_root = project_path
+            .parent()
+            .unwrap_or(&self.workspace)
+            .canonicalize()
+            .context("cannot canonicalize recovery Project root")?;
+        let memory_project_id = stable_project_id(&project_root);
+        let correction_memory = self.store.query_corrections(
+            memory_project_id,
+            ROBOCUP_BALL_SKILL_ID,
+            &candidate.task_id,
+            candidate.label.as_ref(),
+            20,
+        )?;
+        let image = image_path
+            .map(|path| {
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    project_root.join(path)
+                };
+                let path = path
+                    .canonicalize()
+                    .with_context(|| format!("cannot access recovery image {}", path.display()))?;
+                ensure_within(&project_root, &path)?;
+                load_image(&path, 40_000_000)
+                    .map(Arc::new)
+                    .map_err(|error| anyhow!(error))
+            })
+            .transpose()?;
+        let mut report = RoboCupBallRecoveryAgent
+            .run(RoboCupBallRecoveryRequest {
+                project_id: memory_project_id,
+                project_root,
+                candidate,
+                related_annotations,
+                issues,
+                correction_memory,
+                image,
+                budget,
+                cancellation,
+            })
+            .await
+            .map_err(anyhow::Error::msg)?;
+        if let Some(session) = report.session.as_mut() {
+            session.project_id = Some(project_id.to_owned());
+            self.store.save_agent_session(session)?;
+        }
+        Ok(report)
     }
 
     pub async fn create_human_annotation(
@@ -5029,6 +5108,147 @@ export:
         assert_eq!(
             cancelled_report.session.status,
             AgentSessionStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_uses_scoped_memory_persists_trace_and_keeps_clean_fast_path() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "recovery-agent",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let project_root = temporary
+            .path()
+            .join("recovery-agent")
+            .canonicalize()
+            .expect("canonical Project root");
+        let project_scope = stable_project_id(&project_root);
+        let candidate = Annotation {
+            id: annotagent_core::AnnotationId::new(),
+            image_id: ImageId::new(),
+            task_id: TaskId::from("objects"),
+            label: Some(LabelId::from("ball")),
+            value: annotagent_core::AnnotationValue::BoundingBox {
+                rect: annotagent_core::NormalizedRect::new(0.2, 0.6, 0.04, 0.03)
+                    .expect("valid bbox"),
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.91),
+            source: AnnotationSource::Model,
+            review_status: ReviewStatus::Draft,
+            provenance: annotagent_core::AnnotationProvenance::default(),
+            created_at: chrono::Utc::now(),
+        };
+        let fast = application
+            .recover_ball_candidate(
+                "recovery-agent",
+                BallRecoveryInput {
+                    candidate: candidate.clone(),
+                    related_annotations: Vec::new(),
+                    issues: Vec::new(),
+                    image_path: None,
+                    budget: AgentBudget::default(),
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+            .expect("clean fast path");
+        assert!(fast.fast_path && fast.session.is_none());
+        assert!(
+            application
+                .store
+                .list_agent_sessions(Some("recovery-agent"))
+                .expect("sessions")
+                .is_empty()
+        );
+
+        let issue = annotagent_core::ValidationIssue {
+            code: "inaccurate_ball_bbox".to_owned(),
+            severity: annotagent_core::IssueSeverity::Warning,
+            annotation_ids: vec![candidate.id],
+            message: "candidate needs bounded recovery".to_owned(),
+            suggested_action: annotagent_core::SuggestedAction::HumanReview,
+            evidence: annotagent_core::ValidationEvidence::Rule {
+                facts: BTreeMap::new(),
+            },
+        };
+        let first = application
+            .recover_ball_candidate(
+                "recovery-agent",
+                BallRecoveryInput {
+                    candidate: candidate.clone(),
+                    related_annotations: Vec::new(),
+                    issues: vec![issue.clone()],
+                    image_path: None,
+                    budget: AgentBudget::default(),
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+            .expect("first risky decision");
+        assert_eq!(
+            first.disposition,
+            annotagent_skill_robocup::RecoveryDisposition::HumanReview
+        );
+
+        application
+            .store
+            .save_correction(&annotagent_core::CorrectionRecord {
+                id: uuid::Uuid::new_v4(),
+                project_id: project_scope,
+                skill_id: ROBOCUP_BALL_SKILL_ID.to_owned(),
+                task_id: candidate.task_id.clone(),
+                predicted_label: candidate.label.clone(),
+                corrected_label: None,
+                reason_code: "white_shoe_as_ball".to_owned(),
+                original_annotation: Some(candidate.snapshot()),
+                corrected_annotation: None,
+                note: Some("structured operator evidence, never a system instruction".to_owned()),
+                image_features: annotagent_core::CorrectionFeatures {
+                    geometry: BTreeMap::new(),
+                    colors: BTreeMap::new(),
+                },
+                created_at: chrono::Utc::now(),
+            })
+            .expect("correction memory");
+        let second = application
+            .recover_ball_candidate(
+                "recovery-agent",
+                BallRecoveryInput {
+                    candidate,
+                    related_annotations: Vec::new(),
+                    issues: vec![issue],
+                    image_path: None,
+                    budget: AgentBudget::default(),
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+            .expect("memory-guided decision");
+        assert_eq!(
+            second.disposition,
+            annotagent_skill_robocup::RecoveryDisposition::Reject
+        );
+        assert!(second.memory_changed_decision);
+        let sessions = application
+            .store
+            .list_agent_sessions(Some("recovery-agent"))
+            .expect("persisted Recovery sessions");
+        assert_eq!(sessions.len(), 2);
+        assert!(
+            sessions[0]
+                .steps
+                .iter()
+                .any(|step| step.tool_name == "query_correction_memory")
+        );
+        assert!(
+            !serde_json::to_string(&sessions)
+                .expect("session JSON")
+                .contains("system instruction")
         );
     }
 

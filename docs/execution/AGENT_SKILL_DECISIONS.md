@@ -25,3 +25,13 @@ identifier, canonicalized under the Skill root, with traversal and undeclared-re
 
 `DomainSkill` remains as an adapter during migration so existing RoboCup and Label Pipeline paths
 continue to work. New architecture and UI use the layered `Skill` contract.
+
+## D006 — Recovery Memory is scoped evidence, not instruction
+
+Recovery retrieves only records matching the exact Project UUID, Skill, Task and Label. The Agent
+trace receives controlled reason codes and timestamps, not free-form notes as instructions. A clean
+candidate bypasses the Agent; a risky candidate that cannot finish because of cancellation or
+budget is sent to Human Review.
+
+Rejected: global similarity memory, cross-Project fallback, prompt injection through notes, and
+turning an unfinished recovery into automatic acceptance.

@@ -1071,13 +1071,13 @@ fn trace(
         request,
         &inputs.artifacts,
         &inputs.pipeline_artifacts,
-        cache_key.clone(),
+        cache_key.as_ref(),
     );
     let output_envelopes = artifact_envelopes(
         request,
         &output.artifacts,
         &output.pipeline_artifacts,
-        cache_key.clone(),
+        cache_key.as_ref(),
     );
     DagNodeTrace {
         node_id: node.id.clone(),
@@ -1104,7 +1104,7 @@ fn artifact_envelopes(
     request: &DagExecutionRequest,
     artifacts: &[VisionArtifact],
     pipeline_artifacts: &[PipelineArtifact],
-    cache_key: Option<String>,
+    cache_key: Option<&String>,
 ) -> Vec<ArtifactEnvelope> {
     artifacts
         .iter()
@@ -1116,7 +1116,7 @@ fn artifact_envelopes(
                 request.run_id,
                 source_node,
                 artifact,
-                cache_key.clone(),
+                cache_key.cloned(),
             )
         })
         .chain(pipeline_artifacts.iter().cloned().map(|artifact| {
@@ -1127,7 +1127,7 @@ fn artifact_envelopes(
                 source_node,
                 artifact,
                 ArtifactProvenance::default(),
-                cache_key.clone(),
+                cache_key.cloned(),
             )
         }))
         .collect()

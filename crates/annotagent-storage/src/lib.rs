@@ -1287,6 +1287,40 @@ impl SqliteStore {
         })
     }
 
+    pub fn query_corrections(
+        &self,
+        project_id: ProjectId,
+        skill_id: &str,
+        task_id: &TaskId,
+        label: Option<&LabelId>,
+        limit: usize,
+    ) -> Result<Vec<CorrectionRecord>, StorageError> {
+        let limit = i64::try_from(limit.clamp(1, 100)).unwrap_or(100);
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT record_json FROM correction_records
+                 WHERE project_id = ?1 AND skill_id = ?2 AND task_id = ?3
+                   AND (?4 IS NULL OR predicted_label = ?4 OR corrected_label = ?4)
+                 ORDER BY created_at DESC LIMIT ?5",
+            )?;
+            let rows = statement
+                .query_map(
+                    params![
+                        project_id.to_string(),
+                        skill_id,
+                        task_id.as_str(),
+                        label.map(LabelId::as_str),
+                        limit,
+                    ],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
+        })
+    }
+
     pub(crate) fn with_connection<T>(
         &self,
         operation: impl FnOnce(&Connection) -> Result<T, StorageError>,
@@ -1952,8 +1986,8 @@ fn sqlite_u64(value: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, AttributeValue, RunEventKind, RunEventPayload,
-        VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
+        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures, RunEventKind,
+        RunEventPayload, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -2247,5 +2281,49 @@ mod tests {
                 status: RunStatus::Pending,
             }
         );
+    }
+
+    #[test]
+    fn correction_memory_isolated_by_project_skill_task_and_label() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_a = ProjectId::new();
+        let project_b = ProjectId::new();
+        let record = |project_id, skill_id: &str, task_id: &str, label: &str| CorrectionRecord {
+            id: Uuid::new_v4(),
+            project_id,
+            skill_id: skill_id.to_owned(),
+            task_id: TaskId::from(task_id),
+            predicted_label: Some(LabelId::from(label)),
+            corrected_label: None,
+            reason_code: "fixture".to_owned(),
+            original_annotation: None,
+            corrected_annotation: None,
+            note: None,
+            image_features: CorrectionFeatures {
+                geometry: BTreeMap::new(),
+                colors: BTreeMap::new(),
+            },
+            created_at: Utc::now(),
+        };
+        for item in [
+            record(project_a, "domain.target", "objects", "target"),
+            record(project_b, "domain.target", "objects", "target"),
+            record(project_a, "domain.other", "objects", "target"),
+            record(project_a, "domain.target", "attributes", "target"),
+            record(project_a, "domain.target", "objects", "other"),
+        ] {
+            store.save_correction(&item).expect("correction");
+        }
+        let matches = store
+            .query_corrections(
+                project_a,
+                "domain.target",
+                &TaskId::from("objects"),
+                Some(&LabelId::from("target")),
+                20,
+            )
+            .expect("isolated query");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].project_id, project_a);
     }
 }

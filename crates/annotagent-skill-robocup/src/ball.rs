@@ -205,7 +205,7 @@ impl annotagent_core::AnnotationValidator for RoboCupBallHardNegativeValidator {
     }
 }
 
-/// Backward-compatible name used by the original broad RoboCup Skill.
+/// Backward-compatible name used by the original broad `RoboCup` Skill.
 pub type BallHardNegativeValidator = RoboCupBallHardNegativeValidator;
 
 #[derive(Debug, Clone, Default)]
