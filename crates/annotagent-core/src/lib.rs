@@ -1,5 +1,6 @@
 //! Stable, domain-neutral data types and extension contracts for `AnnotAgent`.
 
+pub mod agent;
 pub mod annotation;
 pub mod artifact;
 pub mod batch;
@@ -15,6 +16,7 @@ pub mod usage;
 pub mod vision_backend;
 pub mod workflow;
 
+pub use agent::*;
 pub use annotation::*;
 pub use artifact::*;
 pub use batch::*;

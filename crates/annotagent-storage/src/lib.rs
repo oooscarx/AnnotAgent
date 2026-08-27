@@ -7,11 +7,12 @@ pub use batch::BatchClaimResult;
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
-    Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue, ArtifactId,
-    ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage, ProjectId,
-    PublishedWorkflowVersion, RelationEndpoint, RevisionActor, RunEvent, RunEventPayload, RunId,
-    RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus, WorkflowSnapshot,
+    AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
+    ArtifactId, ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage,
+    ProjectId, PublishedWorkflowVersion, RelationEndpoint, RevisionActor, RunEvent,
+    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
+    WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -23,6 +24,7 @@ use uuid::Uuid;
 const INITIAL_MIGRATION: &str = include_str!("../../../migrations/0001_initial.sql");
 const BATCH_MIGRATION: &str =
     include_str!("../../../migrations/0003_persistent_dataset_batches.sql");
+const AGENT_SESSION_MIGRATION: &str = include_str!("../../../migrations/0004_agent_sessions.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -223,7 +225,70 @@ impl SqliteStore {
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (3, ?1, ?2)",
                 params!["persistent_dataset_batches", Utc::now().to_rfc3339()],
             )?;
+            connection.execute_batch(AGENT_SESSION_MIGRATION)?;
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (4, ?1, ?2)",
+                params!["agent_sessions", Utc::now().to_rfc3339()],
+            )?;
             Ok(())
+        })
+    }
+
+    pub fn save_agent_session(&self, session: &AgentSession) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO agent_sessions
+                 (id, project_id, kind, status, session_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                   project_id = excluded.project_id,
+                   status = excluded.status,
+                   session_json = excluded.session_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    session.id.to_string(),
+                    session.project_id,
+                    format!("{:?}", session.kind).to_ascii_lowercase(),
+                    format!("{:?}", session.status).to_ascii_lowercase(),
+                    serde_json::to_string(session)?,
+                    session.created_at.to_rfc3339(),
+                    session.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_agent_sessions(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<AgentSession>, StorageError> {
+        self.with_connection(|connection| {
+            let (sql, parameter) = project_id.map_or(
+                (
+                    "SELECT session_json FROM agent_sessions ORDER BY updated_at DESC",
+                    None,
+                ),
+                |project_id| {
+                    (
+                        "SELECT session_json FROM agent_sessions WHERE project_id = ?1 ORDER BY updated_at DESC",
+                        Some(project_id),
+                    )
+                },
+            );
+            let mut statement = connection.prepare(sql)?;
+            let rows = if let Some(project_id) = parameter {
+                statement
+                    .query_map([project_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
         })
     }
 
@@ -1926,6 +1991,7 @@ mod tests {
             "dataset_batches",
             "batch_images",
             "batch_events",
+            "agent_sessions",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),

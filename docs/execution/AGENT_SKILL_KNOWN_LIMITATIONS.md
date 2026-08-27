@@ -10,6 +10,9 @@
   external live request remains conditional on operator-owned configuration.
 - Real YOLO weights are intentionally out of process behind Pipeline Vision Protocol v1; the Mock
   and generic HTTP JSON paths are release-blocking, while a live worker is conditional.
+- The offline deterministic Advisor is the release-blocking iterative policy. The external
+  OpenAI-compatible advisor adjustment remains live-conditional and still passes through the same
+  registry validation and human publication boundary.
 - Workflow Advisor and Annotation Recovery are not yet the required iterative Agent loops.
 - RoboCup Ball is not yet isolated as its own Domain Skill inside a Pack.
 - Web and TUI do not yet expose the complete Agent sessions, tools and memory views.

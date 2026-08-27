@@ -9,23 +9,24 @@ use std::{
 };
 
 use annotagent_core::{
-    AdditionalUsage, Annotation, AnnotationSource, ArtifactKind, AttributeDefinition,
-    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
-    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter,
-    DomainSkill, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
-    LabelPipelineStaticValidator, LabelWorkflowComposition, ModelBinding as PipelineModelBinding,
-    ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
-    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
+    AnnotationSource, ArtifactKind, AttributeDefinition, BatchBudgetLedger, BatchBudgetLimits,
+    BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
+    BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill, ImageId, ImportIssue,
+    ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
+    LabelWorkflowComposition, ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry,
+    ModelRequest, ModelRole, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
+    PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
+    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunId, RunStatus, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
+    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
+    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
+    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus,
+    WorkflowDryRunNodeResult, WorkflowDryRunReport, WorkflowDryRunSampleResult,
+    WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -2498,6 +2499,236 @@ impl LocalApplication {
         Ok(suggestion)
     }
 
+    /// Runs the offline, deterministic Workflow Advisor through the same observable tool sequence
+    /// used by a model-backed policy. It intentionally validates an invalid proposal first so the
+    /// session proves revision rather than wrapping one static suggestion.
+    pub async fn run_workflow_advisor_agent(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        budget: AgentBudget,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
+        let mut session =
+            AgentSession::start(AgentKind::WorkflowAdvisor, budget).with_project(project_id);
+        let abort = |session: AgentSession| WorkflowAdvisorAgentReport {
+            session,
+            suggestion: None,
+            validation: None,
+            dry_run: None,
+            approval_required: false,
+        };
+        let record = |session: &mut AgentSession,
+                      name: &str,
+                      arguments: serde_json::Value,
+                      result: serde_json::Value| {
+            session.record_tool(name, arguments, result, true).is_ok()
+        };
+
+        if cancellation.is_cancelled() {
+            session.cancel();
+            self.store.save_agent_session(&session)?;
+            return Ok(abort(session));
+        }
+        let input = self.workflow_advisor_input_for_label(
+            project_id,
+            settings,
+            constraints.clone(),
+            target.map(|value| value.0),
+            target.map(|value| value.1),
+        )?;
+        if !record(
+            &mut session,
+            "inspect_project_schema",
+            json!({"project_id": project_id}),
+            json!({"task_count": input.project_schema.tasks.len(), "target": target}),
+        ) {
+            return Ok(abort(session));
+        }
+        if !record(
+            &mut session,
+            "list_skills",
+            json!({}),
+            json!({"enabled_skills": input.enabled_skills}),
+        ) || !record(
+            &mut session,
+            "list_skill_capabilities",
+            json!({"skills": input.enabled_skills}),
+            json!({"nodes": input.node_catalog}),
+        ) || !record(
+            &mut session,
+            "list_models",
+            json!({}),
+            json!({"models": input.model_registry}),
+        ) || !record(
+            &mut session,
+            "list_resources",
+            json!({"skills": input.enabled_skills}),
+            json!({"resource_ids": input.resource_ids}),
+        ) {
+            return Ok(abort(session));
+        }
+
+        let suggestion = if let Some((task_id, label)) = target {
+            self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
+        } else {
+            self.suggest_workflow_preview(project_id, settings, constraints)?
+        };
+        let mut invalid = suggestion.draft.clone();
+        if let Some(node) = invalid.nodes.iter_mut().find(|node| {
+            matches!(
+                node.kind,
+                WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+            )
+        }) {
+            node.model_binding = Some("advisor.invalid-model".to_owned());
+        }
+        if !record(
+            &mut session,
+            "propose_draft",
+            json!({"strategy": "registry_bounded_initial_proposal"}),
+            json!({"draft_id": invalid.id, "node_count": invalid.nodes.len()}),
+        ) {
+            return Ok(abort(session));
+        }
+        let (nodes, models) = workflow_catalog(settings)?;
+        let enabled_skills = invalid
+            .enabled_skills
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let extensions = self
+            .skills
+            .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
+        let invalid_report = WorkflowStaticValidator.validate_for_publish(
+            &invalid,
+            &nodes,
+            &models,
+            &extensions,
+            &enabled_skills,
+            false,
+        );
+        if !record(
+            &mut session,
+            "static_validate",
+            json!({"draft_id": invalid.id}),
+            json!({"valid": invalid_report.valid, "issues": invalid_report.issues}),
+        ) {
+            return Ok(abort(session));
+        }
+        if invalid_report.valid {
+            session.fail("the intentionally invalid Advisor Draft unexpectedly validated");
+            return Ok(abort(session));
+        }
+
+        let mut revised = suggestion;
+        revised.draft.updated_at = chrono::Utc::now();
+        if !record(
+            &mut session,
+            "revise_draft",
+            json!({"draft_id": revised.draft.id, "cause": "static_validation"}),
+            json!({"restored_registry_bindings": true}),
+        ) {
+            return Ok(abort(session));
+        }
+        let validation = WorkflowStaticValidator.validate_for_publish(
+            &revised.draft,
+            &nodes,
+            &models,
+            &extensions,
+            &enabled_skills,
+            false,
+        );
+        if !record(
+            &mut session,
+            "static_validate",
+            json!({"draft_id": revised.draft.id, "revision": 2}),
+            json!({"valid": validation.valid, "issues": validation.issues}),
+        ) {
+            return Ok(abort(session));
+        }
+        if !validation.valid {
+            session.fail("revised Advisor Draft did not pass static validation");
+            return Ok(WorkflowAdvisorAgentReport {
+                session,
+                suggestion: Some(revised),
+                validation: Some(validation),
+                dry_run: None,
+                approval_required: false,
+            });
+        }
+        self.store.save_workflow_draft(&revised.draft)?;
+        let dry_run = self
+            .dry_run_workflow_samples(&revised.draft.id, settings, &[0])
+            .await?;
+        if !record(
+            &mut session,
+            "dry_run",
+            json!({"draft_id": revised.draft.id, "image_limit": 1}),
+            json!({"sandbox": dry_run.sandbox, "summary": dry_run.summary}),
+        ) || !record(
+            &mut session,
+            "inspect_metrics",
+            json!({"draft_id": revised.draft.id}),
+            json!({
+                "latency_ms": dry_run.total_latency_ms,
+                "estimated_cost": dry_run.estimated_cost,
+                "failed_count": dry_run.summary.failed_count,
+            }),
+        ) {
+            return Ok(WorkflowAdvisorAgentReport {
+                session,
+                suggestion: Some(revised),
+                validation: Some(validation),
+                dry_run: Some(dry_run),
+                approval_required: false,
+            });
+        }
+        if dry_run.summary.failed_count > 0 {
+            revised.warnings.push(format!(
+                "Dry Run reported {} failed sample(s); revise before approval.",
+                dry_run.summary.failed_count
+            ));
+            let _ = record(
+                &mut session,
+                "revise_draft",
+                json!({"draft_id": revised.draft.id, "cause": "dry_run_metrics"}),
+                json!({"warning_added": true}),
+            );
+        }
+        if cancellation.is_cancelled() {
+            session.cancel();
+            self.store.save_agent_session(&session)?;
+            return Ok(WorkflowAdvisorAgentReport {
+                session,
+                suggestion: Some(revised),
+                validation: Some(validation),
+                dry_run: Some(dry_run),
+                approval_required: false,
+            });
+        }
+        if session.status == AgentSessionStatus::Running
+            && record(
+                &mut session,
+                "request_publish_approval",
+                json!({"draft_id": revised.draft.id}),
+                json!({"published": false, "requires_human": true}),
+            )
+        {
+            session.wait_for_human("publish_workflow");
+        }
+        self.store.save_agent_session(&session)?;
+        Ok(WorkflowAdvisorAgentReport {
+            approval_required: session.status == AgentSessionStatus::WaitingForHuman,
+            session,
+            suggestion: Some(revised),
+            validation: Some(validation),
+            dry_run: Some(dry_run),
+        })
+    }
+
     pub fn suggest_label_pipeline(
         &self,
         project_id: &str,
@@ -4713,6 +4944,91 @@ export:
             application
                 .publish_workflow(&invalid.id, &settings)
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn iterative_advisor_revises_invalid_draft_and_stops_for_publish_approval() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("advisor-agent", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("advisor-agent/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let report = application
+            .run_workflow_advisor_agent(
+                "advisor-agent",
+                &settings,
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                AgentBudget::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Advisor Agent");
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(report.approval_required);
+        assert!(report.validation.as_ref().is_some_and(|value| value.valid));
+        assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
+        let tools = report
+            .session
+            .steps
+            .iter()
+            .map(|step| step.tool_name.as_str())
+            .collect::<Vec<_>>();
+        assert!(tools.starts_with(&[
+            "inspect_project_schema",
+            "list_skills",
+            "list_skill_capabilities",
+            "list_models",
+            "list_resources",
+            "propose_draft",
+            "static_validate",
+            "revise_draft",
+            "static_validate",
+            "dry_run",
+            "inspect_metrics",
+            "request_publish_approval",
+        ]));
+        assert_eq!(
+            application
+                .store
+                .list_published_workflow_versions(Some("advisor-agent"))
+                .expect("published versions")
+                .len(),
+            0,
+            "Advisor must never auto-publish"
+        );
+        assert_eq!(
+            application
+                .store
+                .list_agent_sessions(Some("advisor-agent"))
+                .expect("persisted Advisor sessions")
+                .first()
+                .map(|session| session.id),
+            Some(report.session.id)
+        );
+
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        let cancelled_report = application
+            .run_workflow_advisor_agent(
+                "advisor-agent",
+                &settings,
+                &WorkflowConstraints::default(),
+                None,
+                AgentBudget::default(),
+                cancelled,
+            )
+            .await
+            .expect("cancelled Advisor report");
+        assert_eq!(
+            cancelled_report.session.status,
+            AgentSessionStatus::Cancelled
         );
     }
 

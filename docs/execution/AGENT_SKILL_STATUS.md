@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M4 — complete. M5 iterative Workflow Advisor Agent is next.
+M5 — complete. M6 RoboCup Ball Domain Skill and Pack is next.
 
 ## Audited baseline
 
@@ -90,3 +90,16 @@ M4 — complete. M5 iterative Workflow Advisor Agent is next.
   reference and an item cache key;
 - both detection templates intentionally exclude Crop; the UI composition remains detector →
   filter → crop.
+
+## M5 delivered
+
+- shared serializable `AgentSession`, tool-step trace, status, usage and step/tool/token/cost budget
+  contracts;
+- iterative Workflow Advisor actions covering schema/Skill/capability/model/resource inspection,
+  proposal, validation, revision, Dry Run, metrics and publish approval request;
+- the offline policy deliberately produces an invalid binding, consumes the blocking report and
+  revises to a valid Draft;
+- default HTTP `mock`/`agent` Advisor now runs this loop and returns its trace alongside the
+  compatible suggestion payload;
+- SQLite migration v4 persists sessions by Project; cancellation and budget stops are explicit;
+- terminal success waits for human publish approval and creates no Workflow Version.

@@ -259,6 +259,15 @@ pub struct WorkflowSuggestion {
     pub alternatives: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowAdvisorAgentReport {
+    pub session: crate::AgentSession,
+    pub suggestion: Option<WorkflowSuggestion>,
+    pub validation: Option<WorkflowValidationReport>,
+    pub dry_run: Option<WorkflowDryRunReport>,
+    pub approval_required: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct WorkflowConstraints {
     pub preferred_model_id: Option<String>,

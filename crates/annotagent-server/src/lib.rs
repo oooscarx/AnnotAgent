@@ -16,9 +16,10 @@ use annotagent_application::{
     ProjectSummary, Settings, WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
-    Annotation, AnnotationId, AttributeDefinition, BatchId, CorrectionFeatures, CorrectionRecord,
-    DatasetExporter, ExportRequest, LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunId,
-    RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
+    AgentBudget, Annotation, AnnotationId, AttributeDefinition, BatchId, CorrectionFeatures,
+    CorrectionRecord, DatasetExporter, ExportRequest, LabelId, ProjectSchema, ProjectSnapshot,
+    ReviewStatus, RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints,
+    WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
@@ -902,54 +903,73 @@ async fn suggest_workflow(
         .target_task_id
         .as_deref()
         .zip(request.target_label.as_deref());
-    let suggestion = match request.advisor.as_str() {
-        "mock" => match target {
-            Some((task_id, label)) => state
-                .application
-                .suggest_label_pipeline(
-                    &request.project_id,
-                    &settings,
-                    task_id,
-                    label,
-                    &request.constraints,
-                )
-                .map_err(ApiError::bad_request)?,
-            None => state
-                .application
-                .suggest_workflow(&request.project_id, &settings, &request.constraints)
-                .map_err(ApiError::bad_request)?,
-        },
-        "llm" => match target {
-            Some((task_id, label)) => state
-                .application
-                .suggest_label_pipeline_live(
-                    &request.project_id,
-                    &settings,
-                    state.api_key.read().await.clone(),
-                    task_id,
-                    label,
-                    &request.constraints,
-                )
-                .await
-                .map_err(ApiError::bad_request)?,
-            None => state
-                .application
-                .suggest_workflow_live(
-                    &request.project_id,
-                    &settings,
-                    state.api_key.read().await.clone(),
-                    &request.constraints,
-                )
-                .await
-                .map_err(ApiError::bad_request)?,
-        },
-        other => {
-            return Err(ApiError::bad_request(format!(
-                "unknown Workflow Advisor {other:?}; choose mock or llm"
-            )));
-        }
-    };
-    Ok((StatusCode::CREATED, Json(json!(suggestion))))
+    let (suggestion, agent_report) =
+        match request.advisor.as_str() {
+            "mock" | "agent" => {
+                let report = state
+                    .application
+                    .run_workflow_advisor_agent(
+                        &request.project_id,
+                        &settings,
+                        &request.constraints,
+                        target,
+                        AgentBudget::default(),
+                        Default::default(),
+                    )
+                    .await
+                    .map_err(ApiError::bad_request)?;
+                let suggestion =
+                    report.suggestion.clone().ok_or_else(|| {
+                        ApiError::bad_request(report.session.stop_reason.clone().unwrap_or_else(
+                            || "Workflow Advisor stopped without a Draft".to_owned(),
+                        ))
+                    })?;
+                (suggestion, Some(report))
+            }
+            "llm" => (
+                match target {
+                    Some((task_id, label)) => state
+                        .application
+                        .suggest_label_pipeline_live(
+                            &request.project_id,
+                            &settings,
+                            state.api_key.read().await.clone(),
+                            task_id,
+                            label,
+                            &request.constraints,
+                        )
+                        .await
+                        .map_err(ApiError::bad_request)?,
+                    None => state
+                        .application
+                        .suggest_workflow_live(
+                            &request.project_id,
+                            &settings,
+                            state.api_key.read().await.clone(),
+                            &request.constraints,
+                        )
+                        .await
+                        .map_err(ApiError::bad_request)?,
+                },
+                None,
+            ),
+            other => {
+                return Err(ApiError::bad_request(format!(
+                    "unknown Workflow Advisor {other:?}; choose mock or llm"
+                )));
+            }
+        };
+    let mut value = serde_json::to_value(suggestion).map_err(ApiError::internal)?;
+    if let (Some(report), Some(object)) = (agent_report, value.as_object_mut()) {
+        object.insert("agent_session".to_owned(), json!(report.session));
+        object.insert("agent_validation".to_owned(), json!(report.validation));
+        object.insert("agent_dry_run".to_owned(), json!(report.dry_run));
+        object.insert(
+            "approval_required".to_owned(),
+            json!(report.approval_required),
+        );
+    }
+    Ok((StatusCode::CREATED, Json(value)))
 }
 
 async fn save_workflow_draft(

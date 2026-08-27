@@ -106,3 +106,21 @@ cargo test -p annotagent-runtime --test published_dag
 The YOLO integration executes two overlapping Mock detections, applies class mapping, threshold and
 NMS, commits one Detection, then verifies Crop dimensions/cache/parent lineage and classifier
 Replay. Skill template tests assert that neither detector owns `core.crop`.
+
+## M5 — iterative Workflow Advisor Agent
+
+```text
+cargo test -p annotagent-core agent
+1 passed; 0 failed
+cargo test -p annotagent-storage migration_creates_required_tables
+1 passed; 0 failed
+cargo test -p annotagent-application \
+  iterative_advisor_revises_invalid_draft_and_stops_for_publish_approval
+1 passed; 0 failed
+cargo test -p annotagent-server \
+  label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real
+1 passed; 0 failed
+```
+
+The application test asserts the complete 12-action loop, valid sandbox Dry Run, persisted session,
+cancelled session, `waiting_for_human` terminal state, and zero published versions.
