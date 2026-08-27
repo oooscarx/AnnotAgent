@@ -26,9 +26,15 @@ import type {
   HistoryRun,
   ImageItem,
   ModelBinding,
+  NodeReplayReport,
+  PipelineArtifact,
+  PipelineArtifactType,
+  PipelineSource,
+  PipelineStep,
   ProjectSummary,
   ReviewItem,
   RunEvent,
+  RunNodeArtifactInspection,
   SkillDetail,
   WorkflowCatalog,
   WorkflowDraft,
@@ -542,6 +548,8 @@ function ProjectPage({
   const [importFormat, setImportFormat] = useState("native");
   const [importDryRun, setImportDryRun] = useState(true);
   const [importResult, setImportResult] = useState("");
+  const [labelTaskId, setLabelTaskId] = useState("");
+  const [newLabel, setNewLabel] = useState("");
   useEffect(() => {
     if (project)
       void api
@@ -561,6 +569,10 @@ function ProjectPage({
     project?.active_workflow.workflow_id,
     project?.active_workflow.version,
   ]);
+  useEffect(() => {
+    setLabelTaskId(project?.annotation_schema[0]?.id ?? "");
+    setNewLabel("");
+  }, [project?.id]);
   if (!project)
     return (
       <section className="page-stack">
@@ -650,6 +662,17 @@ function ProjectPage({
         setImportResult("");
         onError(error.message);
       });
+  };
+  const addLabel = () => {
+    if (!labelTaskId || !newLabel.trim())
+      return onError("Choose a task and enter a Label id.");
+    void api
+      .addProjectLabel(project.id, labelTaskId, newLabel.trim())
+      .then(() => {
+        setNewLabel("");
+        onRefresh();
+      })
+      .catch((error: Error) => onError(error.message));
   };
   return (
     <section className="page-stack">
@@ -879,6 +902,36 @@ function ProjectPage({
               </article>
             ))}
           </div>
+          <div className="schema-label-authoring">
+            <label>
+              Task
+              <select
+                aria-label="Label task"
+                value={labelTaskId}
+                onChange={(event) => setLabelTaskId(event.target.value)}
+              >
+                {project.annotation_schema.map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.id} · {task.kind}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              New Label id
+              <input
+                value={newLabel}
+                placeholder="vehicle"
+                onChange={(event) => setNewLabel(event.target.value)}
+              />
+            </label>
+            <button
+              onClick={addLabel}
+              disabled={!labelTaskId || !newLabel.trim()}
+            >
+              Add Label to Project Schema
+            </button>
+          </div>
         </Panel>
         <Panel
           title="Versions, Runs, Reviews & Exports"
@@ -989,6 +1042,14 @@ function WorkflowsPage({
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
   const [templateId, setTemplateId] = useState("");
+  const activeProject = projects.find((project) => project.id === activeProjectId);
+  const [targetTaskId, setTargetTaskId] = useState("");
+  const [targetLabel, setTargetLabel] = useState("");
+  const [inspectableRuns, setInspectableRuns] = useState<HistoryRun[]>([]);
+  const [inspectRunId, setInspectRunId] = useState("");
+  const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
+  const [inspectedNodeId, setInspectedNodeId] = useState("");
+  const [replay, setReplay] = useState<NodeReplayReport>();
   const [busy, setBusy] = useState(false);
   const refreshDrafts = () =>
     api
@@ -1014,6 +1075,20 @@ function WorkflowsPage({
     }
     setReport(undefined);
     setSelectedPublishedKey("");
+    setTargetTaskId(activeProject?.annotation_schema[0]?.id ?? "");
+    setTargetLabel(activeProject?.annotation_schema[0]?.labels[0] ?? "");
+    setInspection(undefined);
+    setReplay(undefined);
+    void api
+      .runs()
+      .then((value) => {
+        const projectRuns = value.runs.filter(
+          (run) => run.project_name === activeProject?.name && run.checkpoint_present,
+        );
+        setInspectableRuns(projectRuns);
+        setInspectRunId(projectRuns[0]?.id ?? "");
+      })
+      .catch((error: Error) => onError(error.message));
   }, [activeProjectId]);
   const finish = (promise: Promise<unknown>) => {
     setBusy(true);
@@ -1036,6 +1111,43 @@ function WorkflowsPage({
     activeProjectId
       ? finish(api.suggestWorkflow(activeProjectId, advisorKind))
       : onError("Select a Project before suggesting a Workflow.");
+  const suggestLabelPipeline = () =>
+    activeProjectId && targetTaskId && targetLabel
+      ? finish(
+          api.suggestWorkflow(activeProjectId, advisorKind, {
+            task_id: targetTaskId,
+            label: targetLabel,
+          }),
+        )
+      : onError("Choose a Project task and target Label first.");
+  const targetTask = activeProject?.annotation_schema.find(
+    (task) => task.id === targetTaskId,
+  );
+  const inspectRun = () => {
+    if (!inspectRunId) return;
+    setBusy(true);
+    void api
+      .pipelineArtifacts(inspectRunId)
+      .then((value) => {
+        setInspection(value);
+        setInspectedNodeId(value.nodes[0]?.node_id ?? "");
+        setReplay(undefined);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const replayNode = () => {
+    if (!inspection || !inspectedNodeId) return;
+    setBusy(true);
+    void api
+      .replayNode(inspection.run_id, inspectedNodeId)
+      .then((value) => {
+        setReplay(value);
+        setInspection(value.inspection);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
   const save = () => draft && finish(api.saveWorkflowDraft(draft));
   const dryRun = () =>
     draft &&
@@ -1200,6 +1312,42 @@ function WorkflowsPage({
             }
           >
             Suggest with Advisor
+          </button>
+          <select
+            aria-label="Target task"
+            value={targetTaskId}
+            onChange={(event) => {
+              const taskId = event.target.value;
+              setTargetTaskId(taskId);
+              setTargetLabel(
+                activeProject?.annotation_schema.find((task) => task.id === taskId)
+                  ?.labels[0] ?? "",
+              );
+            }}
+          >
+            {(activeProject?.annotation_schema ?? []).map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.id} · {task.kind}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Target Label"
+            value={targetLabel}
+            onChange={(event) => setTargetLabel(event.target.value)}
+          >
+            {(targetTask?.labels ?? []).map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={suggestLabelPipeline}
+            disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}
+            title="Create an editable registry-bounded Label Pipeline Draft"
+          >
+            Suggest Label Pipeline
           </button>
           <select
             aria-label="Workflow Advisor"
@@ -1370,16 +1518,36 @@ function WorkflowsPage({
               eyebrow={`${draft.status} · ${draft.id.slice(0, 8)}`}
             >
               <div className="button-row">
-                <button onClick={addNode} disabled={immutable}>
+                <button
+                  onClick={addNode}
+                  disabled={immutable || Boolean(draft.label_pipeline)}
+                  title={
+                    draft.label_pipeline
+                      ? "Use the Label Pipeline Node Catalog below"
+                      : undefined
+                  }
+                >
                   Add node
                 </button>
                 <button
                   onClick={addEdge}
-                  disabled={immutable || draft.nodes.length < 2}
+                  disabled={
+                    immutable || Boolean(draft.label_pipeline) || draft.nodes.length < 2
+                  }
                 >
                   Add connection
                 </button>
               </div>
+              {draft.label_pipeline && (
+                <LabelPipelineEditor
+                  draft={draft}
+                  catalog={catalog}
+                  immutable={Boolean(immutable)}
+                  onChange={setDraft}
+                />
+              )}
+              {!draft.label_pipeline && (
+                <>
               <div className="workflow-nodes editable-workflow">
                 {draft.nodes.map((node, index) => (
                   <article key={node.id}>
@@ -1640,6 +1808,8 @@ function WorkflowsPage({
                   </article>
                 ))}
               </div>
+                </>
+              )}
               {report && (
                 <div
                   className={
@@ -1690,8 +1860,802 @@ function WorkflowsPage({
           )}
         </div>
       </div>
+      <Panel title="Node Artifact Inspector" eyebrow="Persisted checkpoint · exact Replay">
+        <div className="button-row">
+          <select
+            aria-label="Inspectable Run"
+            value={inspectRunId}
+            onChange={(event) => setInspectRunId(event.target.value)}
+          >
+            <option value="">Choose a completed Pipeline Run…</option>
+            {inspectableRuns.map((run) => (
+              <option key={run.id} value={run.id}>
+                {run.id.slice(0, 8)} · {run.workflow_name}@v{run.workflow_version}
+              </option>
+            ))}
+          </select>
+          <button onClick={inspectRun} disabled={busy || !inspectRunId}>
+            Load Artifacts
+          </button>
+          <select
+            aria-label="Inspected node"
+            value={inspectedNodeId}
+            disabled={!inspection}
+            onChange={(event) => setInspectedNodeId(event.target.value)}
+          >
+            {(inspection?.nodes ?? []).map((node) => (
+              <option key={node.node_id} value={node.node_id}>
+                {node.node_id} · {node.status}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={replayNode}
+            disabled={busy || !inspection || !inspectedNodeId}
+            title="Replay this node and descendants while preserving upstream checkpoint outputs"
+          >
+            Replay from node
+          </button>
+        </div>
+        {inspection ? (
+          <PipelineArtifactInspector
+            inspection={inspection}
+            nodeId={inspectedNodeId}
+            replay={replay}
+          />
+        ) : (
+          <Empty
+            title="No checkpoint loaded"
+            detail="Run a published Label Pipeline, then load its per-node typed Artifacts here."
+          />
+        )}
+      </Panel>
     </section>
   );
+}
+
+function LabelPipelineEditor({
+  draft,
+  catalog,
+  immutable,
+  onChange,
+}: {
+  draft: WorkflowDraft;
+  catalog?: WorkflowCatalog;
+  immutable: boolean;
+  onChange: (draft: WorkflowDraft) => void;
+}) {
+  const composition = draft.label_pipeline;
+  const [pipelineId, setPipelineId] = useState(
+    composition?.label_pipelines[0]?.id ?? "",
+  );
+  const [catalogNode, setCatalogNode] = useState("core.crop");
+  if (!composition) return null;
+  const selected =
+    composition.label_pipelines.find((pipeline) => pipeline.id === pipelineId) ??
+    composition.label_pipelines[0];
+  const replaceComposition = (next: typeof composition) =>
+    onChange({ ...draft, label_pipeline: next });
+  const updateSharedStep = (
+    stageIndex: number,
+    stepIndex: number,
+    next: PipelineStep,
+  ) =>
+    replaceComposition({
+      ...composition,
+      shared_stages: composition.shared_stages.map((stage, index) =>
+        index === stageIndex
+          ? {
+              ...stage,
+              steps: stage.steps.map((step, current) =>
+                current === stepIndex ? next : step,
+              ),
+            }
+          : stage,
+      ),
+    });
+  const updatePipelineStep = (
+    targetPipelineId: string,
+    stepIndex: number,
+    next: PipelineStep,
+  ) =>
+    replaceComposition({
+      ...composition,
+      label_pipelines: composition.label_pipelines.map((pipeline) =>
+        pipeline.id === targetPipelineId
+          ? {
+              ...pipeline,
+              steps: pipeline.steps.map((step, current) =>
+                current === stepIndex ? next : step,
+              ),
+            }
+          : pipeline,
+      ),
+    });
+  const removePipelineStep = (targetPipelineId: string, stepIndex: number) =>
+    replaceComposition({
+      ...composition,
+      label_pipelines: composition.label_pipelines.map((pipeline) =>
+        pipeline.id === targetPipelineId
+          ? {
+              ...pipeline,
+              steps: pipeline.steps.filter((_, current) => current !== stepIndex),
+            }
+          : pipeline,
+      ),
+    });
+  const addCatalogNode = () => {
+    if (!selected) return;
+    const commitIndex = selected.steps.findIndex((step) => step.kind === "commit");
+    const insertion = commitIndex < 0 ? selected.steps.length : commitIndex;
+    const previous = selected.steps[Math.max(0, insertion - 1)];
+    const previousOutput = previous
+      ? Object.entries(previous.outputs)[0]
+      : undefined;
+    const suffix = selected.steps.length + 1;
+    const id = `${selected.id}.${catalogNode.split(".").at(-1) ?? "node"}.${suffix}`;
+    const output = pipelineNodeOutput(catalogNode);
+    const source: PipelineSource = previousOutput
+      ? {
+          source: "step",
+          step_id: previous.id,
+          port: previousOutput[0],
+          artifact_type: previousOutput[1],
+        }
+      : { source: "image" };
+    const step: PipelineStep = {
+      id,
+      node_type: catalogNode,
+      kind: pipelineNodeKind(catalogNode),
+      inputs:
+        catalogNode === "core.crop"
+          ? { image: { source: "image" }, detections: source }
+          : { input: source },
+      outputs: { [output.port]: output.type },
+      model_binding: pipelineModelBinding(catalogNode, catalog),
+      parameters: pipelineNodeParameters(catalogNode, selected.target_label),
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    replaceComposition({
+      ...composition,
+      label_pipelines: composition.label_pipelines.map((pipeline) =>
+        pipeline.id === selected.id
+          ? {
+              ...pipeline,
+              steps: [
+                ...pipeline.steps.slice(0, insertion),
+                step,
+                ...pipeline.steps.slice(insertion),
+              ],
+            }
+          : pipeline,
+      ),
+    });
+  };
+  const applyDetectCropTemplate = () => {
+    if (!selected) return;
+    const detection = [...selected.steps]
+      .reverse()
+      .find((step) => Object.values(step.outputs).includes("detection_set"));
+    const gate = selected.steps.find((step) => step.node_type === "core.confidence_gate");
+    const commit = selected.steps.find((step) => step.kind === "commit");
+    if (!detection || !gate || !commit) return;
+    const prefix = selected.id;
+    const crop: PipelineStep = {
+      id: `${prefix}.crop`,
+      node_type: "core.crop",
+      kind: "transform",
+      inputs: {
+        image: { source: "image" },
+        detections: {
+          source: "step",
+          step_id: detection.id,
+          port: Object.keys(detection.outputs)[0],
+          artifact_type: "detection_set",
+        },
+      },
+      outputs: { crops: "crop_set" },
+      parameters: { padding: 0.05 },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    const classifier: PipelineStep = {
+      id: `${prefix}.crop_classifier`,
+      node_type: "classification.classify",
+      kind: "vision_model",
+      inputs: {
+        subjects: {
+          source: "step",
+          step_id: crop.id,
+          port: "crops",
+          artifact_type: "crop_set",
+        },
+      },
+      outputs: { classifications: "classification_set" },
+      model_binding: pipelineModelBinding("classification.classify", catalog),
+      parameters: {
+        labels: [selected.target_label],
+        mock_label: selected.target_label,
+      },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    const attach: PipelineStep = {
+      id: `${prefix}.attach_result`,
+      node_type: "core.attach_result",
+      kind: "candidate_merge",
+      inputs: {
+        detections: {
+          source: "step",
+          step_id: detection.id,
+          port: Object.keys(detection.outputs)[0],
+          artifact_type: "detection_set",
+        },
+        classifications: {
+          source: "step",
+          step_id: classifier.id,
+          port: "classifications",
+          artifact_type: "classification_set",
+        },
+      },
+      outputs: { candidates: "annotation_candidate_set" },
+      parameters: { task_id: selected.target_task_id, class_mapping: {} },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    };
+    const updatedGate: PipelineStep = {
+      ...gate,
+      inputs: {
+        candidates: {
+          source: "step",
+          step_id: attach.id,
+          port: "candidates",
+          artifact_type: "annotation_candidate_set",
+        },
+      },
+      outputs: { candidates: "annotation_candidate_set" },
+    };
+    const updatedCommit: PipelineStep = {
+      ...commit,
+      inputs: {
+        candidates: {
+          source: "step",
+          step_id: updatedGate.id,
+          port: "candidates",
+          artifact_type: "annotation_candidate_set",
+        },
+      },
+    };
+    const beforeGate = selected.steps.filter(
+      (step) => step.id !== gate.id && step.id !== commit.id,
+    );
+    replaceComposition({
+      ...composition,
+      label_pipelines: composition.label_pipelines.map((pipeline) =>
+        pipeline.id === selected.id
+          ? {
+              ...pipeline,
+              steps: [
+                ...beforeGate,
+                crop,
+                classifier,
+                attach,
+                updatedGate,
+                updatedCommit,
+              ],
+            }
+          : pipeline,
+      ),
+    });
+  };
+  return (
+    <div className="label-pipeline-editor">
+      <div className="pipeline-section-heading">
+        <div>
+          <span className="eyebrow">Shared Stages</span>
+          <h3>Execute once per image and configuration</h3>
+        </div>
+        <small>{composition.shared_stages.length} shared stage(s)</small>
+      </div>
+      {composition.shared_stages.map((stage, stageIndex) => (
+        <section className="pipeline-lane shared" key={stage.id}>
+          <header>
+            <strong>{stage.name}</strong>
+            <code>{stage.id}</code>
+          </header>
+          <div className="pipeline-step-row">
+            {stage.steps.map((step, stepIndex) => (
+              <PipelineStepCard
+                key={step.id}
+                step={step}
+                catalog={catalog}
+                immutable={immutable}
+                shared
+                onChange={(next) => updateSharedStep(stageIndex, stepIndex, next)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+      <div className="pipeline-section-heading">
+        <div>
+          <span className="eyebrow">Label Pipelines</span>
+          <h3>One execution method per semantic Label</h3>
+        </div>
+        <div className="button-row">
+          <select
+            aria-label="Edited Label Pipeline"
+            value={selected?.id ?? ""}
+            onChange={(event) => setPipelineId(event.target.value)}
+          >
+            {composition.label_pipelines.map((pipeline) => (
+              <option key={pipeline.id} value={pipeline.id}>
+                {pipeline.target_task_id} / {pipeline.target_label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Node Catalog"
+            value={catalogNode}
+            onChange={(event) => setCatalogNode(event.target.value)}
+          >
+            {(catalog?.node_catalog ?? [])
+              .filter((node) =>
+                [
+                  "core.crop",
+                  "core.filter",
+                  "core.map_label",
+                  "core.attach_result",
+                  "core.attach_attribute",
+                  "core.confidence_gate",
+                  "classification.classify",
+                ].includes(node.id),
+              )
+              .map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.display_name}
+                </option>
+              ))}
+          </select>
+          <button onClick={addCatalogNode} disabled={immutable || !selected}>
+            Add Catalog Node
+          </button>
+          <button
+            onClick={applyDetectCropTemplate}
+            disabled={
+              immutable ||
+              !selected?.steps.some((step) =>
+                Object.values(step.outputs).includes("detection_set"),
+              )
+            }
+            title="Internal graph: detector → filter → Crop → classifier → Attach Result"
+          >
+            Apply Detect &amp; Crop template
+          </button>
+        </div>
+      </div>
+      {composition.label_pipelines.map((pipeline) => (
+        <section className="pipeline-lane" key={pipeline.id}>
+          <header>
+            <strong>{pipeline.target_label}</strong>
+            <span>{pipeline.target_task_id}</span>
+            <code>{pipeline.id}</code>
+          </header>
+          <div className="pipeline-step-row">
+            {pipeline.steps.map((step, stepIndex) => (
+              <PipelineStepCard
+                key={step.id}
+                step={step}
+                catalog={catalog}
+                immutable={immutable}
+                onChange={(next) =>
+                  updatePipelineStep(pipeline.id, stepIndex, next)
+                }
+                onRemove={() => removePipelineStep(pipeline.id, stepIndex)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function PipelineStepCard({
+  step,
+  catalog,
+  immutable,
+  shared = false,
+  onChange,
+  onRemove,
+}: {
+  step: PipelineStep;
+  catalog?: WorkflowCatalog;
+  immutable: boolean;
+  shared?: boolean;
+  onChange: (step: PipelineStep) => void;
+  onRemove?: () => void;
+}) {
+  const parameterNumber = (name: string) =>
+    typeof step.parameters[name] === "number"
+      ? String(step.parameters[name])
+      : "";
+  return (
+    <article className="pipeline-step-card">
+      <span className="pipeline-step-kind">{shared ? "shared" : step.kind}</span>
+      <strong>{step.node_type}</strong>
+      <code>{step.id}</code>
+      <small>
+        {Object.values(step.inputs)
+          .map((source) =>
+            source.source === "image" ? "Image" : `${source.step_id}.${source.port}`,
+          )
+          .join(" + ") || "No input"}
+        {" → "}
+        {Object.values(step.outputs).join(", ") || "terminal"}
+      </small>
+      {Object.entries(step.inputs).map(([inputName, source]) => (
+        <div className="form-grid" key={inputName}>
+          <label>
+            {inputName} source node
+            <input
+              value={source.source === "image" ? "core.image_input" : source.step_id}
+              disabled={immutable || source.source === "image"}
+              onChange={(event) =>
+                source.source !== "image" &&
+                onChange({
+                  ...step,
+                  inputs: {
+                    ...step.inputs,
+                    [inputName]: { ...source, step_id: event.target.value },
+                  },
+                })
+              }
+            />
+          </label>
+          <label>
+            Source port
+            <input
+              value={source.source === "image" ? "image" : source.port}
+              disabled={immutable || source.source === "image"}
+              onChange={(event) =>
+                source.source !== "image" &&
+                onChange({
+                  ...step,
+                  inputs: {
+                    ...step.inputs,
+                    [inputName]: { ...source, port: event.target.value },
+                  },
+                })
+              }
+            />
+          </label>
+        </div>
+      ))}
+      {step.model_binding && (
+        <label>
+          Model binding
+          <select
+            value={step.model_binding.model_id}
+            disabled={immutable}
+            onChange={(event) =>
+              onChange({
+                ...step,
+                model_binding: {
+                  ...step.model_binding!,
+                  model_id: event.target.value,
+                },
+              })
+            }
+          >
+            {(catalog?.model_registry ?? [])
+              .filter((model) =>
+                model.capabilities.includes(step.model_binding!.capability),
+              )
+              .map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.display_name}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
+      {step.node_type === "core.confidence_gate" && (
+        <label>
+          Confidence threshold
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={parameterNumber("threshold")}
+            disabled={immutable}
+            onChange={(event) =>
+              onChange({
+                ...step,
+                parameters: {
+                  ...step.parameters,
+                  threshold: Number(event.target.value),
+                },
+              })
+            }
+          />
+        </label>
+      )}
+      {step.node_type === "core.crop" && (
+        <label>
+          Crop padding
+          <input
+            type="number"
+            min="0"
+            max="0.5"
+            step="0.01"
+            value={parameterNumber("padding")}
+            disabled={immutable}
+            onChange={(event) =>
+              onChange({
+                ...step,
+                parameters: { ...step.parameters, padding: Number(event.target.value) },
+              })
+            }
+          />
+        </label>
+      )}
+      {step.node_type === "core.filter" && (
+        <label>
+          Minimum confidence
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={parameterNumber("minimum_confidence")}
+            disabled={immutable}
+            onChange={(event) =>
+              onChange({
+                ...step,
+                parameters: {
+                  ...step.parameters,
+                  minimum_confidence: Number(event.target.value),
+                },
+              })
+            }
+          />
+        </label>
+      )}
+      <label>
+        Fallback node
+        <input
+          value={step.fallback ?? ""}
+          placeholder="none"
+          disabled={immutable}
+          onChange={(event) =>
+            onChange({ ...step, fallback: event.target.value || undefined })
+          }
+        />
+      </label>
+      <label>
+        Parameters / class mapping (JSON)
+        <textarea
+          value={JSON.stringify(step.parameters, null, 2)}
+          disabled={immutable}
+          onChange={(event) => {
+            try {
+              onChange({
+                ...step,
+                parameters: JSON.parse(event.target.value) as Record<string, unknown>,
+              });
+            } catch {
+              // Keep the last valid structured configuration while JSON is incomplete.
+            }
+          }}
+        />
+      </label>
+      {onRemove && step.kind !== "commit" && (
+        <button className="danger" onClick={onRemove} disabled={immutable}>
+          Remove node
+        </button>
+      )}
+    </article>
+  );
+}
+
+export function pipelineNodeOutput(nodeType: string): {
+  port: string;
+  type: PipelineArtifactType;
+} {
+  if (nodeType === "core.crop") return { port: "crops", type: "crop_set" };
+  if (nodeType === "classification.classify")
+    return { port: "classifications", type: "classification_set" };
+  if (nodeType === "core.attach_result" || nodeType === "core.attach_attribute")
+    return { port: "candidates", type: "annotation_candidate_set" };
+  if (nodeType === "core.confidence_gate")
+    return { port: "candidates", type: "annotation_candidate_set" };
+  return { port: "detections", type: "detection_set" };
+}
+
+export function pipelineNodeKind(nodeType: string): NonNullable<PipelineStep["kind"]> {
+  if (nodeType.includes("classify") || nodeType.includes("detect"))
+    return "vision_model";
+  if (nodeType === "core.attach_result") return "candidate_merge";
+  if (nodeType === "core.confidence_gate") return "gate";
+  return "transform";
+}
+
+export function pipelineNodeParameters(nodeType: string, label: string) {
+  if (nodeType === "core.crop") return { padding: 0.05 };
+  if (nodeType === "core.filter")
+    return { labels: [label], minimum_confidence: 0.5 };
+  if (nodeType === "core.map_label") return { class_mapping: {} };
+  if (nodeType === "core.confidence_gate") return { threshold: 0.9 };
+  if (nodeType === "classification.classify")
+    return { labels: [label], mock_label: label };
+  return {};
+}
+
+function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
+  const capability = nodeType.includes("classify")
+    ? "classification"
+    : nodeType.includes("detect")
+      ? "object_detection"
+      : undefined;
+  if (!capability) return undefined;
+  const model = catalog?.model_registry.find((candidate) =>
+    candidate.capabilities.includes(capability),
+  );
+  return {
+    model_id: model?.id ?? (capability === "classification" ? "mock-classifier" : "mock-detector"),
+    capability,
+    configuration: {},
+  };
+}
+
+function PipelineArtifactInspector({
+  inspection,
+  nodeId,
+  replay,
+}: {
+  inspection: RunNodeArtifactInspection;
+  nodeId: string;
+  replay?: NodeReplayReport;
+}) {
+  const node = inspection.nodes.find((item) => item.node_id === nodeId);
+  if (!node) return null;
+  const imageUrl =
+    inspection.image_index === undefined
+      ? undefined
+      : `/api/projects/${inspection.project_id}/images/${inspection.image_index}/content`;
+  const rects = artifactRects(node.outputs);
+  const crops = artifactCrops(node.outputs);
+  return (
+    <div className="artifact-inspector-grid">
+      <div className="artifact-preview-panel">
+        <span className="eyebrow">Visual preview</span>
+        {imageUrl ? (
+          <div className="artifact-image-stage">
+            <img src={imageUrl} alt="Original Pipeline input" />
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Artifact bounding boxes">
+              {rects.map((rect, index) => (
+                <rect
+                  key={`${rect.x}-${rect.y}-${index}`}
+                  x={rect.x * 100}
+                  y={rect.y * 100}
+                  width={rect.width * 100}
+                  height={rect.height * 100}
+                />
+              ))}
+            </svg>
+          </div>
+        ) : (
+          <small>This Run predates replayable image identity.</small>
+        )}
+        {imageUrl && crops.length > 0 && (
+          <div className="crop-preview-list">
+            {crops.map((crop, index) => (
+              <svg
+                key={`${crop.x}-${crop.y}-${index}`}
+                viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`}
+                aria-label={`Crop ${index + 1}`}
+              >
+                <image href={imageUrl} x="0" y="0" width="100" height="100" />
+              </svg>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="artifact-node-detail">
+        <span className="eyebrow">{node.operation}</span>
+        <h3>{node.node_id}</h3>
+        <div className="workflow-facts">
+          <Fact label="Status" value={node.status} />
+          <Fact label="Latency" value={`${node.latency_ms} ms`} />
+          <Fact label="Attempts" value={node.attempts} />
+          <Fact label="Cache" value={node.cache_hit ? "hit" : "miss"} />
+        </div>
+        {node.error && (
+          <p className="run-reason">
+            <code>{node.error.code}</code> {node.error.summary}
+          </p>
+        )}
+        <details open>
+          <summary>Configuration</summary>
+          <pre>{JSON.stringify(node.configuration, null, 2)}</pre>
+        </details>
+        <details>
+          <summary>Inputs · {node.inputs.length}</summary>
+          <pre>{JSON.stringify(node.inputs, null, 2)}</pre>
+        </details>
+        <details open>
+          <summary>Outputs · {node.outputs.length}</summary>
+          <pre>{JSON.stringify(node.outputs, null, 2)}</pre>
+        </details>
+        {replay && replay.replayed_from === node.node_id && (
+          <div className="validation-report valid">
+            <strong>Sandbox Replay completed</strong>
+            <small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small>
+            <small>
+              Preserved upstream: {replay.preserved_upstream_nodes.join(", ")}
+            </small>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type ArtifactRect = { x: number; y: number; width: number; height: number };
+
+export function artifactRects(artifacts: PipelineArtifact[]): ArtifactRect[] {
+  return artifacts.flatMap((artifact) => {
+    if (artifact.kind !== "detection_set") return [];
+    const detections = artifact.artifact.detections;
+    if (!Array.isArray(detections)) return [];
+    return detections.flatMap((detection) => {
+      if (!detection || typeof detection !== "object") return [];
+      const rect = (detection as Record<string, unknown>).rect;
+      return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
+    });
+  });
+}
+
+export function artifactCrops(artifacts: PipelineArtifact[]): ArtifactRect[] {
+  return artifacts.flatMap((artifact) => {
+    if (artifact.kind !== "crop_set") return [];
+    const crops = artifact.artifact.crops;
+    if (!Array.isArray(crops)) return [];
+    return crops.flatMap((crop) => {
+      if (!crop || typeof crop !== "object") return [];
+      const rect = (crop as Record<string, unknown>).rect;
+      return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
+    });
+  });
+}
+
+function parseArtifactRect(value: unknown): ArtifactRect | undefined {
+  if (Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number"))
+    return { x: value[0], y: value[1], width: value[2], height: value[3] };
+  if (!value || typeof value !== "object") return undefined;
+  const rect = value as Record<string, unknown>;
+  const x = rect.x;
+  const y = rect.y;
+  const width = rect.width;
+  const height = rect.height;
+  return [x, y, width, height].every((item) => typeof item === "number")
+    ? { x: x as number, y: y as number, width: width as number, height: height as number }
+    : undefined;
 }
 
 function WorkflowDetail({

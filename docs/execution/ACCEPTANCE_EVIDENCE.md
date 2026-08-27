@@ -314,16 +314,16 @@ primary blocker for this release.
 | 6 | One shared detector serves three Labels once/image | PASS | The compiler emits one shared node; the Runtime executes each compiled node once and the Replay test observes the detector call count remain one. |
 | 7 | Static type errors block publish | PASS | Label validator paths are merged into product validation; an unknown Model remains editable but blocks publish. |
 | 8 | Advisor result is a Draft | PASS | Mock and LLM paths start from an exact target task/Label safe Draft and never publish or execute automatically. |
-| 9 | Human edits Draft | PASS (API) | Editing the composition recompiles the flat DAG and survives persistence; product GUI is LP5. |
+| 9 | Human edits Draft | PASS | GUI edits typed sources, Model Binding, thresholds, padding, class mapping, fallback, and JSON parameters before Save. |
 | 10 | Dry Run writes no formal annotation | PASS | Real typed Pipeline runners execute 1–10 images in a sandbox and create no Run/Annotation record. |
 | 11 | Published Version is immutable | PASS | Snapshot hash now includes optional Label Pipeline composition. |
 | 12 | Run pins Workflow Version | PASS (foundation) | Existing image and Dataset exact-version tests pass. |
-| 13 | Node Inspector shows I/O/config/timing/error | PASS (API) | Product API exposes typed inputs/outputs, full node config, status, latency, attempts, cache, usage, and error; GUI is LP5. |
+| 13 | Node Inspector shows I/O/config/timing/error | PASS | Product GUI renders API-backed typed inputs/outputs, full node config, status, latency, attempts, cache, usage, and error. |
 | 14 | Classifier Replay does not rerun detector | PASS (Runtime) | `crop_classification_replay_keeps_shared_detector_checkpoint` observes detector 1, classifier 2. |
 | 15 | Three mock demos pass offline | PASS | Three generic example schemas and executable whole-image, detection, and crop-classification flows pass offline. |
 | 16 | 100 synthetic images pass | PASS | Application test executes 100 synthetic images using one exact published Label Pipeline version. |
 | 17 | Pause/Resume/Cancel/active recovery | PASS | Label Pipeline uses the same durable coordinator; control, reconciliation, exclusion, and 100-image restart/recovery gates pass. |
-| 18 | All Rust/Web checks pass | PARTIAL | LP3: 124 Rust tests and strict Clippy pass; final Web/browser gate is LP5. |
+| 18 | All Rust/Web checks pass | PASS | 126 Rust tests, strict Clippy, Web typecheck/build, and 8-file/15-test Web suite pass. |
 | 19 | Core contains no domain/implementation branches | PASS | Core scan for RoboCup, detector product names, and domain Labels is clean. |
 | 20 | No push/remote change/historical API key | PASS | Work remains local; no credential was read or used. |
 
@@ -490,3 +490,52 @@ Direct evidence:
    Run, Artifact inspection, and classifier Replay through the routes consumed by the Web GUI.
 
 LP4 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP5 passes.
+
+## Label Pipeline Alpha LP5 — product GUI and final release acceptance
+
+Implementation and evidence commit: recorded by the LP5 local commit containing this section.
+
+Final acceptance commands:
+
+| Command | Exit | Evidence |
+| --- | ---: | --- |
+| `./scripts/acceptance.sh` | 0 | Core domain scan, secret-prefix scan, fmt, strict Clippy, all Rust tests/builds, all Web checks/build, doctor, and offline generic demo pass. |
+| `cargo test --workspace --all-features` | 0 | 126 Rust tests pass; 0 fail; all doc tests pass. |
+| Web typecheck/test/build | 0 | TypeScript passes; 8 files / 15 tests pass; Vite production build succeeds. |
+| In-app browser product journey | 0-equivalent | Label creation, target Draft, real Dry Run, immutable publish, Run, Inspector, image preview, and classifier Replay pass. |
+| Core/secret scans | 0 | Core contains no RoboCup/YOLO/concrete Label branch; repository contains no live-key prefix. |
+
+Direct evidence:
+
+1. Project Schema has a real `Add Label` product API and GUI. The server validates the complete
+   schema and enabled Skill catalog before rewriting `project.yaml`; duplicate/invalid Labels fail
+   instead of appearing only in client state.
+2. Workflow Designer renders `Shared Stages` and one lane per Label Pipeline. Shared stages are
+   visually distinguished and preserve one flat node identity when compiled.
+3. Node Catalog additions create typed Pipeline steps. The editor exposes source node/port, Model
+   Binding, confidence threshold, minimum confidence, Crop padding, class mapping/parameters,
+   fallback, and removal. Invalid intermediate edits remain Drafts and publication stays blocked.
+4. `Apply Detect & Crop template` is enabled only on a Detection Pipeline and constructs detector →
+   filter → Core Crop → Classification → Attach Result → Confidence Gate → Commit. The Web helper
+   test asserts Crop remains `core.crop` and Detection remains `detection_set`.
+5. Save persists the authoring projection and recompiles it. Dry Run executes 1–10 images through
+   the actual typed Runtime. Publish freezes the complete composition and disables every edit
+   control; the browser gate confirmed an exact Published Version was selected for the Run.
+6. Inspector chooses a persisted Pipeline Run and exact node. It renders the original Project image,
+   Detection bbox overlays, Crop views clipped from that image, typed input/output JSON, Model/config,
+   status, latency, attempts, cache, usage, and structured error. Replayed nodes show only their
+   latest trace rather than duplicate Inspector rows.
+7. Browser classifier Replay completed in the sandbox and reported classifier, confidence Gate, and
+   Commit re-executed while `core.image_input` was preserved. No formal annotation was written by
+   Replay.
+8. The browser exercise found and fixed a real binding bug: `mock-classifier` and `mock-detector`
+   now select their offline backends even when workspace settings default to a live provider. No
+   absent API key is requested for an explicitly mock-bound node.
+9. Desktop visual inspection confirmed the Pipeline lanes and Artifact Inspector remain readable;
+   responsive CSS collapses Inspector and headings at smaller breakpoints. Unavailable actions stay
+   disabled with an explicit reason; no disabled control claims missing Runtime behavior.
+10. The full existing RoboCup, persistent Batch recovery, Review, import/export, and security suites
+    remain green. No push or remote mutation occurred and no conversation credential was read or
+    used.
+
+LP5 status: `PASS`. AnnotAgent Label Pipeline Alpha passes all 20 offline Release Blocking gates.

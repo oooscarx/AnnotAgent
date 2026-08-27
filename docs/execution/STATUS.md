@@ -1,14 +1,12 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 16:31 CST
+Last updated: 2026-08-27 16:46 CST
 
 ## Current milestone
 
-Milestone LP4 — complete: target-Label controlled Advisor, editable composition-backed Drafts,
-blocking static validation, real 1–10 image Dry Run, typed Artifact Inspector, and exact-node Replay.
-
-Milestone LP5 — next: Project Label authoring and the product Workflow GUI, including Shared
-Stages, per-Label Pipelines, Node Catalog editing, bbox/crop preview, Inspector, and Replay controls.
+Milestone LP5 — complete: Project Label authoring, Shared Stage/per-Label Pipeline GUI, controlled
+Node Catalog editing, Detect & Crop composition, bbox/crop preview, Inspector, Replay, and the full
+Rust/Web/browser release gate.
 
 ## Product objective
 
@@ -73,21 +71,33 @@ acceptance path.
   usage, latency, and structured error directly from the persisted checkpoint.
 - Replay starts at one exact node in a sandbox, keeps byte-for-byte-equal upstream checkpoint
   outputs, and never recovers credentials from Run history.
+- LP5 adds validated Project Schema Label creation without coupling Label semantics to Runtime
+  methods. Existing published versions remain immutable.
+- The Workflow GUI renders Shared Stages separately from per-Label lanes, exposes typed sources,
+  Model Binding, threshold, padding, class mapping, fallback, parameters, Save, Dry Run, and publish.
+- The optional Detect & Crop template is visibly and internally detector → filter → Core Crop →
+  Classification → Attach Result → Confidence Gate → Commit; Crop is never placed in the detector.
+- The Node Artifact Inspector renders the original image, Detection bbox overlays, Crop previews,
+  typed JSON inputs/outputs, full configuration, timing/error/usage, and real Replay results.
 
-## LP4 verification
+## LP5 verification
 
-- Application target-Label Advisor gate passes Suggest → human edit → recompile → real Dry Run →
-  publish immutability, and proves an unknown Model blocks publication.
-- Application persisted-run gate exposes Pipeline Artifacts and replays the classifier while
-  preserving Image Input; its exact-version 100-image Dataset path remains green.
-- HTTP gate passes Advisor → Dry Run isolation → publish → Run → Inspector → Replay against the
-  product routes.
+- In-app browser gate passes Project Label creation → target-Label Draft → human-visible Pipeline
+  editor → real Dry Run → immutable publish → exact-version Run → Inspector → classifier Replay.
+- Browser Replay reports `scene.day.classifier`, Gate, and Commit re-executed while
+  `core.image_input` remains preserved. The inspected image and configuration render without layout
+  overlap at the tested desktop viewport.
 - `cargo test --workspace --all-features`: 126 Rust tests passed, 0 failed; doc tests passed.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
+- Web typecheck/build passed; 8 files and 15 tests passed.
+- `./scripts/acceptance.sh`: passed end to end, including domain/secret scans, doctor, and offline
+  generic demo.
 - Core domain scan for RoboCup/YOLO/domain Labels: clean.
 - No conversation credential was read, restored, logged, or used.
 
-## Remaining release blockers
+## Release status
 
-LP5 must still finish Project Label authoring and the product Workflow GUI/Inspector plus full
-Rust/Web/browser acceptance. Until those gates pass, Label Pipeline Alpha is not release-complete.
+All 20 Label Pipeline Alpha Release Blocking gates have direct offline evidence. Live
+OpenAI-compatible inference and configured external HTTP detector quality remain optional deployment
+conditions, not blockers for the mock/offline Alpha contract. RoboCup remains regression-tested and
+on the Roadmap; it is not the primary acceptance path.

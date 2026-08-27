@@ -164,7 +164,9 @@ impl PublishedWorkflowRuntime {
                 }
                 CLASSIFICATION_OPERATION => {
                     let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-                        if let Some(provider) = &self.pipeline_provider {
+                        if node.model_binding.as_deref() != Some("mock-classifier")
+                            && let Some(provider) = &self.pipeline_provider
+                        {
                             Arc::new(OpenAiCompatiblePipelineClassifier::new(
                                 "workspace-openai-compatible-classifier",
                                 provider.clone(),
@@ -185,7 +187,9 @@ impl PublishedWorkflowRuntime {
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
-                    if self.provider_name != "mock" {
+                    if self.provider_name != "mock"
+                        && node.model_binding.as_deref() != Some("mock-detector")
+                    {
                         bail!(
                             "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
                         );
@@ -691,7 +695,9 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 }
                 CLASSIFICATION_OPERATION => {
                     let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-                        if let Some(provider) = &self.pipeline_provider {
+                        if node.model_binding.as_deref() != Some("mock-classifier")
+                            && let Some(provider) = &self.pipeline_provider
+                        {
                             Arc::new(OpenAiCompatiblePipelineClassifier::new(
                                 "workspace-openai-compatible-classifier",
                                 provider.clone(),
@@ -712,7 +718,9 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
-                    if self.provider_name != "mock" {
+                    if self.provider_name != "mock"
+                        && node.model_binding.as_deref() != Some("mock-detector")
+                    {
                         bail!(
                             "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
                         );

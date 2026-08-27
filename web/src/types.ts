@@ -229,7 +229,12 @@ export interface WorkflowNodePort {
     | "semantic_mask"
     | "instance_mask"
     | "attributes"
-    | "relations";
+    | "relations"
+    | "image"
+    | "detection_set"
+    | "crop_set"
+    | "classification_set"
+    | "annotation_candidate_set";
   required: boolean;
   multiple: boolean;
 }
@@ -253,8 +258,68 @@ export interface WorkflowDraft {
   enabled_skills?: Record<string, string>;
   resource_versions?: Record<string, string>;
   allow_unvalidated_commit?: boolean;
+  label_pipeline?: LabelWorkflowComposition;
   created_at: string;
   updated_at: string;
+}
+
+export type PipelineArtifactType =
+  | "image"
+  | "detection_set"
+  | "crop_set"
+  | "classification_set"
+  | "annotation_candidate_set";
+
+export type PipelineSource =
+  | { source: "image" }
+  | {
+      source: "shared_stage";
+      stage_id: string;
+      step_id: string;
+      port: string;
+      artifact_type: PipelineArtifactType;
+    }
+  | {
+      source: "step";
+      step_id: string;
+      port: string;
+      artifact_type: PipelineArtifactType;
+    };
+
+export interface PipelineStep {
+  id: string;
+  node_type: string;
+  kind: NonNullable<WorkflowDraftNode["kind"]>;
+  inputs: Record<string, PipelineSource>;
+  outputs: Record<string, PipelineArtifactType>;
+  model_binding?: {
+    model_id: string;
+    capability: string;
+    configuration: Record<string, unknown>;
+  };
+  skill_binding?: { skill_id: string; version: string; operation: string };
+  parameters: Record<string, unknown>;
+  validators: string[];
+  refiners: string[];
+  fallback?: string;
+  retry_policy: { max_attempts: number };
+  review_gate: { required: boolean; allow_manual_override: boolean };
+  resources: {
+    timeout_seconds?: number;
+    max_memory_mb?: number;
+    accelerator?: string;
+  };
+}
+
+export interface LabelWorkflowComposition {
+  schema_version: number;
+  shared_stages: { id: string; name: string; steps: PipelineStep[] }[];
+  label_pipelines: {
+    id: string;
+    target_task_id: string;
+    target_label: string;
+    steps: PipelineStep[];
+  }[];
 }
 
 export interface WorkflowValidationReport {
@@ -297,6 +362,8 @@ export interface WorkflowVersionComparison {
 export interface WorkflowCatalog {
   project_id: string;
   project_schema: unknown;
+  target_task_id?: string;
+  target_label?: string;
   enabled_skills: string[];
   node_catalog: { id: string; display_name: string; produces: string[] }[];
   model_registry: {
@@ -321,6 +388,42 @@ export interface WorkflowCatalog {
     sample_height?: number;
     mime_types: string[];
   };
+}
+
+export interface PipelineArtifact {
+  kind: PipelineArtifactType;
+  artifact: Record<string, unknown>;
+}
+
+export interface RunNodeArtifactInspection {
+  run_id: string;
+  workflow_id: string;
+  workflow_version: number;
+  content_hash: string;
+  project_id: string;
+  image_index?: number;
+  nodes: {
+    node_id: string;
+    operation: string;
+    status: string;
+    configuration: WorkflowDraftNode;
+    inputs: PipelineArtifact[];
+    outputs: PipelineArtifact[];
+    latency_ms: number;
+    attempts: number;
+    cache_hit: boolean;
+    usage: { input_tokens: number; output_tokens: number; cost: string };
+    error?: { code: string; summary: string; retryable: boolean };
+  }[];
+}
+
+export interface NodeReplayReport {
+  source_run_id: string;
+  replayed_from: string;
+  reexecuted_nodes: string[];
+  preserved_upstream_nodes: string[];
+  inspection: RunNodeArtifactInspection;
+  sandbox: boolean;
 }
 
 export interface ImageItem {

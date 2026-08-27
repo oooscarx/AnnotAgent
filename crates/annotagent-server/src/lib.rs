@@ -304,6 +304,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route(
+            "/api/projects/{project_id}/schema/labels",
+            post(add_project_label),
+        )
+        .route(
             "/api/projects/{project_id}/workflow-catalog",
             get(get_workflow_catalog),
         )
@@ -1096,6 +1100,24 @@ async fn get_project(
             }
         }
     }
+    Ok(Json(json!(project)))
+}
+
+#[derive(Debug, Deserialize)]
+struct AddProjectLabelRequest {
+    task_id: String,
+    label: String,
+}
+
+async fn add_project_label(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<AddProjectLabelRequest>,
+) -> ApiResult<Json<Value>> {
+    let project = state
+        .application
+        .add_project_label(&project_id, &request.task_id, &request.label)
+        .map_err(ApiError::bad_request)?;
     Ok(Json(json!(project)))
 }
 
@@ -2856,6 +2878,21 @@ export:
         assert_eq!(created.status(), StatusCode::CREATED);
         generate_synthetic_inspection(&temp.path().join("http-label/images/sample.png"))
             .expect("sample image");
+        let schema = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/http-label/schema/labels",
+                Some(json!({"task_id": "scene", "label": "dawn"})),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            schema["annotation_schema"][0]["labels"]
+                .as_array()
+                .is_some_and(|labels| labels.contains(&json!("dawn")))
+        );
 
         let suggestion = response_json(
             request(

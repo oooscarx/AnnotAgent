@@ -801,21 +801,21 @@ fn node_artifact_inspection(
     checkpoint: &DagCheckpoint,
     image_index: Option<usize>,
 ) -> RunNodeArtifactInspection {
-    let nodes = checkpoint
-        .traces
+    let nodes = workflow
+        .draft
+        .nodes
         .iter()
-        .filter_map(|trace| {
-            let configuration = workflow
-                .draft
-                .nodes
+        .filter_map(|configuration| {
+            let trace = checkpoint
+                .traces
                 .iter()
-                .find(|node| node.id == trace.node_id)?
-                .clone();
+                .rev()
+                .find(|trace| trace.node_id == configuration.id)?;
             Some(NodeArtifactInspection {
                 node_id: trace.node_id.clone(),
                 operation: trace.operation.clone(),
                 status: trace.status,
-                configuration,
+                configuration: configuration.clone(),
                 inputs: trace.input_pipeline_artifacts.clone(),
                 outputs: trace.output_pipeline_artifacts.clone(),
                 latency_ms: (trace.finished_at - trace.started_at)
@@ -1762,6 +1762,29 @@ impl LocalApplication {
         self.get_project(project_id)
     }
 
+    pub fn add_project_label(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        label: &str,
+    ) -> Result<ProjectSummary> {
+        let path = self.project_path(project_id)?;
+        let (mut project, _) = load_project_schema_with_registry(&path, &self.skills)?;
+        let task = project
+            .tasks
+            .iter_mut()
+            .find(|task| task.id.as_str() == task_id)
+            .ok_or_else(|| anyhow!("task {task_id:?} is not in Project Schema"))?;
+        if task.labels.iter().any(|current| current == label) {
+            bail!("Label {label:?} already exists on task {task_id:?}");
+        }
+        task.labels.push(label.to_owned());
+        resolve_project_skills(&project, &self.skills)?;
+        let yaml = serde_yaml::to_string(&project)?;
+        std::fs::write(&path, yaml)?;
+        self.get_project(project_id)
+    }
+
     pub fn get_project(&self, project_id: &str) -> Result<ProjectSummary> {
         let path = self.project_path(project_id)?;
         let (project, project_skills) = load_project_schema_with_registry(&path, &self.skills)?;
@@ -1984,11 +2007,6 @@ impl LocalApplication {
             .into_iter()
             .find(|run| run.id == run_id)
             .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
-        if history.provider != "mock" {
-            bail!(
-                "Replay currently requires the original offline mock binding; live credentials are never recovered from Run history"
-            );
-        }
         let snapshot: serde_json::Value = serde_json::from_str(
             history
                 .workflow_snapshot_json
@@ -2001,6 +2019,16 @@ impl LocalApplication {
                 .cloned()
                 .ok_or_else(|| anyhow!("run {run_id} did not select a Published Workflow"))?,
         )?;
+        let has_live_model_binding = workflow.draft.nodes.iter().any(|node| {
+            node.model_binding
+                .as_deref()
+                .is_some_and(|model| !model.starts_with("mock-"))
+        });
+        if history.provider != "mock" && has_live_model_binding {
+            bail!(
+                "Replay of live model nodes requires an explicit current binding; credentials are never recovered from Run history"
+            );
+        }
         let checkpoint: DagCheckpoint = serde_json::from_value(
             snapshot
                 .get("checkpoint")

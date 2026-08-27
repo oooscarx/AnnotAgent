@@ -6,6 +6,8 @@ import type {
   ModelBinding,
   ProjectWorkflow,
   ProjectSummary,
+  NodeReplayReport,
+  RunNodeArtifactInspection,
   ReviewItem,
   RunEvent,
   SkillDetail,
@@ -91,8 +93,14 @@ export const api = {
     request<{ drafts: WorkflowDraft[] }>(
       `/api/workflow-drafts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
     ),
-  workflowCatalog: (projectId: string) =>
-    request<WorkflowCatalog>(`/api/projects/${projectId}/workflow-catalog`),
+  workflowCatalog: (projectId: string, taskId?: string, label?: string) =>
+    request<WorkflowCatalog>(
+      `/api/projects/${projectId}/workflow-catalog${
+        taskId && label
+          ? `?target_task_id=${encodeURIComponent(taskId)}&target_label=${encodeURIComponent(label)}`
+          : ""
+      }`,
+    ),
   createWorkflowDraft: (
     projectId: string,
     fromTemplate = false,
@@ -106,7 +114,11 @@ export const api = {
         ...(templateId ? { template_id: templateId } : {}),
       }),
     }),
-  suggestWorkflow: (projectId: string, advisor: "mock" | "llm" = "mock") =>
+  suggestWorkflow: (
+    projectId: string,
+    advisor: "mock" | "llm" = "mock",
+    target?: { task_id: string; label: string },
+  ) =>
     request<{
       draft: WorkflowDraft;
       rationale: string[];
@@ -118,9 +130,26 @@ export const api = {
       body: JSON.stringify({
         project_id: projectId,
         advisor,
+        ...(target
+          ? { target_task_id: target.task_id, target_label: target.label }
+          : {}),
         constraints: { require_review_gate: true },
       }),
     }),
+  addProjectLabel: (projectId: string, taskId: string, label: string) =>
+    request<ProjectSummary>(`/api/projects/${projectId}/schema/labels`, {
+      method: "POST",
+      body: JSON.stringify({ task_id: taskId, label }),
+    }),
+  pipelineArtifacts: (runId: string) =>
+    request<RunNodeArtifactInspection>(
+      `/api/runs/${runId}/pipeline-artifacts`,
+    ),
+  replayNode: (runId: string, nodeId: string) =>
+    request<NodeReplayReport>(
+      `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
+      { method: "POST" },
+    ),
   saveWorkflowDraft: (draft: WorkflowDraft) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, {
       method: "PATCH",

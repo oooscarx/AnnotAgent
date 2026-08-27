@@ -82,7 +82,9 @@ evidence and a dedicated local commit.
     - Unimplemented controls remain disabled with an explicit reason; no mock screen may claim a
       missing Runtime capability.
     - Run all Rust/Web/security/browser gates and publish final evidence locally.
-    - Status: pending.
+    - Status: completed locally; Project Label authoring, Shared/per-Label editor lanes, real node
+      configuration, Detect & Crop composition, Artifact previews, Inspector/Replay, and complete
+      Rust/Web/browser acceptance pass.
 
 ## Working sequence
 
@@ -92,6 +94,6 @@ regression-tested later extension example, not a primary blocker.
 
 ## Completion rule
 
-Label Pipeline Alpha is releasable only when every one of its 20 Release Blocking gates in
-`ACCEPTANCE_EVIDENCE.md` has reproducible passing evidence. Missing evidence is incomplete, never
-assumed success.
+Label Pipeline Alpha meets this rule: every one of its 20 Release Blocking gates in
+`ACCEPTANCE_EVIDENCE.md` has reproducible passing evidence. Future changes must keep the same rule;
+missing evidence is incomplete, never assumed success.
