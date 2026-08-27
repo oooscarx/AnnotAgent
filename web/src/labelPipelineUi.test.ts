@@ -3,12 +3,13 @@ import {
   artifactCrops,
   artifactCropMarks,
   artifactDetectionMarks,
+  annotationDetectionMarks,
   artifactRects,
   pipelineNodeKind,
   pipelineNodeOutput,
   pipelineNodeParameters,
 } from "./App";
-import type { PipelineArtifact } from "./types";
+import type { Annotation, PipelineArtifact } from "./types";
 
 describe("Label Pipeline product helpers", () => {
   it("keeps Crop in Core and classification/detection outputs typed", () => {
@@ -98,6 +99,33 @@ describe("Label Pipeline product helpers", () => {
       parentArtifact: "set-1",
       label: "football",
       sourceNode: "crop",
+    });
+  });
+
+  it("turns a committed bounding-box Annotation into a Run preview mark", () => {
+    const annotation: Annotation = {
+      id: "annotation-1",
+      image_id: "image-1",
+      task_id: "objects",
+      label: "ball",
+      value: { kind: "bounding_box", rect: [0.422, 0.334, 0.055, 0.067] },
+      attributes: {},
+      confidence: 0.95,
+      source: "model",
+      review_status: "auto_accepted",
+      provenance: {},
+      created_at: "2026-08-28T00:00:00Z",
+    };
+
+    expect(annotationDetectionMarks([annotation])[0]).toMatchObject({
+      id: "annotation-1",
+      label: "ball",
+      confidence: 0.95,
+      x: 0.422,
+      y: 0.334,
+      width: 0.055,
+      height: 0.067,
+      sourceNode: "committed annotation",
     });
   });
 });

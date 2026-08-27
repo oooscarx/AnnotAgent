@@ -167,3 +167,20 @@ OpenAI-compatible action recovery and local credential status: `PASS`.
   production Web build pass.
 
 Bounded auxiliary-tool convergence status: `PASS`.
+
+## Formal Annotation overlay in Run detail — 2026-08-28
+
+- `GET /api/runs/{run}/annotations` now returns formal Run Annotations and the resolved Project
+  image index independently of Pipeline checkpoint availability.
+- Legacy compatibility Runs resolve their source image through the persisted image digest; Pipeline
+  Runs reuse their checkpoint image index.
+- Run Result preview merges committed bounding-box Annotations with Detection/Crop Artifacts,
+  deduplicates exact matching boxes, shows annotation count, label, confidence, and the correct
+  source image.
+- Browser verification on Run `6df70d25-e1fe-4233-8ec1-cd4314f665ca` displayed
+  `color_771292.png`, one `ball` box at 95% confidence, and a non-black label color despite the Run
+  having no Pipeline checkpoint.
+- Strict workspace Clippy, all 151 Rust tests and doc tests, Web typecheck, all 25 Web tests, and the
+  production Web build pass; browser console inspection reported no warnings or errors.
+
+Formal Annotation overlay status: `PASS`.

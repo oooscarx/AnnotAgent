@@ -538,6 +538,13 @@ export interface ImageItem {
   url: string;
 }
 
+export interface RunAnnotationInspection {
+  run_id: string;
+  project_id: string;
+  image_index?: number;
+  annotations: Annotation[];
+}
+
 export type Point = [number, number];
 
 export type AnnotationValue =

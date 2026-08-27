@@ -636,3 +636,20 @@ OpenAI-compatible action recovery and workspace-local credential status: `PASS`.
    and the Vite production build passed.
 
 Bounded auxiliary-tool convergence status: `PASS`.
+
+## Formal Annotation overlay in Run detail — 2026-08-28
+
+1. Annotation inspection for Run `6df70d25-e1fe-4233-8ec1-cd4314f665ca` returned Project
+   `robocup-ball`, image index `4`, and committed Annotation
+   `ba406c34-1ab8-437d-912f-622c5f7e7c7e` with normalized rect
+   `[0.422, 0.334, 0.055, 0.067]` and confidence `0.95`.
+2. The in-app browser Run page rendered `1 Annotations`, selected `color_771292.png`, displayed a
+   `ball` color legend, and exposed an interactive overlay labelled `ball 95 percent`.
+3. Visual inspection confirmed the box is aligned over the football and uses the Project annotation
+   color rather than a black outline. The previous `No replayable Artifact` empty state is absent.
+4. The server journey test exercises the new read endpoint after formal and human annotations are
+   persisted. The Web helper test verifies committed Annotation geometry becomes a preview mark.
+5. Strict workspace Clippy passed. All 151 Rust tests plus doc tests passed. Web typecheck, 25 tests,
+   and the Vite production build passed; browser console inspection returned no warnings or errors.
+
+Formal Annotation overlay status: `PASS`.

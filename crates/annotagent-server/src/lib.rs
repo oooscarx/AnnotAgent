@@ -468,7 +468,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/runs/{run_id}/resume", post(resume_run))
         .route("/api/runs/{run_id}/cancel", post(cancel_run))
         .route("/api/runs/{run_id}/events", get(run_events))
-        .route("/api/runs/{run_id}/annotations", post(create_annotation))
+        .route(
+            "/api/runs/{run_id}/annotations",
+            get(list_run_annotations).post(create_annotation),
+        )
         .route("/api/reviews", get(list_reviews))
         .route("/api/reviews/{review_id}", get(get_review))
         .route("/api/reviews/{review_id}/decision", post(review_decision))
@@ -1957,6 +1960,17 @@ struct AnnotationCreate {
     annotation: Annotation,
 }
 
+async fn list_run_annotations(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<RunId>,
+) -> ApiResult<Json<Value>> {
+    let inspection = state
+        .application
+        .inspect_run_annotations(run_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!(inspection)))
+}
+
 async fn create_annotation(
     State(state): State<ServerState>,
     AxumPath(run_id): AxumPath<RunId>,
@@ -2925,6 +2939,23 @@ mod tests {
             json!("needs_review")
         );
         assert!(created["annotation"]["confidence"].is_null());
+        let run_annotations = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/annotations"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(run_annotations["project_id"], json!("review-demo"));
+        assert!(run_annotations["image_index"].is_number());
+        assert!(
+            run_annotations["annotations"]
+                .as_array()
+                .is_some_and(|annotations| annotations.len() >= 2)
+        );
         let reason_code = skill
             .correction_taxonomy()
             .into_iter()

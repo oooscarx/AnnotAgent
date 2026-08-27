@@ -55,6 +55,8 @@ All paths are relative to the local Axum server.
 | POST | `/api/batches/{batch}/resume` | Recover a paused/failed batch and execute only remaining images |
 | POST | `/api/batches/{batch}/cancel` | Cancel active child runs and prevent new node claims |
 | GET | `/api/runs/{run}` | Durable run summary |
+| GET | `/api/runs/{run}/annotations` | Formal Run annotations plus the resolved Project image index for visual overlay |
+| POST | `/api/runs/{run}/annotations` | Create a human annotation in the Run review workflow |
 | POST | `/api/runs/{run}/pause` | Pause at a safe boundary |
 | POST | `/api/runs/{run}/resume` | Resume a paused run |
 | POST | `/api/runs/{run}/cancel` | Propagate cancellation |
@@ -81,6 +83,11 @@ restarted server can render Pending, Running, Paused, or Awaiting Review state b
 operator resumes work.
 
 Run list summaries derive immutable Workflow name/version, Skill versions, current node/status, Artifact count, validation issues, retry/fallback, provider/model identity, usage/cost, timeout, checkpoint, review suspension, and terminal reason from persisted history. Exact-version image and Batch starts execute `published_dag_runtime`; only an unselected legacy single-Skill start records `legacy_agent_runtime`.
+
+Run annotation inspection is independent of Pipeline checkpoints. For compatibility Runs, the
+server resolves the source image from the persisted model-message image digest; for published
+Pipeline Runs it reuses the checkpoint image index. The GUI overlays formal committed bounding-box
+Annotations together with typed Detection Artifacts without drawing exact duplicates twice.
 
 Batch mutation is lease-guarded and transactional. Budget reservations include already
 consumed and concurrently reserved usage before an image is claimed. Batch events use a

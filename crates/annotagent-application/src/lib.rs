@@ -914,6 +914,14 @@ pub struct RunNodeArtifactInspection {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RunAnnotationInspection {
+    pub run_id: RunId,
+    pub project_id: String,
+    pub image_index: Option<usize>,
+    pub annotations: Vec<Annotation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct NodeArtifactInspection {
     pub node_id: String,
     pub operation: String,
@@ -2313,6 +2321,51 @@ impl LocalApplication {
             &checkpoint,
             image_index,
         ))
+    }
+
+    pub fn inspect_run_annotations(&self, run_id: RunId) -> Result<RunAnnotationInspection> {
+        let history = self.store.history(run_id)?;
+        let stable_id = history
+            .run
+            .project_id
+            .ok_or_else(|| anyhow!("run {run_id} has no Project identity"))?;
+        let project_id = std::fs::read_dir(&self.workspace)?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .find_map(|entry| {
+                let root = entry.path();
+                (root.join("project.yaml").is_file() && stable_project_id(&root) == stable_id)
+                    .then(|| entry.file_name().to_string_lossy().into_owned())
+            })
+            .ok_or_else(|| anyhow!("Project for run {run_id} is no longer available"))?;
+        let annotation_image_id = history
+            .annotations
+            .first()
+            .map(|annotation| annotation.image_id);
+        let image_index = self
+            .inspect_run_pipeline_artifacts(run_id)
+            .ok()
+            .and_then(|inspection| inspection.image_index)
+            .or_else(|| {
+                history
+                    .model_messages
+                    .iter()
+                    .filter(|entry| {
+                        annotation_image_id.is_none() || entry.image_id == annotation_image_id
+                    })
+                    .find_map(|entry| extract_sha256(&entry.message.content))
+                    .and_then(|sha256| {
+                        self.image_index_by_sha256(&project_id, sha256)
+                            .ok()
+                            .flatten()
+                    })
+            });
+        Ok(RunAnnotationInspection {
+            run_id,
+            project_id,
+            image_index,
+            annotations: history.annotations,
+        })
     }
 
     pub async fn replay_run_from_node(
@@ -4491,6 +4544,11 @@ fn find_or_generate_image(project_path: &Path, project: &ProjectSchema) -> Resul
     let path = root.join("synthetic-robocup.png");
     generate_synthetic_robocup(&path).map_err(|error| anyhow!(error))?;
     Ok(path)
+}
+
+fn extract_sha256(content: &str) -> Option<&str> {
+    let value = content.split_once("sha256=")?.1.split(';').next()?.trim();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(value)
 }
 
 fn supported_images(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {

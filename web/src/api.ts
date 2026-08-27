@@ -10,6 +10,7 @@ import type {
   ProjectSummary,
   NodeReplayReport,
   RunNodeArtifactInspection,
+  RunAnnotationInspection,
   ReviewItem,
   RunEvent,
   SkillDetail,
@@ -171,6 +172,8 @@ export const api = {
     request<RunNodeArtifactInspection>(
       `/api/runs/${runId}/pipeline-artifacts`,
     ),
+  runAnnotations: (runId: string) =>
+    request<RunAnnotationInspection>(`/api/runs/${runId}/annotations`),
   replayNode: (runId: string, nodeId: string) =>
     request<NodeReplayReport>(
       `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
