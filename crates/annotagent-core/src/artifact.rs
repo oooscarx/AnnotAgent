@@ -6,9 +6,189 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnnotationValue, ArtifactId, AttributeValue, CoreResult, ImageId, Keypoint, LabelId,
-    MaskEncoding, NormalizedPoint, NormalizedRect, RelationValue, TaskId,
+    AnnotationValue, ArtifactId, ArtifactRef, AttributeValue, CoreResult, ImageId, Keypoint,
+    LabelId, MaskEncoding, NormalizedPoint, NormalizedRect, PipelineArtifact, ProjectId,
+    RelationValue, RunId, TaskId,
 };
+
+pub const ARTIFACT_ENVELOPE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ArtifactEnvelopeRef {
+    pub artifact_id: String,
+    #[serde(default)]
+    pub item_id: Option<String>,
+}
+
+impl From<&ArtifactRef> for ArtifactEnvelopeRef {
+    fn from(reference: &ArtifactRef) -> Self {
+        Self {
+            artifact_id: reference.artifact_id.clone(),
+            item_id: reference.item_id.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "family", content = "payload", rename_all = "snake_case")]
+pub enum ArtifactPayload {
+    Vision(VisionArtifact),
+    Pipeline(PipelineArtifact),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactEnvelope {
+    pub schema_version: u32,
+    pub artifact_id: String,
+    pub project_id: ProjectId,
+    pub run_id: RunId,
+    pub image_id: ImageId,
+    pub node_id: String,
+    pub payload: ArtifactPayload,
+    #[serde(default)]
+    pub parents: Vec<ArtifactEnvelopeRef>,
+    pub provenance: ArtifactProvenance,
+    pub created_at: DateTime<Utc>,
+    pub cache_key: Option<String>,
+}
+
+impl ArtifactEnvelope {
+    #[must_use]
+    pub fn from_vision(
+        project_id: ProjectId,
+        run_id: RunId,
+        node_id: impl Into<String>,
+        artifact: VisionArtifact,
+        cache_key: Option<String>,
+    ) -> Self {
+        let artifact_id = artifact.id.to_string();
+        let image_id = artifact.image_id;
+        let parents = artifact
+            .provenance
+            .input_artifact_ids
+            .iter()
+            .map(|id| ArtifactEnvelopeRef {
+                artifact_id: id.to_string(),
+                item_id: None,
+            })
+            .collect();
+        let provenance = artifact.provenance.clone();
+        let created_at = artifact.created_at;
+        Self {
+            schema_version: ARTIFACT_ENVELOPE_SCHEMA_VERSION,
+            artifact_id,
+            project_id,
+            run_id,
+            image_id,
+            node_id: node_id.into(),
+            payload: ArtifactPayload::Vision(artifact),
+            parents,
+            provenance,
+            created_at,
+            cache_key,
+        }
+    }
+
+    #[must_use]
+    pub fn from_pipeline(
+        project_id: ProjectId,
+        run_id: RunId,
+        node_id: impl Into<String>,
+        artifact: PipelineArtifact,
+        provenance: ArtifactProvenance,
+        cache_key: Option<String>,
+    ) -> Self {
+        let artifact_id = artifact.reference().artifact_id.clone();
+        let image_id = artifact.image_id();
+        let parents = pipeline_parents(&artifact);
+        Self {
+            schema_version: ARTIFACT_ENVELOPE_SCHEMA_VERSION,
+            artifact_id,
+            project_id,
+            run_id,
+            image_id,
+            node_id: node_id.into(),
+            payload: ArtifactPayload::Pipeline(artifact),
+            parents,
+            provenance,
+            created_at: Utc::now(),
+            cache_key,
+        }
+    }
+
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.schema_version != ARTIFACT_ENVELOPE_SCHEMA_VERSION {
+            return Err(crate::CoreError::Validation(format!(
+                "unsupported artifact envelope schema version {}",
+                self.schema_version
+            )));
+        }
+        if self.node_id.trim().is_empty() || self.artifact_id.trim().is_empty() {
+            return Err(crate::CoreError::Validation(
+                "artifact envelope requires node_id and artifact_id".to_owned(),
+            ));
+        }
+        let (payload_id, payload_image) = match &self.payload {
+            ArtifactPayload::Vision(artifact) => {
+                artifact.validate()?;
+                (artifact.id.to_string(), artifact.image_id)
+            }
+            ArtifactPayload::Pipeline(artifact) => {
+                artifact.validate().map_err(crate::CoreError::Validation)?;
+                (
+                    artifact.reference().artifact_id.clone(),
+                    artifact.image_id(),
+                )
+            }
+        };
+        if payload_id != self.artifact_id || payload_image != self.image_id {
+            return Err(crate::CoreError::Validation(
+                "artifact envelope scope does not match its payload".to_owned(),
+            ));
+        }
+        let mut parents = std::collections::BTreeSet::new();
+        for parent in &self.parents {
+            if parent.artifact_id == self.artifact_id && parent.item_id.is_none() {
+                return Err(crate::CoreError::Validation(
+                    "artifact envelope cannot be its own parent".to_owned(),
+                ));
+            }
+            if !parents.insert(parent) {
+                return Err(crate::CoreError::Validation(
+                    "artifact envelope parents must be unique".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn pipeline_parents(artifact: &PipelineArtifact) -> Vec<ArtifactEnvelopeRef> {
+    let references = match artifact {
+        PipelineArtifact::Image(_) | PipelineArtifact::DetectionSet(_) => Vec::new(),
+        PipelineArtifact::CropSet(crops) => vec![&crops.source_detections],
+        PipelineArtifact::ClassificationSet(classifications) => classifications
+            .classifications
+            .iter()
+            .flat_map(|classification| {
+                std::iter::once(&classification.subject).chain(classification.parent.iter())
+            })
+            .collect(),
+        PipelineArtifact::AnnotationCandidateSet(candidates) => candidates
+            .candidates
+            .iter()
+            .flat_map(|candidate| {
+                std::iter::once(&candidate.subject).chain(candidate.evidence.iter())
+            })
+            .collect(),
+    };
+    references
+        .into_iter()
+        .map(ArtifactEnvelopeRef::from)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,5 +503,42 @@ mod tests {
         assert!(artifact.validate().is_err());
         artifact.replaces_artifact_id = Some(artifact.id);
         assert!(artifact.validate().is_err());
+    }
+
+    #[test]
+    fn strong_envelope_validates_scope_lineage_and_model_safe_reference() {
+        let parent = ArtifactId::new();
+        let artifact = VisionArtifact {
+            id: ArtifactId::new(),
+            image_id: ImageId::new(),
+            task_id: Some(TaskId::from("object")),
+            label: Some(LabelId::from("target")),
+            role: ArtifactRole::Candidate,
+            value: VisionArtifactValue::BoundingBox {
+                rect: NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("rect"),
+            },
+            source_node: "detector".to_owned(),
+            confidence: Some(0.9),
+            metadata: BTreeMap::new(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            provenance: ArtifactProvenance {
+                input_artifact_ids: vec![parent],
+                ..ArtifactProvenance::default()
+            },
+            revision: 1,
+            replaces_artifact_id: None,
+            created_at: Utc::now(),
+        };
+        let mut envelope = ArtifactEnvelope::from_vision(
+            ProjectId::new(),
+            RunId::new(),
+            "detector",
+            artifact,
+            Some("sha256:fixture".to_owned()),
+        );
+        assert!(envelope.validate().is_ok());
+        assert_eq!(envelope.parents[0].artifact_id, parent.to_string());
+        envelope.image_id = ImageId::new();
+        assert!(envelope.validate().is_err());
     }
 }

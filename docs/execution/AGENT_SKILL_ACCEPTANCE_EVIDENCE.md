@@ -50,3 +50,24 @@ cargo test -p annotagent-runtime --test skill_extension
 
 The tests also retain the legacy external Domain Skill execution proof and deterministic namespace
 merge proof.
+
+## M2 — tool-call protocol and Artifact lineage
+
+Verification:
+
+```text
+cargo test -p annotagent-core artifact
+3 passed; 0 failed
+cargo test -p annotagent-runtime engine::tests
+4 passed; 0 failed
+cargo test -p annotagent-provider \
+  openai_compatible::tests::serializes_assistant_tool_call_history_for_follow_up_turns
+1 passed; 0 failed
+cargo test -p annotagent-runtime --test published_dag
+6 passed; 0 failed
+```
+
+The DAG suite covers deterministic cache/replay, retry/fallback, timeout and cancellation. Trace
+assertions validate strong output envelopes and exact Project scope. The protocol tests reject
+duplicate, missing, unexpected, wrong-order and nested tool results and verify geometry-reference
+hand-off.

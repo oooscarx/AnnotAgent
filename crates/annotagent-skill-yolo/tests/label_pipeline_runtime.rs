@@ -160,6 +160,7 @@ fn image(image_id: ImageId) -> PipelineArtifact {
 
 fn request(image_id: ImageId) -> DagExecutionRequest {
     DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id,
         initial_artifacts: Vec::new(),

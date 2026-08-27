@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M1 — complete. M2 tool protocol and strong Artifact envelope is next.
+M2 — complete. M3 Classification Capability Skill is next.
 
 ## Audited baseline
 
@@ -54,3 +54,14 @@ M1 — complete. M2 tool protocol and strong Artifact envelope is next.
   rejection;
 - manifest-declared on-demand resources with traversal and undeclared-resource rejection;
 - independent dummy Capability, Domain and Pack registration without Core/Runtime branching.
+
+## M2 delivered
+
+- versioned strong `ArtifactEnvelope` with Project/Run/image/node scope, typed payload, parent/item
+  lineage, provenance, timestamp and deterministic cache key;
+- Published DAG input/output trace envelopes with validation and Replay-compatible serialization;
+- strict full-history validation for single/multiple calls, ordered one-result-per-id, duplicate
+  IDs, missing IDs/results, unexpected/wrong IDs and nested calls;
+- model-visible tool results expose stable Artifact references while full geometry remains in the
+  persisted result;
+- existing node timeout and provider/DAG cancellation tests are retained as protocol stop proofs.

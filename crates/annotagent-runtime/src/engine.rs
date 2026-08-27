@@ -2556,4 +2556,89 @@ mod tests {
         );
         assert!(validate_model_message_history(&[assistant]).is_err());
     }
+
+    #[test]
+    fn tool_history_rejects_duplicate_missing_unexpected_and_nested_results() {
+        let id = ToolCallId::new("call-1");
+        let call = ModelToolCall {
+            id: id.clone(),
+            name: "inspect".to_owned(),
+            arguments: json!({}),
+        };
+        let assistant = ModelMessage {
+            role: ModelRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![call.clone(), call],
+        };
+        assert!(validate_model_message_history(&[assistant]).is_err());
+
+        let missing_id = ModelMessage {
+            role: ModelRole::Tool,
+            content: json!({"ok": true}).to_string(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        };
+        assert!(validate_model_message_history(&[missing_id]).is_err());
+
+        let unexpected = ModelMessage {
+            role: ModelRole::Tool,
+            content: json!({"ok": true}).to_string(),
+            tool_call_id: Some(ToolCallId::new("unexpected")),
+            tool_calls: Vec::new(),
+        };
+        assert!(validate_model_message_history(&[unexpected]).is_err());
+
+        let nested_call_id = ToolCallId::new("nested-parent");
+        let nested_assistant = ModelMessage {
+            role: ModelRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![ModelToolCall {
+                id: nested_call_id.clone(),
+                name: "inspect".to_owned(),
+                arguments: json!({}),
+            }],
+        };
+        let nested = ModelMessage {
+            role: ModelRole::Tool,
+            content: json!({"ok": true}).to_string(),
+            tool_call_id: Some(nested_call_id),
+            tool_calls: vec![ModelToolCall {
+                id,
+                name: "nested".to_owned(),
+                arguments: json!({}),
+            }],
+        };
+        assert!(validate_model_message_history(&[nested_assistant, nested]).is_err());
+    }
+
+    #[test]
+    fn model_visible_tool_result_uses_artifact_references_not_copied_geometry() {
+        let artifact = VisionArtifact {
+            id: annotagent_core::ArtifactId::new(),
+            image_id: ImageId::new(),
+            task_id: Some(TaskId::from("object")),
+            label: None,
+            role: annotagent_core::ArtifactRole::Evidence,
+            value: annotagent_core::VisionArtifactValue::BoundingBox {
+                rect: annotagent_core::NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("rect"),
+            },
+            source_node: "detector".to_owned(),
+            confidence: Some(0.9),
+            metadata: BTreeMap::new(),
+            validation_state: annotagent_core::ArtifactValidationState::Valid,
+            provenance: annotagent_core::ArtifactProvenance::default(),
+            revision: 1,
+            replaces_artifact_id: None,
+            created_at: Utc::now(),
+        };
+        let result = ToolResult::with_artifacts("one detection", vec![artifact], &json!({}));
+        assert_eq!(
+            result.model_result["artifact_references"][0]["kind"],
+            "bounding_box"
+        );
+        assert!(result.model_result.to_string().find("rect").is_none());
+        assert!(result.persisted_result.to_string().contains("rect"));
+    }
 }

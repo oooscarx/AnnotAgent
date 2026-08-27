@@ -4,6 +4,8 @@
 
 - Layered Skill kinds and resolution are available; bundled legacy Skills still use the
   `DomainSkill` compatibility path until their milestone migrations.
+- Strong envelopes are materialized in Published DAG traces; legacy per-task storage continues to
+  persist `VisionArtifact` payload rows for backward-compatible history import/export.
 - Workflow Advisor and Annotation Recovery are not yet the required iterative Agent loops.
 - RoboCup Ball is not yet isolated as its own Domain Skill inside a Pack.
 - Web and TUI do not yet expose the complete Agent sessions, tools and memory views.

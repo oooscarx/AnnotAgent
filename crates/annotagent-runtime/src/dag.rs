@@ -7,8 +7,9 @@ use std::{
 };
 
 use annotagent_core::{
-    ArtifactValidationState, ImageId, PipelineArtifact, PublishedWorkflowVersion, RunId,
-    VisionArtifact, WorkflowDraft, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    ArtifactEnvelope, ArtifactProvenance, ArtifactValidationState, ImageId, PipelineArtifact,
+    ProjectId, PublishedWorkflowVersion, RunId, VisionArtifact, WorkflowDraft, WorkflowDraftNode,
+    WorkflowEdge, WorkflowNodeKind,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -132,6 +133,7 @@ impl DagNodeFailure {
 }
 
 pub struct DagNodeContext<'a> {
+    pub project_id: ProjectId,
     pub run_id: RunId,
     pub image_id: ImageId,
     pub node: &'a WorkflowDraftNode,
@@ -164,6 +166,10 @@ pub struct DagNodeTrace {
     pub input_pipeline_artifacts: Vec<PipelineArtifact>,
     #[serde(default)]
     pub output_pipeline_artifacts: Vec<PipelineArtifact>,
+    #[serde(default)]
+    pub input_envelopes: Vec<ArtifactEnvelope>,
+    #[serde(default)]
+    pub output_envelopes: Vec<ArtifactEnvelope>,
     pub route: Option<String>,
     pub usage: DagNodeUsage,
     pub error: Option<DagNodeFailure>,
@@ -202,6 +208,7 @@ impl DagCheckpoint {
 }
 
 pub struct DagExecutionRequest {
+    pub project_id: ProjectId,
     pub run_id: RunId,
     pub image_id: ImageId,
     pub initial_artifacts: Vec<VisionArtifact>,
@@ -508,6 +515,7 @@ impl PublishedDagExecutor {
         let started_at = Utc::now();
         if node.kind == WorkflowNodeKind::HumanReview && !approved_review {
             return NodeExecution::Suspended(trace(
+                request,
                 node,
                 DagNodeStatus::AwaitingReview,
                 0,
@@ -535,6 +543,7 @@ impl PublishedDagExecutor {
                 format!("operation {:?} has no registered runner", node.node_type),
             );
             return NodeExecution::Failed(trace(
+                request,
                 node,
                 DagNodeStatus::Failed,
                 1,
@@ -569,6 +578,7 @@ impl PublishedDagExecutor {
                         output.usage = DagNodeUsage::default();
                         return NodeExecution::Completed {
                             trace: trace(
+                                request,
                                 node,
                                 DagNodeStatus::Cached,
                                 0,
@@ -585,6 +595,7 @@ impl PublishedDagExecutor {
                 }
                 Err(_) => {
                     return NodeExecution::Failed(trace(
+                        request,
                         node,
                         DagNodeStatus::Failed,
                         0,
@@ -618,6 +629,7 @@ impl PublishedDagExecutor {
             attempts_made = attempt;
             if request.cancellation.is_cancelled() {
                 return NodeExecution::Cancelled(trace(
+                    request,
                     node,
                     DagNodeStatus::Cancelled,
                     attempt.saturating_sub(1),
@@ -634,6 +646,7 @@ impl PublishedDagExecutor {
                     registration
                         .runner
                         .run(DagNodeContext {
+                            project_id: request.project_id,
                             run_id: request.run_id,
                             image_id: request.image_id,
                             node,
@@ -649,6 +662,7 @@ impl PublishedDagExecutor {
             let outcome = tokio::select! {
                 () = request.cancellation.cancelled() => {
                     return NodeExecution::Cancelled(trace(
+                        request,
                         node,
                         DagNodeStatus::Cancelled,
                         attempt.saturating_sub(1),
@@ -671,6 +685,7 @@ impl PublishedDagExecutor {
                     }
                     return NodeExecution::Completed {
                         trace: trace(
+                            request,
                             node,
                             DagNodeStatus::Succeeded,
                             attempt,
@@ -700,6 +715,7 @@ impl PublishedDagExecutor {
             }
         }
         NodeExecution::Failed(trace(
+            request,
             node,
             DagNodeStatus::Failed,
             attempts_made,
@@ -1040,6 +1056,7 @@ fn node_cache_key(
 
 #[allow(clippy::too_many_arguments)]
 fn trace(
+    request: &DagExecutionRequest,
     node: &WorkflowDraftNode,
     status: DagNodeStatus,
     attempt_count: u32,
@@ -1050,6 +1067,18 @@ fn trace(
     error: Option<DagNodeFailure>,
     started_at: DateTime<Utc>,
 ) -> DagNodeTrace {
+    let input_envelopes = artifact_envelopes(
+        request,
+        &inputs.artifacts,
+        &inputs.pipeline_artifacts,
+        cache_key.clone(),
+    );
+    let output_envelopes = artifact_envelopes(
+        request,
+        &output.artifacts,
+        &output.pipeline_artifacts,
+        cache_key.clone(),
+    );
     DagNodeTrace {
         node_id: node.id.clone(),
         operation: node.node_type.clone(),
@@ -1061,12 +1090,47 @@ fn trace(
         output_artifacts: output.artifacts,
         input_pipeline_artifacts: inputs.pipeline_artifacts,
         output_pipeline_artifacts: output.pipeline_artifacts,
+        input_envelopes,
+        output_envelopes,
         route: output.route,
         usage: output.usage,
         error,
         started_at,
         finished_at: Utc::now(),
     }
+}
+
+fn artifact_envelopes(
+    request: &DagExecutionRequest,
+    artifacts: &[VisionArtifact],
+    pipeline_artifacts: &[PipelineArtifact],
+    cache_key: Option<String>,
+) -> Vec<ArtifactEnvelope> {
+    artifacts
+        .iter()
+        .cloned()
+        .map(|artifact| {
+            let source_node = artifact.source_node.clone();
+            ArtifactEnvelope::from_vision(
+                request.project_id,
+                request.run_id,
+                source_node,
+                artifact,
+                cache_key.clone(),
+            )
+        })
+        .chain(pipeline_artifacts.iter().cloned().map(|artifact| {
+            let source_node = artifact.reference().source_node.clone();
+            ArtifactEnvelope::from_pipeline(
+                request.project_id,
+                request.run_id,
+                source_node,
+                artifact,
+                ArtifactProvenance::default(),
+                cache_key.clone(),
+            )
+        }))
+        .collect()
 }
 
 fn cancel_pending(checkpoint: &mut DagCheckpoint) {

@@ -293,6 +293,7 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
     let executor = executor();
     let high = artifact(0.95, ArtifactValidationState::Unvalidated);
     let high_request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: high.image_id,
         initial_artifacts: vec![high],
@@ -310,6 +311,20 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
         DagNodeStatus::Skipped
     );
     assert!(passed.checkpoint.usage.input_tokens > 0);
+    assert!(
+        passed
+            .checkpoint
+            .traces
+            .iter()
+            .flat_map(|trace| &trace.output_envelopes)
+            .all(|envelope| envelope.validate().is_ok())
+    );
+    assert!(passed.checkpoint.traces.iter().any(|trace| {
+        trace
+            .output_envelopes
+            .iter()
+            .any(|envelope| envelope.project_id == high_request.project_id)
+    }));
 
     let repeated = executor
         .execute(&workflow, &high_request)
@@ -326,6 +341,7 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
 
     let low = artifact(0.4, ArtifactValidationState::Unvalidated);
     let low_request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: low.image_id,
         initial_artifacts: vec![low],
@@ -402,6 +418,7 @@ async fn retry_limit_and_fallback_are_bounded() {
         .register_runner("flaky", runner.clone(), false)
         .expect("runner");
     let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
@@ -511,6 +528,7 @@ async fn independent_nodes_execute_in_parallel() {
         .register_runner("parallel", runner.clone(), false)
         .expect("runner");
     let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
@@ -562,6 +580,7 @@ async fn cancellation_stops_running_and_pending_nodes() {
         .expect("runner");
     let cancellation = CancellationToken::new();
     let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
@@ -597,6 +616,7 @@ async fn node_timeout_is_structured_and_tampered_snapshot_is_rejected() {
         .register_runner("slow", Arc::new(SlowRunner), false)
         .expect("runner");
     let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
@@ -657,6 +677,7 @@ async fn commit_builtin_cannot_be_overridden_or_accept_unvalidated_artifacts() {
         .expect("attempted override registration");
     let candidate = artifact(0.99, ArtifactValidationState::Unvalidated);
     let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
         run_id: RunId::new(),
         image_id: candidate.image_id,
         initial_artifacts: vec![candidate],
