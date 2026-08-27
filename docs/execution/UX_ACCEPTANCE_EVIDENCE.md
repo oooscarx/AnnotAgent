@@ -96,6 +96,48 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - Build DOM exposes four named step buttons and disabled corrupt-image reporting honestly.
 - Web: 10 files/24 tests and production build passed.
 
+## Milestone 9 — Release acceptance
+
+- `web/e2e/guided-workspace.spec.ts`: 10/10 Chromium scenarios passed in 11.0 seconds.
+- Empty workspace screenshot contains no RoboCup product content and keeps the five-entry global navigation.
+- Dry Run screenshot records the real summary metrics before publication; the test publishes, starts the exact version with Mock, waits for its terminal status, and opens its persisted Run trace.
+- B-Human screenshot records the live VLM football DetectionSet and Core CropSet joined by `parent.item_id` with readable label, confidence, and non-black annotation styling.
+- Refreshing `/runs/:runId?image=0&node=core.image_input` restores the same active image and node.
+- Active Run fixture remains active after refresh; `Open active run` is available and `Start dataset batch` is disabled.
+- Review -> Run -> Review returns to the exact Review item without copying IDs.
+- Full Rust workspace tests passed, including 14 Application, 26 Core, 7 Server, 20 Provider, runtime/storage/export/Skill integration suites, the 100-image persistent batch test, and all doc tests.
+- `cargo fmt --all --check`, all-feature workspace Clippy with `-D warnings`, and all-feature workspace build passed.
+- Web unit suite: 10 files/24 tests; typecheck and production build passed.
+
 ## Manual tasks
 
-Tasks A–D are pending until the Run and Review workspaces are integrated.
+### Task A — B-Human label-to-export path
+
+- PASS: existing `bhuman-vlm-football` Project exposes 5 B-Human images, the `footballs / football` bounding-box schema, and the published VLM Detect -> Filter -> Crop -> Cache -> Confidence -> Commit Pipeline.
+- PASS: persisted Run `367e9a0e-5fea-485a-adf7-b437502c2727` opens without ID entry from history and shows the live `qwen3.7-flash` DetectionSet, 98% football bbox, CropSet, parent Artifact, source node, and seven-node timeline.
+- PASS: browser Replay from `footballs.football.crop` completed in sandbox. Preserved upstream includes `shared.detector`; re-executed nodes are Crop and Crop Cache only.
+- PASS: Review recorded a `manual_bbox_adjustment` revision, accepted the football bbox, and removed it from the queue.
+- PASS: Project `Export native` wrote `workspace/bhuman-vlm-football/exports/native/annotagent-native.json`; report: 1 exported, 0 skipped, no warnings.
+- A new three-image live VLM Dry Run was not issued because acceptance explicitly forbids reuse of conversation API keys. The persisted live Run covers external VLM output; the isolated offline browser suite covers new Dry Run and publication behavior.
+
+### Task B — Run URL restoration
+
+- PASS: image and node query state survived a full browser refresh; active node and Artifact preview were restored from the persisted checkpoint.
+
+### Task C — Review source round-trip
+
+- PASS: Review Detail displayed source Run, Workflow Version, source node, reason, confidence, and validation issues; `Open run context` and `Open review item` returned bidirectionally.
+
+### Task D — Active work restoration
+
+- PASS: browser test restored server-owned active Run state after navigation and refresh and verified duplicate Dataset Batch Start was locked.
+
+## Screenshots
+
+- `docs/execution/screenshots/01-empty-workspace.png`
+- `docs/execution/screenshots/02-dry-run-summary.png`
+- `docs/execution/screenshots/03-run-artifact-lineage.png`
+
+## Release blockers
+
+- 1–27 — PASS. The corresponding behavior is implemented, covered by unit/integration/browser checks, and evidenced above.

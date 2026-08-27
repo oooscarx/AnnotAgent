@@ -2175,10 +2175,27 @@ impl LocalApplication {
                 .cloned()
                 .ok_or_else(|| anyhow!("run {run_id} did not select a Published Workflow"))?,
         )?;
+        let mut replayed_node_ids = BTreeSet::from([node_id.to_owned()]);
+        loop {
+            let descendants = workflow
+                .draft
+                .edges
+                .iter()
+                .filter(|edge| replayed_node_ids.contains(&edge.from_node))
+                .map(|edge| edge.to_node.clone())
+                .collect::<Vec<_>>();
+            let before = replayed_node_ids.len();
+            replayed_node_ids.extend(descendants);
+            if replayed_node_ids.len() == before {
+                break;
+            }
+        }
         let has_live_model_binding = workflow.draft.nodes.iter().any(|node| {
-            node.model_binding
-                .as_deref()
-                .is_some_and(|model| !model.starts_with("mock-"))
+            replayed_node_ids.contains(&node.id)
+                && node
+                    .model_binding
+                    .as_deref()
+                    .is_some_and(|model| !model.starts_with("mock-"))
         });
         if history.provider != "mock" && has_live_model_binding {
             bail!(

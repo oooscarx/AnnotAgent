@@ -943,6 +943,8 @@ function ProjectPage({
   const [importFormat, setImportFormat] = useState("native");
   const [importDryRun, setImportDryRun] = useState(true);
   const [importResult, setImportResult] = useState("");
+  const [exportResult, setExportResult] = useState("");
+  const [exporting, setExporting] = useState("");
   const [labelTaskId, setLabelTaskId] = useState("");
   const [newLabel, setNewLabel] = useState("");
   useEffect(() => {
@@ -1001,6 +1003,19 @@ function ProjectPage({
         `${workflow.workflow_id}:${workflow.version}` === workflowKey,
     ) ?? project.active_workflow;
   const primaryAction = deriveProjectNextAction(project);
+  const exportAnnotations = (format: string) => {
+    setExporting(format);
+    setExportResult("");
+    void api
+      .export(project.id, format)
+      .then((value) =>
+        setExportResult(
+          `Exported ${format}: ${JSON.stringify(value, null, 2)}`,
+        ),
+      )
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setExporting(""));
+  };
   const start = () => {
     setStarting(true);
     void api
@@ -1352,6 +1367,22 @@ function ProjectPage({
             }
           />
           <TagGroup title="Export formats" values={project.export_formats} />
+          <div className="button-row" aria-label="Export annotations">
+            {project.export_formats.map((format) => (
+              <button
+                key={format}
+                disabled={Boolean(exporting)}
+                onClick={() => exportAnnotations(format)}
+              >
+                {exporting === format ? "Exporting…" : `Export ${format}`}
+              </button>
+            ))}
+          </div>
+          {exportResult && (
+            <pre className="import-report" aria-live="polite">
+              {exportResult}
+            </pre>
+          )}
         </Panel>
         </div>
         <Panel title="Annotation import" eyebrow="Dry-run first · compatibility report">
@@ -3524,11 +3555,19 @@ function RunDetailWorkspace({
     void api.replayNode(run.id, selectedNode.node_id).then((value) => { setReplay(value); setInspection(value.inspection); }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
   };
   const duration = Math.max(0, new Date(run.updated_at).getTime() - new Date(run.created_at).getTime());
+  const completedNodes = inspection?.nodes.filter((node) =>
+    ["succeeded", "completed", "skipped"].includes(node.status),
+  ).length;
+  const nodeProgress = inspection?.nodes.length
+    ? `${completedNodes}/${inspection.nodes.length} nodes`
+    : run.current_node
+      ? `Current: ${run.current_node}`
+      : "No node trace";
   return (
     <section className="page-stack run-detail-page">
       <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← All runs</button>
       <div className="toolbar-panel run-detail-header">
-        <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{run.artifact_count} Artifacts</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
+        <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
         <div className="button-row">{runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Open review item</button>}<button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
       </div>
       <div className="run-workspace">

@@ -27,3 +27,11 @@ Default node cards show name, binding, typed input/output, essential thresholds,
 ## D-007 — Honest feature states
 
 Unavailable operations remain visibly disabled with a reason. No client-side demo metrics or fabricated runtime results are used to satisfy acceptance.
+
+## D-008 — Replay binds only the selected subgraph
+
+Replay preserves completed ancestors and registers only the selected node plus downstream consumers. Historical credentials are never recovered, and a Core-only replay does not require an unrelated live model binding upstream.
+
+## D-009 — Export follows persisted annotation identity
+
+Export works for generic Published Workflows without a Skill. It selects a Run containing annotations and resolves the corresponding source image from the persisted workflow image SHA-256 before handing the snapshot to a versioned exporter.

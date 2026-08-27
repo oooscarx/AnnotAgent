@@ -13,7 +13,7 @@ Updated: 2026-08-27
 | 6 Review Integration | Complete | Review source context, bidirectional deep links, labeled bbox/crop lineage, notes and decisions are connected. |
 | 7 Reliability | Complete | URL/popstate restoration, SSE refetch/reconnect state, active Run/Batch locking, and retry recovery are implemented. |
 | 8 Usability | Complete | Route focus, dialogs, keyboard selection, loading/retry, responsive breakpoints, zoom, and reduced motion pass browser checks. |
-| 9 Acceptance | Pending | Full release checks and manual tasks remain. |
+| 9 Acceptance | Complete | Playwright covers ten browser journeys, screenshots and README are current, full Rust/Web checks pass, and the B-Human Artifact/Review/Export path was exercised without a new external model call. |
 
 ## Existing capability inventory
 
@@ -109,3 +109,14 @@ Updated: 2026-08-27
 - In-app browser at 1024×768: `scrollWidth === innerWidth === 1024`.
 - In-app browser at 720×700 (desktop 200% zoom equivalent): `scrollWidth === innerWidth === 720`; sidebar becomes static top navigation.
 - Web 10 files/24 tests and production build passed.
+
+## Milestone 9 verification
+
+- Playwright runs an isolated offline Mock workspace for empty state, Project creation, data import, Build navigation, Dry Run, publish, formal Run, Artifact opening, URL refresh, Review round-trip, active-Run locking, and generic-copy checks.
+- The persisted B-Human live VLM Run verifies labeled bbox, Crop parent lineage, and image/node URL context against real DetectionSet/CropSet Artifacts.
+- Crop Replay now registers only the selected downstream subgraph. It preserves `shared.detector`, `core.image_input`, and `core.filter` instead of requiring or rerunning the historical live VLM binding.
+- Generic published-Workflow export no longer invokes the legacy single-Skill loader. It selects a Run that actually has annotations and resolves the source image by persisted SHA-256.
+- B-Human manual acceptance created and adjusted a football bbox revision, accepted it from Review, and exported one native annotation with zero skips or warnings.
+- Screenshots: `01-empty-workspace.png`, `02-dry-run-summary.png`, and `03-run-artifact-lineage.png`.
+- Web: 10 unit files/24 tests, production build, and 10/10 Chromium E2E scenarios pass.
+- Rust: fmt, workspace Clippy with `-D warnings`, workspace tests, and all-feature workspace build pass.

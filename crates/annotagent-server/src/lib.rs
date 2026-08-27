@@ -1661,7 +1661,10 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
                     "project_name": run.project_name,
                     "annotation": annotation,
                     "workflow_id": inspection.as_ref().map(|value| value.workflow_id.as_str()),
-                    "workflow_version": inspection.as_ref().map(|value| value.workflow_version).unwrap_or_else(|| summary.workflow_version.parse().unwrap_or_default()),
+                    "workflow_version": inspection.as_ref().map_or_else(
+                        || summary.workflow_version.parse().unwrap_or_default(),
+                        |value| value.workflow_version,
+                    ),
                     "source_node": source_node.or(summary.current_node.as_deref()),
                     "source_artifact_id": source_artifact_id,
                     "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !summary.validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
@@ -1843,27 +1846,53 @@ async fn export_dataset(
         .application
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
-    let (schema, _) =
-        annotagent_application::load_project(&project_path).map_err(ApiError::bad_request)?;
-    let run = state
+    let project_yaml = std::fs::read_to_string(&project_path).map_err(ApiError::bad_request)?;
+    let schema = ProjectSchema::from_yaml(&project_yaml).map_err(ApiError::bad_request)?;
+    let runs = state
         .application
         .list_runs()
         .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|run| run.project_name == schema.project.name)
-        .ok_or_else(|| ApiError::bad_request("project has no completed run"))?;
-    let annotations = state
-        .application
-        .store()
-        .list_annotations(run.id)
-        .map_err(ApiError::internal)?;
-    let image_path = state
+        .into_iter();
+    let mut export_source = None;
+    for run in runs.filter(|run| run.project_name == schema.project.name) {
+        let annotations = state
+            .application
+            .store()
+            .list_annotations(run.id)
+            .map_err(ApiError::internal)?;
+        if !annotations.is_empty() {
+            export_source = Some((run, annotations));
+            break;
+        }
+    }
+    let (run, annotations) = export_source
+        .ok_or_else(|| ApiError::bad_request("project has no run with annotations"))?;
+    let image_paths = state
         .application
         .list_project_images(&project_id)
-        .map_err(ApiError::bad_request)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::bad_request("project has no image"))?;
+        .map_err(ApiError::bad_request)?;
+    let source_sha256 = run
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok())
+        .and_then(|snapshot| {
+            snapshot
+                .pointer("/image/sha256")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let image_path = if let Some(source_sha256) = source_sha256 {
+        image_paths
+            .iter()
+            .find(|path| {
+                annotagent_image_tools::load_image(path, 40_000_000)
+                    .is_ok_and(|frame| frame.metadata.sha256 == source_sha256)
+            })
+            .cloned()
+    } else {
+        image_paths.first().cloned()
+    }
+    .ok_or_else(|| ApiError::bad_request("the annotated source image is unavailable"))?;
     let frame = annotagent_image_tools::load_image(&image_path, 40_000_000)
         .map_err(ApiError::bad_request)?;
     let image_id = annotations
@@ -3109,6 +3138,46 @@ export:
                 .as_array()
                 .is_some_and(|nodes| nodes.contains(&json!("core.image_input")))
         );
+
+        let annotation_id = uuid::Uuid::new_v4();
+        let image_id = uuid::Uuid::new_v4();
+        let created_annotation = request(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/runs/{run_id}/annotations"),
+            Some(json!({
+                "annotation": {
+                    "id": annotation_id,
+                    "image_id": image_id,
+                    "task_id": "scene",
+                    "label": "day",
+                    "value": {"kind": "classification", "labels": ["day"]},
+                    "attributes": {},
+                    "confidence": null,
+                    "source": "human",
+                    "review_status": "needs_review",
+                    "provenance": {
+                        "run_step_id": null,
+                        "provider": null,
+                        "model": null,
+                        "tool_names": [],
+                        "parent_annotation_id": null,
+                        "artifact_ids": []
+                    },
+                    "created_at": Utc::now()
+                }
+            })),
+        )
+        .await;
+        assert_eq!(created_annotation.status(), StatusCode::CREATED);
+        let exported = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/http-label/export",
+            Some(json!({"format": "native"})),
+        )
+        .await;
+        assert_eq!(exported.status(), StatusCode::OK);
     }
 
     async fn request(

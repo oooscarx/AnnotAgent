@@ -4,6 +4,35 @@
 
 AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes geometry, registered tools gather bounded image evidence, deterministic validators and refiners check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
 
+## Guided Project Workspace
+
+The Web product is organized around one concrete Project journey:
+
+`Data -> Labels -> Pipeline -> Test & Publish -> Run -> Inspect -> Review -> Export`
+
+Start it from the repository root:
+
+```bash
+npm --prefix web install
+npm --prefix web run build
+cargo run -p annotagent -- serve --workspace ./workspace --open
+```
+
+In the browser:
+
+1. Open **Projects**, create or choose a Project, then use **Build**.
+2. In **Data**, add workspace-local images. In **Labels**, define annotation semantics such as classification or bounding box labels.
+3. In **Pipeline**, create a Draft, use the controlled Advisor or Node Catalog, configure model bindings and Core nodes, then save.
+4. In **Test & Publish**, Dry Run 1–10 images. A valid report can be published as an immutable Workflow Version.
+5. Start a single-image Run or Dataset Batch from the Project. Active work is restored from backend state and duplicate Start is locked.
+6. Open **Runs** to inspect the exact image, node timeline, inputs, outputs, configuration, usage, errors, bbox/crop lineage, and sandbox Replay. Image, node, and Artifact context is preserved in the URL.
+7. Open **Review** to edit and accept or reject queued annotations. Source Run links are bidirectional.
+8. Return to the Project **Export** section and choose a format. The report shows the written files, exported count, skips, and warnings.
+
+Provider settings live under **Settings -> Provider & budgets**. Non-secret settings persist in the workspace; secrets use the operating-system credential store. The offline Mock provider is suitable for product evaluation without a key.
+
+Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and detailed milestone evidence is in [`docs/execution/UX_ACCEPTANCE_EVIDENCE.md`](docs/execution/UX_ACCEPTANCE_EVIDENCE.md).
+
 ## 1. AnnotAgent Core
 
 Core owns domain-neutral task types, checked geometry, the model/tool/validation loop, budgets, events, registries, persistence contracts, and frontend application use cases. It does not contain domain labels. CLI, TUI, and HTTP all call the same `LocalApplication` service.
@@ -128,6 +157,7 @@ cargo build --workspace --all-features
 npm --prefix web run typecheck
 npm --prefix web test -- --run
 npm --prefix web run build
+npm --prefix web run test:e2e
 cargo run -p annotagent -- doctor
 cargo run -p annotagent -- demo generic-workflow
 cargo run -p annotagent -- demo robocup-hybrid

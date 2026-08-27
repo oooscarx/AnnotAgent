@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
@@ -133,6 +136,14 @@ impl PublishedWorkflowRuntime {
     }
 
     fn executor_for(&self, request: &ImageRunRequest) -> Result<PublishedDagExecutor> {
+        self.executor_for_nodes(request, None)
+    }
+
+    fn executor_for_nodes(
+        &self,
+        request: &ImageRunRequest,
+        included_nodes: Option<&BTreeSet<String>>,
+    ) -> Result<PublishedDagExecutor> {
         let runner = Arc::new(WorkflowRunner {
             project: request.project.clone(),
             image: request.image.clone(),
@@ -148,6 +159,9 @@ impl PublishedWorkflowRuntime {
         let mut operations = std::collections::BTreeSet::new();
         let core_pipeline_runner = Arc::new(CorePipelineRunner);
         for node in &self.workflow.draft.nodes {
+            if included_nodes.is_some_and(|included| !included.contains(&node.id)) {
+                continue;
+            }
             if !operations.insert(node.node_type.clone()) {
                 continue;
             }
@@ -312,7 +326,23 @@ impl PublishedWorkflowRuntime {
         checkpoint: DagCheckpoint,
         node_id: &str,
     ) -> Result<DagRunResult> {
-        let executor = self.executor_for(request)?;
+        let mut replayed_node_ids = BTreeSet::from([node_id.to_owned()]);
+        loop {
+            let descendants = self
+                .workflow
+                .draft
+                .edges
+                .iter()
+                .filter(|edge| replayed_node_ids.contains(&edge.from_node))
+                .map(|edge| edge.to_node.clone())
+                .collect::<Vec<_>>();
+            let before = replayed_node_ids.len();
+            replayed_node_ids.extend(descendants);
+            if replayed_node_ids.len() == before {
+                break;
+            }
+        }
+        let executor = self.executor_for_nodes(request, Some(&replayed_node_ids))?;
         let dag_request = self.dag_request(request);
         Ok(executor
             .replay_from(&self.workflow, &dag_request, checkpoint, node_id)
