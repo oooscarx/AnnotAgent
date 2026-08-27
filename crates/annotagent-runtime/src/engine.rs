@@ -506,6 +506,8 @@ impl AgentRuntime {
         let mut recovery_turns_used = 0_u32;
         let mut deterministic_cache = HashMap::<String, ToolResult>::new();
         let mut known_artifacts = false;
+        let mut consecutive_auxiliary_calls = 0_u32;
+        let mut convergence_turn_pending = false;
         while current_step < step_limit {
             current_step += 1;
             self.control
@@ -539,13 +541,20 @@ impl AgentRuntime {
             )
             .await?;
             validate_model_message_history(&messages)?;
-            let available_definitions = available_definitions(&definitions, known_artifacts);
+            let all_available_definitions = available_definitions(&definitions, known_artifacts);
+            let convergence_turn = convergence_turn_pending;
+            let finalization_only = convergence_turn || current_step == step_limit;
+            let request_definitions = if finalization_only {
+                finalization_definitions(&all_available_definitions)
+            } else {
+                all_available_definitions
+            };
             let model_request = ModelRequest {
                 model: self.config.model.clone(),
                 task_id: task.id.clone(),
                 messages: messages.clone(),
                 images: request.model_image.clone().into_iter().collect(),
-                tools: available_definitions,
+                tools: request_definitions,
                 max_output_tokens: self.config.max_output_tokens,
                 temperature: self.config.temperature,
                 extra: BTreeMap::new(),
@@ -711,6 +720,9 @@ impl AgentRuntime {
                     continue;
                 }
             };
+            if convergence_turn {
+                convergence_turn_pending = false;
+            }
             let additional = AdditionalUsage {
                 image_count: u64::from(request.model_image.is_some()),
                 request_count: 1,
@@ -821,6 +833,7 @@ impl AgentRuntime {
             let mut retry_requested = false;
             let mut terminal_reached = false;
             let mut feedback = Vec::new();
+            let mut auxiliary_calls_this_turn = 0_u32;
             for call in response_tool_calls {
                 if terminal_reached || retry_requested {
                     let message = "tool call was not executed because an earlier call in the same assistant message selected a terminal or retry action";
@@ -967,6 +980,9 @@ impl AgentRuntime {
                 };
                 match result {
                     Ok(result) => {
+                        if tools.is_read_only(&call.name) {
+                            auxiliary_calls_this_turn = auxiliary_calls_this_turn.saturating_add(1);
+                        }
                         if tools.is_read_only(&call.name) && !cache_hit {
                             deterministic_cache.insert(signature, result.clone());
                         }
@@ -1490,6 +1506,64 @@ impl AgentRuntime {
                         }
                     }
                 }
+            }
+            if auxiliary_calls_this_turn > 0 {
+                consecutive_auxiliary_calls =
+                    consecutive_auxiliary_calls.saturating_add(auxiliary_calls_this_turn);
+            } else {
+                consecutive_auxiliary_calls = 0;
+            }
+            if !terminal_reached
+                && !retry_requested
+                && consecutive_auxiliary_calls >= 2
+                && current_step < step_limit
+            {
+                let actions =
+                    finalization_definitions(&available_definitions(&definitions, known_artifacts))
+                        .into_iter()
+                        .map(|definition| definition.name)
+                        .collect::<Vec<_>>();
+                feedback.push(
+                    json!({
+                        "type": "convergence_required",
+                        "reason": "two or more consecutive auxiliary evidence calls completed without a terminal decision",
+                        "instruction": "Use the best evidence already collected and select one of the available terminal actions on the next turn. Do not call another evidence tool during that bounded convergence turn.",
+                        "available_actions": actions,
+                    })
+                    .to_string(),
+                );
+                convergence_turn_pending = true;
+                consecutive_auxiliary_calls = 0;
+                self.publish(
+                    RunEvent::new(
+                        request.run_id,
+                        RunEventKind::RetryScheduled,
+                        RunEventPayload::Message {
+                            summary: "repeated auxiliary exploration detected; reserved one bounded convergence turn"
+                                .to_owned(),
+                        },
+                    )
+                    .scoped(Some(request.image_id), Some(task.id.clone())),
+                )
+                .await?;
+            } else if !terminal_reached
+                && !retry_requested
+                && current_step.saturating_add(1) == step_limit
+            {
+                let actions =
+                    finalization_definitions(&available_definitions(&definitions, known_artifacts))
+                        .into_iter()
+                        .map(|definition| definition.name)
+                        .collect::<Vec<_>>();
+                feedback.push(
+                    json!({
+                        "type": "finalization_required",
+                        "reason": "the next model turn is the last turn in the configured task budget",
+                        "instruction": "Select a terminal action on the next turn using the evidence already collected.",
+                        "available_actions": actions,
+                    })
+                    .to_string(),
+                );
             }
             if retry_requested {
                 recovery_turns_used += 1;
@@ -2237,6 +2311,22 @@ fn available_definitions(
         .collect()
 }
 
+fn finalization_definitions(definitions: &[ToolDefinition]) -> Vec<ToolDefinition> {
+    definitions
+        .iter()
+        .filter(|definition| {
+            matches!(
+                definition.name.as_str(),
+                "submit_annotation_candidates"
+                    | "commit_artifacts"
+                    | "request_human_review"
+                    | "finish_task"
+            )
+        })
+        .cloned()
+        .collect()
+}
+
 fn cached_tool_result(result: &ToolResult, definitions: &[ToolDefinition]) -> ToolResult {
     let available_actions = available_definitions(definitions, !result.artifacts.is_empty())
         .into_iter()
@@ -2640,5 +2730,40 @@ mod tests {
         );
         assert!(!result.model_result.to_string().contains("rect"));
         assert!(result.persisted_result.to_string().contains("rect"));
+    }
+
+    #[test]
+    fn finalization_turn_exposes_terminal_actions_without_auxiliary_tools() {
+        let definitions = vec![
+            ToolDefinition {
+                name: "evaluate_ball_hard_negative".to_owned(),
+                description: "evidence".to_owned(),
+                parameters: json!({"type": "object"}),
+                read_only: true,
+            },
+            ToolDefinition {
+                name: "submit_annotation_candidates".to_owned(),
+                description: "submit".to_owned(),
+                parameters: json!({"type": "object"}),
+                read_only: false,
+            },
+            ToolDefinition {
+                name: "request_human_review".to_owned(),
+                description: "review".to_owned(),
+                parameters: json!({"type": "object"}),
+                read_only: false,
+            },
+        ];
+
+        assert_eq!(
+            finalization_definitions(&definitions)
+                .into_iter()
+                .map(|definition| definition.name)
+                .collect::<Vec<_>>(),
+            vec![
+                "submit_annotation_candidates".to_owned(),
+                "request_human_review".to_owned(),
+            ]
+        );
     }
 }

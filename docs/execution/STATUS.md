@@ -149,3 +149,21 @@ on the Roadmap; it is not the primary acceptance path.
   production Web build pass.
 
 OpenAI-compatible action recovery and local credential status: `PASS`.
+
+## Bounded auxiliary-tool convergence — 2026-08-28
+
+- Diagnosed failed Run `709bae51-d2d8-45d7-b713-89b1c8dfdc33`: all eight Qwen responses were
+  valid tool calls, but every call selected `evaluate_ball_hard_negative`; no submission action was
+  selected before the configured turn budget ended.
+- Runtime now detects two consecutive successful auxiliary evidence calls and reserves exactly one
+  bounded convergence turn exposing only terminal actions. A failed terminal candidate returns to
+  the normal recovery protocol; auxiliary tools are not permanently disabled.
+- The final configured model turn is also terminal-only. No task/model/tool budget was increased.
+- Live Run `6df70d25-e1fe-4233-8ec1-cd4314f665ca` completed on the same B-Human image with tool
+  sequence `evaluate_ball_hard_negative → evaluate_ball_hard_negative →
+  submit_annotation_candidates`, zero validation issues, and one committed Ball annotation. Usage
+  was 15,641 tokens across three requests at `$0.034535`.
+- Strict workspace Clippy, all 151 Rust tests and doc tests, Web typecheck, all 24 Web tests, and the
+  production Web build pass.
+
+Bounded auxiliary-tool convergence status: `PASS`.

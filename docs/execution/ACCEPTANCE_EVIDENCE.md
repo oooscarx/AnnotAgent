@@ -618,3 +618,21 @@ RoboCup Ball-only scope reset status: `PASS`.
    and the Vite production build passed.
 
 OpenAI-compatible action recovery and workspace-local credential status: `PASS`.
+
+## Bounded auxiliary-tool convergence — 2026-08-28
+
+1. Failure Run `709bae51-d2d8-45d7-b713-89b1c8dfdc33` consumed all eight configured turns on eight
+   successful `evaluate_ball_hard_negative` calls and then failed without a submission. This proves
+   the failure was model action selection, not Provider parsing or tool execution.
+2. `repeated_auxiliary_calls_reserve_a_bounded_convergence_turn` proves that two successful
+   auxiliary calls add structured `convergence_required` feedback and the next submission commits.
+   `finalization_turn_exposes_terminal_actions_without_auxiliary_tools` proves evidence tools are
+   absent only during a bounded finalization turn.
+3. Live Qwen Run `6df70d25-e1fe-4233-8ec1-cd4314f665ca` completed with exactly two evidence calls
+   followed by `submit_annotation_candidates`. Deterministic validation accepted the candidate
+   without issues and committed annotation `ba406c34-1ab8-437d-912f-622c5f7e7c7e`.
+4. The live Run used 9,343 input and 6,298 output tokens across three requests, costing `$0.034535`.
+5. Strict workspace Clippy passed. All 151 Rust tests plus doc tests passed. Web typecheck, 24 tests,
+   and the Vite production build passed.
+
+Bounded auxiliary-tool convergence status: `PASS`.

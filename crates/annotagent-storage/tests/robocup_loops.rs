@@ -222,6 +222,51 @@ async fn identical_ball_evidence_call_reuses_cached_result() {
 }
 
 #[tokio::test]
+async fn repeated_auxiliary_calls_reserve_a_bounded_convergence_turn() {
+    let provider = Arc::new(MockVisionProvider::new(MockScript {
+        steps: vec![
+            step(MockResponseSpec::ToolCall {
+                name: "evaluate_ball_hard_negative".to_owned(),
+                arguments: json!({"bbox": [0.20, 0.30, 0.04, 0.04]}),
+            }),
+            step(MockResponseSpec::ToolCall {
+                name: "evaluate_ball_hard_negative".to_owned(),
+                arguments: json!({"bbox": [0.547, 0.75, 0.038, 0.06]}),
+            }),
+            MockStep {
+                expect_task: Some("objects".to_owned()),
+                expect_message_contains: Some("convergence_required".to_owned()),
+                response: ball_submission([0.547, 0.75, 0.038, 0.06]),
+                usage: MockUsage {
+                    input_tokens: 140,
+                    output_tokens: 35,
+                },
+            },
+        ],
+    }));
+    let store = Arc::new(SqliteStore::open_in_memory().expect("SQLite"));
+    let result = run(provider, store.clone()).await;
+
+    assert_eq!(result.status, RunStatus::Completed, "{result:#?}");
+    assert_eq!(result.committed.len(), 1);
+    assert_eq!(result.usage.requests, 3);
+    assert!(
+        store
+            .list_events(result.run_id)
+            .expect("events")
+            .iter()
+            .any(|event| {
+                event.kind == RunEventKind::RetryScheduled
+                    && matches!(
+                        &event.payload,
+                        annotagent_core::RunEventPayload::Message { summary }
+                            if summary.contains("bounded convergence turn")
+                    )
+            })
+    );
+}
+
+#[tokio::test]
 async fn unusual_ball_geometry_is_retried_and_corrected() {
     let provider = Arc::new(MockVisionProvider::new(MockScript {
         steps: vec![
