@@ -1,0 +1,32 @@
+# AnnotAgent Agent + Skill Acceptance Evidence
+
+## M0 — baseline and constraints
+
+### Repository audit
+
+- Start branch: `main`; start state: clean; ahead of `origin/main`: 11 commits.
+- Latest starting commit: `2fe4de7 feat(product): complete guided workspace acceptance`.
+- Remote was inspected read-only and remains `git@github.com:oooscarx/AnnotAgent.git`.
+
+### Course constraints read before implementation
+
+- [Requirements](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/): R1–R6 require
+  Rust core logic, a working UI, configurable providers, interruptible live progress, persisted
+  context/history, and exact usage/cost/budget tracking.
+- [Quick start](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/quick-start/): implement and test
+  incrementally, keep design aligned with reality, preserve Git history, and prepare a stable demo.
+- [Agent architecture](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/agent-architecture/): a real
+  loop is model proposal → Agent-executed tool → tool result in history → another model turn, with
+  final-answer, step, cancellation, token, and cost stop conditions. Skills should load detailed
+  context on demand.
+
+### Baseline checks
+
+```text
+scripts/check-agent-skill-boundaries.sh
+cargo test -p annotagent-runtime tool_history_requires_one_ordered_result_per_call
+```
+
+Result: both checks passed on 2026-08-27. The boundary scan covered Core, Runtime, Server and the
+generic Web component directory. The focused protocol test verified ordered multi-call results and
+rejected missing or wrong-id results.

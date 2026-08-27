@@ -2,6 +2,14 @@
 
 This matrix maps the course [requirements](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/requirements/), [quick start](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/quick-start/), and [architecture guidance](https://lab.cs.tsinghua.edu.cn/rust/projects/agent/agent-architecture/) to concrete code and commands.
 
+The Agent + Skill release adds two explicit Rust-controlled specializations beyond the generic
+annotation loop: (1) iterative, registry-bounded Workflow Advisor planning and (2) risk-triggered
+Annotation Recovery. The `robocup.ball` Domain Skill is a third specialization built from generic
+classification/detection capabilities, deterministic image evidence, domain validators, policy and
+project-scoped correction memory. These are workflows and data sources that a generic chat Agent
+cannot safely substitute because publication, geometry lineage and annotation commits require
+typed, auditable application state.
+
 ## R1 — Rust core logic
 
 Evidence:

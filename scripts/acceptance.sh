@@ -10,6 +10,8 @@ run() {
 
 cd "$repo_root"
 
+run "$repo_root/scripts/check-agent-skill-boundaries.sh"
+
 if rg -n -i 'robocup|yolo|field_line|penalty_mark|team_color|\bball\b|\brobot\b' \
   crates/annotagent-core/src; then
   printf '\nCore domain-boundary scan failed.\n' >&2
