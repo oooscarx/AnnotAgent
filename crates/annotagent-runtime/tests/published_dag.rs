@@ -94,6 +94,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         enabled_skills: BTreeMap::from([("generic".to_owned(), "1".to_owned())]),
         resource_versions: BTreeMap::from([("prompt".to_owned(), "sha256:test".to_owned())]),
         allow_unvalidated_commit: false,
+        label_pipeline: None,
         created_at: now,
         updated_at: now,
     };

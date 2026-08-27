@@ -1,4 +1,4 @@
-# Workflow Alpha Acceptance Evidence
+# AnnotAgent Acceptance Evidence
 
 ## Baseline — 2026-08-27 03:35 CST
 
@@ -297,3 +297,65 @@ Release evidence:
 Live Qwen and configured external-weight inference remain `LIVE-CONDITIONAL`. No conversation credential was read or used, and no fixture output is presented as live inference.
 
 Milestone 9 status: `PASS`. AnnotAgent Workflow Alpha passes the complete offline Release Gate.
+
+## Label Pipeline Alpha release-blocking matrix — 2026-08-27
+
+The active product release path is now Label Pipeline Alpha. The completed Workflow Alpha evidence
+above remains the foundation and RoboCup regression baseline, but RoboCup-specific quality is not a
+primary blocker for this release.
+
+| # | Release blocker | Status after LP1 | Evidence / remaining work |
+| ---: | --- | --- | --- |
+| 1 | Generic Project runs without RoboCup Skill | PASS (foundation) | Existing generic Project/DAG tests remain green. |
+| 2 | Whole-image Classification Skill | INCOMPLETE | Typed contract exists; executable Skill and demo are LP2/LP3. |
+| 3 | Crop Classification Skill | INCOMPLETE | Parent/subject contract and fan-out exist; executable nodes are LP2. |
+| 4 | Detection Skill outputs DetectionSet | INCOMPLETE | `DetectionSetArtifact` is typed and validated; Skill/backend execution is LP2. |
+| 5 | Crop outputs parent-linked CropSet | PASS (contract) | `fan_out_and_fan_in_join_by_parent_reference` proves exact parent lineage; pixel Runtime is LP2. |
+| 6 | One shared detector serves three Labels once/image | PASS (compile) | `one_shared_detector_compiles_once_for_three_label_pipelines` proves one compiled node and three fan-out edges; execution count is LP3. |
+| 7 | Static type errors block publish | PASS (contract) | Label validator reports blocking typed paths; application publish integration is LP4. |
+| 8 | Advisor result is a Draft | PASS (foundation) | Existing bounded Advisor always returns Suggested/Editing Draft; target-Label output is LP4. |
+| 9 | Human edits Draft | PASS (foundation) | Existing persisted editor journey passes; Label Pipeline GUI is LP5. |
+| 10 | Dry Run writes no formal annotation | PASS (foundation) | Existing sandbox Dry Run passes; Label node execution is LP3/LP4. |
+| 11 | Published Version is immutable | PASS | Snapshot hash now includes optional Label Pipeline composition. |
+| 12 | Run pins Workflow Version | PASS (foundation) | Existing image and Dataset exact-version tests pass. |
+| 13 | Node Inspector shows I/O/config/timing/error | INCOMPLETE | Flat trace holds these fields; typed Pipeline Artifact API/UI is LP4/LP5. |
+| 14 | Classifier Replay does not rerun detector | INCOMPLETE | Existing checkpoint/cache base exists; exact Label Pipeline gate is LP3. |
+| 15 | Three mock demos pass offline | INCOMPLETE | LP3. |
+| 16 | 100 synthetic images pass | PASS (foundation) | Existing batch gate passes; Label Pipeline-specific batch gate is LP3. |
+| 17 | Pause/Resume/Cancel/active recovery | PASS (foundation) | Existing Runtime, batch, and application tests pass; Label Pipeline path is LP3. |
+| 18 | All Rust/Web checks pass | PARTIAL | LP1: 117 Rust tests and strict Clippy pass; Web unchanged and final full gate is LP5. |
+| 19 | Core contains no domain/implementation branches | PASS | Core scan for RoboCup, detector product names, and domain Labels is clean. |
+| 20 | No push/remote change/historical API key | PASS | Work remains local; no credential was read or used. |
+
+## Label Pipeline Alpha LP1 — core composition and Artifact contracts
+
+Implementation and evidence commit: recorded by the LP1 local commit containing this section.
+
+Acceptance commands:
+
+| Command | Exit | Evidence |
+| --- | ---: | --- |
+| `cargo test -p annotagent-core` | 0 | 26 tests pass, including four new Label Pipeline contract/compiler tests. |
+| `cargo test --workspace --all-features` | 0 | 117 Rust tests pass; 0 fail; all doc tests pass. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | No warnings or lint suppression. |
+| Core domain scan | 0 | No RoboCup, detector product name, or concrete RoboCup Label branch in `annotagent-core`. |
+
+Direct evidence:
+
+1. `LabelWorkflowComposition::compile_draft` emits exactly one `core.image_input`, each shared step
+   once, and ordinary typed edges into any number of Label Pipelines. The immutable Workflow
+   snapshot content hash includes the composition.
+2. `LabelPipelineStaticValidator` checks target task/Label membership, global step identity,
+   shared-stage ownership, input/output Artifact types, real Node and Model Registry identities,
+   model capability, and enabled Skill version.
+3. `DetectionSetArtifact`, `CropSetArtifact`, `ClassificationSetArtifact`, and
+   `AnnotationCandidateSet` validate confidence, identity, set membership, and lineage.
+4. Image + DetectionSet → CropSet expands each Detection with padding while retaining its exact
+   parent item reference. DetectionSet + ClassificationSet → AnnotationCandidateSet joins by that
+   exact reference and never by array order.
+5. Classification records distinguish whole-image, Detection, and Crop subjects. A Crop
+   classification is invalid without a parent Detection reference.
+6. The full pre-existing Rust suite, including RoboCup extensions and 100-image recovery, remains
+   green. Core contains no product-name or domain-label conditional logic.
+
+LP1 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP2–LP5 pass.

@@ -921,6 +921,16 @@ fn mock_artifact(
             .map_err(|error| DagNodeFailure::terminal("mock_geometry", error.to_string()))
     };
     let value = match kind {
+        ArtifactKind::Image
+        | ArtifactKind::DetectionSet
+        | ArtifactKind::CropSet
+        | ArtifactKind::ClassificationSet
+        | ArtifactKind::AnnotationCandidateSet => {
+            return Err(DagNodeFailure::terminal(
+                "unsupported_mock_artifact",
+                format!("{kind:?} requires a Label Pipeline node runner"),
+            ));
+        }
         ArtifactKind::Classification => VisionArtifactValue::Classification {
             labels: vec![label.cloned().unwrap_or_else(|| LabelId::from("present"))],
         },
@@ -1054,15 +1064,20 @@ const fn artifact_for_task(kind: TaskKind) -> ArtifactKind {
 
 const fn capability_for_kind(kind: ArtifactKind) -> annotagent_core::VisionCapability {
     match kind {
-        ArtifactKind::BoundingBox => annotagent_core::VisionCapability::ObjectDetection,
-        ArtifactKind::SemanticMask => annotagent_core::VisionCapability::SemanticSegmentation,
-        ArtifactKind::InstanceMask => annotagent_core::VisionCapability::InstanceSegmentation,
-        ArtifactKind::Keypoints => annotagent_core::VisionCapability::KeypointDetection,
-        ArtifactKind::Classification
+        ArtifactKind::Image
+        | ArtifactKind::DetectionSet
+        | ArtifactKind::CropSet
+        | ArtifactKind::ClassificationSet
+        | ArtifactKind::AnnotationCandidateSet
+        | ArtifactKind::Classification
         | ArtifactKind::Polyline
         | ArtifactKind::Polygon
         | ArtifactKind::Attributes
         | ArtifactKind::Relations => annotagent_core::VisionCapability::VisionLanguage,
+        ArtifactKind::BoundingBox => annotagent_core::VisionCapability::ObjectDetection,
+        ArtifactKind::SemanticMask => annotagent_core::VisionCapability::SemanticSegmentation,
+        ArtifactKind::InstanceMask => annotagent_core::VisionCapability::InstanceSegmentation,
+        ArtifactKind::Keypoints => annotagent_core::VisionCapability::KeypointDetection,
     }
 }
 

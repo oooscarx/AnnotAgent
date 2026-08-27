@@ -1954,6 +1954,7 @@ mod tests {
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
             allow_unvalidated_commit: true,
+            label_pipeline: None,
             created_at: now,
             updated_at: now,
         };

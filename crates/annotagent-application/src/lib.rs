@@ -1606,6 +1606,7 @@ impl LocalApplication {
                 enabled_skills: project.project.enabled_skill_versions(),
                 resource_versions: BTreeMap::new(),
                 allow_unvalidated_commit: false,
+                label_pipeline: None,
                 created_at: now,
                 updated_at: now,
             }

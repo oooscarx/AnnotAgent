@@ -10,7 +10,7 @@ run() {
 
 cd "$repo_root"
 
-if rg -n -i 'robocup|field_line|penalty_mark|team_color|\bball\b|\brobot\b' \
+if rg -n -i 'robocup|yolo|field_line|penalty_mark|team_color|\bball\b|\brobot\b' \
   crates/annotagent-core/src; then
   printf '\nCore domain-boundary scan failed.\n' >&2
   exit 1
@@ -31,6 +31,5 @@ run npm --prefix "$repo_root/web" run test
 run npm --prefix "$repo_root/web" run build
 run cargo run -p annotagent -- doctor
 run cargo run -p annotagent -- demo generic-workflow
-run cargo run -p annotagent -- demo robocup-hybrid
 
-printf '\nWorkflow Alpha acceptance completed successfully.\n'
+printf '\nLabel Pipeline Alpha acceptance checks completed successfully.\n'

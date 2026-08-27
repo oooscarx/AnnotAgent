@@ -1,49 +1,61 @@
-# Workflow Alpha Status
+# AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 08:12 CST
+Last updated: 2026-08-27 14:59 CST
 
 ## Current milestone
 
-Milestone 9 — complete. AnnotAgent Workflow Alpha passes the offline Release Gate.
+Milestone LP1 — complete: domain-neutral Label Pipeline contracts, typed intermediate Artifacts,
+parent/subject lineage, static validation, and compilation to one flat shared-stage DAG.
+
+Milestone LP2 — next: execute the typed Pipeline Artifacts through Core nodes and the two formal
+Skills, including versioned HTTP Vision Protocol adapters, cache, Commit, and node Replay.
+
+## Product objective
+
+The active release target is **AnnotAgent Label Pipeline Alpha**:
+
+- Project Schema owns annotation semantics and Labels.
+- Workflow owns how each Label is produced.
+- multiple Label Pipelines may fan out from one shared upstream node;
+- a shared node has one compiled identity and executes once per image/configuration;
+- Advisor output is always a registry-bounded editable Draft;
+- Dry Run, immutable publish, exact-version execution, Artifact inspection, and Replay are real
+  Runtime capabilities rather than UI placeholders.
+
+The full RoboCup Workflow is now a non-blocking extension example and Roadmap item. Its existing
+implementation remains under regression tests, but it is not the primary Label Pipeline Alpha
+acceptance path.
 
 ## Completed
 
-- M0 established the Git/test baseline, fail-fast acceptance script, execution ledger, and recovery documents.
-- M1 completed standard tool-call replay, structured/model/UI ToolResult separation, all required typed Artifacts, direct Refiner validation/Commit, state semantics, duplicate/idempotent start, active/last Run recovery, and structured failures.
-- M2 added strongly typed versioned Workflows, immutable content-addressed snapshots, precise static validation, zero/multi-Skill Projects, namespaced registries, and deterministic visual merge evidence.
-- M3 added the published-snapshot DAG executor with parallel waves, retry/fallback, timeout/cancel, caching, HumanReview suspension/resume, safe Commit, checkpoints, and replayable node trace.
-- M4 added Model Registry metadata and mock, OpenAI-compatible, JSON-only, HTTP JSON worker, and deterministic pixel-CV backends with typed v1 contracts and honest health/error behavior.
-- M5 added durable Dataset Batches, leases, transactionally reserved global budgets, persistent checkpoints, pause/restart/resume/cancel, orphan recovery, and the 100-image no-duplicate gate.
-- M6 added bounded Mock/LLM Advisors and the real Draft edit/validate/Dry Run/publish/clone/archive/compare/version-select product loop.
-- M7 added RoboCup-owned hybrid templates, Validators/Refiners/evidence tools, typed detector→semantic→validation→review/Commit execution, and ground-truth evaluation.
-- M8 completed Review geometry create/edit/delete/undo/redo/before-after/revision and Native/COCO/LabelMe/YOLO import/export compatibility round trips.
-- M9 wired exact Published Workflow selection into product image Runs and every Dataset child Run, persisted DAG checkpoints/Artifacts/node status, exposed full GUI/TUI observability, hardened settings/endpoints/paths/archives/pixel limits/untrusted output/secrets, and added stable Generic and RoboCup hybrid offline demos.
-- The Runs page no longer shows the legacy-only `run reached a terminal condition`; it derives structured Provider/Task failures, validation evidence, or an explicit legacy evidence limitation.
-- All required release documents exist and describe the actual implementation rather than the pre-Alpha compatibility roadmap.
+- Workflow Alpha M0–M9 remains the tested foundation: immutable Workflow versions, typed flat DAG,
+  cache/checkpoint/Replay traces, Review, batch recovery, Model Registry, controlled Advisor, and
+  security boundaries.
+- LP1 added `LabelPipeline`, `SharedWorkflowStage`, `PipelineSource`, `PipelineStep`, `ArtifactRef`,
+  `DetectionSetArtifact`, `CropSetArtifact`, `ClassificationSetArtifact`,
+  `AnnotationCandidateSet`, `ModelBinding`, and `SkillBinding`.
+- LP1 compiles one Image Input plus all shared and per-Label steps into the existing flat Workflow
+  graph; three Label Pipelines referencing one shared detector compile to one detector node with
+  three outgoing edges.
+- LP1 implements explicit Image + DetectionSet → CropSet fan-out and DetectionSet +
+  ClassificationSet → AnnotationCandidateSet fan-in. Crop and Classification records retain exact
+  parent/subject item references.
+- LP1 static validation blocks unknown Labels/tasks/nodes/models/Skills, capability mismatches,
+  broken shared-stage ownership, missing sources, and Artifact type mismatches.
+- Published snapshot content hashing now includes the optional Label Pipeline authoring projection;
+  existing Workflow/RoboCup snapshots remain compatible through a defaulted optional field.
 
-## Final acceptance
+## LP1 verification
 
-- `./scripts/acceptance.sh` exits 0.
-- Strict all-target/all-feature Clippy passes with `-D warnings`.
-- 113 Rust tests pass; 0 fail. The 100-image concurrency-four pause/restart/resume test completes with exactly 100 child Runs.
-- 7 Web test files / 13 tests pass; typecheck and production build pass.
-- Doctor reports 28 SQLite tables, migrations and mock/offline readiness.
-- `demo generic-workflow` completes with 2 validated/committed Artifacts.
-- `demo robocup-hybrid` produces 3 Artifacts and correctly routes `possible_white_shoe` to review with 0 unsafe commits.
-- In-app browser verification confirms the Dataset Batch control, immutable version selector, active/last Run state, complete Runs audit fields, and explainable legacy errors.
-- Core domain-word and repository secret-prefix scans are release blockers in `scripts/acceptance.sh` and pass.
+- `cargo test -p annotagent-core`: 26 passed, 0 failed.
+- `cargo test --workspace --all-features`: 117 Rust tests passed, 0 failed; doc tests passed.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
+- Core domain scan for RoboCup/YOLO/domain Labels: clean.
+- No conversation credential was read, restored, logged, or used.
 
-## Live-conditional items
+## Remaining release blockers
 
-- Real Qwen-compatible inference requires a current credential supplied through the supported environment/keychain path. No credential from conversation history was read, restored, or used.
-- Real external detector/segmenter inference requires configured weights or an endpoint. The reference worker reports degraded/`weights_unavailable` without them and is not claimed as live inference.
-
-These are the only external conditional checks; they do not block the offline Workflow Alpha Release Gate. Product-scope limitations are documented in `docs/KNOWN_LIMITATIONS.md`.
-
-## Recent commits
-
-- `b3ba536 feat(release): complete Workflow Alpha execution and hardening`
-- `520d307 docs(review): record milestone 8 acceptance`
-- `3636e0f feat(review): complete editing and annotation round trips`
-- `b200d3e docs(robocup): record milestone 7 acceptance`
-- `08d3958 feat(robocup): complete hybrid skill and evaluation`
+LP2–LP5 must still complete the executable Core nodes and Skill backends, three offline demos,
+100-image Label Pipeline batch/lifecycle evidence, bounded Label Advisor, product GUI/Inspector,
+Replay boundary, and full Rust/Web/browser acceptance. Until those gates pass, Label Pipeline Alpha
+is not release-complete.

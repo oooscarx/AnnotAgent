@@ -461,6 +461,11 @@ fn edge_set(from: &str, to: &str, kinds: &[ArtifactKind]) -> Vec<WorkflowEdge> {
 
 const fn kind_name(kind: ArtifactKind) -> &'static str {
     match kind {
+        ArtifactKind::Image => "image",
+        ArtifactKind::DetectionSet => "detection_set",
+        ArtifactKind::CropSet => "crop_set",
+        ArtifactKind::ClassificationSet => "classification_set",
+        ArtifactKind::AnnotationCandidateSet => "annotation_candidate_set",
         ArtifactKind::Classification => "classification",
         ArtifactKind::BoundingBox => "bounding_box",
         ArtifactKind::Keypoints => "keypoints",

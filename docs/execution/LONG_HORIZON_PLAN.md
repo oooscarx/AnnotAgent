@@ -1,6 +1,8 @@
-# AnnotAgent Workflow Alpha — Long-Horizon Plan
+# AnnotAgent Label Pipeline Alpha — Long-Horizon Plan
 
-This file is the durable execution map for the Workflow Alpha release. A milestone is complete only when its gate has direct automated evidence and a dedicated local commit.
+This file is the durable execution map for the active Label Pipeline Alpha release. Workflow Alpha
+M0–M9 is the completed foundation. A milestone is complete only when its gate has direct automated
+evidence and a dedicated local commit.
 
 ## Invariants
 
@@ -47,10 +49,46 @@ This file is the durable execution map for the Workflow Alpha release. A milesto
     - Complete security tests, observability, required docs, two offline demos, API/browser smoke, and the complete blocking matrix.
     - Status: completed in `b3ba536`; 113 Rust and 13 Web tests plus browser acceptance pass.
 
+### Label Pipeline Alpha
+
+11. **LP1 — Label composition and typed intermediate contracts**
+    - Add shared stages, per-Label Pipelines, registry bindings, explicit set Artifacts, parent and
+      subject lineage, static validation, and compilation to the existing flat immutable DAG.
+    - Status: completed locally; 117 Rust tests and strict Clippy pass. Commit recorded with this
+      milestone evidence.
+12. **LP2 — Executable Core nodes and formal Skills**
+    - Implement Image Input, Crop, Filter, Map Label, Attach Attribute, Confidence Gate, Human
+      Review, Commit, Artifact Cache, and Replay over typed Pipeline Artifacts.
+    - Add Classification Skill and Detection Skill with mock and versioned HTTP JSON bindings.
+    - Crop remains a Core node; the detector produces only `DetectionSetArtifact`.
+    - Status: pending.
+13. **LP3 — Offline examples and lifecycle gates**
+    - Ship whole-image classification, detection, and crop-classification examples.
+    - Prove shared detector execution once/image, classifier Replay without detector rerun, Dry Run
+      isolation, 100-image batch, pause/resume/cancel, and active Run recovery.
+    - Status: pending.
+14. **LP4 — Bounded Advisor and application APIs**
+    - Make Advisor input target-Label aware and constrain output to real Registry nodes, Models,
+      Validators, and Refiners.
+    - Persist editable Drafts, validate, Dry Run 1–10 images, publish immutable versions, expose
+      typed node Artifacts, and Replay from an exact node.
+    - Status: pending.
+15. **LP5 — Product GUI and release acceptance**
+    - Add Project Label authoring, Shared Stages, per-Label Pipelines, Node Catalog editing,
+      bindings/configuration, Artifact bbox/crop preview, Inspector, and Replay.
+    - Unimplemented controls remain disabled with an explicit reason; no mock screen may claim a
+      missing Runtime capability.
+    - Run all Rust/Web/security/browser gates and publish final evidence locally.
+    - Status: pending.
+
 ## Working sequence
 
-The completed implementation order was protocol/state correctness → Artifact → Workflow model → DAG Runtime → Model backends → batch checkpoint → Advisor/editor → RoboCup example → Review/import/export → hardening.
+The active implementation order is Label composition/contracts → executable Core nodes and Skills
+→ offline examples/lifecycle → bounded Advisor/APIs → GUI and release acceptance. RoboCup remains a
+regression-tested later extension example, not a primary blocker.
 
 ## Completion rule
 
-Workflow Alpha is releasable only when every non-live-conditional row in `ACCEPTANCE_EVIDENCE.md` has a reproducible passing command or inspected behavior. Missing evidence is treated as incomplete, not assumed success.
+Label Pipeline Alpha is releasable only when every one of its 20 Release Blocking gates in
+`ACCEPTANCE_EVIDENCE.md` has reproducible passing evidence. Missing evidence is incomplete, never
+assumed success.

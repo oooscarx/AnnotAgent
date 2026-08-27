@@ -178,6 +178,10 @@ pub struct WorkflowDraft {
     pub resource_versions: BTreeMap<String, String>,
     #[serde(default)]
     pub allow_unvalidated_commit: bool,
+    /// Optional authoring projection for label-oriented workflows. Runtime execution remains the
+    /// compiled, flat `nodes`/`edges` DAG so shared stages execute once per image.
+    #[serde(default)]
+    pub label_pipeline: Option<crate::LabelWorkflowComposition>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -217,6 +221,7 @@ impl WorkflowTemplate {
             enabled_skills,
             resource_versions: self.resource_versions.clone(),
             allow_unvalidated_commit: self.allow_unvalidated_commit,
+            label_pipeline: None,
             created_at: now,
             updated_at: now,
         }
@@ -384,6 +389,7 @@ impl WorkflowSnapshot {
             enabled_skills: &'a BTreeMap<String, String>,
             resource_versions: &'a BTreeMap<String, String>,
             allow_unvalidated_commit: bool,
+            label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
             prompt_resources: &'a BTreeMap<String, String>,
         }
@@ -398,6 +404,7 @@ impl WorkflowSnapshot {
             enabled_skills: &self.enabled_skills,
             resource_versions: &draft.resource_versions,
             allow_unvalidated_commit: draft.allow_unvalidated_commit,
+            label_pipeline: &draft.label_pipeline,
             models: &self.models,
             prompt_resources: &self.prompt_resources,
         })
@@ -624,6 +631,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 enabled_skills: skill_versions,
                 resource_versions: BTreeMap::new(),
                 allow_unvalidated_commit: false,
+                label_pipeline: None,
                 created_at: now,
                 updated_at: now,
             },
@@ -1254,8 +1262,13 @@ fn topological_order(draft: &WorkflowDraft) -> Result<Vec<String>, String> {
 }
 
 #[must_use]
-pub const fn all_artifact_kinds() -> [ArtifactKind; 9] {
+pub const fn all_artifact_kinds() -> [ArtifactKind; 14] {
     [
+        ArtifactKind::Image,
+        ArtifactKind::DetectionSet,
+        ArtifactKind::CropSet,
+        ArtifactKind::ClassificationSet,
+        ArtifactKind::AnnotationCandidateSet,
         ArtifactKind::Classification,
         ArtifactKind::BoundingBox,
         ArtifactKind::Keypoints,
@@ -1328,6 +1341,7 @@ mod tests {
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
             allow_unvalidated_commit: true,
+            label_pipeline: None,
             created_at: now,
             updated_at: now,
         }
