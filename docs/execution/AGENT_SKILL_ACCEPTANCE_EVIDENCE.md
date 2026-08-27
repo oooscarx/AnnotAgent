@@ -231,3 +231,65 @@ Direct evidence:
    cancellation, set the stop reason to `cancelled by operator` and cleared Human action to `None`.
 8. Agent trace details are restricted to typed arguments and results. The UI explicitly states and
    enforces that hidden chain-of-thought is not part of the trace.
+
+## M9 — batch reliability, offline demos and Release Matrix
+
+Final command run on 2026-08-28:
+
+```text
+./scripts/acceptance.sh
+exit 0
+```
+
+The script passed, in order:
+
+- Agent + Skill domain boundary scan and repository secret-prefix scan;
+- `cargo fmt --all -- --check`;
+- strict all-feature/all-target Workspace Clippy;
+- 150 Rust unit/integration tests, with zero failures;
+- all-feature Workspace build;
+- Web typecheck, 10 test files / 24 tests, and production build;
+- `annotagent doctor` with SQLite migrations, example Project and Web build present;
+- `demo generic-classification` with `classification@1`, one whole-image ClassificationSet and
+  completed Commit result;
+- `demo generic-detection-crop` with `yolo-detection@1`, DetectionSet → Core Crop, exact parent
+  detection item, pixel dimensions and cache key;
+- `demo robocup-ball` with four cases and no external request.
+
+The 100-image test `persistent_batch_pauses_restarts_and_resumes_one_hundred_images` passed. The
+same suite also covers cancel preventing new nodes, transactional duplicate-start rejection,
+startup requeue/reconciliation, checkpoint reuse, budget reservation, history, export and Replay.
+
+The final Advisor regression test proves two independent revisions: Static Validator errors restore
+registry bindings; a failed Dry Run changes the model node's bounded retry policy, moves the Draft
+to Editing and stops for `edit_failed_dry_run` without requesting Publish approval.
+
+### Release Blocking Acceptance Matrix
+
+| Area | Status | Direct evidence |
+| --- | --- | --- |
+| A. Agent behavior | PASS | 12-step Advisor loop; static and Dry Run revisions; explicit approval/cancel/budget stops; Recovery evidence loop; typed trace only. |
+| B. Skill architecture | PASS | layered registry dependency/conflict/resource tests; external dummy Skill; domain boundary scan; immutable Project/Run snapshots. |
+| C. Generic capabilities | PASS | Classification whole image/crop, VLM Detection, YOLO Mock/HTTP, Core Crop parent lineage, shared detector once, generic Project tests and demos. |
+| D. RoboCup Ball | PASS | Ball registry/Pack tests; white-shoe/sock, penalty/line, field relation/missing evidence tests; fast path and Recovery policy demo. |
+| E. Correction Memory | PASS | exact Project/Skill/task/Label storage isolation, GUI impact view and four-case demo where the second decision changes. |
+| F. Artifact correctness | PASS | ordered Tool history, reference-only model geometry, strong envelopes/provenance, Inspector/Replay/cache, SucceededEmpty, partial tasks and idempotent Commit tests. |
+| G. Product | PASS | AnnotAgent brand, generic empty-state tests, layered Skills, enabled-Skill Project controls, Review taxonomy, Web/TUI Agent trace and cancellation; real browser verification. |
+| H. Course requirements | PASS | Rust core, TUI, GUI, provider/context/reasoning/pricing configuration, SSE/progress/control/history/usage, three domain customizations and offline five-minute demo. Qwen/YOLO live checks are conditional as permitted. |
+
+### Milestone commits through M8
+
+| Milestone | Commit | Message |
+| --- | --- | --- |
+| M0 | `494958e` | `docs(agent): establish agent skill execution baseline` |
+| M1 | `d72fbe2` | `feat(skills): add layered skill registry` |
+| M2 | `eba7780` | `feat(runtime): enforce artifact envelope protocol` |
+| M3 | `559c7e1` | `feat(classification): formalize capability skill` |
+| M4 | `7298c9e` | `feat(detection): formalize detection capabilities` |
+| M5 | `e975246` | `feat(advisor): add iterative workflow agent` |
+| M6 | `ce52557` | `feat(robocup): add ball domain skill pack` |
+| M7 | `2d75fd2` | `feat(recovery): add memory-guided annotation agent` |
+| M8 | `51c54a9` | `feat(product): expose layered skills and agent sessions` |
+
+M9 is the final local commit containing these demos, documents and Release Gate changes; its hash
+is reported after the commit is created.

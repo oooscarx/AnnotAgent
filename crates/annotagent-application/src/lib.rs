@@ -2840,17 +2840,28 @@ impl LocalApplication {
                 approval_required: false,
             });
         }
-        if dry_run.summary.failed_count > 0 {
-            revised.warnings.push(format!(
-                "Dry Run reported {} failed sample(s); revise before approval.",
-                dry_run.summary.failed_count
-            ));
-            let _ = record(
+        if revise_draft_after_failed_dry_run(&mut revised, dry_run.summary.failed_count) {
+            let _recorded = record(
                 &mut session,
                 "revise_draft",
                 json!({"draft_id": revised.draft.id, "cause": "dry_run_metrics"}),
-                json!({"warning_added": true}),
+                json!({
+                    "retry_policy_hardened": true,
+                    "publish_approval_requested": false
+                }),
             );
+            self.store.save_workflow_draft(&revised.draft)?;
+            if session.status == AgentSessionStatus::Running {
+                session.wait_for_human("edit_failed_dry_run");
+            }
+            self.store.save_agent_session(&session)?;
+            return Ok(WorkflowAdvisorAgentReport {
+                session,
+                suggestion: Some(revised),
+                validation: Some(validation),
+                dry_run: Some(dry_run),
+                approval_required: false,
+            });
         }
         if cancellation.is_cancelled() {
             session.cancel();
@@ -4635,6 +4646,58 @@ fn unique_target(directory: &Path, name: &std::ffi::OsStr) -> PathBuf {
     unreachable!()
 }
 
+fn revise_draft_after_failed_dry_run(
+    suggestion: &mut WorkflowSuggestion,
+    failed_count: usize,
+) -> bool {
+    if failed_count == 0 {
+        return false;
+    }
+    let Some(model_node) = suggestion.draft.nodes.iter_mut().find(|node| {
+        matches!(
+            node.kind,
+            WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+        )
+    }) else {
+        suggestion.warnings.push(format!(
+            "Dry Run reported {failed_count} failed sample(s); no model node was available for a bounded retry revision."
+        ));
+        suggestion.draft.status = WorkflowDraftStatus::Editing;
+        suggestion.draft.updated_at = chrono::Utc::now();
+        return true;
+    };
+    let model_node_id = model_node.id.clone();
+    let revised_attempts = model_node
+        .retry_policy
+        .max_attempts
+        .max(1)
+        .saturating_add(1)
+        .min(3);
+    model_node.retry_policy.max_attempts = revised_attempts;
+    if let Some(composition) = suggestion.draft.label_pipeline.as_mut() {
+        for step in composition
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| stage.steps.iter_mut())
+            .chain(
+                composition
+                    .label_pipelines
+                    .iter_mut()
+                    .flat_map(|pipeline| pipeline.steps.iter_mut()),
+            )
+            .filter(|step| step.id == model_node_id)
+        {
+            step.retry_policy.max_attempts = revised_attempts;
+        }
+    }
+    suggestion.draft.status = WorkflowDraftStatus::Editing;
+    suggestion.draft.updated_at = chrono::Utc::now();
+    suggestion.warnings.push(format!(
+        "Dry Run reported {failed_count} failed sample(s); {model_node_id} retry attempts were bounded at {revised_attempts} and the Draft requires human editing before another Dry Run."
+    ));
+    true
+}
+
 trait TerminalEvent {
     fn payload_terminal(&self) -> bool;
 }
@@ -5188,6 +5251,37 @@ export:
                 .first()
                 .map(|session| session.id),
             Some(report.session.id)
+        );
+
+        let mut dry_run_revision = report.suggestion.clone().expect("Advisor suggestion");
+        let (model_node_id, previous_attempts) = dry_run_revision
+            .draft
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+                )
+            })
+            .map(|node| (node.id.clone(), node.retry_policy.max_attempts))
+            .expect("model node");
+        assert!(revise_draft_after_failed_dry_run(&mut dry_run_revision, 2));
+        assert_eq!(dry_run_revision.draft.status, WorkflowDraftStatus::Editing);
+        assert_eq!(
+            dry_run_revision
+                .draft
+                .nodes
+                .iter()
+                .find(|node| node.id == model_node_id)
+                .map(|node| node.retry_policy.max_attempts),
+            Some(previous_attempts.max(1).saturating_add(1).min(3))
+        );
+        assert!(
+            dry_run_revision
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("failed sample") && warning.contains("human"))
         );
 
         let cancelled = CancellationToken::new();

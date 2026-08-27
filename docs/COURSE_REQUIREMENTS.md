@@ -38,6 +38,11 @@ npm --prefix web run build
 cargo run -p annotagent -- serve --workspace ./workspace
 ```
 
+The TUI and GUI both expose persisted Workflow Advisor/Recovery sessions, observable Tool steps,
+usage/cost, stopping state and scoped cancellation. The GUI additionally exposes layered Skill
+configuration and Correction Memory impact. See `docs/DEMO_AGENT_SKILL.md` for the stable
+five-minute path.
+
 ## R3 — Configurable model
 
 `OpenAiCompatibleConfig`, `config/default.toml`, `config/qwen3.7-flash.example.toml`, and the Settings page cover endpoint, environment key name, system-keychain-backed write-only key, model, default run provider, protocol, output/context control, reasoning mode, temperature, timeout, capabilities, headers, extra fields, pricing, and budgets.
@@ -55,6 +60,28 @@ Versioned `RunEvent`, Runtime `EventBus`, application broadcast, and `/api/event
 ```bash
 cargo test -p annotagent-runtime control
 cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_works_over_http
+```
+
+## Course-specialized Agent behavior
+
+The course deliverable contains more than a generic chat loop. Three concrete RoboCup Ball
+specializations are implemented and tested in Rust:
+
+1. deterministic white-shoe/white-sock, penalty-mark and line-intersection hard-negative evidence;
+2. field-region relation evidence with safe missing-evidence degradation;
+3. a bounded Recovery policy that selects crop evidence, Reject or Human Review and adapts to
+   strictly scoped Correction Memory.
+
+The separate Workflow Advisor Agent iteratively inspects registry state, proposes a Draft, consumes
+Static Validator and Dry Run reports, revises the Draft and stops for human publication approval.
+Neither Agent can bypass the Rust-controlled publish/review/commit boundaries.
+
+Offline demonstration:
+
+```bash
+cargo run -p annotagent -- demo generic-classification
+cargo run -p annotagent -- demo generic-detection-crop
+cargo run -p annotagent -- demo robocup-ball
 ```
 
 Manual: start the TUI or GUI, begin a run, use pause/resume/cancel, and inspect persisted `/api/runs/{id}/events`.

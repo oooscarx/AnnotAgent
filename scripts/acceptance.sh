@@ -32,6 +32,8 @@ run npm --prefix "$repo_root/web" run typecheck
 run npm --prefix "$repo_root/web" run test
 run npm --prefix "$repo_root/web" run build
 run cargo run -p annotagent -- doctor
-run cargo run -p annotagent -- demo generic-workflow
+run cargo run -p annotagent -- demo generic-classification
+run cargo run -p annotagent -- demo generic-detection-crop
+run cargo run -p annotagent -- demo robocup-ball
 
-printf '\nLabel Pipeline Alpha acceptance checks completed successfully.\n'
+printf '\nAnnotAgent Agent + Skill Alpha acceptance checks completed successfully.\n'

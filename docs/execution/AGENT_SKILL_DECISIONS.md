@@ -46,3 +46,13 @@ human action when the session becomes terminal.
 
 Rejected: hard-coded domain cards, fabricated Agent steps, UI-only cancellation, implicit global
 correction ownership and exposing hidden model reasoning as a product trace.
+
+## D008 — A failed Dry Run returns the Draft to human editing
+
+When sandbox samples fail, the Advisor may apply one bounded retry-policy hardening to a registered
+model node, records that revision as an observable tool action, saves the Draft as Editing and stops
+for `edit_failed_dry_run`. It does not request publication approval. A successful Dry Run still
+stops at the normal explicit publish boundary.
+
+Rejected: treating a warning-only metadata change as a Draft revision, repeatedly increasing
+Agent steps, auto-publishing a failed Dry Run or hiding the failure behind a larger global budget.

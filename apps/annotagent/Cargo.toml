@@ -19,6 +19,8 @@ annotagent-provider = { path = "../../crates/annotagent-provider" }
 annotagent-runtime = { path = "../../crates/annotagent-runtime" }
 annotagent-server = { path = "../../crates/annotagent-server" }
 annotagent-skill-robocup = { path = "../../crates/annotagent-skill-robocup" }
+annotagent-skill-classification = { path = "../../crates/annotagent-skill-classification" }
+annotagent-skill-yolo = { path = "../../crates/annotagent-skill-yolo" }
 annotagent-storage = { path = "../../crates/annotagent-storage" }
 anyhow.workspace = true
 chrono.workspace = true

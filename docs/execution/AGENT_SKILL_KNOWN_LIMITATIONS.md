@@ -21,3 +21,8 @@
   enables the layered Pack/Domain dependencies; the product does not silently rewrite Project
   semantics.
 - Real Qwen and real YOLO runs require operator-owned configuration and are live-conditional.
+- The required five-image real Qwen sequence was not run in this effort because no operator-owned
+  credential was read or used. No live result is claimed. Mock, local HTTP protocol, timeout,
+  cancellation, usage and cost behavior pass the offline Release Gate.
+- A real YOLO worker with external weights was not available. The versioned HTTP JSON contract and
+  Mock backend pass; live worker throughput/accuracy remains conditional on that external service.

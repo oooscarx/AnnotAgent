@@ -4,7 +4,8 @@ Last updated: 2026-08-28
 
 ## Current milestone
 
-M8 — complete. M9 demos, release matrix and final documentation are next.
+M9 — complete. The offline Agent + Skill Alpha Release Gate passes; only explicitly external live
+checks remain conditional.
 
 ## Audited baseline
 
@@ -146,3 +147,19 @@ M8 — complete. M9 demos, release matrix and final documentation are next.
   states that do not advertise a domain extension unless a Project enables it;
 - browser-verified Advisor waiting/cancellation transitions: cancellation clears pending human
   action and never exposes hidden chain-of-thought.
+
+## M9 delivered
+
+- three real one-command offline demos: `generic-classification`, `generic-detection-crop` and
+  `robocup-ball`;
+- a four-case Ball demo covering fast-path Commit, white-shoe crop evidence, penalty-mark Review
+  and a persisted Correction Memory decision change;
+- a safer failed-Dry-Run Advisor revision: the Draft receives a bounded retry-policy change,
+  returns to Editing and stops for human editing instead of requesting publication approval;
+- a five-minute course walkthrough in `docs/DEMO_AGENT_SKILL.md` and updated R1–R6 mapping;
+- the release script now runs the domain/secret scans, all-feature Rust/Web gates, doctor and all
+  three Agent + Skill demos;
+- 150 Rust tests, including the 100-image persistent pause/restart/resume batch, and 24 Web tests
+  pass in the final release run;
+- Release Matrix A–H passes offline. Real Qwen and a real out-of-process YOLO worker remain clearly
+  `live-conditional` because no operator-owned credentials/service were supplied to this run.
