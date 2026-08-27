@@ -61,7 +61,8 @@ evidence and a dedicated local commit.
       Review, Commit, Artifact Cache, and Replay over typed Pipeline Artifacts.
     - Add Classification Skill and Detection Skill with mock and versioned HTTP JSON bindings.
     - Crop remains a Core node; the detector produces only `DetectionSetArtifact`.
-    - Status: pending.
+    - Status: completed locally; 122 Rust tests and strict Clippy pass. Commit recorded with this
+      milestone evidence.
 13. **LP3 — Offline examples and lifecycle gates**
     - Ship whole-image classification, detection, and crop-classification examples.
     - Prove shared detector execution once/image, classifier Replay without detector rerun, Dry Run

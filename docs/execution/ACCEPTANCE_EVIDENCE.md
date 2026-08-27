@@ -307,10 +307,10 @@ primary blocker for this release.
 | # | Release blocker | Status after LP1 | Evidence / remaining work |
 | ---: | --- | --- | --- |
 | 1 | Generic Project runs without RoboCup Skill | PASS (foundation) | Existing generic Project/DAG tests remain green. |
-| 2 | Whole-image Classification Skill | INCOMPLETE | Typed contract exists; executable Skill and demo are LP2/LP3. |
-| 3 | Crop Classification Skill | INCOMPLETE | Parent/subject contract and fan-out exist; executable nodes are LP2. |
-| 4 | Detection Skill outputs DetectionSet | INCOMPLETE | `DetectionSetArtifact` is typed and validated; Skill/backend execution is LP2. |
-| 5 | Crop outputs parent-linked CropSet | PASS (contract) | `fan_out_and_fan_in_join_by_parent_reference` proves exact parent lineage; pixel Runtime is LP2. |
+| 2 | Whole-image Classification Skill | PASS (Runtime) | Mock Image → Classification → Commit executes offline; application demo Project is LP3. |
+| 3 | Crop Classification Skill | PASS (Runtime) | Shared Detection → Core Crop → Classification → Attach → Gate → Commit executes offline. |
+| 4 | Detection Skill outputs DetectionSet | PASS (Runtime) | Formal detection-only Skill emits scoped `DetectionSetArtifact`; mock and HTTP bindings pass. |
+| 5 | Crop outputs parent-linked CropSet | PASS | Core Crop executes fan-out and Trace preserves exact parent references. |
 | 6 | One shared detector serves three Labels once/image | PASS (compile) | `one_shared_detector_compiles_once_for_three_label_pipelines` proves one compiled node and three fan-out edges; execution count is LP3. |
 | 7 | Static type errors block publish | PASS (contract) | Label validator reports blocking typed paths; application publish integration is LP4. |
 | 8 | Advisor result is a Draft | PASS (foundation) | Existing bounded Advisor always returns Suggested/Editing Draft; target-Label output is LP4. |
@@ -319,11 +319,11 @@ primary blocker for this release.
 | 11 | Published Version is immutable | PASS | Snapshot hash now includes optional Label Pipeline composition. |
 | 12 | Run pins Workflow Version | PASS (foundation) | Existing image and Dataset exact-version tests pass. |
 | 13 | Node Inspector shows I/O/config/timing/error | INCOMPLETE | Flat trace holds these fields; typed Pipeline Artifact API/UI is LP4/LP5. |
-| 14 | Classifier Replay does not rerun detector | INCOMPLETE | Existing checkpoint/cache base exists; exact Label Pipeline gate is LP3. |
+| 14 | Classifier Replay does not rerun detector | PASS (Runtime) | `crop_classification_replay_keeps_shared_detector_checkpoint` observes detector 1, classifier 2. |
 | 15 | Three mock demos pass offline | INCOMPLETE | LP3. |
 | 16 | 100 synthetic images pass | PASS (foundation) | Existing batch gate passes; Label Pipeline-specific batch gate is LP3. |
 | 17 | Pause/Resume/Cancel/active recovery | PASS (foundation) | Existing Runtime, batch, and application tests pass; Label Pipeline path is LP3. |
-| 18 | All Rust/Web checks pass | PARTIAL | LP1: 117 Rust tests and strict Clippy pass; Web unchanged and final full gate is LP5. |
+| 18 | All Rust/Web checks pass | PARTIAL | LP2: 122 Rust tests and strict Clippy pass; Web unchanged and final full gate is LP5. |
 | 19 | Core contains no domain/implementation branches | PASS | Core scan for RoboCup, detector product names, and domain Labels is clean. |
 | 20 | No push/remote change/historical API key | PASS | Work remains local; no credential was read or used. |
 
@@ -359,3 +359,48 @@ Direct evidence:
    green. Core contains no product-name or domain-label conditional logic.
 
 LP1 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP2–LP5 pass.
+
+## Label Pipeline Alpha LP2 — executable Core nodes and formal Skills
+
+Implementation and evidence commit: recorded by the LP2 local commit containing this section.
+
+Acceptance commands:
+
+| Command | Exit | Evidence |
+| --- | ---: | --- |
+| `cargo test -p annotagent-skill-yolo --test label_pipeline_runtime` | 0 | Three offline executable pipelines pass. |
+| `cargo test -p annotagent-provider pipeline_backends` | 0 | Generic HTTP JSON detector/classifier and OpenAI-compatible VLM classifier pass. |
+| `cargo test --workspace --all-features` | 0 | 122 Rust tests pass; 0 fail; all doc tests pass. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | No warnings or lint suppression. |
+
+Direct evidence:
+
+1. Existing `PublishedDagExecutor` carries Pipeline Artifacts through node inputs/outputs, Trace,
+   checkpoint serialization, deterministic cache keys, Human Review, Commit, and result records.
+   Old `VisionArtifact` execution remains intact.
+2. `CorePipelineRunner` implements domain-neutral Crop, Filter, Map Label, Attach Result, Attach
+   Attribute, and Confidence Gate. Crop fans out by Detection reference; Attach Result fans in by
+   the exact parent reference. Confidence Gate marks passed sets/candidates Valid and low-confidence
+   sets/candidates NeedsReview.
+3. `annotagent-skill-classification` accepts Image or CropSet and produces only
+   `ClassificationSetArtifact`. Its mock backend supports deterministic offline acceptance.
+4. `annotagent-skill-yolo` accepts Image and produces only `DetectionSetArtifact`. The crate has no
+   Crop operation; the “Detect & Crop” behavior is an external graph composition.
+5. `HttpJsonPipelineBackend` enforces protocol version, request id, model identity, model binding,
+   image id, node id, output type, retry/cancellation, and Artifact validation for both detector and
+   classifier endpoints.
+6. `OpenAiCompatiblePipelineClassifier` exposes one bounded `submit_classifications` schema. It
+   accepts only requested subject ids and configured Labels, rejects omissions/duplicates, and
+   preserves Crop parent Detection references.
+7. The whole-image path executes Image → Classification → Commit offline. The detection path
+   executes Image → Detection → Filter → Confidence Gate → Commit and asserts the Skill never emits
+   a CropSet.
+8. The crop-classification path executes Image → shared Detection → Core Crop → Classification →
+   Attach Result → Confidence Gate → Commit. Node Trace contains CropSet and ClassificationSet
+   parent lineage.
+9. `PublishedDagExecutor::replay_from` resets only the requested node and descendants. Replaying the
+   classifier increments classifier calls from one to two while detector calls remain exactly one.
+10. Full Workspace regression includes the existing 100-image recovery and RoboCup extension tests;
+    both remain green. No historical credential was read or used.
+
+LP2 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP3–LP5 pass.

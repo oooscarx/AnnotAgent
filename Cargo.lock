@@ -222,6 +222,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-skill-classification"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-runtime",
+ "async-trait",
+ "rust_decimal",
+ "serde_json",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "annotagent-skill-robocup"
 version = "0.1.0"
 dependencies = [
@@ -234,6 +247,23 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "annotagent-skill-yolo"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-runtime",
+ "annotagent-skill-classification",
+ "async-trait",
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

@@ -7,8 +7,8 @@ use std::{
 };
 
 use annotagent_core::{
-    ArtifactValidationState, ImageId, PublishedWorkflowVersion, RunId, VisionArtifact,
-    WorkflowDraft, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    ArtifactValidationState, ImageId, PipelineArtifact, PublishedWorkflowVersion, RunId,
+    VisionArtifact, WorkflowDraft, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -89,6 +89,8 @@ impl std::ops::AddAssign<&Self> for DagNodeUsage {
 pub struct DagNodeOutput {
     #[serde(default)]
     pub artifacts: Vec<VisionArtifact>,
+    #[serde(default)]
+    pub pipeline_artifacts: Vec<PipelineArtifact>,
     /// Gate route selected by this node, for example `pass` or `review`.
     pub route: Option<String>,
     #[serde(default)]
@@ -134,6 +136,7 @@ pub struct DagNodeContext<'a> {
     pub image_id: ImageId,
     pub node: &'a WorkflowDraftNode,
     pub input_artifacts: Vec<VisionArtifact>,
+    pub input_pipeline_artifacts: Vec<PipelineArtifact>,
     pub cancellation: CancellationToken,
 }
 
@@ -157,6 +160,10 @@ pub struct DagNodeTrace {
     pub cache_hit: bool,
     pub input_artifacts: Vec<VisionArtifact>,
     pub output_artifacts: Vec<VisionArtifact>,
+    #[serde(default)]
+    pub input_pipeline_artifacts: Vec<PipelineArtifact>,
+    #[serde(default)]
+    pub output_pipeline_artifacts: Vec<PipelineArtifact>,
     pub route: Option<String>,
     pub usage: DagNodeUsage,
     pub error: Option<DagNodeFailure>,
@@ -198,6 +205,7 @@ pub struct DagExecutionRequest {
     pub run_id: RunId,
     pub image_id: ImageId,
     pub initial_artifacts: Vec<VisionArtifact>,
+    pub initial_pipeline_artifacts: Vec<PipelineArtifact>,
     pub cancellation: CancellationToken,
 }
 
@@ -206,6 +214,7 @@ pub struct DagRunResult {
     pub status: DagRunStatus,
     pub checkpoint: DagCheckpoint,
     pub committed: Vec<VisionArtifact>,
+    pub committed_pipeline_artifacts: Vec<PipelineArtifact>,
 }
 
 #[derive(Default)]
@@ -288,6 +297,38 @@ impl PublishedDagExecutor {
             ));
         }
         self.run(workflow, request, checkpoint, &approved_review_nodes)
+            .await
+    }
+
+    /// Replay one node and every downstream consumer while preserving completed upstream outputs.
+    /// Replaying a classifier therefore does not execute its shared detector or Crop ancestors.
+    pub async fn replay_from(
+        &self,
+        workflow: &PublishedWorkflowVersion,
+        request: &DagExecutionRequest,
+        mut checkpoint: DagCheckpoint,
+        node_id: &str,
+    ) -> Result<DagRunResult, DagRuntimeError> {
+        if checkpoint.workflow_content_hash != workflow.content_hash {
+            return Err(DagRuntimeError::InvalidSnapshot(
+                "checkpoint belongs to a different Workflow content hash".to_owned(),
+            ));
+        }
+        let draft = snapshot_draft(workflow)?;
+        if !draft.nodes.iter().any(|node| node.id == node_id) {
+            return Err(DagRuntimeError::InvalidSnapshot(format!(
+                "replay references unknown node {node_id:?}"
+            )));
+        }
+        for id in descendants_including(draft, node_id) {
+            checkpoint
+                .node_statuses
+                .insert(id.clone(), DagNodeStatus::Pending);
+            checkpoint.node_outputs.remove(&id);
+            checkpoint.approved_review_nodes.remove(&id);
+            checkpoint.activated_fallbacks.remove(&id);
+        }
+        self.run(workflow, request, checkpoint, &BTreeSet::new())
             .await
     }
 
@@ -457,10 +498,13 @@ impl PublishedDagExecutor {
         workflow: &PublishedWorkflowVersion,
         request: &DagExecutionRequest,
         node: &WorkflowDraftNode,
-        mut inputs: Vec<VisionArtifact>,
+        mut inputs: DagInputs,
         approved_review: bool,
     ) -> NodeExecution {
-        inputs.sort_by_key(|artifact| artifact.id);
+        inputs.artifacts.sort_by_key(|artifact| artifact.id);
+        inputs
+            .pipeline_artifacts
+            .sort_by(|left, right| left.reference().cmp(right.reference()));
         let started_at = Utc::now();
         if node.kind == WorkflowNodeKind::HumanReview && !approved_review {
             return NodeExecution::Suspended(trace(
@@ -476,16 +520,15 @@ impl PublishedDagExecutor {
             ));
         }
 
-        let built_in = matches!(
+        let fixed_builtin = matches!(
             node.kind,
-            WorkflowNodeKind::ImageInput
-                | WorkflowNodeKind::HumanReview
-                | WorkflowNodeKind::Commit
-                | WorkflowNodeKind::CandidateMerge
+            WorkflowNodeKind::ImageInput | WorkflowNodeKind::HumanReview | WorkflowNodeKind::Commit
         );
-        let registration = (!built_in)
+        let registration = (!fixed_builtin)
             .then(|| self.runners.get(&node.node_type))
             .flatten();
+        let built_in = fixed_builtin
+            || (node.kind == WorkflowNodeKind::CandidateMerge && registration.is_none());
         if registration.is_none() && !built_in {
             let error = DagNodeFailure::terminal(
                 "runner_not_registered",
@@ -594,7 +637,8 @@ impl PublishedDagExecutor {
                             run_id: request.run_id,
                             image_id: request.image_id,
                             node,
-                            input_artifacts: inputs.clone(),
+                            input_artifacts: inputs.artifacts.clone(),
+                            input_pipeline_artifacts: inputs.pipeline_artifacts.clone(),
                             cancellation: request.cancellation.clone(),
                         })
                         .await
@@ -672,27 +716,63 @@ impl PublishedDagExecutor {
 fn built_in_output(
     node: &WorkflowDraftNode,
     request: &DagExecutionRequest,
-    mut inputs: Vec<VisionArtifact>,
+    mut inputs: DagInputs,
 ) -> Result<DagNodeOutput, DagNodeFailure> {
     match node.kind {
         WorkflowNodeKind::ImageInput => Ok(DagNodeOutput {
             artifacts: request.initial_artifacts.clone(),
+            pipeline_artifacts: request.initial_pipeline_artifacts.clone(),
             ..DagNodeOutput::default()
         }),
         WorkflowNodeKind::HumanReview => {
-            for artifact in &mut inputs {
+            for artifact in &mut inputs.artifacts {
                 artifact.validation_state = ArtifactValidationState::Valid;
             }
+            for artifact in &mut inputs.pipeline_artifacts {
+                match artifact {
+                    PipelineArtifact::DetectionSet(detections) => {
+                        detections.validation_state = ArtifactValidationState::Valid;
+                    }
+                    PipelineArtifact::ClassificationSet(classifications) => {
+                        classifications.validation_state = ArtifactValidationState::Valid;
+                    }
+                    PipelineArtifact::AnnotationCandidateSet(candidates) => {
+                        for candidate in &mut candidates.candidates {
+                            candidate.validation_state = Some(ArtifactValidationState::Valid);
+                        }
+                    }
+                    PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                }
+            }
             Ok(DagNodeOutput {
-                artifacts: inputs,
+                artifacts: inputs.artifacts,
+                pipeline_artifacts: inputs.pipeline_artifacts,
                 metadata: BTreeMap::from([("human_approved".to_owned(), serde_json::json!(true))]),
                 ..DagNodeOutput::default()
             })
         }
         WorkflowNodeKind::Commit => {
             if inputs
+                .artifacts
                 .iter()
                 .any(|artifact| artifact.validation_state != ArtifactValidationState::Valid)
+                || inputs
+                    .pipeline_artifacts
+                    .iter()
+                    .any(|artifact| match artifact {
+                        PipelineArtifact::DetectionSet(detections) => {
+                            detections.validation_state != ArtifactValidationState::Valid
+                        }
+                        PipelineArtifact::ClassificationSet(classifications) => {
+                            classifications.validation_state != ArtifactValidationState::Valid
+                        }
+                        PipelineArtifact::AnnotationCandidateSet(candidates) => {
+                            candidates.candidates.iter().any(|candidate| {
+                                candidate.validation_state != Some(ArtifactValidationState::Valid)
+                            })
+                        }
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => true,
+                    })
             {
                 return Err(DagNodeFailure::terminal(
                     "unsafe_commit_input",
@@ -700,13 +780,15 @@ fn built_in_output(
                 ));
             }
             Ok(DagNodeOutput {
-                artifacts: inputs,
+                artifacts: inputs.artifacts,
+                pipeline_artifacts: inputs.pipeline_artifacts,
                 metadata: BTreeMap::from([("committed".to_owned(), serde_json::json!(true))]),
                 ..DagNodeOutput::default()
             })
         }
         WorkflowNodeKind::CandidateMerge => Ok(DagNodeOutput {
-            artifacts: inputs,
+            artifacts: inputs.artifacts,
+            pipeline_artifacts: inputs.pipeline_artifacts,
             ..DagNodeOutput::default()
         }),
         _ => Err(DagNodeFailure::terminal(
@@ -726,9 +808,15 @@ enum NodeExecution {
     Cancelled(DagNodeTrace),
 }
 
+#[derive(Debug, Clone, Default)]
+struct DagInputs {
+    artifacts: Vec<VisionArtifact>,
+    pipeline_artifacts: Vec<PipelineArtifact>,
+}
+
 #[derive(Debug)]
 enum Readiness {
-    Ready(Vec<VisionArtifact>),
+    Ready(DagInputs),
     Wait,
     Skip,
 }
@@ -747,7 +835,7 @@ fn readiness(
         if node.inputs.iter().any(|port| port.required) {
             return Readiness::Skip;
         }
-        return Readiness::Ready(Vec::new());
+        return Readiness::Ready(DagInputs::default());
     }
     if incoming.iter().any(|edge| {
         !checkpoint
@@ -794,7 +882,34 @@ fn readiness(
         .collect::<Vec<_>>();
     let mut ids = BTreeSet::new();
     artifacts.retain(|artifact| ids.insert(artifact.id));
-    Readiness::Ready(artifacts)
+    let mut pipeline_artifacts = incoming
+        .iter()
+        .filter(|edge| edge_active(edge, checkpoint))
+        .flat_map(|edge| {
+            checkpoint
+                .node_outputs
+                .get(&edge.from_node)
+                .into_iter()
+                .flat_map(|output| {
+                    output
+                        .pipeline_artifacts
+                        .iter()
+                        .filter(|artifact| artifact.reference().port == edge.from_port)
+                        .cloned()
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut pipeline_ids = BTreeSet::new();
+    pipeline_artifacts.retain(|artifact| {
+        pipeline_ids.insert((
+            artifact.reference().artifact_id.clone(),
+            artifact.reference().item_id.clone(),
+        ))
+    });
+    Readiness::Ready(DagInputs {
+        artifacts,
+        pipeline_artifacts,
+    })
 }
 
 fn edge_active(edge: &WorkflowEdge, checkpoint: &DagCheckpoint) -> bool {
@@ -834,6 +949,31 @@ fn effective_fallback(node: &WorkflowDraftNode) -> Option<&str> {
         .target_node
         .as_deref()
         .or(node.fallback.as_deref())
+}
+
+fn descendants_including(draft: &WorkflowDraft, node_id: &str) -> BTreeSet<String> {
+    let mut descendants = BTreeSet::new();
+    let mut pending = vec![node_id.to_owned()];
+    while let Some(current) = pending.pop() {
+        if !descendants.insert(current.clone()) {
+            continue;
+        }
+        pending.extend(
+            draft
+                .edges
+                .iter()
+                .filter(|edge| edge.from_node == current)
+                .map(|edge| edge.to_node.clone()),
+        );
+        pending.extend(
+            draft
+                .nodes
+                .iter()
+                .filter(|node| node.depends_on.contains(&current))
+                .map(|node| node.id.clone()),
+        );
+    }
+    descendants
 }
 
 fn fallback_for_failure<'a>(
@@ -879,7 +1019,7 @@ fn verify_snapshot_hash(workflow: &PublishedWorkflowVersion) -> Result<(), DagRu
 fn node_cache_key(
     workflow: &PublishedWorkflowVersion,
     node: &WorkflowDraftNode,
-    inputs: &[VisionArtifact],
+    inputs: &DagInputs,
 ) -> Result<String, serde_json::Error> {
     let model = node.model_binding.as_deref().and_then(|model_id| {
         workflow
@@ -891,7 +1031,8 @@ fn node_cache_key(
     let material = serde_json::to_vec(&serde_json::json!({
         "node": node,
         "model": model,
-        "inputs": inputs,
+        "inputs": inputs.artifacts,
+        "pipeline_inputs": inputs.pipeline_artifacts,
         "skills": workflow.snapshot.enabled_skills,
     }))?;
     Ok(format!("{:x}", Sha256::digest(material)))
@@ -904,7 +1045,7 @@ fn trace(
     attempt_count: u32,
     cache_key: Option<String>,
     cache_hit: bool,
-    inputs: Vec<VisionArtifact>,
+    inputs: DagInputs,
     output: DagNodeOutput,
     error: Option<DagNodeFailure>,
     started_at: DateTime<Utc>,
@@ -916,8 +1057,10 @@ fn trace(
         attempt_count,
         cache_key,
         cache_hit,
-        input_artifacts: inputs,
+        input_artifacts: inputs.artifacts,
         output_artifacts: output.artifacts,
+        input_pipeline_artifacts: inputs.pipeline_artifacts,
+        output_pipeline_artifacts: output.pipeline_artifacts,
         route: output.route,
         usage: output.usage,
         error,
@@ -945,9 +1088,17 @@ fn result(status: DagRunStatus, checkpoint: DagCheckpoint, draft: &WorkflowDraft
         .filter_map(|node| checkpoint.node_outputs.get(&node.id))
         .flat_map(|output| output.artifacts.clone())
         .collect();
+    let committed_pipeline_artifacts = draft
+        .nodes
+        .iter()
+        .filter(|node| node.kind == WorkflowNodeKind::Commit)
+        .filter_map(|node| checkpoint.node_outputs.get(&node.id))
+        .flat_map(|output| output.pipeline_artifacts.clone())
+        .collect();
     DagRunResult {
         status,
         checkpoint,
         committed,
+        committed_pipeline_artifacts,
     }
 }

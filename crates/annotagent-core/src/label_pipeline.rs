@@ -7,17 +7,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactKind, ArtifactValidationState, FallbackPolicy, ImageId, LabelId, ModelRegistry,
-    NodePort, NodeRegistry, NormalizedRect, ProjectSchema, ResourceRequirements, RetryPolicy,
-    ReviewGate, TaskId, VisionArtifactValue, VisionCapability, WORKFLOW_SCHEMA_VERSION,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
+    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId,
+    ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedRect, ProjectSchema,
+    ResourceRequirements, RetryPolicy, ReviewGate, RunId, TaskId, VisionArtifactValue,
+    VisionBackendError, VisionBackendTimings, VisionBackendUsage, VisionCapability,
+    WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge,
+    WorkflowNodeKind,
 };
 
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
+pub const PIPELINE_VISION_PROTOCOL_VERSION: u32 = 1;
 pub const IMAGE_INPUT_NODE_ID: &str = "core.image_input";
 pub const IMAGE_INPUT_OPERATION: &str = "core.image_input";
 
@@ -43,6 +48,17 @@ impl ArtifactRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub width: u32,
+    pub height: u32,
+    pub mime_type: String,
+    /// Workspace/cache reference; raw image bytes are not serialized into the node trace.
+    pub blob_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Detection {
     pub id: String,
     pub class_id: String,
@@ -58,6 +74,8 @@ pub struct DetectionSetArtifact {
     pub reference: ArtifactRef,
     pub image_id: ImageId,
     pub model_binding: String,
+    #[serde(default = "default_unvalidated")]
+    pub validation_state: ArtifactValidationState,
     pub detections: Vec<Detection>,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
@@ -105,7 +123,13 @@ pub struct ClassificationSetArtifact {
     pub reference: ArtifactRef,
     pub image_id: ImageId,
     pub model_binding: String,
+    #[serde(default = "default_unvalidated")]
+    pub validation_state: ArtifactValidationState,
     pub classifications: Vec<Classification>,
+}
+
+const fn default_unvalidated() -> ArtifactValidationState {
+    ArtifactValidationState::Unvalidated
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +155,132 @@ pub struct AnnotationCandidateSet {
     pub reference: ArtifactRef,
     pub image_id: ImageId,
     pub candidates: Vec<AnnotationCandidate>,
+}
+
+/// Runtime intermediate values carried beside annotation-shaped `VisionArtifact`s.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "artifact", rename_all = "snake_case")]
+pub enum PipelineArtifact {
+    Image(ImageArtifact),
+    DetectionSet(DetectionSetArtifact),
+    CropSet(CropSetArtifact),
+    ClassificationSet(ClassificationSetArtifact),
+    AnnotationCandidateSet(AnnotationCandidateSet),
+}
+
+impl PipelineArtifact {
+    #[must_use]
+    pub const fn artifact_type(&self) -> ArtifactKind {
+        match self {
+            Self::Image(_) => ArtifactKind::Image,
+            Self::DetectionSet(_) => ArtifactKind::DetectionSet,
+            Self::CropSet(_) => ArtifactKind::CropSet,
+            Self::ClassificationSet(_) => ArtifactKind::ClassificationSet,
+            Self::AnnotationCandidateSet(_) => ArtifactKind::AnnotationCandidateSet,
+        }
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> &ArtifactRef {
+        match self {
+            Self::Image(artifact) => &artifact.reference,
+            Self::DetectionSet(artifact) => &artifact.reference,
+            Self::CropSet(artifact) => &artifact.reference,
+            Self::ClassificationSet(artifact) => &artifact.reference,
+            Self::AnnotationCandidateSet(artifact) => &artifact.reference,
+        }
+    }
+
+    #[must_use]
+    pub const fn image_id(&self) -> ImageId {
+        match self {
+            Self::Image(artifact) => artifact.image_id,
+            Self::DetectionSet(artifact) => artifact.image_id,
+            Self::CropSet(artifact) => artifact.image_id,
+            Self::ClassificationSet(artifact) => artifact.image_id,
+            Self::AnnotationCandidateSet(artifact) => artifact.image_id,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Image(artifact) => artifact.validate(),
+            Self::DetectionSet(artifact) => artifact.validate(),
+            Self::CropSet(artifact) => artifact.validate(),
+            Self::ClassificationSet(artifact) => artifact.validate(),
+            Self::AnnotationCandidateSet(artifact) => artifact.validate(),
+        }
+    }
+}
+
+/// Versioned wire contract used by generic HTTP JSON classifiers and detectors.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineInferenceRequest {
+    #[serde(default = "default_pipeline_vision_protocol_version")]
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub run_id: RunId,
+    pub image_id: ImageId,
+    pub node_id: String,
+    pub model_id: String,
+    pub operation: VisionCapability,
+    pub image: Option<ModelImage>,
+    #[serde(default)]
+    pub input_artifacts: Vec<PipelineArtifact>,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, serde_json::Value>,
+    pub timeout_ms: Option<u64>,
+}
+
+const fn default_pipeline_vision_protocol_version() -> u32 {
+    PIPELINE_VISION_PROTOCOL_VERSION
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineInferenceResponse {
+    #[serde(default = "default_pipeline_vision_protocol_version")]
+    pub protocol_version: u32,
+    pub request_id: Option<String>,
+    pub model_identity: Option<String>,
+    #[serde(default)]
+    pub artifacts: Vec<PipelineArtifact>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub usage: VisionBackendUsage,
+    #[serde(default)]
+    pub timings: VisionBackendTimings,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub error: Option<VisionBackendError>,
+}
+
+impl Default for PipelineInferenceResponse {
+    fn default() -> Self {
+        Self {
+            protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+            request_id: None,
+            model_identity: None,
+            artifacts: Vec::new(),
+            metadata: BTreeMap::new(),
+            usage: VisionBackendUsage::default(),
+            timings: VisionBackendTimings::default(),
+            warnings: Vec::new(),
+            error: None,
+        }
+    }
+}
+
+#[async_trait]
+pub trait PipelineModelBackend: Send + Sync {
+    fn id(&self) -> &str;
+    fn capability(&self) -> VisionCapability;
+
+    async fn infer_pipeline(
+        &self,
+        request: PipelineInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<PipelineInferenceResponse>;
 }
 
 /// Registry-bound model selection. Backend kind and endpoint remain owned by the Model Registry.
@@ -787,6 +937,22 @@ impl DetectionSetArtifact {
     }
 }
 
+impl ImageArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::Image)?;
+        if self.width == 0
+            || self.height == 0
+            || self.mime_type.trim().is_empty()
+            || self.blob_ref.trim().is_empty()
+        {
+            return Err(
+                "Image Artifact requires dimensions, MIME type, and a blob reference".to_owned(),
+            );
+        }
+        Ok(())
+    }
+}
+
 impl CropSetArtifact {
     /// Materialize the Image + `DetectionSet` -> `CropSet` fan-out contract. Pixel extraction is
     /// performed by the runtime Crop node; this Core method owns geometry and parent lineage.
@@ -1384,6 +1550,7 @@ mod tests {
             },
             image_id: crop_set.image_id,
             model_binding: "classifier".to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
             classifications: vec![Classification {
                 id: "classification-1".to_owned(),
                 subject: crops.item("crop-1"),
@@ -1421,6 +1588,7 @@ mod tests {
             reference: detection_ref.clone(),
             image_id,
             model_binding: "detector".to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
             detections: vec![Detection {
                 id: "d1".to_owned(),
                 class_id: "0".to_owned(),
@@ -1454,6 +1622,7 @@ mod tests {
             },
             image_id,
             model_binding: "classifier".to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
             classifications: vec![Classification {
                 id: "c1".to_owned(),
                 subject: crop_ref.item("crop:d1"),

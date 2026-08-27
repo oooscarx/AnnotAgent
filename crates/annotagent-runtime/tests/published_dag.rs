@@ -296,6 +296,7 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
         run_id: RunId::new(),
         image_id: high.image_id,
         initial_artifacts: vec![high],
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let passed = executor
@@ -328,6 +329,7 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
         run_id: RunId::new(),
         image_id: low.image_id,
         initial_artifacts: vec![low],
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let suspended = executor
@@ -403,6 +405,7 @@ async fn retry_limit_and_fallback_are_bounded() {
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let result = executor
@@ -511,6 +514,7 @@ async fn independent_nodes_execute_in_parallel() {
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let result = executor
@@ -561,6 +565,7 @@ async fn cancellation_stops_running_and_pending_nodes() {
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: cancellation.clone(),
     };
     let (result, ()) = tokio::join!(executor.execute(&workflow, &request), async move {
@@ -595,6 +600,7 @@ async fn node_timeout_is_structured_and_tampered_snapshot_is_rejected() {
         run_id: RunId::new(),
         image_id: ImageId::new(),
         initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let timed_out = executor
@@ -654,6 +660,7 @@ async fn commit_builtin_cannot_be_overridden_or_accept_unvalidated_artifacts() {
         run_id: RunId::new(),
         image_id: candidate.image_id,
         initial_artifacts: vec![candidate],
+        initial_pipeline_artifacts: Vec::new(),
         cancellation: CancellationToken::new(),
     };
     let result = executor

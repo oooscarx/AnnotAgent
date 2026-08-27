@@ -8,7 +8,9 @@ members = [
     "crates/annotagent-provider",
     "crates/annotagent-runtime",
     "crates/annotagent-server",
+    "crates/annotagent-skill-classification",
     "crates/annotagent-skill-robocup",
+    "crates/annotagent-skill-yolo",
     "crates/annotagent-storage",
 ]
 resolver = "2"

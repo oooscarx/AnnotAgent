@@ -489,6 +489,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     run_id: request.run_id,
                     image_id: request.image_id,
                     initial_artifacts: Vec::new(),
+                    initial_pipeline_artifacts: Vec::new(),
                     cancellation: self.control.cancellation_token(),
                 },
             )
