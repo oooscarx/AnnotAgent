@@ -17,15 +17,16 @@ use annotagent_core::{
     ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
     PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
     PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, SharedWorkflowStage,
-    SnapshotImage, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
-    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
-    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
-    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorInput,
-    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowDryRunNodeResult, WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    SharedWorkflowStage, SnapshotImage, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoImporter, LabelMeImporter, NativeImporter, YoloDetectionImporter, YoloSegmentationImporter,
@@ -121,10 +122,30 @@ pub struct ProjectSummary {
     /// Compatibility field for v1 clients. New clients use `enabled_skills`.
     pub skill_id: String,
     pub image_count: usize,
+    pub task_count: usize,
+    pub review_count: usize,
+    pub readiness: ProjectReadiness,
+    pub blocking_issues: Vec<ProjectBlockingIssue>,
+    pub default_workflow_version: Option<WorkflowVersion>,
     pub active_batch: Option<BatchRecord>,
     pub active_batch_progress: Option<BatchProgress>,
     pub active_run: Option<HistoryRun>,
     pub last_run: Option<HistoryRun>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectReadiness {
+    Incomplete,
+    Ready,
+    ConfigurationIssue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectBlockingIssue {
+    pub code: String,
+    pub message: String,
+    pub next_step: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1863,6 +1884,17 @@ impl LocalApplication {
             .last()
             .cloned()
             .unwrap_or_else(|| compatibility.clone());
+        let default_workflow_version = available_workflow_versions
+            .iter()
+            .find(|workflow| workflow.is_default && workflow.status == WorkflowStatus::Published)
+            .cloned()
+            .or_else(|| {
+                available_workflow_versions
+                    .iter()
+                    .rev()
+                    .find(|workflow| workflow.status == WorkflowStatus::Published)
+                    .cloned()
+            });
         let workflows = available_workflow_versions
             .iter()
             .map(|workflow| WorkflowSummary {
@@ -1895,6 +1927,55 @@ impl LocalApplication {
                 }]
             })
             .unwrap_or_default();
+        let review_count = project_runs
+            .iter()
+            .map(|run| self.store.list_annotations(run.id))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
+            .count();
+        let mut blocking_issues = Vec::new();
+        if image_count == 0 {
+            blocking_issues.push(ProjectBlockingIssue {
+                code: "no_images".to_owned(),
+                message: "Import at least one supported image.".to_owned(),
+                next_step: "data".to_owned(),
+            });
+        }
+        if project.tasks.is_empty() || project.tasks.iter().all(|task| task.labels.is_empty()) {
+            blocking_issues.push(ProjectBlockingIssue {
+                code: "no_labels".to_owned(),
+                message: "Define at least one Label in the Project Schema.".to_owned(),
+                next_step: "labels".to_owned(),
+            });
+        }
+        if default_workflow_version.is_none() {
+            blocking_issues.push(ProjectBlockingIssue {
+                code: "no_published_pipeline".to_owned(),
+                message: "Publish a valid Pipeline Version before starting a Run.".to_owned(),
+                next_step: "pipeline".to_owned(),
+            });
+        }
+        let configuration_issue = available_workflow_versions.iter().any(|workflow| {
+            workflow.is_default
+                && (workflow.status != WorkflowStatus::Published
+                    || workflow.validation_status != "valid")
+        });
+        if configuration_issue {
+            blocking_issues.push(ProjectBlockingIssue {
+                code: "invalid_default_pipeline".to_owned(),
+                message: "The default Pipeline has validation issues.".to_owned(),
+                next_step: "pipeline".to_owned(),
+            });
+        }
+        let readiness = if configuration_issue {
+            ProjectReadiness::ConfigurationIssue
+        } else if blocking_issues.is_empty() {
+            ProjectReadiness::Ready
+        } else {
+            ProjectReadiness::Incomplete
+        };
         Ok(ProjectSummary {
             id: project_id.to_owned(),
             name: project.project.name.clone(),
@@ -1941,6 +2022,11 @@ impl LocalApplication {
                 .collect::<Vec<_>>()
                 .join(","),
             image_count,
+            task_count: project.tasks.len(),
+            review_count,
+            readiness,
+            blocking_issues,
+            default_workflow_version,
             active_batch,
             active_batch_progress,
             active_run,
@@ -4593,6 +4679,16 @@ export:
             .expect("Project summary");
 
         assert_eq!(summary.name, "RoboCup Demo Dataset");
+        assert_eq!(summary.readiness, ProjectReadiness::Incomplete);
+        assert_eq!(summary.task_count, summary.annotation_schema.len());
+        assert_eq!(summary.review_count, 0);
+        assert!(
+            summary
+                .blocking_issues
+                .iter()
+                .any(|issue| issue.code == "no_images" && issue.next_step == "data")
+        );
+        assert!(summary.default_workflow_version.is_some());
         assert_eq!(summary.enabled_skills.len(), 1);
         assert_eq!(summary.enabled_skills[0].id, "robocup");
         assert_eq!(summary.enabled_skills[0].display_name, "RoboCup Perception");

@@ -12,6 +12,7 @@ import {
 } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { deriveProjectRunView } from "./runState";
+import { deriveProjectNextAction } from "./projectWorkspace";
 import { parseWorkspaceRoute, type SettingsSection } from "./navigation";
 import {
   NO_PROJECT_MESSAGE,
@@ -286,6 +287,11 @@ export function App() {
             onOpenWorkflows={() =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/pipeline`)
             }
+            onOpenBuild={(step) =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
+            }
+            onOpenRun={(runId) => navigate(`/runs/${encodeURIComponent(runId)}`)}
+            onOpenReview={() => navigate("/review")}
             onError={setError}
           />
         )}
@@ -633,12 +639,7 @@ function ProjectList({
             </small>
           </span>
           <Status
-            status={
-              project.active_batch?.status ??
-              project.active_run?.status ??
-              project.last_run?.status ??
-              project.active_workflow.status
-            }
+            status={project.readiness}
           />
           <b>→</b>
         </button>
@@ -653,6 +654,9 @@ function ProjectPage({
   events,
   onRefresh,
   onOpenWorkflows,
+  onOpenBuild,
+  onOpenRun,
+  onOpenReview,
   onError,
 }: {
   project?: ProjectSummary;
@@ -660,6 +664,9 @@ function ProjectPage({
   events: RunEvent[];
   onRefresh: () => void;
   onOpenWorkflows: () => void;
+  onOpenBuild: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onOpenRun: (runId: string) => void;
+  onOpenReview: () => void;
   onError: (value: string) => void;
 }) {
   const [images, setImages] = useState<ImageItem[]>([]);
@@ -726,6 +733,7 @@ function ProjectPage({
       (workflow) =>
         `${workflow.workflow_id}:${workflow.version}` === workflowKey,
     ) ?? project.active_workflow;
+  const primaryAction = deriveProjectNextAction(project);
   const start = () => {
     setStarting(true);
     void api
@@ -795,24 +803,32 @@ function ProjectPage({
       })
       .catch((error: Error) => onError(error.message));
   };
+  const runPrimaryAction = () => {
+    if (primaryAction.kind === "active_run") return onOpenRun(primaryAction.runId);
+    if (primaryAction.kind === "build") return onOpenBuild(primaryAction.step);
+    if (primaryAction.kind === "review") return onOpenReview();
+    return start();
+  };
   return (
     <section className="page-stack">
+      <nav className="section-tabs" aria-label={`${project.name} workspace`}>
+        <button className="active" aria-current="page">Overview</button>
+        <button onClick={() => onOpenBuild("data")}>Build</button>
+        <button onClick={() => project.last_run && onOpenRun(project.last_run.id)}>Runs</button>
+        <button onClick={onOpenReview}>Review</button>
+        <button onClick={() => document.getElementById("project-export")?.scrollIntoView()}>Export</button>
+      </nav>
       <div className="toolbar-panel project-heading">
         <div>
           <span className="eyebrow">Project · {project.id}</span>
           <h2>{project.name}</h2>
           <p>{project.description || "No Project description provided."}</p>
           <div className="context-line">
-            <span>
-              Workflow: {project.active_workflow.name}@v
-              {project.active_workflow.version}
-            </span>
-            <span>
-              Skills:{" "}
-              {project.enabled_skills
-                .map((skill) => skill.display_name)
-                .join(", ") || "None"}
-            </span>
+            <span>{project.image_count} images</span>
+            <span>Pipeline: {project.default_workflow_version?.name ?? "Not published"}</span>
+            <span>Active run: {project.active_run?.id.slice(0, 8) ?? project.active_batch?.id.slice(0, 8) ?? "None"}</span>
+            <span>{project.review_count} need review</span>
+            <Status status={project.readiness} />
           </div>
           <label>
             Workflow Version for next Run
@@ -835,16 +851,13 @@ function ProjectPage({
         <div className="button-row" aria-label="Run controls">
           <button
             className="primary"
-            disabled={restoredRun.startDisabled || starting}
-            title={
-              activeRun ? "This Project already has an active Run" : undefined
-            }
-            onClick={start}
+            disabled={starting}
+            onClick={runPrimaryAction}
           >
-            {starting ? "Starting…" : "Start image run"}
+            {starting ? "Starting…" : primaryAction.label}
           </button>
           <button
-            disabled={restoredRun.startDisabled || starting}
+            disabled={restoredRun.startDisabled || starting || project.readiness !== "ready"}
             title={
               activeRun
                 ? "This Project already has an active Run or Dataset Batch"
@@ -1054,10 +1067,8 @@ function ProjectPage({
             </button>
           </div>
         </Panel>
-        <Panel
-          title="Versions, Runs, Reviews & Exports"
-          eyebrow="Project outputs"
-        >
+        <div id="project-export">
+        <Panel title="Versions, Runs, Reviews & Exports" eyebrow="Project outputs">
           <Fact
             label="Workflow versions"
             value={project.available_workflow_versions.length}
@@ -1073,6 +1084,7 @@ function ProjectPage({
           />
           <TagGroup title="Export formats" values={project.export_formats} />
         </Panel>
+        </div>
         <Panel title="Annotation import" eyebrow="Dry-run first · compatibility report">
           <label>
             Format
@@ -4094,6 +4106,7 @@ function Fact({ label, value }: { label: string; value: string | number }) {
 function Status({ status }: { status: string }) {
   const normalized = status.replaceAll(" ", "_").toLowerCase();
   const presentation =
+    normalized === "ready" ||
     normalized === "completed" ||
     normalized === "confirmed" ||
     normalized === "auto_accepted" ||
@@ -4104,12 +4117,18 @@ function Status({ status }: { status: string }) {
           label:
             normalized === "published"
               ? "Published"
+              : normalized === "ready"
+                ? "Ready"
               : normalized === "valid"
                 ? "Valid"
                 : "Completed",
         }
       : normalized === "completed_with_review" || normalized === "needs_review"
         ? { tone: "needs-review", label: "Completed with review" }
+        : normalized === "incomplete"
+          ? { tone: "needs-review", label: "Incomplete" }
+        : normalized === "configuration_issue"
+          ? { tone: "failed", label: "Configuration issue" }
         : normalized === "partial"
           ? { tone: "needs-review", label: "Partial" }
           : normalized === "cancelled" ||

@@ -115,6 +115,15 @@ export interface ProjectSummary {
   /** Compatibility field from ProjectSchema v1. */
   skill_id: string;
   image_count: number;
+  task_count: number;
+  review_count: number;
+  readiness: "incomplete" | "ready" | "configuration_issue";
+  blocking_issues: {
+    code: string;
+    message: string;
+    next_step: "data" | "labels" | "pipeline" | "test";
+  }[];
+  default_workflow_version?: WorkflowVersion;
   active_batch?: {
     id: string;
     status: RunStatus;

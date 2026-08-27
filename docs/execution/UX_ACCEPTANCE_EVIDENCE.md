@@ -18,6 +18,10 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - 1 — PASS: `PRIMARY_NAVIGATION` contains exactly five destinations; covered by `productIdentity.test.ts`.
 - 2 — PASS: Workflow authoring renders only at `/projects/:projectId/build/pipeline`; legacy `/workflows` migrates.
 - 3 — PASS: Models and Capabilities render within Settings routes; legacy registry URLs migrate.
+- 4 — PASS: `/projects/:projectId` maintains project-scoped header and Overview/Build/Runs/Review/Export navigation.
+- 5 — PASS: `deriveProjectNextAction` is covered for images, labels, invalid Pipeline, active Run, review, and ready states.
+- 18 — PASS at API/logic level: Project Summary restores persisted `active_run`/active batch; browser verification remains in Milestone 7.
+- 19 — PASS at logic level: active server work produces `Open active run` and existing `deriveProjectRunView` locks Start; browser verification remains.
 - Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
 
 ## Milestone 1 — Global IA
@@ -25,6 +29,12 @@ Evidence is added only after the relevant behavior has been implemented and exer
 - `navigation.test.ts`: five destinations, legacy migration, and project Build context pass.
 - Web unit suite: 9 files and 18 tests passed.
 - Production build: pass.
+
+## Milestone 2 — Project Workspace
+
+- Rust DTO and persistence tests: application 14 passed; server 7 passed.
+- `projectWorkspace.test.ts`: ordered primary actions and server-owned active Run precedence pass.
+- Web suite: 10 files and 21 tests passed; production build passed.
 
 ## Manual tasks
 
