@@ -12,6 +12,7 @@ import {
 } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { deriveProjectRunView } from "./runState";
+import { parseWorkspaceRoute, type SettingsSection } from "./navigation";
 import {
   NO_PROJECT_MESSAGE,
   PRIMARY_NAVIGATION,
@@ -22,7 +23,6 @@ import {
 } from "./productIdentity";
 import type {
   Annotation,
-  EnabledSkill,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -43,28 +43,60 @@ import type {
   WorkflowVersionComparison,
 } from "./types";
 
-const PAGE_TITLES: Record<ProductPage, string> = {
-  dashboard: "Platform overview",
+const PAGE_TITLES: Record<ProductPage | "project" | "build", string> = {
+  home: "Home",
   projects: "Projects",
   project: "Project",
-  workflows: "Workflows",
-  models: "Models",
-  skills: "Skills",
+  build: "Build",
   runs: "Runs",
   review: "Review",
   settings: "Settings",
 };
 
 export function App() {
-  const [page, setPage] = useState<ProductPage>("dashboard");
+  const [route, setRoute] = useState(() =>
+    parseWorkspaceRoute(
+      window.location.pathname,
+      window.location.search,
+      window.location.hash,
+    ),
+  );
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [runs, setRuns] = useState<HistoryRun[]>([]);
   const [models, setModels] = useState<ModelBinding[]>([]);
-  const [installedSkills, setInstalledSkills] = useState<EnabledSkill[]>([]);
   const [reviewQueue, setReviewQueue] = useState(0);
-  const [projectId, setProjectId] = useState("");
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState("");
+
+  const navigate = (path: string, replace = false) => {
+    if (replace) window.history.replaceState({}, "", path);
+    else window.history.pushState({}, "", path);
+    setRoute(
+      parseWorkspaceRoute(
+        window.location.pathname,
+        window.location.search,
+        window.location.hash,
+      ),
+    );
+  };
+
+  useEffect(() => {
+    const restore = () =>
+      setRoute(
+        parseWorkspaceRoute(
+          window.location.pathname,
+          window.location.search,
+          window.location.hash,
+        ),
+      );
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  useEffect(() => {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (route.canonicalPath !== current || window.location.hash)
+      navigate(route.canonicalPath, true);
+  }, []);
 
   const refresh = () =>
     api
@@ -73,7 +105,6 @@ export function App() {
         setProjects(data.projects);
         setRuns(data.runs);
         setModels(data.models);
-        setInstalledSkills(data.installed_skills);
         setReviewQueue(data.review_queue);
       })
       .catch((reason: Error) => setError(reason.message));
@@ -109,11 +140,21 @@ export function App() {
     [],
   );
 
-  const openProject = (id: string) => {
-    setProjectId(id);
-    setPage(id ? "project" : "projects");
-  };
+  const projectId =
+    route.kind === "project" || route.kind === "build"
+      ? route.projectId
+      : "";
+  const openProject = (id: string) =>
+    navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects");
   const selectedProject = projects.find((project) => project.id === projectId);
+  const page =
+    route.kind === "home" ||
+    route.kind === "projects" ||
+    route.kind === "runs" ||
+    route.kind === "review" ||
+    route.kind === "settings"
+      ? route.kind
+      : route.kind;
 
   return (
     <div className="app-shell">
@@ -123,9 +164,12 @@ export function App() {
       <aside className="sidebar aa-dark">
         <a
           className="brand"
-          href="#dashboard"
-          aria-label={`${PRODUCT_NAME} dashboard`}
-          onClick={() => setPage("dashboard")}
+          href="/"
+          aria-label={`${PRODUCT_NAME} home`}
+          onClick={(event) => {
+            event.preventDefault();
+            navigate("/");
+          }}
         >
           <img
             className="brand-lockup"
@@ -146,10 +190,13 @@ export function App() {
               icon={item.icon}
               active={
                 item.page === "projects"
-                  ? page === "projects" || page === "project"
+                  ? route.kind === "projects" ||
+                    route.kind === "project" ||
+                    route.kind === "build"
                   : page === item.page
               }
-              onClick={() => setPage(item.page)}
+              href={item.href}
+              onClick={() => navigate(item.href)}
             >
               {item.label}
             </Nav>
@@ -209,50 +256,61 @@ export function App() {
             </button>
           </div>
         )}
-        {page === "dashboard" && (
+        {route.kind === "home" && (
           <Dashboard
             projects={projects}
             runs={runs}
-            models={models}
-            skills={installedSkills}
             reviewQueue={reviewQueue}
             onSelect={openProject}
+            onNewProject={() => navigate("/projects?new=1")}
+            onOpenRuns={() => navigate("/runs")}
+            onOpenReview={() => navigate("/review")}
             onRefresh={refresh}
           />
         )}
-        {page === "projects" && (
+        {route.kind === "projects" && (
           <ProjectsPage
             projects={projects}
+            createOnOpen={route.create}
             onSelect={openProject}
             onRefresh={refresh}
             onError={setError}
           />
         )}
-        {page === "project" && (
+        {route.kind === "project" && (
           <ProjectPage
             project={selectedProject}
             runs={runs}
             events={events}
             onRefresh={refresh}
-            onOpenWorkflows={() => setPage("workflows")}
+            onOpenWorkflows={() =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/pipeline`)
+            }
             onError={setError}
           />
         )}
-        {page === "workflows" && (
+        {route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
             projects={projects}
             activeProjectId={projectId}
-            onActivate={setProjectId}
+            onActivate={(id) =>
+              navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`)
+            }
             onRefresh={refresh}
             onError={setError}
           />
         )}
-        {page === "models" && (
-          <ModelsPage models={models} onConfigure={() => setPage("settings")} />
+        {route.kind === "build" && route.step !== "pipeline" && (
+          <BuildStepPlaceholder
+            project={selectedProject}
+            step={route.step}
+            onNavigate={(step) =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
+            }
+          />
         )}
-        {page === "skills" && <SkillsPage onError={setError} />}
-        {page === "runs" && <RunsPage runs={runs} />}
-        {page === "review" && (
+        {route.kind === "runs" && <RunsPage runs={runs} />}
+        {route.kind === "review" && (
           <ReviewPage
             project={selectedProject}
             projects={projects}
@@ -260,7 +318,16 @@ export function App() {
             onError={setError}
           />
         )}
-        {page === "settings" && <SettingsPage onError={setError} />}
+        {route.kind === "settings" && (
+          <SettingsWorkspace
+            section={route.section}
+            models={models}
+            onNavigate={(section) =>
+              navigate(section === "general" ? "/settings" : `/settings/${section}`)
+            }
+            onError={setError}
+          />
+        )}
       </main>
     </div>
   );
@@ -269,50 +336,135 @@ export function App() {
 function Nav({
   icon,
   active,
+  href,
   onClick,
   children,
 }: {
   icon: string;
   active: boolean;
+  href: string;
   onClick: () => void;
   children: string;
 }) {
   return (
-    <button
+    <a
+      href={href}
       className={active ? "active" : ""}
       aria-current={active ? "page" : undefined}
-      onClick={onClick}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick();
+      }}
     >
       <img src={`/brand/core/icons/${icon}.svg`} alt="" aria-hidden="true" />
       {children}
-    </button>
+    </a>
+  );
+}
+
+function BuildStepPlaceholder({
+  project,
+  step,
+  onNavigate,
+}: {
+  project?: ProjectSummary;
+  step: "data" | "labels" | "test";
+  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+}) {
+  return (
+    <section className="page-stack">
+      <nav className="section-tabs" aria-label="Build steps">
+        {(["data", "labels", "pipeline", "test"] as const).map((item) => (
+          <button
+            key={item}
+            className={step === item ? "active" : ""}
+            aria-current={step === item ? "step" : undefined}
+            onClick={() => onNavigate(item)}
+          >
+            {item === "test" ? "Test & Publish" : item[0].toUpperCase() + item.slice(1)}
+          </button>
+        ))}
+      </nav>
+      <Panel title={project?.name ?? "Project unavailable"} eyebrow={`Build · ${step}`}>
+        <p>
+          This guided step is being migrated from the existing Project surface.
+          Use Pipeline now; Data, Labels, and Test & Publish remain visibly
+          unavailable until their real server-backed controls are connected.
+        </p>
+        <button disabled title="Milestone 3 implementation pending">
+          Step unavailable in this milestone
+        </button>
+      </Panel>
+    </section>
+  );
+}
+
+function SettingsWorkspace({
+  section,
+  models,
+  onNavigate,
+  onError,
+}: {
+  section: SettingsSection;
+  models: ModelBinding[];
+  onNavigate: (section: SettingsSection) => void;
+  onError: (value: string) => void;
+}) {
+  return (
+    <section className="page-stack">
+      <nav className="section-tabs" aria-label="Settings sections">
+        {(
+          [
+            ["general", "Provider & budgets"],
+            ["models", "Models"],
+            ["capabilities", "Capabilities"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            className={section === value ? "active" : ""}
+            aria-current={section === value ? "page" : undefined}
+            onClick={() => onNavigate(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      {section === "general" && <SettingsPage onError={onError} />}
+      {section === "models" && (
+        <ModelsPage models={models} onConfigure={() => onNavigate("general")} />
+      )}
+      {section === "capabilities" && <SkillsPage onError={onError} />}
+    </section>
   );
 }
 
 function Dashboard({
   projects,
   runs,
-  models,
-  skills,
   reviewQueue,
   onSelect,
+  onNewProject,
+  onOpenRuns,
+  onOpenReview,
   onRefresh,
 }: {
   projects: ProjectSummary[];
   runs: HistoryRun[];
-  models: ModelBinding[];
-  skills: EnabledSkill[];
   reviewQueue: number;
   onSelect: (id: string) => void;
+  onNewProject: () => void;
+  onOpenRuns: () => void;
+  onOpenReview: () => void;
   onRefresh: () => void;
 }) {
   const activeRuns = runs.filter(
     (run) =>
       run.controllable && (run.status === "running" || run.status === "paused"),
   ).length;
-  const publishedWorkflows = projects
-    .flatMap((project) => project.workflows)
-    .filter((workflow) => workflow.status === "published").length;
+  const failures = runs.filter((run) =>
+    ["failed", "interrupted", "budget_exceeded"].includes(run.status),
+  );
   const tokens = runs.reduce(
     (sum, run) => sum + run.input_tokens + run.output_tokens,
     0,
@@ -322,23 +474,23 @@ function Dashboard({
     <section className="page-stack">
       <div className="hero-panel aa-dark">
         <div>
-          <span className="kicker">AnnotAgent workflow platform</span>
+          <span className="kicker">Guided annotation workspace</span>
           <h2>
-            Compose annotation work
+            Move vision data from setup
             <br />
-            <em>that stays auditable.</em>
+            <em>to reviewed output.</em>
           </h2>
           <p>
-            Projects bind datasets, typed workflows, vision models, reusable
-            Skills, deterministic validation, and human review.
+            Open a Project to import data, define Labels, build and test a
+            Pipeline, run it, inspect its work, and review the result.
           </p>
         </div>
         <div className="hero-actions">
           <button
             className="primary"
-            onClick={() => onSelect(projects[0]?.id ?? "")}
+            onClick={onNewProject}
           >
-            Open a project
+            New project
           </button>
           <button onClick={onRefresh}>Refresh state</button>
         </div>
@@ -348,11 +500,6 @@ function Dashboard({
           label="Projects"
           value={projects.length}
           detail={`${projects.reduce((sum, project) => sum + project.image_count, 0)} images registered`}
-        />
-        <Metric
-          label="Published workflows"
-          value={publishedWorkflows}
-          detail="Validated compatibility versions"
         />
         <Metric
           label="Active runs"
@@ -376,59 +523,31 @@ function Dashboard({
           value={`$${cost.toFixed(4)}`}
           detail="Exact persisted run totals"
         />
-        <Metric
-          label="Installed skills"
-          value={skills.length}
-          detail="Registered domain extensions"
-        />
-        <Metric
-          label="Configured models"
-          value={models.length}
-          detail="Workspace model bindings"
-        />
       </div>
       <div className="platform-grid">
         <Panel title="Recent projects" eyebrow="Concrete annotation work">
           <ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} />
         </Panel>
-        <Panel title="Installed Skills" eyebrow="Reusable domain capability">
-          {skills.length ? (
-            <div className="catalog-summary">
-              <strong>
-                {skills.length} registered extension
-                {skills.length === 1 ? "" : "s"}
-              </strong>
-              <small>
-                Open Skills to inspect domain capabilities and templates.
-              </small>
-            </div>
-          ) : (
-            <Empty
-              title="No Skills installed"
-              detail="Install a registered extension before creating a runnable Project."
-            />
-          )}
+        <Panel title="Active runs" eyebrow="Work in progress">
+          <button className="summary-link" onClick={onOpenRuns}>
+            <strong>{activeRuns} active</strong>
+            <small>Open progress, errors, cost, and artifacts</small>
+          </button>
         </Panel>
-        <Panel title="Configured models" eyebrow="Workspace bindings">
-          {models.length ? (
-            <div className="catalog-list">
-              {models.map((binding) => (
-                <article key={binding.id}>
-                  <span className="catalog-monogram">AI</span>
-                  <span>
-                    <strong>{binding.model}</strong>
-                    <small>
-                      {binding.provider} · {binding.scope.replaceAll("_", " ")}
-                    </small>
-                  </span>
-                </article>
-              ))}
-            </div>
+        <Panel title="Needs review" eyebrow="Human decisions">
+          <button className="summary-link" onClick={onOpenReview}>
+            <strong>{reviewQueue} waiting</strong>
+            <small>Accept, edit, reject, or remove results</small>
+          </button>
+        </Panel>
+        <Panel title="Recent failures" eyebrow="Requires attention">
+          {failures.length ? (
+            <button className="summary-link" onClick={onOpenRuns}>
+              <strong>{failures[0].workflow_name}</strong>
+              <small>{failures[0].terminal_reason ?? failures[0].status}</small>
+            </button>
           ) : (
-            <Empty
-              title="No model configured"
-              detail="Configure a provider in Settings."
-            />
+            <Empty title="No recent failures" detail="Recent terminal runs are healthy." />
           )}
         </Panel>
       </div>
@@ -438,16 +557,18 @@ function Dashboard({
 
 function ProjectsPage({
   projects,
+  createOnOpen,
   onSelect,
   onRefresh,
   onError,
 }: {
   projects: ProjectSummary[];
+  createOnOpen?: boolean;
   onSelect: (id: string) => void;
   onRefresh: () => void;
   onError: (value: string) => void;
 }) {
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(Boolean(createOnOpen));
   return (
     <section className="page-stack">
       <div className="toolbar-panel">

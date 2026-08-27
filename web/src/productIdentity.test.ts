@@ -19,16 +19,14 @@ describe("AnnotAgent product shell", () => {
     expect(activeSkills()).toEqual([]);
   });
 
-  it("uses the complete product navigation", () => {
+  it("uses the five-destination guided product navigation", () => {
     expect(PRIMARY_NAVIGATION.map((item) => item.label)).toEqual([
-      "Dashboard",
+      "Home",
       "Projects",
-      "Workflows",
-      "Models",
-      "Skills",
       "Runs",
       "Review",
       "Settings",
     ]);
+    expect(PRIMARY_NAVIGATION).toHaveLength(5);
   });
 });

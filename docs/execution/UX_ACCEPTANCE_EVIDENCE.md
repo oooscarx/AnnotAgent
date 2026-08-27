@@ -15,7 +15,16 @@ Evidence is added only after the relevant behavior has been implemented and exer
 
 ## Release blockers
 
-All 30 release blockers are currently open. Milestone evidence will reference tests, browser paths, screenshots, and commits rather than implementation intent.
+- 1 — PASS: `PRIMARY_NAVIGATION` contains exactly five destinations; covered by `productIdentity.test.ts`.
+- 2 — PASS: Workflow authoring renders only at `/projects/:projectId/build/pipeline`; legacy `/workflows` migrates.
+- 3 — PASS: Models and Capabilities render within Settings routes; legacy registry URLs migrate.
+- Remaining blockers are open. Milestone evidence references tests, browser paths, screenshots, and commits rather than implementation intent.
+
+## Milestone 1 — Global IA
+
+- `navigation.test.ts`: five destinations, legacy migration, and project Build context pass.
+- Web unit suite: 9 files and 18 tests passed.
+- Production build: pass.
 
 ## Manual tasks
 

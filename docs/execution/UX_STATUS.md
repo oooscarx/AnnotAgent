@@ -5,7 +5,7 @@ Updated: 2026-08-27
 | Milestone | Status | Notes |
 | --- | --- | --- |
 | 0 Baseline | Complete | Inventory and execution documents created; baseline checks pass. |
-| 1 Global IA | Pending | Eight primary entries still exist. |
+| 1 Global IA | Complete | Five URL-driven entries; Pipeline is project-scoped; Models and Capabilities are Settings sections. |
 | 2 Project Workspace | Pending | Project selection exists but context is component-local. |
 | 3 Build Flow | Pending | Existing schema and workflow editors are separate surfaces. |
 | 4 Pipeline UX | Pending | Label pipeline UI exists; hierarchy and version focus need restructuring. |
@@ -37,3 +37,10 @@ Updated: 2026-08-27
 - `cargo test -p annotagent-server --lib`: 7 passed
 - `npm test -- --run`: 8 files, 15 tests passed
 - `npm run typecheck`: pass
+
+## Milestone 1 verification
+
+- Primary navigation: Home, Projects, Runs, Review, Settings.
+- Legacy `/dashboard`, `/workflows`, `/models`, and `/skills` resolve to canonical guided routes.
+- `npm test -- --run`: 9 files, 18 tests passed.
+- `npm run build`: pass.

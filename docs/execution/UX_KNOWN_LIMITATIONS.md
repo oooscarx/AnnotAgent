@@ -4,10 +4,7 @@ Updated: 2026-08-27
 
 ## Baseline limitations
 
-- Navigation has eight primary destinations and is held in component-local state.
-- Project, build, run artifact, and review selection are not represented by durable URLs.
-- Workflow authoring is globally located instead of project-scoped.
-- Models and Skills are global primary destinations rather than Settings sections.
+- Run artifact and review selection are not fully connected to their durable URLs yet.
 - Artifact inspection is embedded at the bottom of the Workflows page.
 - Dry Run emphasizes execution details before user-facing result totals.
 - Shared-stage reuse and label-lane relationships require internal workflow knowledge.

@@ -1,0 +1,32 @@
+import { describe, expect, it } from "vitest";
+import { parseWorkspaceRoute } from "./navigation";
+
+describe("guided workspace routing", () => {
+  it("maps the five primary destinations", () => {
+    expect(parseWorkspaceRoute("/").kind).toBe("home");
+    expect(parseWorkspaceRoute("/projects").kind).toBe("projects");
+    expect(parseWorkspaceRoute("/runs").kind).toBe("runs");
+    expect(parseWorkspaceRoute("/review").kind).toBe("review");
+    expect(parseWorkspaceRoute("/settings").kind).toBe("settings");
+  });
+
+  it("migrates legacy registry routes", () => {
+    expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/");
+    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
+    expect(parseWorkspaceRoute("/skills").canonicalPath).toBe(
+      "/settings/capabilities",
+    );
+    expect(
+      parseWorkspaceRoute("/workflows", "?project_id=alpha").canonicalPath,
+    ).toBe("/projects/alpha/build/pipeline");
+  });
+
+  it("keeps project build context in the path", () => {
+    expect(parseWorkspaceRoute("/projects/demo/build/labels")).toEqual({
+      kind: "build",
+      projectId: "demo",
+      step: "labels",
+      canonicalPath: "/projects/demo/build/labels",
+    });
+  });
+});
