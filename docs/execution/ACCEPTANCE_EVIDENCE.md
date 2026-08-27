@@ -210,7 +210,9 @@ Gate evidence:
 5. `workflow_designer_http_journey_validates_dry_runs_publishes_and_clones` repeats the product API journey, proves Project summaries expose the actual published version, and proves Run summaries derive the chosen Workflow name/version from persisted history.
 6. Browser evidence on `qwen-live` showed `unknown_input_port edges[0].to_port` plus `missing_required_input nodes[2].inputs.from_field_region`; after repair, Dry Run reported one `color_1001525.png` sample at 544×448, eight node outputs, measured latency, and zero mock cost.
 7. Publishing disabled all edit controls. Selecting the published template version and cloning produced a distinct editable Draft. Project Run selection used that exact workflow/version, and Runs history rendered `RoboCup Demo template workflow@v1` rather than the former hard-coded compatibility label.
-8. Browser startup exposed a headless system-keychain block. `ANNOTAGENT_DISABLE_KEYCHAIN=1` now provides an explicit CI/test-only opt-out while leaving secure keychain persistence as the default.
+8. Historical evidence: browser startup exposed a headless system-keychain block and originally
+   added a CI opt-out. This design is superseded by the workspace-local credential implementation
+   documented below; the opt-out and new keychain writes have been removed.
 9. Real Qwen Advisor execution is not claimed because no supported live credential was supplied during this milestone; it remains `LIVE-CONDITIONAL` in `BLOCKERS.md`.
 
 Milestone 6 status: `PASS` offline; live Qwen advice remains conditional.
@@ -596,3 +598,23 @@ The previous `qwen-live`, `robocup-demo`, B-Human legacy exports, pre-reset hist
 final smoke, and the temporary GUI server was stopped after inspection.
 
 RoboCup Ball-only scope reset status: `PASS`.
+
+## OpenAI-compatible action recovery and workspace-local credentials — 2026-08-28
+
+1. The provider request builder sends native tools without a simultaneous JSON-schema response
+   constraint. Qwen thinking mode remains compatible because no unsupported forced `tool_choice`
+   is sent.
+2. A valid registered JSON action returned in assistant content is promoted to a normal tool call,
+   while native `tool_calls` remain unchanged and malformed/plain content remains untrusted text.
+3. Live Run `76e0ed20-771c-4e53-ab97-b682070b38e6` completed on
+   `color_771292.png`, passed deterministic Ball validation with no issues, and committed annotation
+   `5b2b9c79-b288-47ac-979e-fe759d724848`. Each of five model responses produced one Runtime-visible
+   tool call; total usage was 20,792 tokens and `$0.032276`.
+4. `GET /api/settings` reports `credential_store=workspace_private_file` and continues to report the
+   migrated key as configured without returning it. Filesystem inspection showed a `0700`
+   credential directory and `0600` key file; the matching legacy keychain entry was absent after
+   startup.
+5. Strict workspace Clippy passed. All 149 Rust tests plus doc tests passed. Web typecheck, 24 tests,
+   and the Vite production build passed.
+
+OpenAI-compatible action recovery and workspace-local credential status: `PASS`.

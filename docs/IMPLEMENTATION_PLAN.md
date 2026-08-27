@@ -11,7 +11,7 @@ The repository started as an empty directory on 2026-08-26. There was no existin
 3. Added the RoboCup DAG, field containment, field-line pixel refinement, ball hard negatives, team-color evidence, correction-memory influence, and two vertical integration tests.
 4. Added durable history/revisions, budgets, state control, history round-trip and five explicit dataset export formats.
 5. Added the CLI and Ratatui interface over a shared application service.
-6. Added the Axum API, live SSE, durable workspace settings, system-keychain-backed provider keys, and React/TypeScript review GUI.
+6. Added the Axum API, live SSE, durable workspace settings, workspace-private write-only provider keys, and React/TypeScript review GUI.
 7. Added bounded multi-image CLI coordination, an offline two-case demo, course documentation, HTTP vertical tests, real-provider smoke evidence, and full acceptance checks.
 
 ## Architectural decisions

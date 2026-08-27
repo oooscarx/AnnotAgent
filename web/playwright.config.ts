@@ -20,7 +20,7 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      "cd .. && npm --prefix web run build && ANNOTAGENT_DISABLE_KEYCHAIN=1 cargo run -p annotagent -- serve --workspace workspace/e2e-guided --port 8791",
+      "cd .. && npm --prefix web run build && cargo run -p annotagent -- serve --workspace workspace/e2e-guided --port 8791",
     url: "http://127.0.0.1:8791/api/health",
     timeout: 120_000,
     reuseExistingServer: true,

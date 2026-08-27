@@ -3462,8 +3462,8 @@ function ModelsPage({
           <span className="eyebrow">Provider catalog and bindings</span>
           <h2>Models</h2>
           <p>
-            Credentials stay in the system keychain; Workflows refer to stable
-            binding IDs.
+            Credentials stay in a private workspace file; Workflows refer to
+            stable binding IDs.
           </p>
         </div>
         <button className="primary" onClick={onConfigure}>
@@ -4552,7 +4552,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
     void api
       .saveSettings({ ...settings, clear_saved_api_key: true })
       .then((value) =>
-        finish(value, "Saved API key removed from the system keychain.", true),
+        finish(value, "Saved API key removed from the workspace.", true),
       )
       .catch((error: Error) => onError(error.message))
       .finally(() => setSaving(false));
@@ -4667,7 +4667,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
                 onChange={(event) => setKey(event.target.value)}
                 placeholder={
                   settings.api_key_persisted && !providerChanged
-                    ? "Stored in the system keychain · paste to replace"
+                    ? "Stored in a private workspace file · paste to replace"
                     : `Paste your ${preset.shortLabel} key once`
                 }
               />
@@ -4681,7 +4681,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               </button>
               <small>
                 {settings.api_key_persisted && !providerChanged
-                  ? "Keychain protected · never returned by the API"
+                  ? "Workspace-local 0600 file · never returned by the API"
                   : `Environment fallback: ${provider.api_key_env ?? "ANNOTAGENT_API_KEY"}`}
               </small>
             </div>
@@ -4771,7 +4771,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
         {settings.credential_store_error && (
           <div className="error-banner" role="alert">
             <span>
-              System keychain unavailable:{" "}
+              Local credential storage unavailable:{" "}
               {String(settings.credential_store_error)}
             </span>
           </div>

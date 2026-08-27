@@ -49,6 +49,6 @@ semantic segmentation use the same protocol by advertising `prompted_segmentatio
 Rust fixture server covers all three capability families and parses every supported
 Artifact shape without requiring large model files in the repository.
 
-Secrets belong in an environment variable or the operating-system keychain. Registry
-descriptors store only `env:` or `keychain:` references; workers and adapters must not log
+GUI-managed secrets belong in the workspace-private credential file; CLI secrets may use an
+environment variable. Registry descriptors store only opaque references; workers and adapters must not log
 authorization headers or inline image payloads.

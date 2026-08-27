@@ -56,7 +56,7 @@ A Workflow is a typed graph of model, tool, validator/refiner, review, and outpu
 
 ## 4. Model
 
-Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers, persists non-secret configuration in the workspace, and stores keys in the operating-system keychain. CLI environment-variable keys remain supported.
+Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers, persists non-secret configuration in the workspace, and stores the write-only key at `<workspace>/.annotagent/credentials/provider-api-key` with owner-only permissions. CLI environment-variable keys remain supported.
 
 ## 5. Skill
 

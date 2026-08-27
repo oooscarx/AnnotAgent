@@ -144,7 +144,8 @@ impl OpenAiCompatibleProvider {
         body.insert("messages".to_owned(), Value::Array(messages));
         body.insert("max_tokens".to_owned(), json!(request.max_output_tokens));
         body.insert("temperature".to_owned(), json!(request.temperature));
-        if self.config.supports_tool_calls && !request.tools.is_empty() {
+        let native_tool_mode = self.config.supports_tool_calls && !request.tools.is_empty();
+        if native_tool_mode {
             body.insert(
                 "tools".to_owned(),
                 Value::Array(
@@ -165,7 +166,7 @@ impl OpenAiCompatibleProvider {
                 ),
             );
         }
-        if self.config.supports_json_schema {
+        if self.config.supports_json_schema && !native_tool_mode {
             body.insert(
                 "response_format".to_owned(),
                 json!({
@@ -405,7 +406,9 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             let value: Value = serde_json::from_slice(&bytes)
                 .map_err(|error| CoreError::Provider(format!("invalid provider JSON: {error}")))?;
             let mut parsed = parse_chat_response(&value, request_id)?;
-            if !self.config.supports_tool_calls {
+            if self.config.supports_tool_calls {
+                try_promote_json_action(&mut parsed, &request.tools)?;
+            } else {
                 promote_json_action(&mut parsed, &request.tools)?;
             }
             return Ok(parsed);
@@ -451,6 +454,34 @@ fn promote_json_action(
     })?;
     let action: Value = serde_json::from_str(content)
         .map_err(|error| CoreError::Provider(format!("invalid JSON-only action: {error}")))?;
+    promote_action_value(response, tools, &action)
+}
+
+fn try_promote_json_action(
+    response: &mut ModelResponse,
+    tools: &[annotagent_core::ToolDefinition],
+) -> CoreResult<bool> {
+    if !response.tool_calls.is_empty() || tools.is_empty() {
+        return Ok(false);
+    }
+    let Some(content) = response.content.as_deref() else {
+        return Ok(false);
+    };
+    let Ok(action) = serde_json::from_str::<Value>(content) else {
+        return Ok(false);
+    };
+    if action.get("name").is_none() || action.get("arguments").is_none() {
+        return Ok(false);
+    }
+    promote_action_value(response, tools, &action)?;
+    Ok(true)
+}
+
+fn promote_action_value(
+    response: &mut ModelResponse,
+    tools: &[annotagent_core::ToolDefinition],
+    action: &Value,
+) -> CoreResult<()> {
     let name = action.get("name").and_then(Value::as_str).ok_or_else(|| {
         CoreError::Provider("JSON-only action lacks string field `name`".to_owned())
     })?;
@@ -865,6 +896,68 @@ mod tests {
             }],
         )
         .expect("constrained action");
+        assert_eq!(response.tool_calls[0].name, "submit");
+    }
+
+    #[test]
+    fn native_tool_mode_requires_a_tool_without_conflicting_json_schema() {
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint: "https://provider.invalid/v1".to_owned(),
+                api_key_env: "UNUSED_TEST_KEY".to_owned(),
+                model: "tool-vision".to_owned(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 1,
+                max_output_tokens: 100,
+                temperature: 0.0,
+                reasoning_mode: None,
+                supports_tool_calls: true,
+                supports_json_schema: true,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::new(),
+                max_retries: 0,
+            },
+            Some("not-sent".to_owned()),
+        )
+        .expect("provider");
+        let tools = vec![annotagent_core::ToolDefinition {
+            name: "submit".to_owned(),
+            description: "submit".to_owned(),
+            parameters: json!({"type": "object"}),
+            read_only: false,
+        }];
+        let body = provider.request_body(&ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("objects"),
+            messages: vec![ModelMessage {
+                role: ModelRole::User,
+                content: "submit one action".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+            images: Vec::new(),
+            tools: tools.clone(),
+            max_output_tokens: 100,
+            temperature: 0.0,
+            extra: BTreeMap::new(),
+        });
+        assert!(body["tools"].is_array());
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("response_format").is_none());
+
+        let mut response = ModelResponse {
+            content: Some(json!({"name": "submit", "arguments": {}}).to_string()),
+            tool_calls: Vec::new(),
+            usage: TokenUsage {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: None,
+                source: UsageSource::Unknown,
+            },
+            request_id: Some("content-fallback".to_owned()),
+            provider_metadata: BTreeMap::new(),
+        };
+        assert!(try_promote_json_action(&mut response, &tools).expect("fallback action"));
         assert_eq!(response.tool_calls[0].name, "submit");
     }
 

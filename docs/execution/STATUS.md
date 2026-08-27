@@ -131,3 +131,21 @@ All 20 Label Pipeline Alpha Release Blocking gates have direct offline evidence.
 OpenAI-compatible inference and configured external HTTP detector quality remain optional deployment
 conditions, not blockers for the mock/offline Alpha contract. RoboCup remains regression-tested and
 on the Roadmap; it is not the primary acceptance path.
+
+## OpenAI-compatible action recovery and local credentials — 2026-08-28
+
+- Native-tool requests no longer also send a conflicting JSON-schema response format.
+- When an OpenAI-compatible model returns a registered `{name, arguments}` action in message
+  content instead of `tool_calls`, the adapter promotes it through the same registry validation
+  path. Unregistered or malformed content is not promoted.
+- The Settings API now stores its write-only API key at
+  `<workspace>/.annotagent/credentials/provider-api-key`, with directory mode `0700` and file mode
+  `0600` on Unix. Startup migrates and deletes the matching legacy keychain entry; new writes never
+  target the keychain.
+- Live Qwen Run `76e0ed20-771c-4e53-ab97-b682070b38e6` completed on B-Human
+  `color_771292.png`, committed one validated ball annotation, and reported one recognized tool
+  call for every model response. Usage was 20,792 tokens across five requests at `$0.032276`.
+- Strict workspace Clippy, all 149 Rust tests and doc tests, Web typecheck, all 24 Web tests, and the
+  production Web build pass.
+
+OpenAI-compatible action recovery and local credential status: `PASS`.

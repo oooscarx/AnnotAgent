@@ -4,11 +4,11 @@
 
 - Do not commit `.env` or local provider configuration containing a key.
 - CLI providers read the configured environment variable only when making a request.
-- The Web API key is write-only and stored per workspace in the operating system keychain (Keychain Services on macOS, Credential Manager on Windows, Secret Service on Linux). It is omitted from responses, the local TOML settings file, SQLite, model trace, and logs.
-- Headless CI and browser automation may set `ANNOTAGENT_DISABLE_KEYCHAIN=1`; in that mode the server never reads or writes the system keychain and live providers must use their configured API-key environment variable. This opt-out is never enabled by default.
+- The Web API key is write-only and stored at `<workspace>/.annotagent/credentials/provider-api-key`. On Unix, the directory is mode `0700` and the file is mode `0600`. It is omitted from responses, the local TOML settings file, SQLite, model trace, and logs.
+- On the first startup after upgrading, AnnotAgent migrates any existing key for the same workspace out of the legacy operating-system keychain and deletes that legacy entry. New keys are never written to the keychain.
 - Non-secret Web settings are atomically written to `<workspace>/.annotagent/settings.toml` with owner-only permissions on Unix.
 - Provider configuration rejects credential-bearing custom headers such as `Authorization`, API-key/access-token/secret/password fields, including nested extra request metadata. Endpoint URLs cannot contain embedded user info. Authorization and image base64 are redacted from Provider errors, model messages, history, and logs.
-- A key pasted into a chat or terminal transcript should be rotated after testing.
+- The workspace credential file is plaintext protected by filesystem permissions, not encryption. Keep the workspace private and rotate any key pasted into chat or a terminal transcript after testing.
 
 ## Filesystem
 
