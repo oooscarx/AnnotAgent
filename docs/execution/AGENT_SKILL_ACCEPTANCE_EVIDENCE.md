@@ -30,3 +30,23 @@ cargo test -p annotagent-runtime tool_history_requires_one_ordered_result_per_ca
 Result: both checks passed on 2026-08-27. The boundary scan covered Core, Runtime, Server and the
 generic Web component directory. The focused protocol test verified ordered multi-call results and
 rejected missing or wrong-id results.
+
+## M1 — layered Skills and multi-Skill resolution
+
+Implementation:
+
+- `crates/annotagent-core/src/skill.rs`: kinds, versions, dependencies, conflicts and contribution
+  declarations;
+- `crates/annotagent-core/src/traits.rs`: unified object-safe `Skill` contract;
+- `crates/annotagent-runtime/src/registry.rs`: layered catalog/resolver and safe resource loading;
+- `crates/annotagent-runtime/tests/skill_extension.rs`: independent Capability/Domain/Pack fixtures.
+
+Verification:
+
+```text
+cargo test -p annotagent-runtime --test skill_extension
+4 passed; 0 failed
+```
+
+The tests also retain the legacy external Domain Skill execution proof and deterministic namespace
+merge proof.

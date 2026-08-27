@@ -14,13 +14,27 @@ AnnotAgent Core owns typed IDs, checked geometry, annotations, revisions, task D
 
 Declarative Skill resources live under `skills/<id>`. A Project YAML supplies labels, task kinds, attributes, dependencies, validator/refiner selections, review thresholds, and exports. Schema errors have precise paths and unknown fields are rejected.
 
+The layered registry distinguishes `Capability`, `Domain`, and `Pack` manifests. Every manifest has
+an implementation version, dependencies, conflicts, capabilities, extension declarations,
+templates, resources and taxonomy. The unified object-safe `Skill` trait exposes optional nodes,
+tools, Validators, Refiners, templates, resources and correction taxonomy. The original
+`DomainSkill` contract remains as an explicit compatibility adapter while bundled extensions
+migrate.
+
+Layered resolution validates exact Alpha versions, missing dependencies, conflicts and duplicate
+registrations before a Workflow is authored or run. Resource requests accept only manifest-declared
+relative names; absolute paths, traversal and undeclared resources are rejected before Skill code
+runs.
+
 Special algorithms implement object-safe Rust traits and are registered explicitly:
 
 ```rust
 registry.register(Arc::new(MySkill::new()?))?;
 ```
 
-`DomainSkill` returns task templates, DAG, tools, validators, refiners, prompt resources, taxonomy, review policy, and an optional starter Project. `AgentTool::applicable_tasks` keeps domain tools out of unrelated contexts.
+`DomainSkill` returns task templates, DAG, tools, validators, refiners, prompt resources, taxonomy,
+review policy, and an optional starter Project. `AgentTool::applicable_tasks` keeps domain tools out
+of unrelated contexts.
 
 ## Visual profiles
 

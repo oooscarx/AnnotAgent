@@ -227,6 +227,44 @@ pub trait DomainSkill: Send + Sync {
     }
 }
 
+/// Unified extension contract used by Capability, Domain and Pack Skills.
+///
+/// A Pack commonly contributes only manifests, templates and resources. A Capability Skill may
+/// contribute callable nodes/tools without a review policy. A Domain Skill typically composes
+/// capabilities and adds validators, policy, taxonomy and resources.
+pub trait Skill: Send + Sync {
+    fn id(&self) -> &str;
+    fn manifest(&self) -> &SkillManifest;
+
+    fn node_templates(&self) -> Vec<TaskTemplate> {
+        Vec::new()
+    }
+
+    fn tool_factories(&self) -> Vec<Arc<dyn AgentTool>> {
+        Vec::new()
+    }
+
+    fn validators(&self) -> Vec<Arc<dyn AnnotationValidator>> {
+        Vec::new()
+    }
+
+    fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
+        Vec::new()
+    }
+
+    fn workflow_templates(&self) -> Vec<crate::WorkflowTemplate> {
+        Vec::new()
+    }
+
+    fn resources(&self, _request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
+        Ok(Vec::new())
+    }
+
+    fn correction_taxonomy(&self) -> Vec<CorrectionKind> {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
     pub vision: bool,

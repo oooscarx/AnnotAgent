@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use annotagent_core::{DomainSkill, ValidationCatalog};
+use annotagent_core::{
+    DomainSkill, Skill, SkillKind, SkillResource, SkillResourceRequest, ValidationCatalog,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -14,6 +16,174 @@ pub enum RegistryError {
     UnknownSkill(String),
     #[error("extension {kind} {id:?} is registered more than once")]
     DuplicateExtension { kind: &'static str, id: String },
+    #[error("Skill {skill:?} requires {dependency:?} version {required:?}")]
+    MissingDependency {
+        skill: String,
+        dependency: String,
+        required: String,
+    },
+    #[error("Skill {skill:?} requires {dependency:?} version {required:?}, found {actual:?}")]
+    DependencyVersion {
+        skill: String,
+        dependency: String,
+        required: String,
+        actual: String,
+    },
+    #[error("enabled Skills {left:?} and {right:?} conflict")]
+    Conflict { left: String, right: String },
+    #[error("Skill resource {resource:?} is not declared by {skill:?}")]
+    UndeclaredResource { skill: String, resource: String },
+    #[error("unsafe Skill resource path {0:?}")]
+    UnsafeResource(String),
+}
+
+#[derive(Default)]
+pub struct LayeredSkillRegistry {
+    skills: BTreeMap<String, Arc<dyn Skill>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillCatalogEntry {
+    pub id: String,
+    pub version: String,
+    pub kind: SkillKind,
+    pub display_name: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
+}
+
+impl LayeredSkillRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, skill: Arc<dyn Skill>) -> Result<(), RegistryError> {
+        let id = skill.id().to_owned();
+        if self.skills.contains_key(&id) {
+            return Err(RegistryError::DuplicateSkill(id));
+        }
+        if skill.manifest().id != id {
+            return Err(RegistryError::InvalidManifest(format!(
+                "trait id {id:?} does not match manifest id {:?}",
+                skill.manifest().id
+            )));
+        }
+        if let Some(issue) = skill.manifest().validate().into_iter().next() {
+            return Err(RegistryError::InvalidManifest(issue.to_string()));
+        }
+        ensure_unique(
+            "tool",
+            skill
+                .tool_factories()
+                .into_iter()
+                .map(|tool| tool.definition().name),
+        )?;
+        self.skills.insert(id, skill);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn catalog(&self) -> Vec<SkillCatalogEntry> {
+        self.skills
+            .values()
+            .map(|skill| SkillCatalogEntry {
+                id: skill.id().to_owned(),
+                version: skill.manifest().skill_version.clone(),
+                kind: skill.manifest().kind,
+                display_name: skill.manifest().display_name.clone(),
+                description: skill.manifest().description.clone(),
+                capabilities: skill.manifest().capabilities.clone(),
+            })
+            .collect()
+    }
+
+    pub fn get(&self, id: &str) -> Result<Arc<dyn Skill>, RegistryError> {
+        self.skills
+            .get(id)
+            .cloned()
+            .ok_or_else(|| RegistryError::UnknownSkill(id.to_owned()))
+    }
+
+    pub fn resolve_enabled(
+        &self,
+        enabled: &BTreeMap<String, String>,
+    ) -> Result<Vec<Arc<dyn Skill>>, RegistryError> {
+        let mut resolved = Vec::new();
+        for (id, configured_version) in enabled {
+            let skill = self.get(id)?;
+            if skill.manifest().skill_version != *configured_version {
+                return Err(RegistryError::DependencyVersion {
+                    skill: id.clone(),
+                    dependency: id.clone(),
+                    required: configured_version.clone(),
+                    actual: skill.manifest().skill_version.clone(),
+                });
+            }
+            for dependency in &skill.manifest().dependencies {
+                let Some(actual) = enabled.get(&dependency.id) else {
+                    return Err(RegistryError::MissingDependency {
+                        skill: id.clone(),
+                        dependency: dependency.id.clone(),
+                        required: dependency.version.clone(),
+                    });
+                };
+                if actual != &dependency.version {
+                    return Err(RegistryError::DependencyVersion {
+                        skill: id.clone(),
+                        dependency: dependency.id.clone(),
+                        required: dependency.version.clone(),
+                        actual: actual.clone(),
+                    });
+                }
+            }
+            for conflict in &skill.manifest().conflicts {
+                if enabled.contains_key(conflict) {
+                    return Err(RegistryError::Conflict {
+                        left: id.clone(),
+                        right: conflict.clone(),
+                    });
+                }
+            }
+            resolved.push(skill);
+        }
+        Ok(resolved)
+    }
+
+    pub fn load_resource(
+        &self,
+        skill_id: &str,
+        request: &SkillResourceRequest,
+    ) -> Result<Vec<SkillResource>, RegistryError> {
+        let skill = self.get(skill_id)?;
+        let Some(name) = request.resource_name.as_deref() else {
+            return skill
+                .resources(request)
+                .map_err(|error| RegistryError::InvalidManifest(error.to_string()));
+        };
+        if name.is_empty()
+            || std::path::Path::new(name).is_absolute()
+            || name.split('/').any(|component| component == "..")
+            || name.split('\\').any(|component| component == "..")
+        {
+            return Err(RegistryError::UnsafeResource(name.to_owned()));
+        }
+        let declared = skill
+            .manifest()
+            .summary_resources
+            .iter()
+            .chain(skill.manifest().task_resources.values().flatten())
+            .any(|resource| resource == name);
+        if !declared {
+            return Err(RegistryError::UndeclaredResource {
+                skill: skill_id.to_owned(),
+                resource: name.to_owned(),
+            });
+        }
+        skill
+            .resources(request)
+            .map_err(|error| RegistryError::InvalidManifest(error.to_string()))
+    }
 }
 
 #[derive(Default)]

@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M0 — complete. M1 layered Skill architecture is next.
+M1 — complete. M2 tool protocol and strong Artifact envelope is next.
 
 ## Audited baseline
 
@@ -44,3 +44,13 @@ M0 — complete. M1 layered Skill architecture is next.
 - domain boundary scan: passed;
 - ordered one-result-per-tool-call protocol baseline: passed;
 - the complete master request is archived at `docs/execution/AGENT_SKILL_MASTER_PROMPT.md`.
+
+## M1 delivered
+
+- `SkillKind::{Capability, Domain, Pack}`, versioned dependencies and conflicts;
+- unified object-safe `Skill` contract with optional node/tool/Validator/Refiner/template/resource
+  and taxonomy contributions;
+- layered registry with deterministic catalog, exact-version dependency resolution and conflict
+  rejection;
+- manifest-declared on-demand resources with traversal and undeclared-resource rejection;
+- independent dummy Capability, Domain and Pack registration without Core/Runtime branching.
