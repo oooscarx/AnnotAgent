@@ -326,6 +326,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/batches/{batch_id}/cancel", post(cancel_batch))
         .route("/api/projects/{project_id}/export", post(export_dataset))
         .route("/api/runs/{run_id}", get(get_run))
+        .route(
+            "/api/runs/{run_id}/pipeline-artifacts",
+            get(inspect_run_pipeline_artifacts),
+        )
+        .route(
+            "/api/runs/{run_id}/replay/{node_id}",
+            post(replay_run_from_node),
+        )
         .route("/api/runs/{run_id}/pause", post(pause_run))
         .route("/api/runs/{run_id}/resume", post(resume_run))
         .route("/api/runs/{run_id}/cancel", post(cancel_run))
@@ -860,6 +868,8 @@ async fn create_workflow_draft(
 #[derive(Debug, Deserialize)]
 struct SuggestWorkflowRequest {
     project_id: String,
+    target_task_id: Option<String>,
+    target_label: Option<String>,
     #[serde(default = "default_workflow_advisor")]
     advisor: String,
     #[serde(default)]
@@ -875,21 +885,56 @@ async fn suggest_workflow(
     Json(request): Json<SuggestWorkflowRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let settings = state.settings.read().await.clone();
+    if request.target_task_id.is_some() != request.target_label.is_some() {
+        return Err(ApiError::bad_request(
+            "target_task_id and target_label must be supplied together",
+        ));
+    }
+    let target = request
+        .target_task_id
+        .as_deref()
+        .zip(request.target_label.as_deref());
     let suggestion = match request.advisor.as_str() {
-        "mock" => state
-            .application
-            .suggest_workflow(&request.project_id, &settings, &request.constraints)
-            .map_err(ApiError::bad_request)?,
-        "llm" => state
-            .application
-            .suggest_workflow_live(
-                &request.project_id,
-                &settings,
-                state.api_key.read().await.clone(),
-                &request.constraints,
-            )
-            .await
-            .map_err(ApiError::bad_request)?,
+        "mock" => match target {
+            Some((task_id, label)) => state
+                .application
+                .suggest_label_pipeline(
+                    &request.project_id,
+                    &settings,
+                    task_id,
+                    label,
+                    &request.constraints,
+                )
+                .map_err(ApiError::bad_request)?,
+            None => state
+                .application
+                .suggest_workflow(&request.project_id, &settings, &request.constraints)
+                .map_err(ApiError::bad_request)?,
+        },
+        "llm" => match target {
+            Some((task_id, label)) => state
+                .application
+                .suggest_label_pipeline_live(
+                    &request.project_id,
+                    &settings,
+                    state.api_key.read().await.clone(),
+                    task_id,
+                    label,
+                    &request.constraints,
+                )
+                .await
+                .map_err(ApiError::bad_request)?,
+            None => state
+                .application
+                .suggest_workflow_live(
+                    &request.project_id,
+                    &settings,
+                    state.api_key.read().await.clone(),
+                    &request.constraints,
+                )
+                .await
+                .map_err(ApiError::bad_request)?,
+        },
         other => {
             return Err(ApiError::bad_request(format!(
                 "unknown Workflow Advisor {other:?}; choose mock or llm"
@@ -1057,13 +1102,31 @@ async fn get_project(
 async fn get_workflow_catalog(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<WorkflowCatalogQuery>,
 ) -> ApiResult<Json<Value>> {
+    if query.target_task_id.is_some() != query.target_label.is_some() {
+        return Err(ApiError::bad_request(
+            "target_task_id and target_label must be supplied together",
+        ));
+    }
     let settings = state.settings.read().await.clone();
     let input = state
         .application
-        .workflow_advisor_input(&project_id, &settings, WorkflowConstraints::default())
+        .workflow_advisor_input_for_label(
+            &project_id,
+            &settings,
+            WorkflowConstraints::default(),
+            query.target_task_id.as_deref(),
+            query.target_label.as_deref(),
+        )
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(input)))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkflowCatalogQuery {
+    target_task_id: Option<String>,
+    target_label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1396,6 +1459,32 @@ async fn cancel_batch(
 
 fn parse_run_id(value: &str) -> ApiResult<RunId> {
     value.parse().map_err(ApiError::bad_request)
+}
+
+async fn inspect_run_pipeline_artifacts(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let run_id = parse_run_id(&run_id)?;
+    let inspection = state
+        .application
+        .inspect_run_pipeline_artifacts(run_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!(inspection)))
+}
+
+async fn replay_run_from_node(
+    State(state): State<ServerState>,
+    AxumPath((run_id, node_id)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let run_id = parse_run_id(&run_id)?;
+    let settings = state.settings.read().await.clone();
+    let replay = state
+        .application
+        .replay_run_from_node(run_id, &node_id, &settings)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(replay)))
 }
 
 async fn get_run(
@@ -1886,7 +1975,7 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
     use annotagent_core::RunStatus;
-    use annotagent_image_tools::generate_synthetic_robocup;
+    use annotagent_image_tools::{generate_synthetic_inspection, generate_synthetic_robocup};
     use axum::body::to_bytes;
     use futures::StreamExt;
     use serde_json::json;
@@ -2729,6 +2818,171 @@ mod tests {
         )
         .await;
         assert_eq!(cancelled["batch"]["status"], json!("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let state = test_state(application.clone(), Arc::new(MemorySecretStore::default()));
+        let service = router(state, None);
+        let project_yaml = r"
+version: 1
+project:
+  name: HTTP Label Pipeline
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 2
+tasks:
+  - id: scene
+    kind: classification
+    labels: [day, night]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        let created = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects",
+            Some(json!({"id": "http-label", "yaml": project_yaml})),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        generate_synthetic_inspection(&temp.path().join("http-label/images/sample.png"))
+            .expect("sample image");
+
+        let suggestion = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/workflow-drafts/suggest",
+                Some(json!({
+                    "project_id": "http-label",
+                    "advisor": "mock",
+                    "target_task_id": "scene",
+                    "target_label": "day"
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(suggestion["draft"]["status"], json!("suggested"));
+        assert_eq!(
+            suggestion["draft"]["label_pipeline"]["label_pipelines"][0]["target_label"],
+            json!("day")
+        );
+        let draft_id = suggestion["draft"]["id"].as_str().expect("draft id");
+        let dry_run = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/dry-run"),
+                Some(json!({"image_indices": [0]})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(dry_run["sandbox"], json!(true));
+        assert_eq!(dry_run["validation"]["valid"], json!(true));
+        assert!(
+            dry_run["samples"][0]["nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.iter().any(|node| {
+                    node["node_id"] == json!("scene.day.classifier")
+                        && node["output_types"] == json!(["classification_set"])
+                }))
+        );
+        assert!(
+            application
+                .list_runs()
+                .expect("Dry Run isolation")
+                .is_empty()
+        );
+
+        let published = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/publish"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        let workflow_id = published["workflow_id"].as_str().expect("workflow id");
+        let version = published["version"].as_u64().expect("version");
+        let started = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/http-label/runs",
+                Some(json!({
+                    "provider": "mock",
+                    "workflow_id": workflow_id,
+                    "version": version
+                })),
+            )
+            .await,
+        )
+        .await;
+        let run_id = started["run_id"].as_str().expect("run id");
+        wait_for_status(&application, run_id, RunStatus::Completed).await;
+        let inspection = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/pipeline-artifacts"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(inspection["workflow_id"], json!(workflow_id));
+        assert_eq!(inspection["image_index"], json!(0));
+        let classifier = inspection["nodes"]
+            .as_array()
+            .and_then(|nodes| {
+                nodes
+                    .iter()
+                    .find(|node| node["node_id"] == json!("scene.day.classifier"))
+            })
+            .expect("classifier Inspector");
+        assert_eq!(
+            classifier["outputs"][0]["kind"],
+            json!("classification_set")
+        );
+        assert_eq!(classifier["attempts"], json!(1));
+        assert!(classifier["configuration"]["parameters"]["labels"].is_array());
+        assert!(classifier["latency_ms"].is_number());
+        assert!(classifier["error"].is_null());
+
+        let replay = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/runs/{run_id}/replay/scene.day.classifier"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(replay["sandbox"], json!(true));
+        assert!(
+            replay["reexecuted_nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.contains(&json!("scene.day.classifier")))
+        );
+        assert!(
+            replay["preserved_upstream_nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.contains(&json!("core.image_input")))
+        );
     }
 
     async fn request(

@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactKind, ModelRegistry, NodeRegistry, ProjectSchema, TaskKind, ValidationCatalog,
-    VisionCapability, VisionModelDescriptor,
+    ArtifactKind, LabelId, ModelRegistry, NodeRegistry, ProjectSchema, TaskId, TaskKind,
+    ValidationCatalog, VisionCapability, VisionModelDescriptor,
 };
 
 pub const WORKFLOW_SCHEMA_VERSION: u32 = 2;
@@ -283,6 +283,12 @@ pub struct WorkflowDataProfile {
 pub struct WorkflowAdvisorInput {
     pub project_id: String,
     pub project_schema: ProjectSchema,
+    /// When present, the Advisor is constrained to proposing one editable Label Pipeline for this
+    /// exact Project task/Label pair instead of an unrestricted project-wide graph.
+    #[serde(default)]
+    pub target_task_id: Option<TaskId>,
+    #[serde(default)]
+    pub target_label: Option<LabelId>,
     pub enabled_skills: Vec<String>,
     pub node_catalog: Vec<crate::VisionNodeDescriptor>,
     pub model_registry: Vec<VisionModelDescriptor>,

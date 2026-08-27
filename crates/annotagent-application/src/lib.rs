@@ -12,17 +12,20 @@ use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationSource, ArtifactKind, BatchBudgetLedger,
     BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
     BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
-    ImageId, ImportIssue, ImportReport, ImportRequest, ModelMessage, ModelRegistry, ModelRequest,
-    ModelRole, NodeRegistry, PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion,
-    RegistryWorkflowAdvisor, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    SnapshotImage, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
-    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
-    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
-    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowSnapshot, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds,
+    ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, ModelBinding as PipelineModelBinding,
+    ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
+    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, SharedWorkflowStage,
+    SnapshotImage, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
+    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
+    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorInput,
+    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus,
+    WorkflowDryRunNodeResult, WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoImporter, LabelMeImporter, NativeImporter, YoloDetectionImporter, YoloSegmentationImporter,
@@ -33,8 +36,8 @@ use annotagent_provider::{
     OpenAiCompatibleConfig, OpenAiCompatibleProvider,
 };
 use annotagent_runtime::{
-    AgentLoopConfig, AgentRuntime, ImageRunRequest, ImageRunResult, RunControl, RuntimeStore,
-    SkillRegistry,
+    AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
+    ImageRunRequest, ImageRunResult, RunControl, RuntimeStore, SkillRegistry,
 };
 use annotagent_skill_robocup::RoboCupSkill;
 use annotagent_storage::{BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore};
@@ -539,12 +542,347 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     Ok((nodes, models))
 }
 
+fn controlled_label_composition(
+    project: &ProjectSchema,
+    target_task_id: &str,
+    target_label: &str,
+    constraints: &WorkflowConstraints,
+) -> Result<LabelWorkflowComposition> {
+    let task = project
+        .tasks
+        .iter()
+        .find(|task| task.id.as_str() == target_task_id)
+        .ok_or_else(|| anyhow!("target task {target_task_id:?} is not in Project Schema"))?;
+    if !task.labels.iter().any(|label| label == target_label) {
+        bail!("target Label {target_label:?} is not declared by task {target_task_id:?}");
+    }
+    let target_task = TaskId::from(target_task_id);
+    let target = LabelId::from(target_label);
+    let threshold = project.review.auto_accept_confidence;
+    let gate = |input: PipelineSource, artifact_type: ArtifactKind| PipelineStep {
+        id: format!("{target_task_id}.{target_label}.confidence"),
+        node_type: annotagent_runtime::CORE_CONFIDENCE_GATE.to_owned(),
+        kind: WorkflowNodeKind::Gate,
+        inputs: BTreeMap::from([("candidates".to_owned(), input)]),
+        outputs: BTreeMap::from([("candidates".to_owned(), artifact_type)]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::from([("threshold".to_owned(), json!(threshold))]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate {
+            required: true,
+            allow_manual_override: true,
+        },
+        resources: ResourceRequirements::default(),
+    };
+    let commit = |input: PipelineSource| PipelineStep {
+        id: format!("{target_task_id}.{target_label}.commit"),
+        node_type: "commit".to_owned(),
+        kind: WorkflowNodeKind::Commit,
+        inputs: BTreeMap::from([("candidates".to_owned(), input)]),
+        outputs: BTreeMap::new(),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::from([
+            ("task_id".to_owned(), json!(target_task_id)),
+            ("target_label".to_owned(), json!(target_label)),
+        ]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+
+    let (shared_stages, steps) = match task.kind {
+        TaskKind::Classification => {
+            let classifier_id = format!("{target_task_id}.{target_label}.classifier");
+            let gate_id = format!("{target_task_id}.{target_label}.confidence");
+            let classifier = PipelineStep {
+                id: classifier_id.clone(),
+                node_type: annotagent_skill_classification::CLASSIFICATION_OPERATION.to_owned(),
+                kind: WorkflowNodeKind::VisionModel,
+                inputs: BTreeMap::from([("subjects".to_owned(), PipelineSource::Image)]),
+                outputs: BTreeMap::from([(
+                    "classifications".to_owned(),
+                    ArtifactKind::ClassificationSet,
+                )]),
+                model_binding: Some(PipelineModelBinding {
+                    model_id: constraints
+                        .preferred_model_id
+                        .clone()
+                        .unwrap_or_else(|| "mock-classifier".to_owned()),
+                    capability: VisionCapability::Classification,
+                    configuration: BTreeMap::new(),
+                }),
+                skill_binding: None,
+                parameters: BTreeMap::from([
+                    ("labels".to_owned(), json!(task.labels)),
+                    ("mock_label".to_owned(), json!(target_label)),
+                    ("target_label".to_owned(), json!(target_label)),
+                ]),
+                validators: task.validators.clone(),
+                refiners: task.refiners.clone(),
+                fallback: None,
+                retry_policy: RetryPolicy {
+                    max_attempts: project.runtime.max_retries.saturating_add(1),
+                },
+                review_gate: ReviewGate::default(),
+                resources: ResourceRequirements {
+                    timeout_seconds: Some(project.runtime.task_timeout_seconds),
+                    ..ResourceRequirements::default()
+                },
+            };
+            let gate_step = gate(
+                PipelineSource::Step {
+                    step_id: classifier_id,
+                    port: "classifications".to_owned(),
+                    artifact_type: ArtifactKind::ClassificationSet,
+                },
+                ArtifactKind::ClassificationSet,
+            );
+            let commit_step = commit(PipelineSource::Step {
+                step_id: gate_id,
+                port: "candidates".to_owned(),
+                artifact_type: ArtifactKind::ClassificationSet,
+            });
+            (Vec::new(), vec![classifier, gate_step, commit_step])
+        }
+        TaskKind::BoundingBox => {
+            let detector_id = "shared.detector".to_owned();
+            let filter_id = format!("{target_task_id}.{target_label}.filter");
+            let gate_id = format!("{target_task_id}.{target_label}.confidence");
+            let detector = PipelineStep {
+                id: detector_id.clone(),
+                node_type: annotagent_skill_yolo::YOLO_DETECTION_OPERATION.to_owned(),
+                kind: WorkflowNodeKind::VisionModel,
+                inputs: BTreeMap::from([("image".to_owned(), PipelineSource::Image)]),
+                outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
+                model_binding: Some(PipelineModelBinding {
+                    model_id: constraints
+                        .preferred_model_id
+                        .clone()
+                        .unwrap_or_else(|| "mock-detector".to_owned()),
+                    capability: VisionCapability::ObjectDetection,
+                    configuration: BTreeMap::new(),
+                }),
+                skill_binding: None,
+                parameters: BTreeMap::from([
+                    ("mock_label".to_owned(), json!(target_label)),
+                    ("mock_class_id".to_owned(), json!(target_label)),
+                ]),
+                validators: Vec::new(),
+                refiners: Vec::new(),
+                fallback: None,
+                retry_policy: RetryPolicy {
+                    max_attempts: project.runtime.max_retries.saturating_add(1),
+                },
+                review_gate: ReviewGate::default(),
+                resources: ResourceRequirements {
+                    timeout_seconds: Some(project.runtime.task_timeout_seconds),
+                    ..ResourceRequirements::default()
+                },
+            };
+            let filter = PipelineStep {
+                id: filter_id.clone(),
+                node_type: annotagent_runtime::CORE_FILTER.to_owned(),
+                kind: WorkflowNodeKind::Transform,
+                inputs: BTreeMap::from([(
+                    "detections".to_owned(),
+                    PipelineSource::SharedStage {
+                        stage_id: "shared-vision".to_owned(),
+                        step_id: detector_id,
+                        port: "detections".to_owned(),
+                        artifact_type: ArtifactKind::DetectionSet,
+                    },
+                )]),
+                outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
+                model_binding: None,
+                skill_binding: None,
+                parameters: BTreeMap::from([
+                    ("labels".to_owned(), json!([target_label])),
+                    ("minimum_confidence".to_owned(), json!(0.0)),
+                ]),
+                validators: task.validators.clone(),
+                refiners: task.refiners.clone(),
+                fallback: None,
+                retry_policy: RetryPolicy::default(),
+                review_gate: ReviewGate::default(),
+                resources: ResourceRequirements::default(),
+            };
+            let gate_step = gate(
+                PipelineSource::Step {
+                    step_id: filter_id,
+                    port: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                },
+                ArtifactKind::DetectionSet,
+            );
+            let commit_step = commit(PipelineSource::Step {
+                step_id: gate_id,
+                port: "candidates".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+            });
+            (
+                vec![SharedWorkflowStage {
+                    id: "shared-vision".to_owned(),
+                    name: "Shared detector".to_owned(),
+                    steps: vec![detector],
+                }],
+                vec![filter, gate_step, commit_step],
+            )
+        }
+        other => bail!(
+            "Label Pipeline Advisor currently supports classification and bounding_box tasks, not {other:?}"
+        ),
+    };
+    Ok(LabelWorkflowComposition {
+        schema_version: annotagent_core::LABEL_PIPELINE_SCHEMA_VERSION,
+        shared_stages,
+        label_pipelines: vec![LabelPipeline {
+            id: format!("{target_task_id}.{target_label}"),
+            target_task_id: target_task,
+            target_label: target,
+            steps,
+        }],
+    })
+}
+
+fn compile_label_projection(draft: WorkflowDraft, project: &ProjectSchema) -> WorkflowDraft {
+    let Some(composition) = draft.label_pipeline.clone() else {
+        return draft;
+    };
+    let mut compiled = composition.compile_draft(
+        draft.project_id.clone(),
+        draft.name.clone(),
+        project.project.enabled_skill_versions(),
+        draft.created_at,
+    );
+    compiled.id = draft.id;
+    compiled.status = draft.status;
+    compiled.resource_versions = draft.resource_versions;
+    compiled.allow_unvalidated_commit = draft.allow_unvalidated_commit;
+    compiled.created_at = draft.created_at;
+    compiled.updated_at = draft.updated_at;
+    compiled
+}
+
+fn label_projection_issues(
+    draft: &WorkflowDraft,
+    project: &ProjectSchema,
+    nodes: &NodeRegistry,
+    models: &ModelRegistry,
+) -> Vec<WorkflowValidationIssue> {
+    draft
+        .label_pipeline
+        .as_ref()
+        .map_or_else(Vec::new, |composition| {
+            LabelPipelineStaticValidator
+                .validate(composition, project, nodes, models)
+                .issues
+                .into_iter()
+                .map(|issue| WorkflowValidationIssue {
+                    code: issue.code,
+                    path: format!("label_pipeline.{}", issue.path),
+                    message: issue.message,
+                    blocking: issue.blocking,
+                })
+                .collect()
+        })
+}
+
+fn node_artifact_inspection(
+    run_id: RunId,
+    workflow: &PublishedWorkflowVersion,
+    checkpoint: &DagCheckpoint,
+    image_index: Option<usize>,
+) -> RunNodeArtifactInspection {
+    let nodes = checkpoint
+        .traces
+        .iter()
+        .filter_map(|trace| {
+            let configuration = workflow
+                .draft
+                .nodes
+                .iter()
+                .find(|node| node.id == trace.node_id)?
+                .clone();
+            Some(NodeArtifactInspection {
+                node_id: trace.node_id.clone(),
+                operation: trace.operation.clone(),
+                status: trace.status,
+                configuration,
+                inputs: trace.input_pipeline_artifacts.clone(),
+                outputs: trace.output_pipeline_artifacts.clone(),
+                latency_ms: (trace.finished_at - trace.started_at)
+                    .num_milliseconds()
+                    .max(0)
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+                attempts: trace.attempt_count,
+                cache_hit: trace.cache_hit,
+                usage: trace.usage.clone(),
+                error: trace.error.clone(),
+            })
+        })
+        .collect();
+    RunNodeArtifactInspection {
+        run_id,
+        workflow_id: workflow.workflow_id.clone(),
+        workflow_version: workflow.version,
+        content_hash: workflow.content_hash.clone(),
+        project_id: workflow.project_id.clone(),
+        image_index,
+        nodes,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StartedRun {
     pub run_id: RunId,
     pub image_path: PathBuf,
     pub status: RunStatus,
     pub idempotent: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunNodeArtifactInspection {
+    pub run_id: RunId,
+    pub workflow_id: String,
+    pub workflow_version: u32,
+    pub content_hash: String,
+    pub project_id: String,
+    pub image_index: Option<usize>,
+    pub nodes: Vec<NodeArtifactInspection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeArtifactInspection {
+    pub node_id: String,
+    pub operation: String,
+    pub status: DagNodeStatus,
+    pub configuration: annotagent_core::WorkflowDraftNode,
+    pub inputs: Vec<PipelineArtifact>,
+    pub outputs: Vec<PipelineArtifact>,
+    pub latency_ms: u64,
+    pub attempts: u32,
+    pub cache_hit: bool,
+    pub usage: DagNodeUsage,
+    pub error: Option<DagNodeFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeReplayReport {
+    pub source_run_id: RunId,
+    pub replayed_from: String,
+    pub reexecuted_nodes: Vec<String>,
+    pub preserved_upstream_nodes: Vec<String>,
+    pub inspection: RunNodeArtifactInspection,
+    pub sandbox: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1590,6 +1928,199 @@ impl LocalApplication {
         Ok(images)
     }
 
+    pub fn inspect_run_pipeline_artifacts(
+        &self,
+        run_id: RunId,
+    ) -> Result<RunNodeArtifactInspection> {
+        let history = self
+            .store
+            .list_runs()?
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
+        let snapshot: serde_json::Value = serde_json::from_str(
+            history
+                .workflow_snapshot_json
+                .as_deref()
+                .ok_or_else(|| anyhow!("run {run_id} has no Workflow checkpoint"))?,
+        )?;
+        let workflow: PublishedWorkflowVersion = serde_json::from_value(
+            snapshot
+                .get("selected_workflow")
+                .cloned()
+                .ok_or_else(|| anyhow!("run {run_id} did not select a Published Workflow"))?,
+        )?;
+        let checkpoint: DagCheckpoint = serde_json::from_value(
+            snapshot
+                .get("checkpoint")
+                .cloned()
+                .ok_or_else(|| anyhow!("run {run_id} has no completed node checkpoint"))?,
+        )?;
+        let image_index = snapshot
+            .pointer("/image/sha256")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|sha256| {
+                self.image_index_by_sha256(&workflow.project_id, sha256)
+                    .ok()
+            })
+            .flatten();
+        Ok(node_artifact_inspection(
+            run_id,
+            &workflow,
+            &checkpoint,
+            image_index,
+        ))
+    }
+
+    pub async fn replay_run_from_node(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+    ) -> Result<NodeReplayReport> {
+        let history = self
+            .store
+            .list_runs()?
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
+        if history.provider != "mock" {
+            bail!(
+                "Replay currently requires the original offline mock binding; live credentials are never recovered from Run history"
+            );
+        }
+        let snapshot: serde_json::Value = serde_json::from_str(
+            history
+                .workflow_snapshot_json
+                .as_deref()
+                .ok_or_else(|| anyhow!("run {run_id} has no Workflow checkpoint"))?,
+        )?;
+        let workflow: PublishedWorkflowVersion = serde_json::from_value(
+            snapshot
+                .get("selected_workflow")
+                .cloned()
+                .ok_or_else(|| anyhow!("run {run_id} did not select a Published Workflow"))?,
+        )?;
+        let checkpoint: DagCheckpoint = serde_json::from_value(
+            snapshot
+                .get("checkpoint")
+                .cloned()
+                .ok_or_else(|| anyhow!("run {run_id} has no completed node checkpoint"))?,
+        )?;
+        let sha256 = snapshot
+            .pointer("/image/sha256")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("run {run_id} predates replayable image identity"))?;
+        let image_index = self
+            .image_index_by_sha256(&workflow.project_id, sha256)?
+            .ok_or_else(|| {
+                anyhow!("the source image for run {run_id} is no longer in the Project")
+            })?;
+        let images = self.list_project_images(&workflow.project_id)?;
+        let image_path = images
+            .get(image_index)
+            .ok_or_else(|| anyhow!("source image index {image_index} is no longer available"))?;
+        let project_path = self.project_path(&workflow.project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let use_namespace = project_skills.len() > 1;
+        let mut validators = BTreeMap::new();
+        let mut refiners = BTreeMap::new();
+        for skill in &project_skills {
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
+        }
+        let runtime = PublishedWorkflowRuntime::new(
+            workflow.clone(),
+            "mock",
+            settings,
+            None,
+            self.store.clone(),
+            validators,
+            refiners,
+        )?;
+        let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
+        let model_image = to_model_image("label-pipeline-replay", &image, 1280)
+            .map_err(|error| anyhow!(error))?;
+        let image_id = checkpoint
+            .node_outputs
+            .values()
+            .flat_map(|output| output.pipeline_artifacts.iter())
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) => Some(image.image_id),
+                _ => None,
+            })
+            .ok_or_else(|| anyhow!("run {run_id} checkpoint has no Image Artifact"))?;
+        let before_trace_count = checkpoint.traces.len();
+        let before_outputs = checkpoint.node_outputs.clone();
+        let request = ImageRunRequest {
+            run_id: RunId::new(),
+            project_id: stable_project_id(project_path.parent().unwrap_or(&self.workspace)),
+            project_root: project_path
+                .parent()
+                .unwrap_or(&self.workspace)
+                .to_path_buf(),
+            project: Arc::new(project),
+            image_id,
+            image,
+            model_image: Some(model_image),
+        };
+        let result = runtime
+            .replay_sandbox(&request, checkpoint, node_id)
+            .await?;
+        let reexecuted_nodes = result.checkpoint.traces[before_trace_count..]
+            .iter()
+            .map(|trace| trace.node_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let preserved_upstream_nodes = before_outputs
+            .iter()
+            .filter(|(id, output)| {
+                result.checkpoint.node_outputs.get(*id) == Some(*output)
+                    && !reexecuted_nodes.contains(id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        Ok(NodeReplayReport {
+            source_run_id: run_id,
+            replayed_from: node_id.to_owned(),
+            reexecuted_nodes,
+            preserved_upstream_nodes,
+            inspection: node_artifact_inspection(
+                run_id,
+                &workflow,
+                &result.checkpoint,
+                Some(image_index),
+            ),
+            sandbox: true,
+        })
+    }
+
+    fn image_index_by_sha256(&self, project_id: &str, sha256: &str) -> Result<Option<usize>> {
+        for (index, path) in self.list_project_images(project_id)?.iter().enumerate() {
+            let image = load_image(path, 40_000_000).map_err(|error| anyhow!(error))?;
+            if image.metadata.sha256 == sha256 {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn list_workflow_drafts(&self, project_id: Option<&str>) -> Result<Vec<WorkflowDraft>> {
         if let Some(project_id) = project_id {
             validate_project_id(project_id)?;
@@ -1602,6 +2133,17 @@ impl LocalApplication {
         project_id: &str,
         settings: &Settings,
         constraints: WorkflowConstraints,
+    ) -> Result<WorkflowAdvisorInput> {
+        self.workflow_advisor_input_for_label(project_id, settings, constraints, None, None)
+    }
+
+    pub fn workflow_advisor_input_for_label(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: WorkflowConstraints,
+        target_task_id: Option<&str>,
+        target_label: Option<&str>,
     ) -> Result<WorkflowAdvisorInput> {
         let project_path = self.project_path(project_id)?;
         let (project, project_skills) =
@@ -1625,6 +2167,8 @@ impl LocalApplication {
         Ok(WorkflowAdvisorInput {
             project_id: project_id.to_owned(),
             project_schema: project,
+            target_task_id: target_task_id.map(TaskId::from),
+            target_label: target_label.map(LabelId::from),
             enabled_skills,
             node_catalog: nodes.nodes(),
             model_registry: models.models(),
@@ -1744,6 +2288,91 @@ impl LocalApplication {
         Ok(suggestion)
     }
 
+    pub fn suggest_label_pipeline(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        target_task_id: &str,
+        target_label: &str,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        let suggestion = self.suggest_label_pipeline_preview(
+            project_id,
+            settings,
+            target_task_id,
+            target_label,
+            constraints,
+        )?;
+        self.store.save_workflow_draft(&suggestion.draft)?;
+        Ok(suggestion)
+    }
+
+    fn suggest_label_pipeline_preview(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        target_task_id: &str,
+        target_label: &str,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (nodes, models) = workflow_catalog(settings)?;
+        let composition =
+            controlled_label_composition(&project, target_task_id, target_label, constraints)?;
+        let label_report =
+            LabelPipelineStaticValidator.validate(&composition, &project, &nodes, &models);
+        if !label_report.valid {
+            bail!(
+                "controlled Label Pipeline template failed registry validation: {}",
+                label_report
+                    .issues
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.path, issue.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        let now = chrono::Utc::now();
+        let mut draft = composition.compile_draft(
+            project_id,
+            format!("{target_label} Label Pipeline"),
+            project.project.enabled_skill_versions(),
+            now,
+        );
+        draft.status = WorkflowDraftStatus::Suggested;
+        Ok(WorkflowSuggestion {
+            draft,
+            rationale: vec![
+                format!(
+                    "The Draft targets only {target_task_id}.{target_label} and uses registered nodes and Models."
+                ),
+                "Shared model stages are compiled once and referenced by Label Pipelines rather than duplicated."
+                    .to_owned(),
+            ],
+            unresolved_model_bindings: Vec::new(),
+            warnings: vec![
+                "This suggestion is an editable Draft. Dry Run and static validation are required before publish."
+                    .to_owned(),
+            ],
+            alternatives: match project
+                .tasks
+                .iter()
+                .find(|task| task.id.as_str() == target_task_id)
+                .map(|task| task.kind)
+            {
+                Some(TaskKind::BoundingBox) => vec![
+                    "Add Core Crop after the shared detector and bind a Classification Skill for crop attributes."
+                        .to_owned(),
+                ],
+                _ => vec![
+                    "Bind a generic HTTP JSON classifier when the mock binding is no longer appropriate."
+                        .to_owned(),
+                ],
+            },
+        })
+    }
+
     pub async fn suggest_workflow_live(
         &self,
         project_id: &str,
@@ -1751,8 +2380,55 @@ impl LocalApplication {
         temporary_api_key: Option<String>,
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
-        let input = self.workflow_advisor_input(project_id, settings, constraints.clone())?;
-        let mut suggestion = self.suggest_workflow_preview(project_id, settings, constraints)?;
+        self.suggest_workflow_live_for_label(
+            project_id,
+            settings,
+            temporary_api_key,
+            constraints,
+            None,
+        )
+        .await
+    }
+
+    pub async fn suggest_label_pipeline_live(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        temporary_api_key: Option<String>,
+        target_task_id: &str,
+        target_label: &str,
+        constraints: &WorkflowConstraints,
+    ) -> Result<WorkflowSuggestion> {
+        self.suggest_workflow_live_for_label(
+            project_id,
+            settings,
+            temporary_api_key,
+            constraints,
+            Some((target_task_id, target_label)),
+        )
+        .await
+    }
+
+    async fn suggest_workflow_live_for_label(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        temporary_api_key: Option<String>,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+    ) -> Result<WorkflowSuggestion> {
+        let input = self.workflow_advisor_input_for_label(
+            project_id,
+            settings,
+            constraints.clone(),
+            target.map(|value| value.0),
+            target.map(|value| value.1),
+        )?;
+        let mut suggestion = if let Some((task_id, label)) = target {
+            self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
+        } else {
+            self.suggest_workflow_preview(project_id, settings, constraints)?
+        };
         let node_ids = suggestion
             .draft
             .nodes
@@ -1870,6 +2546,31 @@ impl LocalApplication {
                 node.gate.required = true;
             }
         }
+        if let Some(composition) = suggestion.draft.label_pipeline.as_mut() {
+            for step in composition
+                .shared_stages
+                .iter_mut()
+                .flat_map(|stage| stage.steps.iter_mut())
+                .chain(
+                    composition
+                        .label_pipelines
+                        .iter_mut()
+                        .flat_map(|pipeline| pipeline.steps.iter_mut()),
+                )
+            {
+                if let Some(binding) = advice
+                    .model_bindings
+                    .iter()
+                    .find(|binding| binding.node_id == step.id)
+                    && let Some(model_binding) = step.model_binding.as_mut()
+                {
+                    model_binding.model_id.clone_from(&binding.model_id);
+                }
+                if advice.review_gate_node_ids.contains(&step.id) {
+                    step.review_gate.required = true;
+                }
+            }
+        }
         suggestion.rationale = advice.rationale;
         suggestion.unresolved_model_bindings = advice.unresolved_model_bindings;
         suggestion.warnings = advice.warnings;
@@ -1923,7 +2624,7 @@ impl LocalApplication {
     }
 
     pub fn save_workflow_draft(&self, mut draft: WorkflowDraft) -> Result<WorkflowDraft> {
-        self.project_path(&draft.project_id)?;
+        let project_path = self.project_path(&draft.project_id)?;
         if let Ok(existing) = self.store.get_workflow_draft(&draft.id)
             && matches!(
                 existing.status,
@@ -1934,6 +2635,10 @@ impl LocalApplication {
         }
         draft.status = WorkflowDraftStatus::Editing;
         draft.updated_at = chrono::Utc::now();
+        if draft.label_pipeline.is_some() {
+            let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+            draft = compile_label_projection(draft, &project);
+        }
         self.store.save_workflow_draft(&draft)?;
         Ok(draft)
     }
@@ -1969,6 +2674,8 @@ impl LocalApplication {
         settings: &Settings,
     ) -> Result<WorkflowValidationReport> {
         let draft = self.store.get_workflow_draft(draft_id)?;
+        let project_path = self.project_path(&draft.project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
         let enabled_skills = draft
             .enabled_skills
@@ -1977,7 +2684,7 @@ impl LocalApplication {
             .collect::<BTreeSet<_>>();
         let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
         let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
-        let report = WorkflowStaticValidator.validate_for_publish(
+        let mut report = WorkflowStaticValidator.validate_for_publish(
             &draft,
             &nodes,
             &models,
@@ -1985,6 +2692,10 @@ impl LocalApplication {
             &enabled_skills,
             false,
         );
+        report
+            .issues
+            .extend(label_projection_issues(&draft, &project, &nodes, &models));
+        report.valid = report.issues.iter().all(|issue| !issue.blocking);
         if report.valid
             && !matches!(
                 draft.status,
@@ -2014,6 +2725,11 @@ impl LocalApplication {
         } else {
             image_indices.iter().copied().take(10).collect::<Vec<_>>()
         };
+        if draft.label_pipeline.is_some() && validation.valid {
+            return self
+                .dry_run_label_pipeline_samples(draft, settings, &images, &selected, started)
+                .await;
+        }
         let (nodes, models) = workflow_catalog(settings)?;
         let mut samples = Vec::new();
         if validation.valid {
@@ -2131,6 +2847,149 @@ impl LocalApplication {
         Ok(WorkflowDryRunReport {
             sandbox: true,
             validation,
+            samples,
+            total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            estimated_cost: "0".to_owned(),
+        })
+    }
+
+    async fn dry_run_label_pipeline_samples(
+        &self,
+        draft: WorkflowDraft,
+        settings: &Settings,
+        images: &[PathBuf],
+        selected: &[usize],
+        started: std::time::Instant,
+    ) -> Result<WorkflowDryRunReport> {
+        let project_path = self.project_path(&draft.project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (_, models) = workflow_catalog(settings)?;
+        let snapshot =
+            WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions());
+        let content_hash = annotagent_image_tools::sha256(&snapshot.content_hash_material()?);
+        let published = PublishedWorkflowVersion {
+            workflow_id: format!("dry-run:{}", draft.id),
+            version: 0,
+            project_id: draft.project_id.clone(),
+            source_draft_id: draft.id.clone(),
+            content_hash,
+            draft,
+            snapshot,
+            published_at: chrono::Utc::now(),
+        };
+        let execution_order = published
+            .draft
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        let use_namespace = project_skills.len() > 1;
+        let mut validators = BTreeMap::new();
+        let mut refiners = BTreeMap::new();
+        for skill in &project_skills {
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
+        }
+        let runtime = PublishedWorkflowRuntime::new(
+            published,
+            &settings.default_provider,
+            settings,
+            None,
+            self.store.clone(),
+            validators,
+            refiners,
+        )?;
+        let project = Arc::new(project);
+        let project_root = project_path
+            .parent()
+            .unwrap_or(&self.workspace)
+            .to_path_buf();
+        let mut samples = Vec::new();
+        let mut execution_issues = Vec::new();
+        for index in selected {
+            let path = images
+                .get(*index)
+                .ok_or_else(|| anyhow!("image index {index} was not found"))?;
+            let image = Arc::new(load_image(path, 40_000_000).map_err(|error| anyhow!(error))?);
+            let model_image = to_model_image("label-pipeline-dry-run", &image, 1280)
+                .map_err(|error| anyhow!(error))?;
+            let request = ImageRunRequest {
+                run_id: RunId::new(),
+                project_id: stable_project_id(&project_root),
+                project_root: project_root.clone(),
+                project: project.clone(),
+                image_id: ImageId::new(),
+                image: image.clone(),
+                model_image: Some(model_image),
+            };
+            let result = runtime.execute_sandbox(&request).await?;
+            let nodes = result
+                .checkpoint
+                .traces
+                .iter()
+                .map(|trace| {
+                    let issues = trace
+                        .error
+                        .iter()
+                        .map(|error| WorkflowValidationIssue {
+                            code: error.code.clone(),
+                            path: format!("nodes.{}", trace.node_id),
+                            message: error.summary.clone(),
+                            blocking: true,
+                        })
+                        .collect::<Vec<_>>();
+                    execution_issues.extend(issues.clone());
+                    WorkflowDryRunNodeResult {
+                        node_id: trace.node_id.clone(),
+                        status: format!("{:?}", trace.status).to_ascii_lowercase(),
+                        output_types: trace
+                            .output_pipeline_artifacts
+                            .iter()
+                            .map(PipelineArtifact::artifact_type)
+                            .collect(),
+                        latency_ms: (trace.finished_at - trace.started_at)
+                            .num_milliseconds()
+                            .max(0)
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                        estimated_cost: trace.usage.cost.to_string(),
+                        issues,
+                    }
+                })
+                .collect();
+            samples.push(WorkflowDryRunSampleResult {
+                image_name: path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("image")
+                    .to_owned(),
+                width: image.metadata.width,
+                height: image.metadata.height,
+                nodes,
+            });
+        }
+        Ok(WorkflowDryRunReport {
+            sandbox: true,
+            validation: WorkflowValidationReport {
+                valid: execution_issues.is_empty(),
+                issues: execution_issues,
+                execution_order,
+            },
             samples,
             total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
             estimated_cost: "0".to_owned(),
@@ -3350,7 +4209,7 @@ export:
             .start_run_path_with_settings_idempotent_workflow(
                 &temporary.path().join("label-classification/project.yaml"),
                 "mock",
-                settings,
+                settings.clone(),
                 None,
                 Some("label-pipeline-app-run"),
                 Some((&published.workflow_id, published.version)),
@@ -3374,6 +4233,36 @@ export:
         assert_eq!(
             snapshot["checkpoint"]["node_outputs"]["classifier"]["pipeline_artifacts"][0]["kind"],
             json!("classification_set")
+        );
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("Pipeline Artifact inspection");
+        assert_eq!(inspection.image_index, Some(0));
+        let classifier_inspection = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "classifier")
+            .expect("classifier inspection");
+        assert_eq!(
+            classifier_inspection.inputs[0].artifact_type(),
+            ArtifactKind::Image
+        );
+        assert_eq!(
+            classifier_inspection.outputs[0].artifact_type(),
+            ArtifactKind::ClassificationSet
+        );
+        assert_eq!(classifier_inspection.attempts, 1);
+        assert!(classifier_inspection.error.is_none());
+        let replay = application
+            .replay_run_from_node(started.run_id, "classifier", &settings)
+            .await
+            .expect("classifier Replay");
+        assert!(replay.sandbox);
+        assert!(replay.reexecuted_nodes.contains(&"classifier".to_owned()));
+        assert!(
+            replay
+                .preserved_upstream_nodes
+                .contains(&"image".to_owned())
         );
 
         let image_root = temporary.path().join("label-classification/images");
@@ -3402,6 +4291,129 @@ export:
         assert!(execution.results.iter().all(|result| {
             result.result.status == RunStatus::Completed && result.result.committed.len() == 1
         }));
+    }
+
+    #[tokio::test]
+    async fn target_label_advisor_draft_is_editable_dry_runnable_and_publish_blocking() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("label-advisor", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("label-advisor/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let suggestion = application
+            .suggest_label_pipeline(
+                "label-advisor",
+                &settings,
+                "scene",
+                "day",
+                &WorkflowConstraints::default(),
+            )
+            .expect("controlled Label Pipeline suggestion");
+        assert_eq!(suggestion.draft.status, WorkflowDraftStatus::Suggested);
+        let composition = suggestion
+            .draft
+            .label_pipeline
+            .as_ref()
+            .expect("Label Pipeline authoring projection");
+        assert_eq!(composition.label_pipelines.len(), 1);
+        assert_eq!(
+            composition.label_pipelines[0].target_task_id,
+            TaskId::from("scene")
+        );
+        assert_eq!(
+            composition.label_pipelines[0].target_label,
+            LabelId::from("day")
+        );
+        assert!(suggestion.unresolved_model_bindings.is_empty());
+
+        let mut edited = suggestion.draft;
+        edited
+            .label_pipeline
+            .as_mut()
+            .expect("composition")
+            .label_pipelines[0]
+            .steps
+            .iter_mut()
+            .find(|step| step.node_type == annotagent_runtime::CORE_CONFIDENCE_GATE)
+            .expect("confidence gate")
+            .parameters
+            .insert("threshold".to_owned(), json!(0.8));
+        let saved = application
+            .save_workflow_draft(edited)
+            .expect("human-edited Draft");
+        assert_eq!(saved.status, WorkflowDraftStatus::Editing);
+        assert_eq!(
+            saved
+                .nodes
+                .iter()
+                .find(|node| node.node_type == annotagent_runtime::CORE_CONFIDENCE_GATE)
+                .and_then(|node| node.parameters.get("threshold")),
+            Some(&json!(0.8))
+        );
+        let dry_run = application
+            .dry_run_workflow_samples(&saved.id, &settings, &[0])
+            .await
+            .expect("real Label Pipeline Dry Run");
+        assert!(dry_run.sandbox);
+        assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
+        assert_eq!(dry_run.samples.len(), 1);
+        assert!(dry_run.samples[0].nodes.iter().any(|node| {
+            node.node_id.ends_with("classifier")
+                && node.output_types.contains(&ArtifactKind::ClassificationSet)
+        }));
+        assert!(
+            application
+                .list_runs()
+                .expect("no formal Dry Run")
+                .is_empty()
+        );
+        let published = application
+            .publish_workflow(&saved.id, &settings)
+            .expect("publish validated Label Pipeline");
+        assert_eq!(published.version, 1);
+        assert!(published.draft.label_pipeline.is_some());
+        assert!(application.save_workflow_draft(published.draft).is_err());
+
+        let mut invalid = application
+            .suggest_label_pipeline(
+                "label-advisor",
+                &settings,
+                "scene",
+                "night",
+                &WorkflowConstraints::default(),
+            )
+            .expect("second Draft")
+            .draft;
+        invalid
+            .label_pipeline
+            .as_mut()
+            .expect("composition")
+            .label_pipelines[0]
+            .steps[0]
+            .model_binding
+            .as_mut()
+            .expect("model binding")
+            .model_id = "not-in-registry".to_owned();
+        let invalid = application
+            .save_workflow_draft(invalid)
+            .expect("invalid Draft remains editable");
+        let invalid_report = application
+            .dry_run_workflow(&invalid.id, &settings)
+            .expect("static report");
+        assert!(!invalid_report.valid);
+        assert!(invalid_report.issues.iter().any(|issue| {
+            issue.code == "unknown_model" && issue.path.starts_with("label_pipeline.")
+        }));
+        assert!(
+            application
+                .publish_workflow(&invalid.id, &settings)
+                .is_err()
+        );
     }
 
     #[tokio::test]

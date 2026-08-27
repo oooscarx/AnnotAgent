@@ -74,7 +74,8 @@ evidence and a dedicated local commit.
       Validators, and Refiners.
     - Persist editable Drafts, validate, Dry Run 1–10 images, publish immutable versions, expose
       typed node Artifacts, and Replay from an exact node.
-    - Status: pending.
+    - Status: completed locally; target-Label mock/LLM advice, composition-backed editing and
+      publication validation, real bounded Dry Run, typed Inspector, and checkpoint Replay pass.
 15. **LP5 — Product GUI and release acceptance**
     - Add Project Label authoring, Shared Stages, per-Label Pipelines, Node Catalog editing,
       bindings/configuration, Artifact bbox/crop preview, Inspector, and Replay.

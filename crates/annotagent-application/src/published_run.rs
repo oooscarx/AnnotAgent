@@ -16,9 +16,10 @@ use annotagent_provider::{
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT, CORE_CONFIDENCE_GATE, CORE_CROP,
-    CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner, DagExecutionRequest, DagNodeContext,
-    DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunStatus,
-    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner, DagCheckpoint, DagExecutionRequest,
+    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
+    DagRunResult, DagRunStatus, ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl,
+    RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, ClassificationSkillRunner, MockClassificationBackend,
@@ -127,6 +128,165 @@ impl PublishedWorkflowRuntime {
             .map_err(|error| anyhow!(error))?;
         let _ignored = self.events.send(event);
         Ok(())
+    }
+
+    fn executor_for(&self, request: &ImageRunRequest) -> Result<PublishedDagExecutor> {
+        let runner = Arc::new(WorkflowRunner {
+            project: request.project.clone(),
+            image: request.image.clone(),
+            model_image: request.model_image.clone(),
+            external_backend: self.external_backend.clone(),
+            provider_name: self.provider_name.clone(),
+            model_name: self.model_name.clone(),
+            control: self.control.clone(),
+            validators: self.validators.clone(),
+            refiners: self.refiners.clone(),
+        });
+        let mut executor = PublishedDagExecutor::new();
+        let mut operations = std::collections::BTreeSet::new();
+        let core_pipeline_runner = Arc::new(CorePipelineRunner);
+        for node in &self.workflow.draft.nodes {
+            if !operations.insert(node.node_type.clone()) {
+                continue;
+            }
+            match node.node_type.as_str() {
+                CORE_CROP
+                | CORE_FILTER
+                | CORE_MAP_LABEL
+                | CORE_ATTACH_RESULT
+                | CORE_ATTACH_ATTRIBUTE
+                | CORE_CONFIDENCE_GATE => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        core_pipeline_runner.clone(),
+                        true,
+                    )?;
+                }
+                CLASSIFICATION_OPERATION => {
+                    let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+                        if let Some(provider) = &self.pipeline_provider {
+                            Arc::new(OpenAiCompatiblePipelineClassifier::new(
+                                "workspace-openai-compatible-classifier",
+                                provider.clone(),
+                            ))
+                        } else {
+                            Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
+                        };
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ClassificationSkillRunner::new(
+                            backend,
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| self.model_name.clone()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                YOLO_DETECTION_OPERATION => {
+                    if self.provider_name != "mock" {
+                        bail!(
+                            "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
+                        );
+                    }
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(YoloDetectionSkillRunner::new(
+                            Arc::new(MockYoloBackend::new("workspace-mock-detector")),
+                            node.model_binding
+                                .clone()
+                                .unwrap_or_else(|| "mock-detector".to_owned()),
+                            request.model_image.clone(),
+                        )?),
+                        false,
+                    )?;
+                }
+                _ if !matches!(
+                    node.kind,
+                    WorkflowNodeKind::ImageInput
+                        | WorkflowNodeKind::HumanReview
+                        | WorkflowNodeKind::Commit
+                        | WorkflowNodeKind::CandidateMerge
+                ) =>
+                {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        runner.clone(),
+                        matches!(
+                            node.kind,
+                            WorkflowNodeKind::Transform
+                                | WorkflowNodeKind::DeterministicTool
+                                | WorkflowNodeKind::Validator
+                                | WorkflowNodeKind::Refiner
+                                | WorkflowNodeKind::Gate
+                        ),
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(executor)
+    }
+
+    fn dag_request(&self, request: &ImageRunRequest) -> DagExecutionRequest {
+        let image_input = self
+            .workflow
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.kind == WorkflowNodeKind::ImageInput);
+        let initial_pipeline_artifacts = image_input
+            .map(|node| {
+                PipelineArtifact::Image(ImageArtifact {
+                    reference: annotagent_core::ArtifactRef {
+                        artifact_id: format!("image:{}", request.image_id),
+                        source_node: node.id.clone(),
+                        port: node
+                            .outputs
+                            .first()
+                            .map_or_else(|| "image".to_owned(), |port| port.id.clone()),
+                        artifact_type: ArtifactKind::Image,
+                        item_id: None,
+                    },
+                    image_id: request.image_id,
+                    width: request.image.metadata.width,
+                    height: request.image.metadata.height,
+                    mime_type: request.image.metadata.mime_type.clone(),
+                    blob_ref: request.model_image.as_ref().map_or_else(
+                        || format!("workspace://{}", request.image.metadata.sha256),
+                        |image| format!("workspace://{}", image.id),
+                    ),
+                })
+            })
+            .into_iter()
+            .collect();
+        DagExecutionRequest {
+            run_id: request.run_id,
+            image_id: request.image_id,
+            initial_artifacts: Vec::new(),
+            initial_pipeline_artifacts,
+            cancellation: self.control.cancellation_token(),
+        }
+    }
+
+    pub(crate) async fn execute_sandbox(&self, request: &ImageRunRequest) -> Result<DagRunResult> {
+        let executor = self.executor_for(request)?;
+        let dag_request = self.dag_request(request);
+        Ok(executor.execute(&self.workflow, &dag_request).await?)
+    }
+
+    pub(crate) async fn replay_sandbox(
+        &self,
+        request: &ImageRunRequest,
+        checkpoint: DagCheckpoint,
+        node_id: &str,
+    ) -> Result<DagRunResult> {
+        let executor = self.executor_for(request)?;
+        let dag_request = self.dag_request(request);
+        Ok(executor
+            .replay_from(&self.workflow, &dag_request, checkpoint, node_id)
+            .await?)
     }
 
     async fn persist_result(
@@ -433,6 +593,12 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
             "schema_version": 1,
             "engine": "published_dag_runtime",
             "selected_workflow": &self.workflow,
+            "image": {
+                "sha256": &request.image.metadata.sha256,
+                "width": request.image.metadata.width,
+                "height": request.image.metadata.height,
+                "mime_type": &request.image.metadata.mime_type,
+            },
         });
         self.store
             .create_run(&RunRecord {

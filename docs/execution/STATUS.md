@@ -1,14 +1,14 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-27 15:37 CST
+Last updated: 2026-08-27 16:31 CST
 
 ## Current milestone
 
-Milestone LP3 — complete: persisted application execution, three generic offline examples,
-exact-version 100-image Label Pipeline batch, and reuse of the durable lifecycle/recovery path.
+Milestone LP4 — complete: target-Label controlled Advisor, editable composition-backed Drafts,
+blocking static validation, real 1–10 image Dry Run, typed Artifact Inspector, and exact-node Replay.
 
-Milestone LP4 — next: target-Label Advisor contracts, application/server APIs for Label Pipeline
-Drafts, bounded Dry Run, typed Artifact inspection, and exact-node Replay.
+Milestone LP5 — next: Project Label authoring and the product Workflow GUI, including Shared
+Stages, per-Label Pipelines, Node Catalog editing, bbox/crop preview, Inspector, and Replay controls.
 
 ## Product objective
 
@@ -63,23 +63,31 @@ acceptance path.
   detector → Crop → Classification composition without enabling RoboCup.
 - A 100-image synthetic Dataset gate executes the exact immutable published whole-image
   Classification Workflow and persists one committed annotation per child Run.
+- LP4 constrains both mock and LLM Advisor paths to an exact Project task/Label pair. The LLM may
+  only adjust registered bindings and review gates on a safe composition-backed Draft.
+- Saving a Label Pipeline Draft recompiles its authoring projection into the one flat Runtime DAG;
+  static Label type/Registry errors remain editable but block publish.
+- Label Pipeline Dry Run calls the same typed DAG runners used by Published Runs, accepts at most 10
+  selected images, and creates neither a durable Run nor a formal annotation.
+- Run Inspector exposes each node's configuration, typed inputs/outputs, status, attempts, cache,
+  usage, latency, and structured error directly from the persisted checkpoint.
+- Replay starts at one exact node in a sandbox, keeps byte-for-byte-equal upstream checkpoint
+  outputs, and never recovers credentials from Run history.
 
-## LP3 verification
+## LP4 verification
 
-- Four Label Pipeline integration tests passed: all three executable offline flows plus validation
-  of the three generic example Project Schemas.
-- The application integration gate passed exact-version execution, typed checkpoint persistence,
-  formal annotation storage, and a 100-image Label Pipeline Dataset batch.
-- Existing pause/resume/cancel, startup reconciliation, active-Run exclusion, and persistent
-  100-image restart recovery tests pass through the same application coordinator used by the new
-  Pipeline path.
-- `cargo test --workspace --all-features`: 124 Rust tests passed, 0 failed; doc tests passed.
+- Application target-Label Advisor gate passes Suggest → human edit → recompile → real Dry Run →
+  publish immutability, and proves an unknown Model blocks publication.
+- Application persisted-run gate exposes Pipeline Artifacts and replays the classifier while
+  preserving Image Input; its exact-version 100-image Dataset path remains green.
+- HTTP gate passes Advisor → Dry Run isolation → publish → Run → Inspector → Replay against the
+  product routes.
+- `cargo test --workspace --all-features`: 126 Rust tests passed, 0 failed; doc tests passed.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
 - Core domain scan for RoboCup/YOLO/domain Labels: clean.
 - No conversation credential was read, restored, logged, or used.
 
 ## Remaining release blockers
 
-LP4–LP5 must still constrain the target-Label Advisor, expose authoring/inspection/Replay APIs, and
-finish the product GUI/Inspector plus full Rust/Web/browser acceptance. Until those gates pass,
-Label Pipeline Alpha is not release-complete.
+LP5 must still finish Project Label authoring and the product Workflow GUI/Inspector plus full
+Rust/Web/browser acceptance. Until those gates pass, Label Pipeline Alpha is not release-complete.

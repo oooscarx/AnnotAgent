@@ -312,13 +312,13 @@ primary blocker for this release.
 | 4 | Detection Skill outputs DetectionSet | PASS (Runtime) | Formal detection-only Skill emits scoped `DetectionSetArtifact`; mock and HTTP bindings pass. |
 | 5 | Crop outputs parent-linked CropSet | PASS | Core Crop executes fan-out and Trace preserves exact parent references. |
 | 6 | One shared detector serves three Labels once/image | PASS | The compiler emits one shared node; the Runtime executes each compiled node once and the Replay test observes the detector call count remain one. |
-| 7 | Static type errors block publish | PASS (contract) | Label validator reports blocking typed paths; application publish integration is LP4. |
-| 8 | Advisor result is a Draft | PASS (foundation) | Existing bounded Advisor always returns Suggested/Editing Draft; target-Label output is LP4. |
-| 9 | Human edits Draft | PASS (foundation) | Existing persisted editor journey passes; Label Pipeline GUI is LP5. |
-| 10 | Dry Run writes no formal annotation | PASS (foundation) | Existing sandbox Dry Run is isolated; Label-specific API exposure remains LP4. |
+| 7 | Static type errors block publish | PASS | Label validator paths are merged into product validation; an unknown Model remains editable but blocks publish. |
+| 8 | Advisor result is a Draft | PASS | Mock and LLM paths start from an exact target task/Label safe Draft and never publish or execute automatically. |
+| 9 | Human edits Draft | PASS (API) | Editing the composition recompiles the flat DAG and survives persistence; product GUI is LP5. |
+| 10 | Dry Run writes no formal annotation | PASS | Real typed Pipeline runners execute 1–10 images in a sandbox and create no Run/Annotation record. |
 | 11 | Published Version is immutable | PASS | Snapshot hash now includes optional Label Pipeline composition. |
 | 12 | Run pins Workflow Version | PASS (foundation) | Existing image and Dataset exact-version tests pass. |
-| 13 | Node Inspector shows I/O/config/timing/error | INCOMPLETE | Flat trace holds these fields; typed Pipeline Artifact API/UI is LP4/LP5. |
+| 13 | Node Inspector shows I/O/config/timing/error | PASS (API) | Product API exposes typed inputs/outputs, full node config, status, latency, attempts, cache, usage, and error; GUI is LP5. |
 | 14 | Classifier Replay does not rerun detector | PASS (Runtime) | `crop_classification_replay_keeps_shared_detector_checkpoint` observes detector 1, classifier 2. |
 | 15 | Three mock demos pass offline | PASS | Three generic example schemas and executable whole-image, detection, and crop-classification flows pass offline. |
 | 16 | 100 synthetic images pass | PASS | Application test executes 100 synthetic images using one exact published Label Pipeline version. |
@@ -447,3 +447,46 @@ Direct evidence:
 9. No conversation credential was read or used, and no remote or push operation occurred.
 
 LP3 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP4–LP5 pass.
+
+## Label Pipeline Alpha LP4 — bounded Advisor, real Dry Run, Inspector, and Replay APIs
+
+Implementation and evidence commit: recorded by the LP4 local commit containing this section.
+
+Acceptance commands:
+
+| Command | Exit | Evidence |
+| --- | ---: | --- |
+| `cargo test -p annotagent-application target_label_advisor_draft_is_editable_dry_runnable_and_publish_blocking` | 0 | Target-Label Draft, human edit, real isolated Dry Run, immutability, and blocking registry error pass. |
+| `cargo test -p annotagent-application published_label_pipeline_executes_and_persists_typed_checkpoint` | 0 | Persisted Inspector and classifier Replay preserve Image Input; exact-version 100-image batch passes. |
+| `cargo test -p annotagent-server label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real` | 0 | Complete HTTP product journey passes. |
+| `cargo test --workspace --all-features` | 0 | 126 Rust tests pass; 0 fail; all doc tests pass. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | 0 | No warnings or lint suppression. |
+
+Direct evidence:
+
+1. `WorkflowAdvisorInput` can carry one exact `target_task_id` and `target_label`. The server rejects
+   half-specified targets. The deterministic Advisor supports only registered Classification and
+   Detection compositions; unsupported task kinds return a clear error.
+2. Live LLM advice receives the same target-scoped Registry input and safe base Draft. Its only
+   action can select enum-bounded existing node/model ids and review gates; it cannot emit code,
+   URLs, arbitrary nodes, Validators, Refiners, or execute/publish the result.
+3. Label authoring data remains the source of truth for methods while Project Schema remains the
+   source of truth for semantics. Saving re-compiles `LabelWorkflowComposition` to a flat DAG and
+   preserves Draft identity/lifecycle metadata.
+4. `LabelPipelineStaticValidator` issues are merged into product `WorkflowValidationReport` paths.
+   A deliberately unknown Model remains saveable for human correction but publication is rejected.
+5. Label Pipeline Dry Run no longer fabricates completed node rows. It builds an ephemeral immutable
+   snapshot and calls the same Core/Classification/Detection DAG runners as Published Runs for each
+   of 1–10 selected images. The test verifies Pipeline output types and zero persisted Runs.
+6. Published Run snapshots now retain non-secret source image identity and the exact DAG checkpoint.
+   `/api/runs/{id}/pipeline-artifacts` exposes per-node configuration, typed inputs/outputs, status,
+   latency, attempts, cache hit, usage, and structured error.
+7. `/api/runs/{id}/replay/{node}` invokes `PublishedDagExecutor::replay_from` using the immutable
+   Workflow and stored checkpoint. The classifier and descendants re-execute while the Image Input
+   output remains equal and is reported as preserved upstream state.
+8. Replay is a sandbox and does not create formal annotations. Non-mock historical Runs are rejected
+   rather than recovering a secret from history; no historical or conversation credential is read.
+9. The HTTP integration gate performs target suggestion, real Dry Run, immutable publish, exact
+   Run, Artifact inspection, and classifier Replay through the routes consumed by the Web GUI.
+
+LP4 status: `PASS`. Label Pipeline Alpha overall remains `INCOMPLETE` until LP5 passes.
