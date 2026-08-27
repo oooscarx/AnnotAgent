@@ -11,6 +11,7 @@ annotagent-core = { path = "../annotagent-core" }
 annotagent-runtime = { path = "../annotagent-runtime" }
 async-trait.workspace = true
 rust_decimal.workspace = true
+serde_json.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
 

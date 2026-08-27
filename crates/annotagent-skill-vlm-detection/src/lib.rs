@@ -3,11 +3,13 @@
 //! This Skill owns only the Image -> `DetectionSet` model operation. Filtering, cropping,
 //! review, and commit remain generic Core nodes.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    ArtifactKind, CoreError, CoreResult, ModelImage, PipelineArtifact, PipelineInferenceRequest,
-    PipelineModelBackend, VisionCapability, VisionNodeDescriptor,
+    ArtifactKind, CoreError, CoreResult, ModelImage, NodePort, PipelineArtifact,
+    PipelineInferenceRequest, PipelineModelBackend, Skill, SkillKind, SkillManifest, SkillResource,
+    SkillResourceRequest, TaskId, TaskTemplate, VisionCapability, VisionNodeDescriptor,
+    WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -16,6 +18,160 @@ use rust_decimal::Decimal;
 pub const VLM_DETECTION_SKILL_ID: &str = "vlm-detection";
 pub const VLM_DETECTION_SKILL_VERSION: &str = "1";
 pub const VLM_DETECTION_OPERATION: &str = "vlm_detection.detect";
+
+pub struct VlmDetectionCapabilitySkill {
+    manifest: SkillManifest,
+}
+
+impl Default for VlmDetectionCapabilitySkill {
+    fn default() -> Self {
+        Self {
+            manifest: SkillManifest {
+                version: 1,
+                id: VLM_DETECTION_SKILL_ID.to_owned(),
+                kind: SkillKind::Capability,
+                skill_version: VLM_DETECTION_SKILL_VERSION.to_owned(),
+                display_name: "VLM Detection".to_owned(),
+                description:
+                    "Registry-bounded structured object grounding with a vision-language model"
+                        .to_owned(),
+                rust_implementation: Some(
+                    "annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill".to_owned(),
+                ),
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+                capabilities: vec!["vision_language_detection".to_owned()],
+                nodes: vec![VLM_DETECTION_OPERATION.to_owned()],
+                tools: vec!["submit_detections".to_owned()],
+                validators: Vec::new(),
+                policies: Vec::new(),
+                templates: vec!["vlm-detection.structured".to_owned()],
+                summary_resources: vec!["vlm-detection/summary.md".to_owned()],
+                task_resources: BTreeMap::new(),
+                correction_taxonomy: Vec::new(),
+                visual_profile: BTreeMap::new(),
+            },
+        }
+    }
+}
+
+impl Skill for VlmDetectionCapabilitySkill {
+    fn id(&self) -> &str {
+        VLM_DETECTION_SKILL_ID
+    }
+
+    fn manifest(&self) -> &SkillManifest {
+        &self.manifest
+    }
+
+    fn node_templates(&self) -> Vec<TaskTemplate> {
+        vec![TaskTemplate {
+            id: TaskId::from(VLM_DETECTION_OPERATION),
+            description: "Image → structured DetectionSet, including valid empty sets".to_owned(),
+        }]
+    }
+
+    fn workflow_templates(&self) -> Vec<WorkflowTemplate> {
+        vec![structured_detection_template()]
+    }
+
+    fn resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
+        match request.resource_name.as_deref() {
+            None | Some("vlm-detection/summary.md") => Ok(vec![SkillResource {
+                name: "vlm-detection/summary.md".to_owned(),
+                media_type: "text/markdown".to_owned(),
+                content: "Declare allowed labels and a visual target definition. The model submits only a scoped DetectionSet; Core owns Filter, Crop, gates and Commit.".to_owned(),
+            }]),
+            Some(other) => Err(CoreError::Validation(format!(
+                "unknown VLM Detection resource {other:?}"
+            ))),
+        }
+    }
+}
+
+fn port(id: &str, artifact_type: ArtifactKind) -> NodePort {
+    NodePort {
+        id: id.to_owned(),
+        artifact_type,
+        required: true,
+        multiple: false,
+    }
+}
+
+fn structured_detection_template() -> WorkflowTemplate {
+    let node = |id: &str, node_type: &str, kind, inputs, outputs| WorkflowDraftNode {
+        id: id.to_owned(),
+        node_type: node_type.to_owned(),
+        kind,
+        inputs,
+        outputs,
+        required_skills: vec![VLM_DETECTION_SKILL_ID.to_owned()],
+        ..WorkflowDraftNode::default()
+    };
+    WorkflowTemplate {
+        id: "vlm-detection.structured".to_owned(),
+        name: "Structured VLM Detection".to_owned(),
+        description: "Image → VLM Detection → Confidence Gate → Commit".to_owned(),
+        nodes: vec![
+            node(
+                "image",
+                "core.image_input",
+                WorkflowNodeKind::ImageInput,
+                Vec::new(),
+                vec![port("image", ArtifactKind::Image)],
+            ),
+            node(
+                "detector",
+                VLM_DETECTION_OPERATION,
+                WorkflowNodeKind::VisionLanguageModel,
+                vec![port("image", ArtifactKind::Image)],
+                vec![port("detections", ArtifactKind::DetectionSet)],
+            ),
+            node(
+                "gate",
+                "core.confidence_gate",
+                WorkflowNodeKind::Gate,
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                vec![port("detections", ArtifactKind::DetectionSet)],
+            ),
+            node(
+                "commit",
+                "core.commit",
+                WorkflowNodeKind::Commit,
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                Vec::new(),
+            ),
+        ],
+        edges: vec![
+            WorkflowEdge {
+                from_node: "image".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "detector".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "detector".to_owned(),
+                from_port: "detections".to_owned(),
+                to_node: "gate".to_owned(),
+                to_port: "detections".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "gate".to_owned(),
+                from_port: "detections".to_owned(),
+                to_node: "commit".to_owned(),
+                to_port: "detections".to_owned(),
+                route: Some("pass".to_owned()),
+            },
+        ],
+        resource_versions: BTreeMap::from([(
+            "vlm-detection/summary.md".to_owned(),
+            VLM_DETECTION_SKILL_VERSION.to_owned(),
+        )]),
+        allow_unvalidated_commit: false,
+    }
+}
 
 #[must_use]
 pub fn node_descriptor() -> VisionNodeDescriptor {
@@ -133,5 +289,31 @@ impl DagNodeRunner for VlmDetectionSkillRunner {
             },
             ..DagNodeOutput::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use annotagent_core::{SkillKind, SkillResourceRequest};
+
+    use super::*;
+
+    #[test]
+    fn manifest_and_template_keep_crop_outside_detection_skill() {
+        let skill = VlmDetectionCapabilitySkill::default();
+        assert_eq!(skill.manifest().kind, SkillKind::Capability);
+        assert!(skill.manifest().validate().is_empty());
+        let serialized = serde_json::to_string(&skill.workflow_templates()).expect("templates");
+        assert!(!serialized.contains("core.crop"));
+        assert_eq!(
+            skill
+                .resources(&SkillResourceRequest {
+                    task_id: None,
+                    resource_name: Some("vlm-detection/summary.md".to_owned()),
+                })
+                .expect("resource")
+                .len(),
+            1
+        );
     }
 }

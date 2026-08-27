@@ -4,7 +4,7 @@ Last updated: 2026-08-27
 
 ## Current milestone
 
-M3 — complete. M4 Detection Skills and Core processing verification is next.
+M4 — complete. M5 iterative Workflow Advisor Agent is next.
 
 ## Audited baseline
 
@@ -76,3 +76,17 @@ M3 — complete. M4 Detection Skills and Core processing verification is next.
   Protocol;
 - deterministic `classification.verify` node with allow-list and confidence-to-review behavior;
 - runtime/catalog registration for both classifier and verifier nodes.
+
+## M4 delivered
+
+- formal `vlm-detection` and `yolo-detection` Capability Skill manifests, bounded resources and
+  templates;
+- VLM Detection remains structured Image → DetectionSet and accepts a valid empty DetectionSet;
+- YOLO remains detection-only with Mock/HTTP JSON backends, class mapping, confidence threshold and
+  deterministic per-class NMS;
+- Core owns Filter, Map Label, Crop, Attach Result/Attribute, Confidence Gate, Artifact Cache and
+  Compute Image Statistics; built-in Image Input/Human Review/Commit remain Runtime-controlled;
+- Crop output now records source and crop dimensions, padding, parent detection item, MIME/blob
+  reference and an item cache key;
+- both detection templates intentionally exclude Crop; the UI composition remains detector →
+  filter → crop.

@@ -513,6 +513,14 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             deterministic: true,
         },
         VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_IMAGE_STATISTICS.to_owned(),
+            display_name: "Compute Image Statistics".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image],
+            produces: vec![ArtifactKind::Attributes],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
             id: annotagent_runtime::CORE_CROP.to_owned(),
             display_name: "Crop".to_owned(),
             required_capabilities: Vec::new(),

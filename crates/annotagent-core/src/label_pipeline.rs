@@ -88,10 +88,20 @@ pub struct Crop {
     pub parent: ArtifactRef,
     pub rect: NormalizedRect,
     #[serde(default)]
+    pub source_width: u32,
+    #[serde(default)]
+    pub source_height: u32,
+    #[serde(default)]
+    pub crop_width: u32,
+    #[serde(default)]
+    pub crop_height: u32,
+    #[serde(default)]
     pub padding: f32,
     pub mime_type: Option<String>,
     /// A cache/blob reference; image bytes are deliberately not embedded in traces.
     pub blob_ref: Option<String>,
+    #[serde(default)]
+    pub cache_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -980,9 +990,14 @@ impl CropSetArtifact {
                     id: format!("crop:{}", detection.id),
                     parent: detections.reference.item(&detection.id),
                     rect,
+                    source_width: 0,
+                    source_height: 0,
+                    crop_width: 0,
+                    crop_height: 0,
                     padding,
                     mime_type: None,
                     blob_ref: blob_ref(detection),
+                    cache_key: None,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -1010,6 +1025,17 @@ impl CropSetArtifact {
             }
             if !crop.padding.is_finite() || crop.padding < 0.0 {
                 return Err("Crop padding must be finite and non-negative".to_owned());
+            }
+            let dimensions_absent = crop.source_width == 0
+                && crop.source_height == 0
+                && crop.crop_width == 0
+                && crop.crop_height == 0;
+            let dimensions_complete = crop.source_width > 0
+                && crop.source_height > 0
+                && crop.crop_width > 0
+                && crop.crop_height > 0;
+            if !dimensions_absent && !dimensions_complete {
+                return Err("Crop dimensions must be all present or all absent".to_owned());
             }
         }
         Ok(())
@@ -1534,9 +1560,14 @@ mod tests {
                 id: "crop-1".to_owned(),
                 parent: detections.item("detection-1"),
                 rect: NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("rect"),
+                source_width: 0,
+                source_height: 0,
+                crop_width: 0,
+                crop_height: 0,
                 padding: 0.05,
                 mime_type: None,
                 blob_ref: Some("cache://crop-1".to_owned()),
+                cache_key: None,
             }],
         };
         crop_set.validate().expect("valid CropSet");

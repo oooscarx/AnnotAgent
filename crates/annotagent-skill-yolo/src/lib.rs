@@ -4,9 +4,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
     ArtifactKind, ArtifactRef, CoreError, CoreResult, Detection, DetectionSetArtifact, LabelId,
-    ModelImage, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
-    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, VisionCapability,
-    VisionNodeDescriptor,
+    ModelImage, NodePort, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
+    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind,
+    SkillManifest, SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
+    VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -16,6 +17,156 @@ use tokio_util::sync::CancellationToken;
 pub const YOLO_SKILL_ID: &str = "yolo-detection";
 pub const YOLO_SKILL_VERSION: &str = "1";
 pub const YOLO_DETECTION_OPERATION: &str = "yolo_detection.detect";
+
+pub struct YoloCapabilitySkill {
+    manifest: SkillManifest,
+}
+
+impl Default for YoloCapabilitySkill {
+    fn default() -> Self {
+        Self {
+            manifest: SkillManifest {
+                version: 1,
+                id: YOLO_SKILL_ID.to_owned(),
+                kind: SkillKind::Capability,
+                skill_version: YOLO_SKILL_VERSION.to_owned(),
+                display_name: "YOLO Detection".to_owned(),
+                description: "Detection-only YOLO capability through Mock or HTTP JSON".to_owned(),
+                rust_implementation: Some("annotagent_skill_yolo::YoloCapabilitySkill".to_owned()),
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+                capabilities: vec!["object_detection".to_owned()],
+                nodes: vec![YOLO_DETECTION_OPERATION.to_owned()],
+                tools: Vec::new(),
+                validators: Vec::new(),
+                policies: Vec::new(),
+                templates: vec!["yolo.detection".to_owned()],
+                summary_resources: vec!["yolo/summary.md".to_owned()],
+                task_resources: BTreeMap::new(),
+                correction_taxonomy: Vec::new(),
+                visual_profile: BTreeMap::new(),
+            },
+        }
+    }
+}
+
+impl Skill for YoloCapabilitySkill {
+    fn id(&self) -> &str {
+        YOLO_SKILL_ID
+    }
+
+    fn manifest(&self) -> &SkillManifest {
+        &self.manifest
+    }
+
+    fn node_templates(&self) -> Vec<TaskTemplate> {
+        vec![TaskTemplate {
+            id: TaskId::from(YOLO_DETECTION_OPERATION),
+            description: "Image → DetectionSet; never crops pixels".to_owned(),
+        }]
+    }
+
+    fn workflow_templates(&self) -> Vec<WorkflowTemplate> {
+        vec![detection_template()]
+    }
+
+    fn resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
+        match request.resource_name.as_deref() {
+            None | Some("yolo/summary.md") => Ok(vec![SkillResource {
+                name: "yolo/summary.md".to_owned(),
+                media_type: "text/markdown".to_owned(),
+                content: "YOLO produces DetectionSet only. Configure class_mapping, confidence_threshold and nms_iou_threshold. Compose core.filter then core.crop for Detect & Crop.".to_owned(),
+            }]),
+            Some(other) => Err(CoreError::Validation(format!(
+                "unknown YOLO resource {other:?}"
+            ))),
+        }
+    }
+}
+
+fn port(id: &str, artifact_type: ArtifactKind) -> NodePort {
+    NodePort {
+        id: id.to_owned(),
+        artifact_type,
+        required: true,
+        multiple: false,
+    }
+}
+
+fn detection_template() -> WorkflowTemplate {
+    let node = |id: &str, node_type: &str, kind, inputs, outputs| WorkflowDraftNode {
+        id: id.to_owned(),
+        node_type: node_type.to_owned(),
+        kind,
+        inputs,
+        outputs,
+        required_skills: vec![YOLO_SKILL_ID.to_owned()],
+        ..WorkflowDraftNode::default()
+    };
+    WorkflowTemplate {
+        id: "yolo.detection".to_owned(),
+        name: "YOLO Detection".to_owned(),
+        description: "Image → YOLO → Filter → Confidence Gate → Commit".to_owned(),
+        nodes: vec![
+            node(
+                "image",
+                "core.image_input",
+                WorkflowNodeKind::ImageInput,
+                Vec::new(),
+                vec![port("image", ArtifactKind::Image)],
+            ),
+            node(
+                "detector",
+                YOLO_DETECTION_OPERATION,
+                WorkflowNodeKind::VisionModel,
+                vec![port("image", ArtifactKind::Image)],
+                vec![port("detections", ArtifactKind::DetectionSet)],
+            ),
+            node(
+                "filter",
+                "core.filter",
+                WorkflowNodeKind::Transform,
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                vec![port("detections", ArtifactKind::DetectionSet)],
+            ),
+            node(
+                "gate",
+                "core.confidence_gate",
+                WorkflowNodeKind::Gate,
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                vec![port("detections", ArtifactKind::DetectionSet)],
+            ),
+            node(
+                "commit",
+                "core.commit",
+                WorkflowNodeKind::Commit,
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                Vec::new(),
+            ),
+        ],
+        edges: vec![
+            edge("image", "image", "detector", "image", None),
+            edge("detector", "detections", "filter", "detections", None),
+            edge("filter", "detections", "gate", "detections", None),
+            edge("gate", "detections", "commit", "detections", Some("pass")),
+        ],
+        resource_versions: BTreeMap::from([(
+            "yolo/summary.md".to_owned(),
+            YOLO_SKILL_VERSION.to_owned(),
+        )]),
+        allow_unvalidated_commit: false,
+    }
+}
+
+fn edge(from: &str, from_port: &str, to: &str, to_port: &str, route: Option<&str>) -> WorkflowEdge {
+    WorkflowEdge {
+        from_node: from.to_owned(),
+        from_port: from_port.to_owned(),
+        to_node: to.to_owned(),
+        to_port: to_port.to_owned(),
+        route: route.map(ToOwned::to_owned),
+    }
+}
 
 #[must_use]
 pub fn node_descriptor() -> VisionNodeDescriptor {
@@ -78,7 +229,7 @@ impl DagNodeRunner for YoloDetectionSkillRunner {
             .model_binding
             .as_deref()
             .unwrap_or(&self.model_id);
-        let response = self
+        let mut response = self
             .backend
             .infer_pipeline(
                 PipelineInferenceRequest {
@@ -109,6 +260,7 @@ impl DagNodeRunner for YoloDetectionSkillRunner {
                 retryable: error.retryable,
             });
         }
+        postprocess_detection_sets(&mut response.artifacts, &context.node.parameters)?;
         if response.artifacts.is_empty()
             || response.artifacts.iter().any(|artifact| {
                 !matches!(artifact, PipelineArtifact::DetectionSet(_))
@@ -131,6 +283,74 @@ impl DagNodeRunner for YoloDetectionSkillRunner {
             },
             ..DagNodeOutput::default()
         })
+    }
+}
+
+fn postprocess_detection_sets(
+    artifacts: &mut [PipelineArtifact],
+    parameters: &BTreeMap<String, serde_json::Value>,
+) -> Result<(), DagNodeFailure> {
+    let threshold = parameters
+        .get("confidence_threshold")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0) as f32;
+    let nms_threshold = parameters
+        .get("nms_iou_threshold")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(1.0) as f32;
+    if !(0.0..=1.0).contains(&threshold) || !(0.0..=1.0).contains(&nms_threshold) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_detection_parameters",
+            "confidence_threshold and nms_iou_threshold must be within [0,1]",
+        ));
+    }
+    let mapping = parameters
+        .get("class_mapping")
+        .and_then(serde_json::Value::as_object);
+    for artifact in artifacts {
+        let PipelineArtifact::DetectionSet(set) = artifact else {
+            continue;
+        };
+        set.detections
+            .retain(|detection| detection.confidence >= threshold);
+        for detection in &mut set.detections {
+            if let Some(label) = mapping
+                .and_then(|mapping| mapping.get(&detection.class_id))
+                .and_then(serde_json::Value::as_str)
+            {
+                detection.label = Some(LabelId::from(label));
+            }
+        }
+        set.detections.sort_by(|left, right| {
+            right
+                .confidence
+                .total_cmp(&left.confidence)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let mut kept = Vec::<Detection>::new();
+        for candidate in set.detections.drain(..) {
+            let suppressed = kept.iter().any(|existing| {
+                existing.class_id == candidate.class_id
+                    && intersection_over_union(existing.rect, candidate.rect) > nms_threshold
+            });
+            if !suppressed {
+                kept.push(candidate);
+            }
+        }
+        set.detections = kept;
+        set.validate()
+            .map_err(|error| DagNodeFailure::terminal("invalid_detection_output", error))?;
+    }
+    Ok(())
+}
+
+fn intersection_over_union(left: NormalizedRect, right: NormalizedRect) -> f32 {
+    let intersection = left.intersection_area(right);
+    let union = left.area() + right.area() - intersection;
+    if union <= f32::EPSILON {
+        0.0
+    } else {
+        intersection / union
     }
 }
 
@@ -222,5 +442,31 @@ impl PipelineModelBackend for MockYoloBackend {
             metadata: BTreeMap::from([("mode".to_owned(), serde_json::json!("mock"))]),
             ..PipelineInferenceResponse::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use annotagent_core::{SkillKind, SkillResourceRequest};
+
+    use super::*;
+
+    #[test]
+    fn capability_manifest_and_template_do_not_claim_crop() {
+        let skill = YoloCapabilitySkill::default();
+        assert_eq!(skill.manifest().kind, SkillKind::Capability);
+        assert!(skill.manifest().validate().is_empty());
+        let serialized = serde_json::to_string(&skill.workflow_templates()).expect("templates");
+        assert!(!serialized.contains("core.crop"));
+        assert!(
+            skill
+                .resources(&SkillResourceRequest {
+                    task_id: None,
+                    resource_name: Some("yolo/summary.md".to_owned()),
+                })
+                .expect("resource")[0]
+                .content
+                .contains("core.crop")
+        );
     }
 }

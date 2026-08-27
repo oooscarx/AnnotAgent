@@ -271,7 +271,14 @@ async fn detection_filter_gate_and_commit_are_typed() {
                 WorkflowNodeKind::VisionModel,
                 vec![port("image", ArtifactKind::Image)],
                 vec![port("detections", ArtifactKind::DetectionSet)],
-                BTreeMap::from([("mock_confidence".to_owned(), json!(0.95))]),
+                BTreeMap::from([
+                    ("mock_confidence".to_owned(), json!(0.95)),
+                    ("mock_count".to_owned(), json!(2)),
+                    ("mock_class_id".to_owned(), json!("0")),
+                    ("class_mapping".to_owned(), json!({"0": "target"})),
+                    ("confidence_threshold".to_owned(), json!(0.8)),
+                    ("nms_iou_threshold".to_owned(), json!(0.5)),
+                ]),
             ),
             node(
                 "filter",
@@ -325,7 +332,9 @@ async fn detection_filter_gate_and_commit_are_typed() {
     assert_eq!(result.status, DagRunStatus::Completed);
     assert!(matches!(
         result.committed_pipeline_artifacts.as_slice(),
-        [PipelineArtifact::DetectionSet(set)] if set.detections.len() == 1
+        [PipelineArtifact::DetectionSet(set)]
+            if set.detections.len() == 1
+                && set.detections[0].label.as_ref().is_some_and(|label| label.as_str() == "target")
     ));
     assert!(result.checkpoint.traces.iter().all(|trace| {
         trace
@@ -492,6 +501,10 @@ async fn crop_classification_replay_keeps_shared_detector_checkpoint() {
         crops.crops[0].parent.item_id.as_deref(),
         Some("detection-0")
     );
+    assert_eq!(crops.crops[0].source_width, 640);
+    assert_eq!(crops.crops[0].source_height, 480);
+    assert!(crops.crops[0].crop_width > 0 && crops.crops[0].crop_height > 0);
+    assert!(crops.crops[0].cache_key.is_some());
     let classifier_trace = first
         .checkpoint
         .traces

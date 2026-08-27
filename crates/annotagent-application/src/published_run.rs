@@ -20,10 +20,10 @@ use annotagent_provider::{
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
-    CORE_CONFIDENCE_GATE, CORE_CROP, CORE_FILTER, CORE_MAP_LABEL, CorePipelineRunner,
-    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
-    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, ImageRunRequest,
-    ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_CONFIDENCE_GATE, CORE_CROP, CORE_FILTER, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL,
+    CorePipelineRunner, DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure,
+    DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -173,7 +173,8 @@ impl PublishedWorkflowRuntime {
                 | CORE_MAP_LABEL
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
-                | CORE_CONFIDENCE_GATE => {
+                | CORE_CONFIDENCE_GATE
+                | CORE_IMAGE_STATISTICS => {
                     executor.register_runner(
                         node.node_type.clone(),
                         core_pipeline_runner.clone(),
@@ -752,7 +753,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_MAP_LABEL
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
-                | CORE_CONFIDENCE_GATE => {
+                | CORE_CONFIDENCE_GATE
+                | CORE_IMAGE_STATISTICS => {
                     executor.register_runner(
                         node.node_type.clone(),
                         core_pipeline_runner.clone(),

@@ -89,3 +89,20 @@ cargo test -p annotagent-application \
 Evidence covers Capability manifest/template discovery, whole-image single/multi-label output,
 confidence verification, generic HTTP JSON, OpenAI-compatible subject bounding, crop parent
 lineage, Commit and classifier-only Replay without rerunning the detector.
+
+## M4 — Detection Skills and Core processing
+
+```text
+cargo test -p annotagent-skill-vlm-detection
+1 passed; 0 failed
+cargo test -p annotagent-skill-yolo
+5 passed; 0 failed across unit and integration targets
+cargo test -p annotagent-core label_pipeline
+4 passed; 0 failed
+cargo test -p annotagent-runtime --test published_dag
+6 passed; 0 failed
+```
+
+The YOLO integration executes two overlapping Mock detections, applies class mapping, threshold and
+NMS, commits one Detection, then verifies Crop dimensions/cache/parent lineage and classifier
+Replay. Skill template tests assert that neither detector owns `core.crop`.

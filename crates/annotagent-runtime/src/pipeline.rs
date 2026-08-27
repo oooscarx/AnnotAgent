@@ -3,11 +3,13 @@
 use std::{collections::BTreeMap, sync::OnceLock};
 
 use annotagent_core::{
-    AnnotationCandidateSet, ArtifactKind, ArtifactRef, ArtifactValidationState,
-    ClassificationSetArtifact, CropSetArtifact, DetectionSetArtifact, LabelId, PipelineArtifact,
-    TaskId,
+    AnnotationCandidateSet, ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef,
+    ArtifactRole, ArtifactValidationState, AttributeValue, ClassificationSetArtifact,
+    CropSetArtifact, DetectionSetArtifact, LabelId, PipelineArtifact, TaskId, VisionArtifact,
+    VisionArtifactValue,
 };
 use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -20,6 +22,7 @@ pub const CORE_ATTACH_RESULT: &str = "core.attach_result";
 pub const CORE_ATTACH_ATTRIBUTE: &str = "core.attach_attribute";
 pub const CORE_CONFIDENCE_GATE: &str = "core.confidence_gate";
 pub const CORE_ARTIFACT_CACHE: &str = "core.artifact_cache";
+pub const CORE_IMAGE_STATISTICS: &str = "core.compute_image_statistics";
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CorePipelineRunner;
@@ -34,6 +37,7 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_ATTACH_RESULT => run_attach_result(&context),
             CORE_ATTACH_ATTRIBUTE => run_attach_attribute(&context),
             CORE_CONFIDENCE_GATE => run_confidence_gate(&context),
+            CORE_IMAGE_STATISTICS => run_image_statistics(&context),
             CORE_ARTIFACT_CACHE => Ok(DagNodeOutput {
                 pipeline_artifacts: context.input_pipeline_artifacts,
                 metadata: BTreeMap::from([("cached".to_owned(), serde_json::json!(true))]),
@@ -47,18 +51,84 @@ impl DagNodeRunner for CorePipelineRunner {
     }
 }
 
+fn run_image_statistics(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let image = one_image(context)?;
+    let aspect_ratio = f64::from(image.width) / f64::from(image.height);
+    let artifact = VisionArtifact {
+        id: ArtifactId::new(),
+        image_id: image.image_id,
+        task_id: None,
+        label: None,
+        role: ArtifactRole::Evidence,
+        value: VisionArtifactValue::Attributes {
+            values: BTreeMap::from([
+                (
+                    "width".to_owned(),
+                    AttributeValue::Number(f64::from(image.width)),
+                ),
+                (
+                    "height".to_owned(),
+                    AttributeValue::Number(f64::from(image.height)),
+                ),
+                (
+                    "aspect_ratio".to_owned(),
+                    AttributeValue::Number(aspect_ratio),
+                ),
+            ]),
+        },
+        source_node: context.node.id.clone(),
+        confidence: Some(1.0),
+        metadata: BTreeMap::from([("blob_ref".to_owned(), serde_json::json!(image.blob_ref))]),
+        validation_state: ArtifactValidationState::Valid,
+        provenance: ArtifactProvenance {
+            tool: Some(CORE_IMAGE_STATISTICS.to_owned()),
+            ..ArtifactProvenance::default()
+        },
+        revision: 1,
+        replaces_artifact_id: None,
+        created_at: Utc::now(),
+    };
+    artifact
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("image_statistics_failed", error.to_string()))?;
+    Ok(DagNodeOutput {
+        artifacts: vec![artifact],
+        ..DagNodeOutput::default()
+    })
+}
+
 fn run_crop(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
-    require_image(context)?;
+    let image = one_image(context)?;
     let detections = one_detection_set(context)?;
     let padding = number_parameter(context, "padding", 0.0)? as f32;
     let reference = output_reference(context, "crops", ArtifactKind::CropSet)?;
-    let crops = CropSetArtifact::fan_out(reference, detections, padding, |detection| {
+    let mut crops = CropSetArtifact::fan_out(reference, detections, padding, |detection| {
         Some(format!(
             "artifact-cache://{}/{}",
             context.node.id, detection.id
         ))
     })
     .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
+    for crop in &mut crops.crops {
+        crop.source_width = image.width;
+        crop.source_height = image.height;
+        crop.crop_width = ((crop.rect.width() * image.width as f32).round() as u32).max(1);
+        crop.crop_height = ((crop.rect.height() * image.height as f32).round() as u32).max(1);
+        crop.mime_type = Some(image.mime_type.clone());
+        let material = format!(
+            "{}:{}:{}:{}:{}:{}",
+            image.blob_ref,
+            crop.parent.artifact_id,
+            crop.parent.item_id.as_deref().unwrap_or_default(),
+            crop.rect.x(),
+            crop.rect.y(),
+            padding
+        );
+        crop.cache_key = Some(format!("{:x}", Sha256::digest(material.as_bytes())));
+    }
+    crops
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
     Ok(output(PipelineArtifact::CropSet(crops)))
 }
 
@@ -236,19 +306,17 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
     }
 }
 
-fn require_image(context: &DagNodeContext<'_>) -> Result<(), DagNodeFailure> {
-    if context
-        .input_pipeline_artifacts
-        .iter()
-        .any(|artifact| matches!(artifact, PipelineArtifact::Image(_)))
-    {
-        Ok(())
-    } else {
-        Err(DagNodeFailure::terminal(
-            "missing_image_input",
-            "Crop requires Image input",
-        ))
-    }
+fn one_image<'a>(
+    context: &'a DagNodeContext<'_>,
+) -> Result<&'a annotagent_core::ImageArtifact, DagNodeFailure> {
+    exactly_one(
+        context,
+        |artifact| match artifact {
+            PipelineArtifact::Image(value) => Some(value),
+            _ => None,
+        },
+        "Image",
+    )
 }
 
 fn one_detection_set<'a>(
