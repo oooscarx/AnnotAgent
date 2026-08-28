@@ -184,3 +184,27 @@ Bounded auxiliary-tool convergence status: `PASS`.
   production Web build pass; browser console inspection reported no warnings or errors.
 
 Formal Annotation overlay status: `PASS`.
+
+## RoboCup Ball foreground refinement — 2026-08-28
+
+- The active Ball task now runs `ball_foreground_refiner` after VLM submission and before the
+  existing hard-negative Validator and Review policy.
+- The Refiner is Skill-owned and uses bounded local foreground segmentation against green-field
+  pixels. It is not presented as SAM and introduces no RoboCup branch into Core.
+- Painted field lines are rejected as thin axis support. Inconclusive evidence preserves the exact
+  VLM box and emits `ball_foreground_refiner_fallback` for Human Review.
+- Runtime persists both the original candidate and refined candidate as revision-linked Artifacts.
+- Live Qwen Run `d1500707-18a8-4d30-87be-2a379e65e34f` executed two evidence calls, submission,
+  refinement, validation, and commit. The initial calibration reduced the candidate area while
+  retaining confidence and produced no validation issue.
+- Later live Runs returned increasingly oversized/upward-biased coarse rects and safely selected
+  fallback/Review. Replaying the widest exact candidate after final tuning maps
+  `[0.438, 0.335, 0.065, 0.075]` to
+  `[0.4375, 0.35714287, 0.036764707, 0.04017857]` at quality `0.544`; the horizontal field line and
+  an unrelated robot foot no longer widen the result.
+- Strict workspace Clippy and all 153 Rust unit/integration tests plus doc tests pass. Browser
+  verification shows one colored `ball 95%` overlay on the successful live Run with no console
+  warning or error.
+
+RoboCup Ball foreground refinement status: `PASS` (deterministic local backend). A real SAM worker
+remains an optional HTTP Vision Protocol backend and is not claimed by this milestone.

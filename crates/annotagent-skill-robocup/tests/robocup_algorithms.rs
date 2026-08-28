@@ -3,16 +3,16 @@ use std::collections::BTreeMap;
 use annotagent_core::{
     AgentTool, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner, AnnotationSource,
     AnnotationValidator, AnnotationValue, AttributeValue, DomainSkill, ImageFrame, ImageId,
-    Keypoint, LabelId, NormalizedPoint, NormalizedRect, ProjectSchema, RefinementContext,
-    ReviewContext, ReviewDecision, ReviewPolicy, ReviewStatus, RunId, TaskId, ToolContext,
-    ValidationContext,
+    ImageMetadata, Keypoint, LabelId, NormalizedPoint, NormalizedRect, ProjectSchema,
+    RefinementContext, ReviewContext, ReviewDecision, ReviewPolicy, ReviewStatus, RunId, TaskId,
+    ToolContext, ValidationContext,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_skill_robocup::{
     BallHardNegativeValidator, EvaluationGroundTruth, EvaluationPredictions, EvaluationThresholds,
-    FieldContainmentValidator, RoboCupBallFieldRelationValidator, RoboCupFieldLineRefiner,
-    RoboCupReviewPolicy, RoboCupSkill, RobotAttributeValidator, TeamColorEvidenceTool, evaluate,
-    evaluate_with_thresholds,
+    FieldContainmentValidator, RoboCupBallFieldRelationValidator, RoboCupBallForegroundRefiner,
+    RoboCupFieldLineRefiner, RoboCupReviewPolicy, RoboCupSkill, RobotAttributeValidator,
+    TeamColorEvidenceTool, evaluate, evaluate_with_thresholds,
 };
 use chrono::Utc;
 use serde_json::json;
@@ -255,6 +255,98 @@ fn pixel_refiner_moves_coarse_line_toward_white_pixels() {
     assert!(result.confidence > 0.4);
 }
 
+#[test]
+fn ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line() {
+    let width = 120_u32;
+    let height = 100_u32;
+    let mut rgb = vec![0_u8; (width * height * 3) as usize];
+    for pixel in rgb.chunks_exact_mut(3) {
+        pixel.copy_from_slice(&[62, 142, 55]);
+    }
+    for x in 0..width {
+        for y in 59..=61 {
+            let offset = ((y * width + x) * 3) as usize;
+            rgb[offset..offset + 3].copy_from_slice(&[230, 230, 225]);
+        }
+    }
+    for y in 0..height {
+        for x in 0..width {
+            let dx = i64::from(x) - 60;
+            let dy = i64::from(y) - 50;
+            if dx * dx + dy * dy <= 14 * 14 {
+                let offset = ((y * width + x) * 3) as usize;
+                let color = if (x + y) % 9 < 3 {
+                    [205, 38, 42]
+                } else {
+                    [218, 218, 212]
+                };
+                rgb[offset..offset + 3].copy_from_slice(&color);
+            }
+        }
+    }
+    let image = ImageFrame {
+        metadata: ImageMetadata {
+            width,
+            height,
+            mime_type: "image/rgb8".to_owned(),
+            sha256: "synthetic-ball".to_owned(),
+        },
+        rgb,
+    };
+    let coarse = NormalizedRect::new(0.35, 0.31, 0.30, 0.38).expect("coarse box");
+    let candidate = annotation(
+        "ball",
+        "objects",
+        AnnotationValue::BoundingBox { rect: coarse },
+    );
+    let result = RoboCupBallForegroundRefiner::default()
+        .refine(&RefinementContext {
+            project: &project(),
+            image: &image,
+            candidate: &candidate,
+            related_annotations: &[],
+        })
+        .expect("foreground refinement");
+    let AnnotationValue::BoundingBox { rect: refined } = result.annotation.value else {
+        panic!("refiner preserves bounding-box type");
+    };
+    assert!(refined.area() < coarse.area() * 0.8);
+    assert!((refined.center().x() - 0.5).abs() < 0.03);
+    assert!((refined.center().y() - 0.5).abs() < 0.03);
+    assert!(refined.width() / refined.height() < 1.25);
+    assert!(result.issues.is_empty());
+    assert!(result.confidence >= 0.45);
+}
+
+#[test]
+fn ball_foreground_refiner_preserves_original_box_when_evidence_is_missing() {
+    let image = ImageFrame {
+        metadata: ImageMetadata {
+            width: 64,
+            height: 64,
+            mime_type: "image/rgb8".to_owned(),
+            sha256: "green-only".to_owned(),
+        },
+        rgb: [55_u8, 135, 48].repeat(64 * 64),
+    };
+    let coarse = NormalizedRect::new(0.3, 0.3, 0.2, 0.2).expect("coarse box");
+    let candidate = annotation(
+        "ball",
+        "objects",
+        AnnotationValue::BoundingBox { rect: coarse },
+    );
+    let result = RoboCupBallForegroundRefiner::default()
+        .refine(&RefinementContext {
+            project: &project(),
+            image: &image,
+            candidate: &candidate,
+            related_annotations: &[],
+        })
+        .expect("safe fallback");
+    assert_eq!(result.annotation.value, candidate.value);
+    assert_eq!(result.issues[0].code, "ball_foreground_refiner_fallback");
+}
+
 #[tokio::test]
 async fn team_color_tool_and_validator_report_conflict() {
     let (temporary, image) = fixture();
@@ -353,7 +445,8 @@ fn robocup_exposes_only_two_ball_workflow_templates() {
     assert_eq!(skill.workflow().nodes.len(), 1);
     assert_eq!(skill.tool_factories().len(), 1);
     assert_eq!(skill.validators().len(), 1);
-    assert!(skill.refiners().is_empty());
+    assert_eq!(skill.refiners().len(), 1);
+    assert_eq!(skill.refiners()[0].id(), "ball_foreground_refiner");
     let schema = ProjectSchema::from_yaml(skill.project_template().expect("Ball project template"))
         .expect("Ball Project Schema");
     assert_eq!(schema.tasks.len(), 1);

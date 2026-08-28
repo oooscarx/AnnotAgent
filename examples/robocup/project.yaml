@@ -27,6 +27,7 @@ tasks:
     required: true
     multi_label: true
     validators: [ball_hard_negative]
+    refiners: [ball_foreground_refiner]
 review:
   auto_accept_confidence: 0.92
   force_review_below: 0.72

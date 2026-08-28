@@ -2997,7 +2997,7 @@ mod tests {
             .await,
         )
         .await;
-        assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(1));
+        assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(2));
 
         let mut settings =
             response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)

@@ -653,3 +653,28 @@ Bounded auxiliary-tool convergence status: `PASS`.
    and the Vite production build passed; browser console inspection returned no warnings or errors.
 
 Formal Annotation overlay status: `PASS`.
+
+## RoboCup Ball foreground Refiner — 2026-08-28
+
+1. `RoboCupBallForegroundRefiner` accepts only Ball bounding-box candidates, searches a bounded
+   padded region, separates non-field foreground, rejects thin field-line-only axis support, and
+   applies geometry/center/quality guards before rewriting the box.
+2. `ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line` proves a synthetic ball
+   is tightened despite an intersecting white field line.
+   `ball_foreground_refiner_preserves_original_box_when_evidence_is_missing` proves deterministic
+   fallback with a structured Review issue.
+3. Live Run `d1500707-18a8-4d30-87be-2a379e65e34f` used the saved workspace credential without
+   returning or logging it. Events show `refinement_started`, original Candidate Artifact creation,
+   revision-2 Refined Candidate creation, `refinement_completed`, successful validation, annotation
+   commit, Artifact validation, and Artifact commit.
+4. Later live candidates safely fell back because oversized/upward-biased boxes exposed unrelated
+   foreground. The final implementation first resolves the dense object-height band, then computes
+   horizontal support only inside that band. Replaying exact rect `[0.438, 0.335, 0.065, 0.075]`
+   against the same image produced `[0.4375, 0.35714287, 0.036764707, 0.04017857]`, quality `0.544`,
+   with no issue. This is deterministic pixel refinement, not a claimed SAM call.
+5. RoboCup Skill tests (13 total unit/integration including 11 algorithms), the six storage RoboCup
+   loop tests, and the full 153-test Rust workspace pass. Strict workspace Clippy and doc tests pass.
+   Browser verification shows the successful live Run's colored `ball 95%` overlay and reports no
+   console warning or error.
+
+RoboCup Ball foreground Refiner status: `PASS`.

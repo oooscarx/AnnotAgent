@@ -70,7 +70,7 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
-        Vec::new()
+        vec![Arc::new(RoboCupBallForegroundRefiner::default())]
     }
 
     fn prompt_resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
