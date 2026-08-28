@@ -253,3 +253,29 @@ RoboCup Ball SAM2 prompted refinement status: `PASS` (real local SAM2.1 worker).
   production build, doctor, and the three offline demos.
 
 Published editable-review pipeline status: `PASS`.
+
+## Multi-prompt SAM recovery for imprecise VLM boxes — 2026-08-29
+
+- Review history confirmed that the four newest candidates had executed `sam_prompted_refiner`;
+  the remaining error was an inaccurate VLM prompt box, not a missing SAM stage. A box-prompted
+  segmenter cannot recover an object that lies outside its only prompt.
+- The SAM HTTP worker now accepts a bounded `box_prompts` set, runs the image encoder once, and
+  returns the multimask candidates for every prompt with prompt/mask identity and tight-box
+  metadata.
+- The RoboCup Ball Skill expands and shifts the coarse VLM box, evaluates all plausible SAM masks,
+  and selects using SAM confidence, geometry, proximity, non-field pixels, and distinctive ball
+  appearance. Core and the generic HTTP Vision Protocol remain domain-neutral.
+- Live Published Run `1d20cd51-3c04-4d4b-912f-e43f83e31d6a` corrected the VLM box
+  `[0.44, 0.41, 0.035, 0.04]` to the visible football at
+  `[0.4375, 0.35714287, 0.03860294, 0.05133929]`. It selected one result from five plausible SAM
+  candidates and routed exactly one editable bounding box to Review.
+- Review now resolves Pipeline Artifact lineage as well as legacy Vision Artifact lineage. The
+  inspector visibly reports `Source Node: refine_ball` and `Refinement: SAM 2.1 multi-prompt`,
+  while a local fallback is explicitly labelled as having no SAM.
+- `./scripts/acceptance.sh` passes the boundary check, formatting, strict workspace Clippy, all
+  workspace Rust/doc tests, Web typecheck, all 25 Web tests, production build, doctor, and three
+  offline demos. Browser verification confirmed 15 inspectable mask Artifacts, the final
+  `ball 68%` overlay, four resize handles, and the explicit SAM refinement label.
+
+Multi-prompt SAM recovery status: `PASS` (real local SAM2.1 worker; Human Review remains required
+by the configured 0.99 confidence gate).

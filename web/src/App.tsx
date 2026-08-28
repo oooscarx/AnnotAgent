@@ -4199,6 +4199,14 @@ function ReviewPage({
                 <Fact label="Source Run" value={selected.run_id.slice(0, 8)} />
                 <Fact label="Workflow Version" value={selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`} />
                 <Fact label="Source Node" value={selected.source_node ?? "Unknown"} />
+                <Fact
+                  label="Refinement"
+                  value={selected.refinement_chain?.map((refiner) => {
+                    if (refiner === "sam_prompted_refiner") return "SAM 2.1 multi-prompt";
+                    if (refiner === "ball_foreground_refiner") return "Local foreground fallback (no SAM)";
+                    return refiner;
+                  }).join(" → ") || "None recorded"}
+                />
                 <Fact label="Review reason" value={selected.review_reason} />
                 <Fact label="Confidence" value={`${Math.round((selected.confidence ?? selected.annotation.confidence ?? 0) * 100)}%`} />
                 <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />

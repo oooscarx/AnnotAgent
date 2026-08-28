@@ -1,7 +1,7 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     convert::Infallible,
     fs::OpenOptions,
     io::Write,
@@ -1878,6 +1878,11 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
         .map_err(ApiError::internal)?;
     for run in state.application.list_runs().map_err(ApiError::internal)? {
         let summary = run_summary(state, run.clone())?;
+        let artifacts = state
+            .application
+            .store()
+            .list_artifacts(run.id)
+            .map_err(ApiError::internal)?;
         let inspection = state
             .application
             .inspect_run_pipeline_artifacts(run.id)
@@ -1900,6 +1905,50 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
         {
             if annotation.review_status == ReviewStatus::NeedsReview {
                 let source_artifact_id = annotation.provenance.artifact_ids.first().copied();
+                let mut lineage_ids = annotation
+                    .provenance
+                    .artifact_ids
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                let mut refinement_chain = BTreeSet::new();
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    for artifact in &artifacts {
+                        if !lineage_ids.contains(&artifact.id) {
+                            continue;
+                        }
+                        if let Some(tool) = artifact.provenance.tool.as_deref() {
+                            if tool.contains("refiner") || tool.contains("sam") {
+                                refinement_chain.insert(tool.to_owned());
+                            }
+                        }
+                        for parent in &artifact.provenance.input_artifact_ids {
+                            changed |= lineage_ids.insert(*parent);
+                        }
+                    }
+                }
+                let pipeline_artifact_ref = annotation
+                    .attributes
+                    .get("pipeline_artifact_ref")
+                    .and_then(|value| match value {
+                        annotagent_core::AttributeValue::String(value) => Some(value.as_str()),
+                        _ => None,
+                    });
+                if let (Some(inspection), Some(reference)) =
+                    (inspection.as_ref(), pipeline_artifact_ref)
+                {
+                    for node in &inspection.nodes {
+                        if node
+                            .outputs
+                            .iter()
+                            .any(|artifact| artifact.reference().artifact_id == reference)
+                        {
+                            refinement_chain.extend(node.configuration.refiners.iter().cloned());
+                        }
+                    }
+                }
                 let source_node = inspection.as_ref().and_then(|inspection| {
                     inspection.nodes.iter().find_map(|node| {
                         node.outputs
@@ -1907,6 +1956,8 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
                             .any(|artifact| {
                                 source_artifact_id.is_some_and(|id| {
                                     artifact.reference().artifact_id == id.to_string()
+                                }) || pipeline_artifact_ref.is_some_and(|reference| {
+                                    artifact.reference().artifact_id == reference
                                 })
                             })
                             .then_some(node.node_id.as_str())
@@ -1926,6 +1977,7 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
                     "image_index": image_index,
                     "source_node": source_node.or(summary.current_node.as_deref()),
                     "source_artifact_id": source_artifact_id,
+                    "refinement_chain": refinement_chain,
                     "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !summary.validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
                     "confidence": annotation.confidence,
                     "validation_issues": summary.validation_issue_codes,
@@ -2980,6 +3032,7 @@ mod tests {
         assert_eq!(reviews["reviews"][0]["run_id"], json!(run_id));
         assert!(reviews["reviews"][0]["workflow_version"].is_number());
         assert!(reviews["reviews"][0]["review_reason"].is_string());
+        assert!(reviews["reviews"][0]["refinement_chain"].is_array());
         assert!(reviews["reviews"][0]["validation_issues"].is_array());
         let import_directory = temp.path().join("review-demo/import");
         std::fs::create_dir_all(&import_directory).expect("import directory");

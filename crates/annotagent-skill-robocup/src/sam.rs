@@ -107,17 +107,19 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
             ));
         };
         let seed_result = self.fallback.refine(context).await?;
-        let sam_prompt = match seed_result.annotation.value {
+        let seeded_prompt = match seed_result.annotation.value {
             AnnotationValue::BoundingBox { rect }
                 if !seed_result
                     .issues
                     .iter()
                     .any(|issue| issue.code == "ball_foreground_refiner_fallback") =>
             {
-                rect
+                Some(rect)
             }
-            _ => coarse,
+            _ => None,
         };
+        let sam_prompts = ball_search_prompts(coarse, seeded_prompt)?;
+        let sam_prompt = sam_prompts[0];
         let input_artifact = VisionArtifact {
             id: ArtifactId::new(),
             image_id: context.candidate.image_id,
@@ -150,9 +152,13 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
                 data_base64: STANDARD.encode(png),
             }),
             input_artifacts: vec![input_artifact],
-            prompt: Some("segment the football inside the supplied bounding box".to_owned()),
+            prompt: Some(
+                "segment the compact non-field football; return multiple candidates for bounded selection"
+                    .to_owned(),
+            ),
             parameters: BTreeMap::from([
                 ("box_prompt".to_owned(), serde_json::json!(sam_prompt)),
+                ("box_prompts".to_owned(), serde_json::json!(sam_prompts)),
                 ("multimask_output".to_owned(), serde_json::json!(true)),
             ]),
             timeout_ms: Some(120_000),
@@ -166,28 +172,44 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
             Ok(response) => response,
             Err(error) => return self.fallback(context, &error.to_string()).await,
         };
-        let Some(mask_artifact) = response
-            .artifacts
+        let mut artifacts = response.artifacts;
+        let mut candidates = artifacts
             .iter()
-            .find(|artifact| matches!(artifact.value, VisionArtifactValue::InstanceMask { .. }))
-        else {
+            .enumerate()
+            .filter_map(|(index, artifact)| {
+                let VisionArtifactValue::InstanceMask { mask } = &artifact.value else {
+                    return None;
+                };
+                let rect = tight_bbox(mask).ok()?;
+                let score = ball_mask_score(
+                    context.image,
+                    coarse,
+                    rect,
+                    mask,
+                    artifact.confidence.unwrap_or(0.0),
+                )
+                .ok()??;
+                Some((index, rect, score))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| right.2.total_cmp(&left.2));
+        let Some((selected_index, refined, selection_score)) = candidates.first().copied() else {
             return self
-                .fallback(context, "worker returned no instance-mask artifact")
+                .fallback(
+                    context,
+                    "worker returned no geometrically and visually plausible football mask",
+                )
                 .await;
         };
-        let VisionArtifactValue::InstanceMask { mask } = &mask_artifact.value else {
-            unreachable!();
-        };
-        let refined = match tight_bbox(mask) {
-            Ok(rect) if plausible_refinement(coarse, rect) => rect,
-            Ok(_) => {
-                return self
-                    .fallback(context, "SAM mask geometry was outside safety bounds")
-                    .await;
-            }
-            Err(error) => return self.fallback(context, &error.to_string()).await,
-        };
-        let confidence = mask_artifact.confidence.unwrap_or(0.0);
+        let sam_confidence = artifacts[selected_index].confidence.unwrap_or(0.0);
+        artifacts[selected_index].metadata.insert(
+            "ball_selection_score".to_owned(),
+            serde_json::json!(selection_score),
+        );
+        artifacts[selected_index]
+            .metadata
+            .insert("selected".to_owned(), serde_json::json!(true));
+        let confidence = (selection_score * 0.7 + sam_confidence * 0.3).clamp(0.0, 1.0);
         let mut annotation = context.candidate.clone();
         annotation.value = AnnotationValue::BoundingBox { rect: refined };
         annotation.confidence = Some(confidence);
@@ -212,11 +234,13 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
                 }]
             },
             summary: format!(
-                "refined foreground-seeded VLM box with {} prompted mask (score {:.0}%)",
+                "selected a football mask from {} SAM candidates with {} (SAM {:.0}%, selection {:.0}%)",
+                candidates.len(),
                 response.model_identity.as_deref().unwrap_or(&self.model_id),
-                confidence * 100.0
+                sam_confidence * 100.0,
+                selection_score * 100.0,
             ),
-            artifacts: response.artifacts,
+            artifacts,
         })
     }
 }
@@ -245,25 +269,7 @@ fn tight_bbox(mask: &MaskEncoding) -> CoreResult<NormalizedRect> {
 }
 
 fn bbox_from_uncompressed_rle(width: u32, height: u32, counts: &str) -> CoreResult<NormalizedRect> {
-    if width == 0 || height == 0 {
-        return Err(CoreError::Refinement(
-            "SAM mask has zero dimensions".to_owned(),
-        ));
-    }
-    let runs = counts
-        .split_whitespace()
-        .map(|value| {
-            value.parse::<u64>().map_err(|_| {
-                CoreError::Refinement("SAM returned invalid uncompressed COCO RLE".to_owned())
-            })
-        })
-        .collect::<CoreResult<Vec<_>>>()?;
-    let expected = u64::from(width) * u64::from(height);
-    if runs.iter().sum::<u64>() != expected {
-        return Err(CoreError::Refinement(
-            "SAM mask RLE dimensions do not match its counts".to_owned(),
-        ));
-    }
+    let runs = parse_rle_runs(width, height, counts)?;
     let mut cursor = 0_u64;
     let mut bounds: Option<(u32, u32, u32, u32)> = None;
     for (index, length) in runs.into_iter().enumerate() {
@@ -289,12 +295,146 @@ fn bbox_from_uncompressed_rle(width: u32, height: u32, counts: &str) -> CoreResu
     )
 }
 
-fn plausible_refinement(coarse: NormalizedRect, refined: NormalizedRect) -> bool {
-    let center = refined.center();
-    let aspect = refined.width() / refined.height();
-    coarse.contains(center, coarse.width().max(coarse.height()) * 0.2)
-        && refined.area() <= coarse.area() * 1.35
-        && (0.3..=3.0).contains(&aspect)
+fn parse_rle_runs(width: u32, height: u32, counts: &str) -> CoreResult<Vec<u64>> {
+    if width == 0 || height == 0 {
+        return Err(CoreError::Refinement(
+            "SAM mask has zero dimensions".to_owned(),
+        ));
+    }
+    let runs = counts
+        .split_whitespace()
+        .map(|value| {
+            value.parse::<u64>().map_err(|_| {
+                CoreError::Refinement("SAM returned invalid uncompressed COCO RLE".to_owned())
+            })
+        })
+        .collect::<CoreResult<Vec<_>>>()?;
+    let expected = u64::from(width) * u64::from(height);
+    if runs.iter().sum::<u64>() != expected {
+        return Err(CoreError::Refinement(
+            "SAM mask RLE dimensions do not match its counts".to_owned(),
+        ));
+    }
+    Ok(runs)
+}
+
+fn ball_search_prompts(
+    coarse: NormalizedRect,
+    seeded: Option<NormalizedRect>,
+) -> CoreResult<Vec<NormalizedRect>> {
+    let mut prompts = Vec::new();
+    if let Some(seed) = seeded {
+        prompts.push(seed);
+    }
+    prompts.push(coarse);
+    for (width_scale, height_scale, vertical_shift) in [
+        (2.0, 2.5, -0.75),
+        (3.0, 3.5, -1.5),
+        (4.0, 5.0, -2.0),
+        (3.0, 3.0, 0.0),
+    ] {
+        let width = (coarse.width() * width_scale).min(1.0);
+        let height = (coarse.height() * height_scale).min(1.0);
+        let center = coarse.center();
+        let center_y = center.y() + coarse.height() * vertical_shift;
+        let left = (center.x() - width / 2.0).clamp(0.0, 1.0 - width);
+        let top = (center_y - height / 2.0).clamp(0.0, 1.0 - height);
+        let prompt = NormalizedRect::new(left, top, width, height)?;
+        if !prompts.contains(&prompt) {
+            prompts.push(prompt);
+        }
+    }
+    Ok(prompts)
+}
+
+fn ball_mask_score(
+    image: &annotagent_core::ImageFrame,
+    coarse: NormalizedRect,
+    refined: NormalizedRect,
+    mask: &MaskEncoding,
+    sam_confidence: f32,
+) -> CoreResult<Option<f32>> {
+    let area_ratio = refined.area() / coarse.area().max(f32::EPSILON);
+    let aspect = refined.width() / refined.height().max(f32::EPSILON);
+    let coarse_center = coarse.center();
+    let refined_center = refined.center();
+    let distance = ((refined_center.x() - coarse_center.x()) / coarse.width().max(0.005))
+        .hypot((refined_center.y() - coarse_center.y()) / coarse.height().max(0.005));
+    if !(0.15..=12.0).contains(&area_ratio)
+        || !(0.35..=2.5).contains(&aspect)
+        || distance > 5.0
+        || refined.area() > 0.15
+    {
+        return Ok(None);
+    }
+    let (non_field_ratio, distinctive_ratio) = mask_appearance(image, mask)?;
+    if non_field_ratio < 0.25 || distinctive_ratio < 0.04 {
+        return Ok(None);
+    }
+    let aspect_score = (1.0 - aspect.ln().abs() / 1.2).clamp(0.0, 1.0);
+    let size_score = (1.0 - area_ratio.ln().abs() / 2.5).clamp(0.0, 1.0);
+    let proximity_score = (1.0 - distance / 5.0).clamp(0.0, 1.0);
+    Ok(Some(
+        (sam_confidence.clamp(0.0, 1.0) * 0.2
+            + aspect_score * 0.15
+            + size_score * 0.1
+            + proximity_score * 0.1
+            + non_field_ratio * 0.25
+            + distinctive_ratio * 0.2)
+            .clamp(0.0, 1.0),
+    ))
+}
+
+fn mask_appearance(
+    image: &annotagent_core::ImageFrame,
+    mask: &MaskEncoding,
+) -> CoreResult<(f32, f32)> {
+    let MaskEncoding::CocoRle {
+        width,
+        height,
+        counts,
+    } = mask
+    else {
+        return Ok((0.5, 0.25));
+    };
+    if *width != image.metadata.width || *height != image.metadata.height {
+        return Err(CoreError::Refinement(
+            "SAM mask dimensions do not match the source image".to_owned(),
+        ));
+    }
+    let runs = parse_rle_runs(*width, *height, counts)?;
+    let mut cursor = 0_u64;
+    let mut foreground = 0_u64;
+    let mut non_field = 0_u64;
+    let mut distinctive = 0_u64;
+    for (index, length) in runs.into_iter().enumerate() {
+        if index % 2 == 1 {
+            for offset in cursor..cursor + length {
+                let x = (offset / u64::from(*height)) as usize;
+                let y = (offset % u64::from(*height)) as usize;
+                let pixel = (y * *width as usize + x) * 3;
+                let red = image.rgb[pixel];
+                let green = image.rgb[pixel + 1];
+                let blue = image.rgb[pixel + 2];
+                foreground += 1;
+                let field_green = green >= 38
+                    && i16::from(green) - i16::from(red) >= 7
+                    && i16::from(green) - i16::from(blue) >= 4;
+                non_field += u64::from(!field_green);
+                let maximum = red.max(green).max(blue);
+                let minimum = red.min(green).min(blue);
+                distinctive += u64::from(maximum < 105 || maximum - minimum > 32);
+            }
+        }
+        cursor += length;
+    }
+    if foreground == 0 {
+        return Err(CoreError::Refinement("SAM mask is empty".to_owned()));
+    }
+    Ok((
+        non_field as f32 / foreground as f32,
+        distinctive as f32 / foreground as f32,
+    ))
 }
 
 #[cfg(test)]
@@ -315,5 +455,21 @@ mod tests {
         assert!(bbox_from_uncompressed_rle(4, 3, "12").is_err());
         assert!(bbox_from_uncompressed_rle(4, 3, "4 nope 8").is_err());
         assert!(bbox_from_uncompressed_rle(4, 3, "4 2").is_err());
+    }
+
+    #[test]
+    fn search_prompts_cover_a_ball_above_an_imprecise_vlm_box() {
+        let coarse = NormalizedRect::new(0.44, 0.41, 0.035, 0.04).expect("coarse bbox");
+        let actual_ball = NormalizedRect::new(0.4375, 0.357, 0.039, 0.051).expect("ball bbox");
+        let prompts = ball_search_prompts(coarse, None).expect("search prompts");
+
+        assert!(prompts.len() > 1);
+        assert!(prompts.iter().any(|prompt| {
+            let center = actual_ball.center();
+            center.x() >= prompt.x()
+                && center.x() <= prompt.x() + prompt.width()
+                && center.y() >= prompt.y()
+                && center.y() <= prompt.y() + prompt.height()
+        }));
     }
 }

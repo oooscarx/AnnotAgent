@@ -732,3 +732,30 @@ RoboCup Ball SAM2 prompted Refiner status: `PASS`.
    tests, 25 Web tests, the production build, doctor, and all three offline demos.
 
 Published editable-review pipeline status: `PASS`.
+
+## Multi-prompt SAM recovery for imprecise VLM boxes — 2026-08-29
+
+1. The most recent four Review candidates contained `sam_prompted_refiner` lineage; two older
+   candidates contained only `ball_foreground_refiner`. This distinguishes historical fallback
+   output from the current SAM path and proves that the inaccurate latest result was not caused by
+   skipping SAM.
+2. For live Run `1d20cd51-3c04-4d4b-912f-e43f83e31d6a`, Qwen returned the coarse bounding box
+   `[0.44, 0.41, 0.035, 0.04]`, vertically below the visible football. The updated worker returned
+   multimask results for several bounded search prompts without re-encoding the image.
+3. The Ball Skill accepted five plausible SAM candidates and selected prompt index 1, mask index 2,
+   SAM score `0.7824226`, selection score `0.6322746`, and tight bounding box
+   `[0.4375, 0.357142857, 0.038602941, 0.051339286]`. Visual comparison against the 544×448 source
+   image places this box on the football rather than the field line.
+4. Persisted Run inspection reports `completed_with_review`, 6/7 executed nodes, 15 intermediate
+   Artifacts, and exactly one bounding-box Annotation. The 15 masks remain inspectable evidence and
+   do not become duplicate Review annotations.
+5. In-app browser verification displayed the corrected `ball 68%` overlay and an editable Review
+   bounding box with four corner handles. The Review inspector resolved the candidate to
+   `refine_ball` and displayed `SAM 2.1 multi-prompt` instead of leaving the refinement path
+   ambiguous.
+6. `./scripts/acceptance.sh` passed the Agent/Skill boundary check, formatting, strict workspace
+   Clippy, all workspace Rust/doc tests (including the 100-image durable Batch), Web typecheck, all
+   25 Web tests, production build, doctor, and all three offline demos. A focused server check also
+   passed after adding Pipeline Artifact lineage reporting.
+
+Multi-prompt SAM recovery status: `PASS`.

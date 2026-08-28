@@ -590,6 +590,7 @@ export interface ReviewItem {
   image_index?: number;
   source_node?: string;
   source_artifact_id?: string;
+  refinement_chain: string[];
   review_reason: string;
   confidence?: number;
   validation_issues: string[];

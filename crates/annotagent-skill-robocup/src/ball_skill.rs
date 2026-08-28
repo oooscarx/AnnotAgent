@@ -235,7 +235,7 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                     .insert("labels".to_owned(), serde_json::json!(["ball"]));
                 detector_node.parameters.insert(
                     "target_description".to_owned(),
-                    serde_json::json!("the small RoboCup football on the green playing field"),
+                    serde_json::json!("the compact round RoboCup football itself; return a pixel-tight box around the visible ball, ignore white field markings and green turf, and verify that every box edge encloses the ball"),
                 );
                 detector_node
             },

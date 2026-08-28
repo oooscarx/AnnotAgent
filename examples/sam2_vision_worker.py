@@ -98,6 +98,24 @@ def get_box(request: dict[str, Any]) -> list[float]:
     return values
 
 
+def get_boxes(request: dict[str, Any]) -> list[list[float]]:
+    prompts = request.get("parameters", {}).get("box_prompts")
+    if prompts is None:
+        return [get_box(request)]
+    if not isinstance(prompts, list) or not 1 <= len(prompts) <= 8:
+        raise ValueError("box_prompts must contain between one and eight boxes")
+    boxes: list[list[float]] = []
+    for prompt in prompts:
+        if not isinstance(prompt, list) or len(prompt) != 4:
+            raise ValueError("each box prompt must be normalized [x,y,w,h]")
+        values = [float(item) for item in prompt]
+        x, y, width, height = values
+        if min(values) < 0 or width <= 0 or height <= 0 or x + width > 1.00001 or y + height > 1.00001:
+            raise ValueError("box prompt must be a valid normalized rectangle")
+        boxes.append(values)
+    return boxes
+
+
 def uncompressed_coco_rle(mask) -> str:
     # COCO uses column-major order and alternating background/foreground run lengths.
     flat = mask.astype("uint8").flatten(order="F")
@@ -128,68 +146,76 @@ def infer(request: dict[str, Any]) -> dict[str, Any]:
         import numpy as np
 
         image = decode_image(request["image"])
-        normalized_box = get_box(request)
+        normalized_boxes = get_boxes(request)
         height, width = image.shape[:2]
-        x, y, box_width, box_height = normalized_box
-        pixel_box = np.asarray(
-            [x * width, y * height, (x + box_width) * width, (y + box_height) * height],
-            dtype=np.float32,
-        )
         inference_started = time.perf_counter()
+        candidates: list[tuple[int, int, list[float], Any, float]] = []
         with PREDICTOR_LOCK:
             PREDICTOR.set_image(image)
-            masks, scores, _ = PREDICTOR.predict(box=pixel_box, multimask_output=True)
+            for prompt_index, normalized_box in enumerate(normalized_boxes):
+                x, y, box_width, box_height = normalized_box
+                pixel_box = np.asarray(
+                    [x * width, y * height, (x + box_width) * width, (y + box_height) * height],
+                    dtype=np.float32,
+                )
+                masks, scores, _ = PREDICTOR.predict(box=pixel_box, multimask_output=True)
+                for mask_index, (mask, score) in enumerate(zip(masks, scores, strict=True)):
+                    if mask.any():
+                        candidates.append(
+                            (prompt_index, mask_index, normalized_box, mask.astype(bool), float(score))
+                        )
         inference_ms = int((time.perf_counter() - inference_started) * 1000)
-        best = int(np.argmax(scores))
-        mask = masks[best].astype(bool)
-        if not mask.any():
+        if not candidates:
             raise ValueError("SAM2 returned an empty mask")
-        ys, xs = np.where(mask)
-        tight = [
-            float(xs.min() / width),
-            float(ys.min() / height),
-            float((xs.max() - xs.min() + 1) / width),
-            float((ys.max() - ys.min() + 1) / height),
-        ]
-        artifact_id = str(uuid.uuid4())
         input_ids = [item.get("id") for item in request.get("input_artifacts", []) if item.get("id")]
-        artifact = {
-            "id": artifact_id,
-            "image_id": request["image_id"],
-            "task_id": request["task_id"],
-            "label": "ball",
-            "role": "candidate",
-            "value": {
-                "kind": "instance_mask",
-                "mask": {
-                    "encoding": "coco_rle",
-                    "width": width,
-                    "height": height,
-                    "counts": uncompressed_coco_rle(mask),
+        artifacts = []
+        for prompt_index, mask_index, normalized_box, mask, score in candidates:
+            ys, xs = np.where(mask)
+            tight = [
+                float(xs.min() / width),
+                float(ys.min() / height),
+                float((xs.max() - xs.min() + 1) / width),
+                float((ys.max() - ys.min() + 1) / height),
+            ]
+            artifacts.append({
+                "id": str(uuid.uuid4()),
+                "image_id": request["image_id"],
+                "task_id": request["task_id"],
+                "label": "ball",
+                "role": "candidate",
+                "value": {
+                    "kind": "instance_mask",
+                    "mask": {
+                        "encoding": "coco_rle",
+                        "width": width,
+                        "height": height,
+                        "counts": uncompressed_coco_rle(mask),
+                    },
                 },
-            },
-            "source_node": request["node_id"],
-            "confidence": float(scores[best]),
-            "metadata": {
-                "tight_bbox": tight,
-                "prompt_bbox": normalized_box,
-                "mask_area_pixels": int(mask.sum()),
-                "device": DEVICE,
-            },
-            "validation_state": "unvalidated",
-            "provenance": {
-                "provider": "sam2_http_worker",
-                "model": MODEL_IDENTITY,
-                "request_id": request.get("request_id"),
-                "input_artifact_ids": input_ids,
-            },
-            "revision": 1,
-            "replaces_artifact_id": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
+                "source_node": request["node_id"],
+                "confidence": score,
+                "metadata": {
+                    "tight_bbox": tight,
+                    "prompt_bbox": normalized_box,
+                    "prompt_index": prompt_index,
+                    "mask_index": mask_index,
+                    "mask_area_pixels": int(mask.sum()),
+                    "device": DEVICE,
+                },
+                "validation_state": "unvalidated",
+                "provenance": {
+                    "provider": "sam2_http_worker",
+                    "model": MODEL_IDENTITY,
+                    "request_id": request.get("request_id"),
+                    "input_artifact_ids": input_ids,
+                },
+                "revision": 1,
+                "replaces_artifact_id": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
         total_ms = int((time.perf_counter() - started) * 1000)
         return response(
-            artifacts=[artifact],
+            artifacts=artifacts,
             request_id=request.get("request_id"),
             timings={"inference_ms": inference_ms, "total_ms": total_ms},
             usage={"source": DEVICE, "compute_milliseconds": inference_ms},
