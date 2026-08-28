@@ -587,6 +587,7 @@ export interface ReviewItem {
   annotation: Annotation;
   workflow_id?: string;
   workflow_version: number;
+  image_index?: number;
   source_node?: string;
   source_artifact_id?: string;
   review_reason: string;

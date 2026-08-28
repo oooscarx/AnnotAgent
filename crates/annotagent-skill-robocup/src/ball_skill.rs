@@ -1,12 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    AnnotationValidator, ArtifactKind, CoreError, CoreResult, CorrectionKind, NodePort,
-    ReviewPolicy, Skill, SkillManifest, SkillResource, SkillResourceRequest, TaskId, TaskTemplate,
-    WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    AnnotationRefiner, AnnotationValidator, ArtifactKind, CoreError, CoreResult, CorrectionKind,
+    NodePort, ReviewPolicy, Skill, SkillManifest, SkillResource, SkillResourceRequest, TaskId,
+    TaskTemplate, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 
-use crate::{RoboCupBallHardNegativeValidator, RoboCupReviewPolicy};
+use crate::{
+    RoboCupBallForegroundRefiner, RoboCupBallHardNegativeValidator, RoboCupReviewPolicy,
+    RoboCupSamHttpRefiner,
+};
 
 pub const ROBOCUP_PACK_ID: &str = "robocup";
 pub const ROBOCUP_BALL_SKILL_ID: &str = "robocup.ball";
@@ -50,6 +53,7 @@ impl Skill for RoboCupPackSkill {
 
 pub struct RoboCupBallSkill {
     manifest: SkillManifest,
+    refiners: Vec<Arc<dyn AnnotationRefiner>>,
 }
 
 impl RoboCupBallSkill {
@@ -59,6 +63,10 @@ impl RoboCupBallSkill {
                 "../../../skills/robocup/ball/manifest.yaml"
             ))
             .map_err(|error| CoreError::InvalidManifest(error.to_string()))?,
+            refiners: vec![
+                Arc::new(RoboCupBallForegroundRefiner::default()),
+                Arc::new(RoboCupSamHttpRefiner::from_env()?),
+            ],
         })
     }
 }
@@ -83,6 +91,9 @@ impl Skill for RoboCupBallSkill {
         vec![Arc::new(RoboCupBallHardNegativeValidator::default())]
     }
 
+    fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
+        self.refiners.clone()
+    }
     fn review_policies(&self) -> Vec<(String, Arc<dyn ReviewPolicy>)> {
         vec![(
             "robocup.ball.review".to_owned(),
@@ -197,7 +208,7 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
     .map(|(id, name, detector, detector_kind)| WorkflowTemplate {
         id: id.to_owned(),
         name: name.to_owned(),
-        description: "Image → generic detector → Core Filter → RoboCup Ball Validators → Review Gate → Commit".to_owned(),
+        description: "Image → generic detector → Core Filter → prompted SAM refinement → RoboCup Ball Validators → Review Gate → Commit".to_owned(),
         nodes: vec![
             node(
                 "image",
@@ -206,20 +217,53 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                 Vec::new(),
                 vec![port("image", ArtifactKind::Image)],
             ),
-            node(
-                "detector",
-                detector,
-                detector_kind,
-                vec![port("image", ArtifactKind::Image)],
-                vec![port("detections", ArtifactKind::DetectionSet)],
-            ),
-            node(
-                "filter",
-                "core.filter",
-                WorkflowNodeKind::Transform,
-                vec![port("detections", ArtifactKind::DetectionSet)],
-                vec![port("detections", ArtifactKind::DetectionSet)],
-            ),
+            {
+                let mut detector_node = node(
+                    "detector",
+                    detector,
+                    detector_kind,
+                    vec![port("image", ArtifactKind::Image)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                );
+                detector_node.model_binding = Some(if detector == "vlm_detection.detect" {
+                    "default-vision".to_owned()
+                } else {
+                    "mock-detector".to_owned()
+                });
+                detector_node
+                    .parameters
+                    .insert("labels".to_owned(), serde_json::json!(["ball"]));
+                detector_node.parameters.insert(
+                    "target_description".to_owned(),
+                    serde_json::json!("the small RoboCup football on the green playing field"),
+                );
+                detector_node
+            },
+            {
+                let mut filter = node(
+                    "filter",
+                    "core.filter",
+                    WorkflowNodeKind::Transform,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                );
+                filter
+                    .parameters
+                    .insert("labels".to_owned(), serde_json::json!(["ball"]));
+                filter
+            },
+            {
+                let mut refiner = node(
+                    "refine_ball",
+                    "annotation_refiner",
+                    WorkflowNodeKind::Refiner,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                );
+                refiner.refiners = vec!["sam_prompted_refiner".to_owned()];
+                refiner.parameters.insert("task_id".to_owned(), serde_json::json!("objects"));
+                refiner
+            },
             {
                 let mut validator = node(
                     "validate_ball",
@@ -230,6 +274,9 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                 );
                 validator.validators = vec!["ball_hard_negative".to_owned()];
                 validator
+                    .parameters
+                    .insert("task_id".to_owned(), serde_json::json!("objects"));
+                validator
             },
             node(
                 "gate",
@@ -238,20 +285,33 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                 vec![port("detections", ArtifactKind::DetectionSet)],
                 vec![port("detections", ArtifactKind::DetectionSet)],
             ),
-            node(
-                "review",
-                "core.human_review",
-                WorkflowNodeKind::HumanReview,
-                vec![port("detections", ArtifactKind::DetectionSet)],
-                vec![port("detections", ArtifactKind::DetectionSet)],
-            ),
-            node(
-                "commit",
-                "core.commit",
-                WorkflowNodeKind::Commit,
-                vec![port("detections", ArtifactKind::DetectionSet)],
-                Vec::new(),
-            ),
+            {
+                let mut review = node(
+                    "review",
+                    "review_gate",
+                    WorkflowNodeKind::HumanReview,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                );
+                review
+                    .parameters
+                    .insert("task_id".to_owned(), serde_json::json!("objects"));
+                review
+            },
+            {
+                let mut commit = node(
+                    "commit",
+                    "commit",
+                    WorkflowNodeKind::Commit,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    Vec::new(),
+                );
+                commit
+                    .parameters
+                    .insert("task_id".to_owned(), serde_json::json!("objects"));
+                commit.inputs[0].multiple = true;
+                commit
+            },
         ],
         edges: vec![
             WorkflowEdge {
@@ -262,7 +322,8 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                 route: None,
             },
             edge("detector", "filter", None),
-            edge("filter", "validate_ball", None),
+            edge("filter", "refine_ball", None),
+            edge("refine_ball", "validate_ball", None),
             edge("validate_ball", "gate", None),
             edge("gate", "commit", Some("pass")),
             edge("gate", "review", Some("review")),
@@ -292,12 +353,18 @@ mod tests {
         assert_eq!(ball.validators().len(), 1);
         let templates = ball.workflow_templates();
         assert_eq!(templates.len(), 2);
-        assert!(
-            templates
+        assert!(templates.iter().all(|template| {
+            template
+                .nodes
                 .iter()
-                .flat_map(|template| &template.nodes)
-                .all(|node| node.model_binding.is_none())
-        );
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+                    )
+                })
+                .all(|node| node.model_binding.is_some())
+        }));
         assert!(
             ball.resources(&SkillResourceRequest {
                 task_id: None,

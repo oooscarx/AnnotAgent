@@ -229,3 +229,27 @@ remains an optional HTTP Vision Protocol backend and is not claimed by this mile
   all workspace Rust tests and doc tests, Web typecheck/25 tests/build, doctor, and offline demos.
 
 RoboCup Ball SAM2 prompted refinement status: `PASS` (real local SAM2.1 worker).
+
+## Published VLM → SAM → editable Review → Commit — 2026-08-29
+
+- The RoboCup Ball VLM starter is now a valid publishable typed Workflow:
+  `Image → VLM DetectionSet → Filter → SAM Refiner → Validator → Confidence Gate → Human Review → Commit`.
+- The generic `annotation_refiner` adapter refines every DetectionSet item while preserving its
+  detection identity. SAM masks remain inspectable evidence Artifacts; only the final bounding box
+  enters the annotation Review queue.
+- DetectionSet validation now preserves typed output instead of dropping the Pipeline Artifact at
+  the Validator boundary.
+- Review resolves the exact source image, renders at its natural aspect ratio, and exposes drag plus
+  four-corner resize controls. Unsaved edits are persisted before `Accept & commit`.
+- Accept resumes only the frozen Review and Commit descendants from the immutable checkpoint; VLM,
+  Filter, SAM, and Validator are not re-executed. Retry is idempotent and a failed resume restores a
+  reviewable Run state.
+- Live Published Run `11312a03-f9ba-402b-af0c-0e89252a4ec7` reached Commit after human acceptance;
+  all eight nodes are `succeeded` and the Run is `completed` with an `annotation_committed` event.
+- Live Published Run `52988688-84ba-4892-86e1-ef29f8c0195d` is intentionally left at Review for GUI
+  inspection. It contains exactly one editable Ball bbox; Qwen detected the Ball and SAM2 refined it
+  to `[0.44301471, 0.42857143, 0.02941176, 0.03571429]` at 76% confidence.
+- `./scripts/acceptance.sh` passes: strict Clippy, all workspace Rust/doc tests, 25 Web tests,
+  production build, doctor, and the three offline demos.
+
+Published editable-review pipeline status: `PASS`.

@@ -705,3 +705,30 @@ RoboCup Ball foreground Refiner status: `PASS`.
    workspace Rust tests and doc tests, Web typecheck/25 tests/build, doctor, and all offline demos.
 
 RoboCup Ball SAM2 prompted Refiner status: `PASS`.
+
+## Published VLM → SAM → editable Review → Commit — 2026-08-29
+
+1. Workflow Draft `97f29188-7891-42a1-91d0-cc9b32a83178` passed static validation with no issues
+   and published as immutable version 1 with content hash
+   `6f730fb8dfc2228c12e574df00d9a51b8a4c7a2ddde6809822c392da101fc576`.
+2. Live Run `11312a03-f9ba-402b-af0c-0e89252a4ec7` executed Qwen VLM Detection, Core Filter,
+   `annotation_refiner` backed by the local SAM2.1 worker, typed DetectionSet validation, confidence
+   routing, Human Review, and Commit. After acceptance, persisted checkpoint inspection reports
+   `succeeded` for `image`, `detector`, `filter`, `refine_ball`, `validate_ball`, `gate`, `review`,
+   and `commit`; the Run status is `completed`.
+3. Live Run `52988688-84ba-4892-86e1-ef29f8c0195d` proves intermediate mask evidence no longer
+   pollutes the Review queue: Run annotation inspection contains one item, kind `bounding_box`, at
+   image index 4. The SAM mask remains in persisted Artifact lineage.
+4. In-app browser verification shows `Edit bounding box` on the Run page and four accessible resize
+   handles (`nw`, `ne`, `sw`, `se`) in Review. Review displays the exact source Run, Workflow version,
+   source node, confidence, and `Accept & commit` action.
+5. The Review canvas obtains natural image dimensions before drawing and converts screen pointers
+   through the SVG transform, so normalized geometry remains aligned for non-1000×650 images and
+   while zoomed or panned.
+6. Human acceptance is idempotent. A partial failure can be retried without another annotation
+   revision or correction-memory record, and the Published resume executor registers only Review
+   descendants, so it never requires or calls the original live Provider.
+7. `./scripts/acceptance.sh` completed successfully with strict Clippy, all workspace Rust and doc
+   tests, 25 Web tests, the production build, doctor, and all three offline demos.
+
+Published editable-review pipeline status: `PASS`.

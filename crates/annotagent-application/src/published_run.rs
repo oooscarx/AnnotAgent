@@ -359,6 +359,40 @@ impl PublishedWorkflowRuntime {
             .await?)
     }
 
+    pub(crate) async fn resume_review_sandbox(
+        &self,
+        request: &ImageRunRequest,
+        checkpoint: DagCheckpoint,
+        approved_review_nodes: BTreeSet<String>,
+    ) -> Result<DagRunResult> {
+        let mut included_nodes = approved_review_nodes.clone();
+        loop {
+            let descendants = self
+                .workflow
+                .draft
+                .edges
+                .iter()
+                .filter(|edge| included_nodes.contains(&edge.from_node))
+                .map(|edge| edge.to_node.clone())
+                .collect::<Vec<_>>();
+            let before = included_nodes.len();
+            included_nodes.extend(descendants);
+            if included_nodes.len() == before {
+                break;
+            }
+        }
+        let executor = self.executor_for_nodes(request, Some(&included_nodes))?;
+        let dag_request = self.dag_request(request);
+        Ok(executor
+            .resume(
+                &self.workflow,
+                &dag_request,
+                checkpoint,
+                approved_review_nodes,
+            )
+            .await?)
+    }
+
     async fn persist_result(
         &self,
         request: &ImageRunRequest,
@@ -531,7 +565,22 @@ impl PublishedWorkflowRuntime {
             .iter()
             .map(|artifact| artifact.id)
             .collect::<std::collections::BTreeSet<_>>();
-        let selected = if awaiting_review {
+        let has_typed_pipeline_candidates = result
+            .checkpoint
+            .node_outputs
+            .values()
+            .flat_map(|output| &output.pipeline_artifacts)
+            .any(|artifact| {
+                matches!(
+                    artifact,
+                    PipelineArtifact::DetectionSet(_)
+                        | PipelineArtifact::ClassificationSet(_)
+                        | PipelineArtifact::AnnotationCandidateSet(_)
+                )
+            });
+        let selected = if has_typed_pipeline_candidates {
+            Vec::new()
+        } else if awaiting_review {
             unique.values().cloned().collect::<Vec<_>>()
         } else {
             unique
@@ -1103,6 +1152,108 @@ impl WorkflowRunner {
     }
 
     fn run_validator(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let mut detection_sets = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter_map(|artifact| match artifact {
+                PipelineArtifact::DetectionSet(set) => Some(set.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !detection_sets.is_empty() {
+            let task_id = context
+                .node
+                .parameters
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .map(TaskId::from)
+                .or_else(|| {
+                    self.project
+                        .tasks
+                        .iter()
+                        .find(|task| task.kind == TaskKind::BoundingBox)
+                        .map(|task| task.id.clone())
+                })
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "task_binding_missing",
+                        "DetectionSet validator requires a bounding-box task binding",
+                    )
+                })?;
+            for set in &detection_sets {
+                set.validate()
+                    .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
+            }
+            let annotations = detection_sets
+                .iter()
+                .flat_map(|set| {
+                    set.detections.iter().map(|detection| Annotation {
+                        id: AnnotationId::new(),
+                        image_id: set.image_id,
+                        task_id: task_id.clone(),
+                        label: detection
+                            .label
+                            .clone()
+                            .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                        value: annotagent_core::AnnotationValue::BoundingBox {
+                            rect: detection.rect,
+                        },
+                        attributes: BTreeMap::new(),
+                        confidence: Some(detection.confidence),
+                        source: AnnotationSource::ModelAndTool,
+                        review_status: ReviewStatus::Draft,
+                        provenance: AnnotationProvenance::default(),
+                        created_at: Utc::now(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut issues = Vec::new();
+            for annotation in &annotations {
+                for validator_id in &context.node.validators {
+                    let validator = self.validators.get(validator_id).ok_or_else(|| {
+                        DagNodeFailure::terminal(
+                            "validator_not_registered",
+                            format!("validator {validator_id:?} is not registered"),
+                        )
+                    })?;
+                    issues.extend(
+                        validator
+                            .validate(&ValidationContext {
+                                project: &self.project,
+                                image: Some(&self.image),
+                                candidate: annotation,
+                                related_annotations: &annotations,
+                                correction_risk: 0.0,
+                            })
+                            .map_err(|error| {
+                                DagNodeFailure::terminal("validator_error", error.to_string())
+                            })?,
+                    );
+                }
+            }
+            let state = if issues
+                .iter()
+                .any(|issue| issue.suggested_action == SuggestedAction::HumanReview)
+            {
+                ArtifactValidationState::NeedsReview
+            } else {
+                ArtifactValidationState::Valid
+            };
+            for set in &mut detection_sets {
+                set.validation_state = state;
+            }
+            return Ok(DagNodeOutput {
+                pipeline_artifacts: detection_sets
+                    .into_iter()
+                    .map(PipelineArtifact::DetectionSet)
+                    .collect(),
+                metadata: BTreeMap::from([(
+                    "validation_issues".to_owned(),
+                    serde_json::to_value(&issues).unwrap_or_else(|_| json!([])),
+                )]),
+                ..DagNodeOutput::default()
+            });
+        }
         let annotations = context
             .input_artifacts
             .iter()
@@ -1160,6 +1311,130 @@ impl WorkflowRunner {
         &self,
         context: &DagNodeContext<'_>,
     ) -> Result<DagNodeOutput, DagNodeFailure> {
+        let detection_sets = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter_map(|artifact| match artifact {
+                PipelineArtifact::DetectionSet(set) => Some(set.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !detection_sets.is_empty() {
+            let task_id = context
+                .node
+                .parameters
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .map(TaskId::from)
+                .or_else(|| {
+                    self.project
+                        .tasks
+                        .iter()
+                        .find(|task| task.kind == TaskKind::BoundingBox)
+                        .map(|task| task.id.clone())
+                })
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "task_binding_missing",
+                        "DetectionSet refiner requires a bounding-box task binding",
+                    )
+                })?;
+            let related = detection_sets
+                .iter()
+                .flat_map(|set| {
+                    set.detections.iter().map(|detection| Annotation {
+                        id: AnnotationId::new(),
+                        image_id: set.image_id,
+                        task_id: task_id.clone(),
+                        label: detection
+                            .label
+                            .clone()
+                            .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                        value: annotagent_core::AnnotationValue::BoundingBox {
+                            rect: detection.rect,
+                        },
+                        attributes: BTreeMap::new(),
+                        confidence: Some(detection.confidence),
+                        source: AnnotationSource::ModelAndTool,
+                        review_status: ReviewStatus::Draft,
+                        provenance: AnnotationProvenance::default(),
+                        created_at: Utc::now(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut related_index = 0_usize;
+            let mut refined_sets = Vec::new();
+            let mut supporting_artifacts = Vec::new();
+            let mut refinement_issues = Vec::new();
+            let mut summaries = Vec::new();
+            for mut set in detection_sets {
+                for detection in &mut set.detections {
+                    let mut candidate = related[related_index].clone();
+                    related_index += 1;
+                    for refiner_id in &context.node.refiners {
+                        let registered_refiner =
+                            self.refiners.get(refiner_id).ok_or_else(|| {
+                                DagNodeFailure::terminal(
+                                    "refiner_not_registered",
+                                    format!("refiner {refiner_id:?} is not registered"),
+                                )
+                            })?;
+                        let result = registered_refiner
+                            .refine(&RefinementContext {
+                                run_id: context.run_id,
+                                project: &self.project,
+                                image: &self.image,
+                                candidate: &candidate,
+                                related_annotations: &related,
+                                cancellation: context.cancellation.clone(),
+                            })
+                            .await
+                            .map_err(|error| {
+                                DagNodeFailure::terminal("refiner_error", error.to_string())
+                            })?;
+                        candidate = result.annotation;
+                        supporting_artifacts.extend(result.artifacts);
+                        refinement_issues.extend(result.issues);
+                        summaries.push(result.summary);
+                    }
+                    let annotagent_core::AnnotationValue::BoundingBox { rect } = candidate.value
+                    else {
+                        return Err(DagNodeFailure::terminal(
+                            "refiner_output_type",
+                            "DetectionSet refiner must return a bounding box",
+                        ));
+                    };
+                    detection.rect = rect;
+                    detection.confidence = candidate.confidence.unwrap_or(detection.confidence);
+                }
+                set.reference.artifact_id = format!(
+                    "{}:{}:{}",
+                    context.node.id,
+                    context.image_id,
+                    uuid::Uuid::new_v4()
+                );
+                set.reference.source_node = context.node.id.clone();
+                set.reference.port = context
+                    .node
+                    .outputs
+                    .first()
+                    .map_or_else(|| "detections".to_owned(), |port| port.id.clone());
+                set.reference.artifact_type = ArtifactKind::DetectionSet;
+                set.validation_state = ArtifactValidationState::Unvalidated;
+                set.metadata
+                    .insert("refinement_summary".to_owned(), json!(summaries.join("; ")));
+                refined_sets.push(PipelineArtifact::DetectionSet(set));
+            }
+            return Ok(DagNodeOutput {
+                artifacts: supporting_artifacts,
+                pipeline_artifacts: refined_sets,
+                metadata: BTreeMap::from([(
+                    "refinement_issues".to_owned(),
+                    serde_json::to_value(refinement_issues).unwrap_or_else(|_| json!([])),
+                )]),
+                ..DagNodeOutput::default()
+            });
+        }
         let related = context
             .input_artifacts
             .iter()
@@ -1536,21 +1811,45 @@ fn pipeline_annotations(
         ReviewStatus::AutoAccepted
     };
     let mut annotations = Vec::new();
-    for commit in workflow
+    let terminal_nodes = workflow
         .draft
         .nodes
         .iter()
-        .filter(|node| node.kind == WorkflowNodeKind::Commit)
-    {
-        let Some(output) = result.checkpoint.node_outputs.get(&commit.id) else {
-            continue;
-        };
-        let task_id = commit
+        .filter(|node| {
+            node.kind
+                == if awaiting_review {
+                    WorkflowNodeKind::HumanReview
+                } else {
+                    WorkflowNodeKind::Commit
+                }
+        })
+        .collect::<Vec<_>>();
+    for terminal in terminal_nodes {
+        let task_id = terminal
             .parameters
             .get("task_id")
             .and_then(serde_json::Value::as_str)
             .map_or_else(|| TaskId::from("unbound"), TaskId::from);
-        for artifact in &output.pipeline_artifacts {
+        let outputs = if awaiting_review {
+            workflow
+                .draft
+                .edges
+                .iter()
+                .filter(|edge| edge.to_node == terminal.id)
+                .filter_map(|edge| result.checkpoint.node_outputs.get(&edge.from_node))
+                .collect::<Vec<_>>()
+        } else {
+            result
+                .checkpoint
+                .node_outputs
+                .get(&terminal.id)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        for artifact in outputs
+            .into_iter()
+            .flat_map(|output| &output.pipeline_artifacts)
+        {
             match artifact {
                 PipelineArtifact::DetectionSet(set) => {
                     annotations.extend(set.detections.iter().map(|detection| {
@@ -1565,7 +1864,16 @@ fn pipeline_annotations(
                             value: annotagent_core::AnnotationValue::BoundingBox {
                                 rect: detection.rect,
                             },
-                            attributes: BTreeMap::new(),
+                            attributes: BTreeMap::from([
+                                (
+                                    "pipeline_detection_id".to_owned(),
+                                    AttributeValue::String(detection.id.clone()),
+                                ),
+                                (
+                                    "pipeline_artifact_ref".to_owned(),
+                                    AttributeValue::String(set.reference.artifact_id.clone()),
+                                ),
+                            ]),
                             confidence: Some(detection.confidence),
                             source: AnnotationSource::ModelAndTool,
                             review_status: status,

@@ -119,7 +119,21 @@ impl DomainSkill for RoboCupSkill {
 
     fn workflow_templates(&self) -> Vec<annotagent_core::WorkflowTemplate> {
         RoboCupBallSkill::new()
-            .map(|skill| annotagent_core::Skill::workflow_templates(&skill))
+            .map(|skill| {
+                annotagent_core::Skill::workflow_templates(&skill)
+                    .into_iter()
+                    .map(|mut template| {
+                        for node in &mut template.nodes {
+                            node.required_skills = vec!["robocup".to_owned()];
+                        }
+                        template.resource_versions = std::collections::BTreeMap::from([
+                            ("SKILL.md".to_owned(), "1".to_owned()),
+                            ("tasks/ball.md".to_owned(), "1".to_owned()),
+                        ]);
+                        template
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

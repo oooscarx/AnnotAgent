@@ -10,23 +10,23 @@ use std::{
 
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
-    AnnotationSource, ArtifactKind, AttributeDefinition, BatchBudgetLedger, BatchBudgetLimits,
-    BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
-    BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill, EnabledSkillConfig, ImageId,
-    ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
-    LabelWorkflowComposition, ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry,
-    ModelRequest, ModelRole, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
-    PricingConfig, ProjectId, ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
-    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, VisionCapability,
-    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
-    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
-    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
-    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowDryRunNodeResult, WorkflowDryRunReport, WorkflowDryRunSampleResult,
-    WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BatchBudgetLedger,
+    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
+    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
+    EnabledSkillConfig, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, ModelBinding as PipelineModelBinding,
+    ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
+    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
+    WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -490,6 +490,12 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             None,
             vec![ArtifactKind::Polyline],
             true,
+        ),
+        (
+            "annotation_refiner",
+            None,
+            vec![ArtifactKind::DetectionSet],
+            false,
         ),
         ("static_validator", None, artifact_kinds.clone(), true),
         ("review_gate", None, artifact_kinds.clone(), true),
@@ -2366,6 +2372,187 @@ impl LocalApplication {
             image_index,
             annotations: history.annotations,
         })
+    }
+
+    /// Resume the frozen `HumanReview` and `Commit` nodes of a Published Workflow without
+    /// re-running any model or upstream refiner. The reviewed geometry is patched into the
+    /// persisted typed Artifact before the checkpoint is resumed.
+    pub async fn resume_published_review(
+        &self,
+        run_id: RunId,
+        annotation: &Annotation,
+        settings: &Settings,
+    ) -> Result<bool> {
+        let history = self
+            .store
+            .list_runs()?
+            .into_iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
+        let Some(snapshot_json) = history.workflow_snapshot_json.as_deref() else {
+            return Ok(false);
+        };
+        let mut snapshot: serde_json::Value = serde_json::from_str(snapshot_json)?;
+        let Some(workflow_value) = snapshot.get("selected_workflow").cloned() else {
+            return Ok(false);
+        };
+        let workflow: PublishedWorkflowVersion = serde_json::from_value(workflow_value)?;
+        let Some(checkpoint_value) = snapshot.get("checkpoint").cloned() else {
+            return Ok(false);
+        };
+        let mut checkpoint: DagCheckpoint = serde_json::from_value(checkpoint_value)?;
+        let approved_review_nodes = checkpoint
+            .node_statuses
+            .iter()
+            .filter_map(|(node_id, status)| {
+                (*status == DagNodeStatus::AwaitingReview).then_some(node_id.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        if approved_review_nodes.is_empty() {
+            return Ok(false);
+        }
+
+        let detection_id = annotation
+            .attributes
+            .get("pipeline_detection_id")
+            .and_then(|value| match value {
+                AttributeValue::String(value) => Some(value.as_str()),
+                _ => None,
+            });
+        let artifact_ref = annotation
+            .attributes
+            .get("pipeline_artifact_ref")
+            .and_then(|value| match value {
+                AttributeValue::String(value) => Some(value.as_str()),
+                _ => None,
+            });
+        if let annotagent_core::AnnotationValue::BoundingBox { rect } = annotation.value {
+            for output in checkpoint.node_outputs.values_mut() {
+                for artifact in &mut output.pipeline_artifacts {
+                    let PipelineArtifact::DetectionSet(set) = artifact else {
+                        continue;
+                    };
+                    if artifact_ref.is_some_and(|reference| reference != set.reference.artifact_id)
+                    {
+                        continue;
+                    }
+                    for detection in &mut set.detections {
+                        if detection_id.is_none_or(|id| id == detection.id) {
+                            detection.rect = rect;
+                            detection.confidence =
+                                annotation.confidence.unwrap_or(detection.confidence);
+                        }
+                    }
+                }
+            }
+        }
+
+        let sha256 = snapshot
+            .pointer("/image/sha256")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("run {run_id} has no replayable image identity"))?;
+        let image_index = self
+            .image_index_by_sha256(&workflow.project_id, sha256)?
+            .ok_or_else(|| anyhow!("the source image for run {run_id} is no longer available"))?;
+        let images = self.list_project_images(&workflow.project_id)?;
+        let image_path = images
+            .get(image_index)
+            .ok_or_else(|| anyhow!("source image index {image_index} is no longer available"))?;
+        let project_path = self.project_path(&workflow.project_id)?;
+        let (project, project_skills) =
+            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let use_namespace = project_skills.len() > 1;
+        let mut validators = BTreeMap::new();
+        let mut refiners = BTreeMap::new();
+        for skill in &project_skills {
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{}.{}", skill.id(), refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
+        }
+        let runtime = PublishedWorkflowRuntime::new(
+            workflow.clone(),
+            "mock",
+            settings,
+            None,
+            self.store.clone(),
+            validators,
+            refiners,
+        )?;
+        let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
+        let model_image = to_model_image("label-pipeline-review-resume", &image, 1280)
+            .map_err(|error| anyhow!(error))?;
+        let image_id = annotation.image_id;
+        let project_root = project_path
+            .parent()
+            .unwrap_or(&self.workspace)
+            .to_path_buf();
+        let request = ImageRunRequest {
+            run_id,
+            project_id: stable_project_id(&project_root),
+            project_root,
+            project: Arc::new(project),
+            image_id,
+            image,
+            model_image: Some(model_image),
+        };
+        self.store
+            .set_run_status(run_id, RunStatus::Running, Some("human review approved"))
+            .await
+            .map_err(|error| anyhow!(error))?;
+        let result = match runtime
+            .resume_review_sandbox(&request, checkpoint, approved_review_nodes)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.store
+                    .set_run_status(
+                        run_id,
+                        RunStatus::CompletedWithReview,
+                        Some("human review resume failed; retry remains available"),
+                    )
+                    .await
+                    .map_err(|store_error| anyhow!(store_error))?;
+                return Err(error);
+            }
+        };
+        if result.status != annotagent_runtime::DagRunStatus::Completed {
+            bail!("reviewed Published Workflow did not reach Commit");
+        }
+        snapshot["checkpoint"] = serde_json::to_value(&result.checkpoint)?;
+        self.store
+            .update_run_workflow_snapshot(run_id, &serde_json::to_string(&snapshot)?)?;
+        for trace in result.checkpoint.traces.iter().rev().take_while(|trace| {
+            matches!(
+                trace.status,
+                DagNodeStatus::Succeeded | DagNodeStatus::Cached
+            ) && (trace.node_id == "review" || trace.node_id == "commit")
+        }) {
+            self.store
+                .set_task_run_status(
+                    run_id,
+                    image_id,
+                    &TaskId::from(trace.node_id.as_str()),
+                    TaskRunStatus::Succeeded,
+                    None,
+                )
+                .await
+                .map_err(|error| anyhow!(error))?;
+        }
+        Ok(true)
     }
 
     pub async fn replay_run_from_node(

@@ -16,14 +16,15 @@ use annotagent_application::{
     ProjectSummary, Settings, WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
-    AgentBudget, Annotation, AnnotationId, AttributeDefinition, BatchId, CorrectionFeatures,
-    CorrectionRecord, DatasetExporter, EnabledSkillConfig, ExportRequest, LabelId, ProjectSchema,
-    ProjectSnapshot, ReviewStatus, RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals,
-    WorkflowConstraints, WorkflowDraft,
+    AgentBudget, Annotation, AnnotationId, ArtifactValidationState, AttributeDefinition, BatchId,
+    CorrectionFeatures, CorrectionRecord, DatasetExporter, EnabledSkillConfig, ExportRequest,
+    LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunEvent, RunEventKind, RunEventPayload,
+    RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_export::{
     CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
 };
+use annotagent_runtime::RuntimeStore;
 use annotagent_storage::HistoryRun;
 use anyhow::{Context, anyhow, bail};
 use axum::{
@@ -1881,6 +1882,11 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
             .application
             .inspect_run_pipeline_artifacts(run.id)
             .ok();
+        let image_index = state
+            .application
+            .inspect_run_annotations(run.id)
+            .ok()
+            .and_then(|value| value.image_index);
         let project_id = projects.iter().find_map(|project| {
             let path = state.application.project_path(&project.id).ok()?;
             (Some(stable_project_id(path.parent()?)) == run.project_id)
@@ -1917,6 +1923,7 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
                         || summary.workflow_version.parse().unwrap_or_default(),
                         |value| value.workflow_version,
                     ),
+                    "image_index": image_index,
                     "source_node": source_node.or(summary.current_node.as_deref()),
                     "source_artifact_id": source_artifact_id,
                     "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !summary.validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
@@ -2021,26 +2028,38 @@ async fn review_decision(
     Json(request): Json<ReviewDecisionRequest>,
 ) -> ApiResult<Json<Value>> {
     let id = parse_annotation_id(&review_id)?;
-    let (_, mut annotation) = state
+    let (run_id, mut annotation) = state
         .application
         .store()
         .find_annotation(id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("review was not found"))?;
     let original = annotation.snapshot();
-    annotation.review_status = match request.decision.as_str() {
+    let requested_status = match request.decision.as_str() {
         "accept" => ReviewStatus::HumanAccepted,
         "reject" | "delete" => ReviewStatus::Rejected,
         other => return Err(ApiError::bad_request(format!("unknown decision {other:?}"))),
     };
+    let already_applied = annotation.review_status == requested_status
+        && request
+            .corrected_label
+            .as_ref()
+            .is_none_or(|label| annotation.label.as_ref() == Some(label));
+    annotation.review_status = requested_status;
     if let Some(label) = request.corrected_label.clone() {
         annotation.label = Some(label);
     }
-    let revision = state
-        .application
-        .store()
-        .update_annotation(&annotation, Some(&request.reason_code))
-        .map_err(ApiError::bad_request)?;
+    let revision = if already_applied {
+        None
+    } else {
+        Some(
+            state
+                .application
+                .store()
+                .update_annotation(&annotation, Some(&request.reason_code))
+                .map_err(ApiError::bad_request)?,
+        )
+    };
     let project_path = state
         .application
         .project_path(&request.project_id)
@@ -2052,6 +2071,7 @@ async fn review_decision(
     let configured_skills = project.project.enabled_skill_versions();
     let skill_id = request
         .skill_id
+        .clone()
         .or_else(|| {
             (configured_skills.len() == 1)
                 .then(|| configured_skills.keys().next().cloned())
@@ -2074,23 +2094,125 @@ async fn review_decision(
         task_id: annotation.task_id.clone(),
         predicted_label: original.label.clone(),
         corrected_label: annotation.label.clone(),
-        reason_code: request.reason_code,
+        reason_code: request.reason_code.clone(),
         original_annotation: Some(original),
         corrected_annotation: Some(annotation.snapshot()),
-        note: request.note,
+        note: request.note.clone(),
         image_features: CorrectionFeatures {
             geometry: BTreeMap::new(),
             colors: BTreeMap::new(),
         },
         created_at: Utc::now(),
     };
-    state
-        .application
-        .store()
-        .save_correction(&record)
-        .map_err(ApiError::internal)?;
+    let correction_id = if already_applied {
+        None
+    } else {
+        state
+            .application
+            .store()
+            .save_correction(&record)
+            .map_err(ApiError::internal)?;
+        Some(record.id)
+    };
+    if annotation.review_status == ReviewStatus::HumanAccepted {
+        let settings = state.settings.read().await.clone();
+        let resumed = state
+            .application
+            .resume_published_review(run_id, &annotation, &settings)
+            .await
+            .map_err(ApiError::internal)?;
+        if already_applied && !resumed {
+            return Ok(Json(json!({
+                "annotation": annotation,
+                "revision": revision,
+                "correction_id": correction_id,
+            })));
+        }
+        let artifact_ids = annotation.provenance.artifact_ids.clone();
+        for artifact_id in &artifact_ids {
+            state
+                .application
+                .store()
+                .set_artifact_validation_state(run_id, *artifact_id, ArtifactValidationState::Valid)
+                .await
+                .map_err(ApiError::internal)?;
+        }
+        if !artifact_ids.is_empty() {
+            state
+                .application
+                .store()
+                .record_event(
+                    &RunEvent::new(
+                        run_id,
+                        RunEventKind::ArtifactCommitted,
+                        RunEventPayload::Artifact {
+                            artifact_ids,
+                            summary: "human-approved Artifact committed".to_owned(),
+                        },
+                    )
+                    .scoped(Some(annotation.image_id), Some(annotation.task_id.clone())),
+                )
+                .await
+                .map_err(ApiError::internal)?;
+        }
+        state
+            .application
+            .store()
+            .record_event(
+                &RunEvent::new(
+                    run_id,
+                    RunEventKind::AnnotationCommitted,
+                    RunEventPayload::Annotation {
+                        annotation_ids: vec![annotation.id],
+                        summary: "human accepted the edited annotation".to_owned(),
+                    },
+                )
+                .scoped(Some(annotation.image_id), Some(annotation.task_id.clone())),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        let remaining = state
+            .application
+            .store()
+            .list_annotations(run_id)
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .any(|item| item.review_status == ReviewStatus::NeedsReview);
+        if !remaining {
+            let previous = state
+                .application
+                .list_runs()
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .find(|run| run.id == run_id)
+                .map_or(RunStatus::CompletedWithReview, |run| run.status);
+            state
+                .application
+                .store()
+                .set_run_status(run_id, RunStatus::Completed, Some("human review committed"))
+                .await
+                .map_err(ApiError::internal)?;
+            state
+                .application
+                .store()
+                .record_event(
+                    &RunEvent::new(
+                        run_id,
+                        RunEventKind::RunCompleted,
+                        RunEventPayload::State {
+                            from: Some(previous),
+                            to: RunStatus::Completed,
+                            reason: Some("all reviewed annotations committed".to_owned()),
+                        },
+                    )
+                    .scoped(Some(annotation.image_id), None),
+                )
+                .await
+                .map_err(ApiError::internal)?;
+        }
+    }
     Ok(Json(
-        json!({"annotation": annotation, "revision": revision, "correction_id": record.id}),
+        json!({"annotation": annotation, "revision": revision, "correction_id": correction_id}),
     ))
 }
 

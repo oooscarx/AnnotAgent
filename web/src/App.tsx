@@ -3613,7 +3613,11 @@ function RunDetailWorkspace({
     void api.runAnnotations(run.id).then(setAnnotationInspection).catch((error: Error) => onError(error.message));
     if (project)
       void api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
-    void api.reviews().then((value) => setRunReview(value.reviews.find((review) => review.run_id === run.id))).catch((error: Error) => onError(error.message));
+    void api.reviews().then((value) => setRunReview(
+      value.reviews.find(
+        (review) => review.run_id === run.id && review.annotation.value.kind === "bounding_box",
+      ) ?? value.reviews.find((review) => review.run_id === run.id),
+    )).catch((error: Error) => onError(error.message));
   }, [run.id, project?.id]);
   const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
   const selectedArtifacts = selectedNode
@@ -3663,7 +3667,7 @@ function RunDetailWorkspace({
       <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← All runs</button>
       <div className="toolbar-panel run-detail-header">
         <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{runAnnotations.length} Annotations</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
-        <div className="button-row">{runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Open review item</button>}<button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
+        <div className="button-row">{runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Edit bounding box</button>}<button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
       </div>
       <div className="run-workspace">
         <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
@@ -3998,7 +4002,7 @@ function ReviewPage({
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   }, [draft, past, future]);
-  const save = () => {
+  const persistDraft = () => {
     if (!draft || !selected) return;
     let attributes: Record<string, unknown>;
     try {
@@ -4022,6 +4026,7 @@ function ReviewPage({
       })
       .catch((error: Error) => onError(error.message));
   };
+  const save = () => persistDraft();
   const createShape = (kind: "bounding_box" | "keypoints" | "polyline" | "polygon") => {
     if (!selected) return onError("Select a review item before creating an annotation.");
     const task = reviewProject?.annotation_schema.find((candidate) => candidate.kind === kind);
@@ -4061,15 +4066,17 @@ function ReviewPage({
       return onError(
         "Select the Review item's Project before recording a decision.",
       );
-    return api
-      .decide(
+    const edited =
+      draft && JSON.stringify(draft) !== JSON.stringify(selected.annotation);
+    const persist = edited ? persistDraft() : Promise.resolve();
+    return persist?.then(() => api.decide(
         selected.id,
         reviewProject.id,
         decision,
         reason,
         note,
         correctionSkillId || undefined,
-      )
+      ))
       .then(refresh)
       .catch((error: Error) => onError(error.message));
   };
@@ -4154,7 +4161,7 @@ function ReviewPage({
         >
           {(compareMode === "before" || compareMode === "split") && (
             <div><small>Before</small><AnnotationCanvas
-              imageUrl={images[0]?.url}
+              imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={selected ? [selected.annotation] : []}
               selectedId={selected?.annotation.id}
               visualContext={visualContext}
@@ -4164,7 +4171,7 @@ function ReviewPage({
           )}
           {(compareMode === "after" || compareMode === "split") && (
             <div><small>After</small><AnnotationCanvas
-              imageUrl={images[0]?.url}
+              imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={draft ? [draft] : []}
               selectedId={draft?.id}
               visualContext={visualContext}
@@ -4268,7 +4275,7 @@ function ReviewPage({
             <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
             <div className="decision-row">
               <button className="primary" onClick={() => decide("accept")}>
-                Accept
+                Accept &amp; commit
               </button>
               <button onClick={() => decide("reject")}>Reject</button>
               <button className="danger" onClick={() => decide("delete")}>

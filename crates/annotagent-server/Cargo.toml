@@ -11,6 +11,7 @@ annotagent-application = { path = "../annotagent-application" }
 annotagent-core = { path = "../annotagent-core" }
 annotagent-export = { path = "../annotagent-export" }
 annotagent-image-tools = { path = "../annotagent-image-tools" }
+annotagent-runtime = { path = "../annotagent-runtime" }
 annotagent-storage = { path = "../annotagent-storage" }
 anyhow.workspace = true
 axum.workspace = true

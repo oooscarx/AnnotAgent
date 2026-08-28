@@ -33,8 +33,9 @@ impl RunStatus {
             (Pending | Paused, Running | Cancelled)
                 | (
                     AwaitingReview,
-                    Running | CompletedWithReview | Cancelled | Interrupted
+                    Running | Completed | CompletedWithReview | Cancelled | Interrupted
                 )
+                | (CompletedWithReview, Completed)
                 | (
                     Running,
                     Paused
