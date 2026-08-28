@@ -228,8 +228,8 @@ fn candidate_bbox_center(annotation: &Annotation) -> NormalizedPoint {
     }
 }
 
-#[test]
-fn pixel_refiner_moves_coarse_line_toward_white_pixels() {
+#[tokio::test]
+async fn pixel_refiner_moves_coarse_line_toward_white_pixels() {
     let (_temporary, image) = fixture();
     let candidate = annotation(
         "white_field_line",
@@ -241,11 +241,14 @@ fn pixel_refiner_moves_coarse_line_toward_white_pixels() {
     let related = vec![full_field()];
     let result = RoboCupFieldLineRefiner::default()
         .refine(&RefinementContext {
+            run_id: RunId::new(),
             project: &project(),
             image: &image,
             candidate: &candidate,
             related_annotations: &related,
+            cancellation: CancellationToken::new(),
         })
+        .await
         .expect("refinement");
     let AnnotationValue::Polyline { points } = result.annotation.value else {
         panic!("refiner preserves polyline type");
@@ -255,8 +258,8 @@ fn pixel_refiner_moves_coarse_line_toward_white_pixels() {
     assert!(result.confidence > 0.4);
 }
 
-#[test]
-fn ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line() {
+#[tokio::test]
+async fn ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line() {
     let width = 120_u32;
     let height = 100_u32;
     let mut rgb = vec![0_u8; (width * height * 3) as usize];
@@ -301,11 +304,14 @@ fn ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line() {
     );
     let result = RoboCupBallForegroundRefiner::default()
         .refine(&RefinementContext {
+            run_id: RunId::new(),
             project: &project(),
             image: &image,
             candidate: &candidate,
             related_annotations: &[],
+            cancellation: CancellationToken::new(),
         })
+        .await
         .expect("foreground refinement");
     let AnnotationValue::BoundingBox { rect: refined } = result.annotation.value else {
         panic!("refiner preserves bounding-box type");
@@ -318,8 +324,8 @@ fn ball_foreground_refiner_tightens_a_coarse_box_and_ignores_a_field_line() {
     assert!(result.confidence >= 0.45);
 }
 
-#[test]
-fn ball_foreground_refiner_preserves_original_box_when_evidence_is_missing() {
+#[tokio::test]
+async fn ball_foreground_refiner_preserves_original_box_when_evidence_is_missing() {
     let image = ImageFrame {
         metadata: ImageMetadata {
             width: 64,
@@ -337,11 +343,14 @@ fn ball_foreground_refiner_preserves_original_box_when_evidence_is_missing() {
     );
     let result = RoboCupBallForegroundRefiner::default()
         .refine(&RefinementContext {
+            run_id: RunId::new(),
             project: &project(),
             image: &image,
             candidate: &candidate,
             related_annotations: &[],
+            cancellation: CancellationToken::new(),
         })
+        .await
         .expect("safe fallback");
     assert_eq!(result.annotation.value, candidate.value);
     assert_eq!(result.issues[0].code, "ball_foreground_refiner_fallback");
@@ -445,8 +454,9 @@ fn robocup_exposes_only_two_ball_workflow_templates() {
     assert_eq!(skill.workflow().nodes.len(), 1);
     assert_eq!(skill.tool_factories().len(), 1);
     assert_eq!(skill.validators().len(), 1);
-    assert_eq!(skill.refiners().len(), 1);
+    assert_eq!(skill.refiners().len(), 2);
     assert_eq!(skill.refiners()[0].id(), "ball_foreground_refiner");
+    assert_eq!(skill.refiners()[1].id(), "sam_prompted_refiner");
     let schema = ProjectSchema::from_yaml(skill.project_template().expect("Ball project template"))
         .expect("Ball Project Schema");
     assert_eq!(schema.tasks.len(), 1);

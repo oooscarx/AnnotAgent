@@ -1757,16 +1757,31 @@ impl AgentRuntime {
                     latest_refiner_artifact = Some(original.id);
                     artifact_revision = 1;
                 }
-                let result = refiner
+                let mut result = refiner
                     .refine(&RefinementContext {
+                        run_id: request.run_id,
                         project: &request.project,
                         image: &request.image,
                         candidate: &candidate,
                         related_annotations: related,
+                        cancellation: self.control.cancellation_token(),
                     })
+                    .await
                     .map_err(|error| RuntimeError::Skill(error.to_string()))?;
+                let mut auxiliary_artifact_ids = Vec::new();
+                for mut artifact in std::mem::take(&mut result.artifacts) {
+                    artifact.provenance.input_artifact_ids =
+                        latest_refiner_artifact.into_iter().collect();
+                    self.record_artifact_created(request, task, &artifact, "refiner evidence")
+                        .await?;
+                    auxiliary_artifact_ids.push(artifact.id);
+                }
                 candidate = result.annotation;
                 candidate.source = AnnotationSource::ModelAndTool;
+                candidate
+                    .provenance
+                    .artifact_ids
+                    .extend(auxiliary_artifact_ids.iter().copied());
                 refiner_confidence = Some(result.confidence);
                 artifact_revision = artifact_revision.saturating_add(1);
                 let refined_artifact = VisionArtifact {
@@ -1787,7 +1802,10 @@ impl AgentRuntime {
                         provider: candidate.provenance.provider.clone(),
                         model: candidate.provenance.model.clone(),
                         tool: Some(refiner_id.clone()),
-                        input_artifact_ids: latest_refiner_artifact.into_iter().collect(),
+                        input_artifact_ids: latest_refiner_artifact
+                            .into_iter()
+                            .chain(auxiliary_artifact_ids.iter().copied())
+                            .collect(),
                         ..ArtifactProvenance::default()
                     },
                     revision: artifact_revision,

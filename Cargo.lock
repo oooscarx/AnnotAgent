@@ -248,7 +248,9 @@ version = "0.1.0"
 dependencies = [
  "annotagent-core",
  "annotagent-image-tools",
+ "annotagent-provider",
  "async-trait",
+ "base64",
  "chrono",
  "serde",
  "serde_json",

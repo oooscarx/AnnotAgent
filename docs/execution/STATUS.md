@@ -208,3 +208,24 @@ Formal Annotation overlay status: `PASS`.
 
 RoboCup Ball foreground refinement status: `PASS` (deterministic local backend). A real SAM worker
 remains an optional HTTP Vision Protocol backend and is not claimed by this milestone.
+
+## RoboCup Ball SAM2 prompted refinement — 2026-08-28
+
+- `sam_prompted_refiner` now executes asynchronously through HTTP Vision Protocol v1. It sends the
+  image and a foreground-seeded VLM box to a real SAM2.1 worker and derives the final bounding box
+  from the returned instance mask, not from worker metadata.
+- `examples/sam2_vision_worker.py` loads the official SAM2.1 Hiera Tiny checkpoint in a
+  workspace-private Python environment. `scripts/setup-sam2.sh` installs a pinned SAM2 revision and
+  checkpoint; `scripts/start-sam2-worker.sh` starts the loopback-only worker on port 8790.
+- Runtime now supports asynchronous, cancellable Refiners and persists auxiliary mask Artifacts.
+  The Run lineage is VLM Candidate → SAM InstanceMask → Refined Candidate. If SAM is unavailable or
+  returns unsafe geometry, the Skill emits `sam_prompted_refiner_unavailable`, uses the explicit
+  local foreground fallback, and requires Human Review.
+- The first box-only live probe exposed an unstable 46% mask for an upward-biased VLM prompt. The
+  final hybrid prompt fixed that failure mode: live Run `acc947fa-48e9-4dc8-a412-799f723004b0`
+  produced a 92% SAM mask and bbox `[0.44117647, 0.35714287, 0.03308824, 0.04464286]`, with zero
+  validator issues. GUI verification shows `3 Artifacts`, `1 Annotations`, and `ball 92%`.
+- `./scripts/acceptance.sh` passes end to end: domain/secret boundaries, formatting, strict Clippy,
+  all workspace Rust tests and doc tests, Web typecheck/25 tests/build, doctor, and offline demos.
+
+RoboCup Ball SAM2 prompted refinement status: `PASS` (real local SAM2.1 worker).

@@ -93,6 +93,19 @@ RoboCup exposes only two Ball starters: `robocup.ball.vlm-bootstrap` and
 `robocup.ball.detector-first`. Both keep detector geometry as typed Artifacts and route only risky
 ball candidates to Review.
 
+For real SAM2.1 refinement, install the workspace-private worker once and start it before the GUI:
+
+```bash
+./scripts/setup-sam2.sh
+./scripts/start-sam2-worker.sh
+```
+
+In a second terminal, start AnnotAgent normally. A RoboCup Ball Project configured with
+`refiners: [sam_prompted_refiner]` runs VLM box proposal → local foreground prompt tightening →
+SAM instance mask → tight bounding box. The mask and both boxes are persisted as separate Run
+Artifacts. The tracked offline example keeps `ball_foreground_refiner`, so Mock acceptance never
+depends on a model service.
+
 Run the ground-truth-backed synthetic evaluation (no key or external weights required):
 
 ```bash

@@ -37,6 +37,18 @@ Image → generic detector → ball filter
 Detector geometry remains in its original Artifact. A VLM may verify a crop but never rewrites the
 box.
 
+The current live Ball Project can add real boundary refinement with
+`sam_prompted_refiner`. It first uses bounded local pixels to correct an imprecise VLM prompt, then
+calls SAM2.1 through HTTP Vision Protocol v1. SAM returns an `InstanceMask`; Rust independently
+decodes its mask, applies geometry guards, and derives the final box. The original box, mask, and
+refined box remain separate, linked Artifacts. Missing/invalid SAM output is explicitly marked and
+routes the local fallback result to Human Review.
+
+```bash
+./scripts/setup-sam2.sh       # once; files stay under ignored workspace/.annotagent
+./scripts/start-sam2-worker.sh
+```
+
 ## Ball hard negatives
 
 `BallHardNegativeValidator` combines geometry and pixels: overlap or lower-body proximity to a robot, aspect/relative size, local white ratio, distance to a penalty keypoint, distance to a field line, original confidence, and project correction risk. It emits explainable codes including white-shoe, penalty-mark, and line-intersection risks. In the Workflow Alpha hybrid demo, the white-shoe candidate is prevented from auto-Commit and routed to Review.

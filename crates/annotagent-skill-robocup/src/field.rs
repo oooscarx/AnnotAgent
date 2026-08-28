@@ -105,12 +105,13 @@ impl Default for RoboCupFieldLineRefiner {
     }
 }
 
+#[async_trait::async_trait]
 impl AnnotationRefiner for RoboCupFieldLineRefiner {
     fn id(&self) -> &str {
         "robocup_field_line_refiner"
     }
 
-    fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult> {
+    async fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult> {
         let AnnotationValue::Polyline { points } = &context.candidate.value else {
             return Err(CoreError::Refinement(
                 "field-line refiner requires a polyline candidate".to_owned(),
@@ -159,6 +160,7 @@ impl AnnotationRefiner for RoboCupFieldLineRefiner {
                 support * 100.0,
                 continuity * 100.0
             ),
+            artifacts: Vec::new(),
         })
     }
 }

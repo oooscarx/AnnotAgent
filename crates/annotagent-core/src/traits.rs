@@ -162,10 +162,12 @@ pub trait AnnotationValidator: Send + Sync {
 }
 
 pub struct RefinementContext<'a> {
+    pub run_id: crate::RunId,
     pub project: &'a ProjectSchema,
     pub image: &'a ImageFrame,
     pub candidate: &'a Annotation,
     pub related_annotations: &'a [Annotation],
+    pub cancellation: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,11 +176,14 @@ pub struct RefinementResult {
     pub confidence: f32,
     pub issues: Vec<ValidationIssue>,
     pub summary: String,
+    #[serde(default)]
+    pub artifacts: Vec<crate::VisionArtifact>,
 }
 
+#[async_trait::async_trait]
 pub trait AnnotationRefiner: Send + Sync {
     fn id(&self) -> &str;
-    fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult>;
+    async fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

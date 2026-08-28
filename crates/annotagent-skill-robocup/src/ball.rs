@@ -233,12 +233,13 @@ impl Default for RoboCupBallForegroundRefiner {
     }
 }
 
+#[async_trait::async_trait]
 impl AnnotationRefiner for RoboCupBallForegroundRefiner {
     fn id(&self) -> &str {
         "ball_foreground_refiner"
     }
 
-    fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult> {
+    async fn refine(&self, context: &RefinementContext<'_>) -> CoreResult<RefinementResult> {
         if context
             .candidate
             .label
@@ -276,6 +277,7 @@ impl AnnotationRefiner for RoboCupBallForegroundRefiner {
                         measurement.quality * 100.0,
                         measurement.foreground_ratio * 100.0,
                     ),
+                    artifacts: Vec::new(),
                 })
             }
             None => Ok(RefinementResult {
@@ -297,6 +299,7 @@ impl AnnotationRefiner for RoboCupBallForegroundRefiner {
                 }],
                 summary: "foreground segmentation was inconclusive; preserved original VLM box"
                     .to_owned(),
+                artifacts: Vec::new(),
             }),
         }
     }

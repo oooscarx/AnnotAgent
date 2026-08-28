@@ -1003,11 +1003,11 @@ impl DagNodeRunner for WorkflowRunner {
                 self.run_model(context).await
             }
             WorkflowNodeKind::Validator => self.run_validator(context),
-            WorkflowNodeKind::Refiner => self.run_refiner(&context),
+            WorkflowNodeKind::Refiner => self.run_refiner(&context).await,
             WorkflowNodeKind::Gate => Ok(run_gate(context)),
             WorkflowNodeKind::Transform
             | WorkflowNodeKind::DeterministicTool
-            | WorkflowNodeKind::Export => self.run_transform(context),
+            | WorkflowNodeKind::Export => self.run_transform(context).await,
             other => Err(DagNodeFailure::terminal(
                 "unsupported_node_kind",
                 format!("application runner cannot execute {other:?}"),
@@ -1156,7 +1156,10 @@ impl WorkflowRunner {
         })
     }
 
-    fn run_refiner(&self, context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    async fn run_refiner(
+        &self,
+        context: &DagNodeContext<'_>,
+    ) -> Result<DagNodeOutput, DagNodeFailure> {
         let related = context
             .input_artifacts
             .iter()
@@ -1174,11 +1177,14 @@ impl WorkflowRunner {
                 })?;
                 let result = registered_refiner
                     .refine(&RefinementContext {
+                        run_id: context.run_id,
                         project: &self.project,
                         image: &self.image,
                         candidate: annotation,
                         related_annotations: &related,
+                        cancellation: context.cancellation.clone(),
                     })
+                    .await
                     .map_err(|error| {
                         DagNodeFailure::terminal("refiner_error", error.to_string())
                     })?;
@@ -1220,7 +1226,10 @@ impl WorkflowRunner {
         })
     }
 
-    fn run_transform(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    async fn run_transform(
+        &self,
+        context: DagNodeContext<'_>,
+    ) -> Result<DagNodeOutput, DagNodeFailure> {
         if context.node.outputs.is_empty() {
             return Ok(DagNodeOutput {
                 artifacts: context.input_artifacts,
@@ -1233,7 +1242,7 @@ impl WorkflowRunner {
             .iter()
             .all(|artifact| artifact_kind(&artifact.value) == kind)
         {
-            return self.run_refiner(&context);
+            return self.run_refiner(&context).await;
         }
         let (task_id, _, label) = target_for_node(&self.project, context.node)?;
         Ok(DagNodeOutput {

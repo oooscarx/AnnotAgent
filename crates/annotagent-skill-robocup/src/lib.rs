@@ -7,6 +7,7 @@ mod field;
 mod policy;
 mod recovery;
 mod robot;
+mod sam;
 mod tools;
 
 use std::sync::Arc;
@@ -24,10 +25,12 @@ pub use field::*;
 pub use policy::*;
 pub use recovery::*;
 pub use robot::*;
+pub use sam::*;
 pub use tools::*;
 
 pub struct RoboCupSkill {
     manifest: SkillManifest,
+    refiners: Vec<Arc<dyn AnnotationRefiner>>,
 }
 
 impl RoboCupSkill {
@@ -35,7 +38,13 @@ impl RoboCupSkill {
         let manifest =
             SkillManifest::from_yaml(include_str!("../../../skills/robocup/manifest.yaml"))
                 .map_err(|error| annotagent_core::CoreError::InvalidManifest(error.to_string()))?;
-        Ok(Self { manifest })
+        Ok(Self {
+            manifest,
+            refiners: vec![
+                Arc::new(RoboCupBallForegroundRefiner::default()),
+                Arc::new(RoboCupSamHttpRefiner::from_env()?),
+            ],
+        })
     }
 }
 
@@ -70,7 +79,7 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
-        vec![Arc::new(RoboCupBallForegroundRefiner::default())]
+        self.refiners.clone()
     }
 
     fn prompt_resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {

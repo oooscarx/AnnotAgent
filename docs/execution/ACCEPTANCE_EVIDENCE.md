@@ -678,3 +678,30 @@ Formal Annotation overlay status: `PASS`.
    console warning or error.
 
 RoboCup Ball foreground Refiner status: `PASS`.
+
+## RoboCup Ball SAM2 prompted Refiner — 2026-08-28
+
+1. `RoboCupSamHttpRefiner` calls `PromptedSegmentation` over HTTP Vision Protocol v1 with the exact
+   Run/Image/Task scope, an inline PNG, a typed bounding-box input Artifact, cancellation, and a
+   bounded 120-second timeout.
+2. The local worker loaded the official SAM2.1 Hiera Tiny checkpoint on Apple MPS. Health and
+   capability endpoints reported `healthy`, `prompted_segmentation`, bounding-box Artifact input,
+   and instance-mask output. The checkpoint and Python environment live under ignored
+   `workspace/.annotagent`; no model binary enters Git.
+3. Runtime persisted all three lineage elements for live Run
+   `acc947fa-48e9-4dc8-a412-799f723004b0`: original VLM bounding-box Artifact, SAM COCO-RLE
+   instance-mask Artifact, and revision-2 refined bounding-box Artifact. The Annotation provenance
+   references both mask and refined box.
+4. The final live input bbox `[0.44, 0.335, 0.055, 0.065]` was foreground-seeded to
+   `[0.4375, 0.3549107, 0.03676471, 0.04241071]`. SAM returned 305 mask pixels at score
+   `0.91769314`; the independently decoded tight bbox was
+   `[0.44117647, 0.35714287, 0.03308824, 0.04464286]`. Deterministic validation accepted it with no
+   issue. Review remained requested only by correction-memory policy.
+5. Browser verification displayed the correct B-Human source image, one colored tight football box,
+   `ball 92%`, `3 Artifacts`, and `1 Annotations`. The earlier false `ball 0%` display was fixed by
+   propagating SAM confidence to the formal Annotation.
+6. Unit tests cover COCO column-major RLE decoding and malformed/empty masks.
+   `./scripts/acceptance.sh` passes domain/secret boundaries, formatting, strict Clippy, all
+   workspace Rust tests and doc tests, Web typecheck/25 tests/build, doctor, and all offline demos.
+
+RoboCup Ball SAM2 prompted Refiner status: `PASS`.
