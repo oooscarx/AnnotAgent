@@ -14,6 +14,7 @@ import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
 import { deriveProjectNextAction } from "./projectWorkspace";
+import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
   type SettingsSection,
@@ -79,6 +80,9 @@ export function App() {
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
+  const [activeProjectId, setActiveProjectId] = useState(() =>
+    window.localStorage.getItem("annotagent.activeProjectId") ?? "",
+  );
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
 
   const navigate = (path: string, replace = false) => {
@@ -165,13 +169,33 @@ export function App() {
     pageTitleRef.current?.focus();
   }, [route.canonicalPath]);
 
-  const projectId =
+  const routeProjectId =
     route.kind === "project" || route.kind === "build"
       ? route.projectId
       : "";
-  const openProject = (id: string) =>
-    navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects");
+  const routeRun = route.kind === "runs" && route.runId
+    ? runs.find((run) => run.id === route.runId)
+    : undefined;
+  const routeRunProject = projectForRun(projects, routeRun);
+  const projectId = routeProjectId || routeRunProject?.id || activeProjectId;
   const selectedProject = projects.find((project) => project.id === projectId);
+  const setProjectContext = (id: string) => {
+    setActiveProjectId(id);
+    if (id) window.localStorage.setItem("annotagent.activeProjectId", id);
+    else window.localStorage.removeItem("annotagent.activeProjectId");
+  };
+  const openProject = (id: string) => {
+    setProjectContext(id);
+    navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects");
+  };
+  const switchProject = (id: string) => {
+    setProjectContext(id);
+    if (route.kind === "project" || route.kind === "build") openProject(id);
+  };
+  useEffect(() => {
+    const resolved = routeProjectId || routeRunProject?.id;
+    if (resolved && resolved !== activeProjectId) setProjectContext(resolved);
+  }, [routeProjectId, routeRunProject?.id]);
   const page =
     route.kind === "home" ||
     route.kind === "projects" ||
@@ -244,7 +268,7 @@ export function App() {
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
             <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
           </div>
-          <div className="project-switch">
+          {(route.kind === "project" || route.kind === "build" || route.kind === "runs" || route.kind === "review") && <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
               const profile = visualProfilesForSkills([skill.id])[0];
               return (
@@ -263,7 +287,7 @@ export function App() {
             <select
               id="active-project"
               value={projectId}
-              onChange={(event) => openProject(event.target.value)}
+              onChange={(event) => switchProject(event.target.value)}
             >
               <option value="">{NO_PROJECT_MESSAGE}</option>
               {projects.map((project) => (
@@ -272,7 +296,7 @@ export function App() {
                 </option>
               ))}
             </select>
-          </div>
+          </div>}
         </header>
         {error && (
           <div className="error-banner" role="alert">
@@ -335,6 +359,8 @@ export function App() {
             onNavigate={(step) =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
+            onOpenProjects={() => navigate("/projects")}
+            onOpenProject={() => openProject(route.projectId)}
             onError={setError}
           />
         )}
@@ -345,6 +371,8 @@ export function App() {
             onNavigate={(step) =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
+            onOpenProjects={() => navigate("/projects")}
+            onOpenProject={() => openProject(route.projectId)}
             onRefresh={refresh}
             onError={setError}
           />
@@ -353,6 +381,7 @@ export function App() {
           <RunsPage
             runs={runs}
             projects={projects}
+            activeProject={selectedProject}
             route={route}
             onNavigate={navigate}
             onRefresh={refresh}
@@ -366,6 +395,7 @@ export function App() {
             events={events}
             route={route}
             onNavigate={navigate}
+            onProjectContext={setProjectContext}
             onError={setError}
           />
         )}
@@ -400,6 +430,7 @@ function Nav({
   return (
     <a
       href={href}
+      title={children}
       className={active ? "active" : ""}
       aria-current={active ? "page" : undefined}
       onClick={(event) => {
@@ -413,21 +444,52 @@ function Nav({
   );
 }
 
+function ProjectBreadcrumb({
+  project,
+  current,
+  onOpenProjects,
+  onOpenProject,
+}: {
+  project?: ProjectSummary;
+  current: string;
+  onOpenProjects: () => void;
+  onOpenProject?: () => void;
+}) {
+  return (
+    <nav className="breadcrumb" aria-label="Breadcrumb">
+      <button className="text-button" onClick={onOpenProjects}>Projects</button>
+      {project && (
+        <>
+          <span aria-hidden="true">/</span>
+          <button className="text-button" onClick={onOpenProject}>{project.name}</button>
+        </>
+      )}
+      <span aria-hidden="true">/</span>
+      <strong>{current}</strong>
+    </nav>
+  );
+}
+
 function BuildWorkspace({
   project,
   step,
   onNavigate,
+  onOpenProjects,
+  onOpenProject,
   onRefresh,
   onError,
 }: {
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
   onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onOpenProjects: () => void;
+  onOpenProject: () => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
   return (
     <section className="page-stack">
+      <ProjectBreadcrumb project={project} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
       <BuildNavigation step={step} onNavigate={onNavigate} />
       {!project ? (
         <Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." />
@@ -1190,28 +1252,24 @@ function ProjectPage({
           >
             {starting ? "Starting…" : "Start dataset batch"}
           </button>
-          <button
-            disabled={!activeRun || visibleStatus !== "running"}
-            onClick={() => control("pause")}
-          >
-            <img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" />
-            Pause
-          </button>
-          <button
-            disabled={!activeRun || visibleStatus !== "paused"}
-            onClick={() => control("resume")}
-          >
-            <img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" />
-            Resume
-          </button>
-          <button
-            className="danger"
-            disabled={!activeRun}
-            onClick={() => control("cancel")}
-          >
-            <img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" />
-            Cancel
-          </button>
+          {activeRun && visibleStatus === "running" && (
+            <button onClick={() => control("pause")}>
+              <img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" />
+              Pause
+            </button>
+          )}
+          {activeRun && visibleStatus === "paused" && (
+            <button onClick={() => control("resume")}>
+              <img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" />
+              Resume
+            </button>
+          )}
+          {activeRun && (
+            <button className="danger" onClick={() => control("cancel")}>
+              <img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" />
+              Cancel
+            </button>
+          )}
         </div>
       </div>
       <div className="run-state-grid" id="project-active-run">
@@ -1506,6 +1564,8 @@ function WorkflowsPage({
   onActivate,
   onRefresh,
   onNavigate,
+  onOpenProjects,
+  onOpenProject,
   onError,
 }: {
   projects: ProjectSummary[];
@@ -1513,6 +1573,8 @@ function WorkflowsPage({
   onActivate: (id: string) => void;
   onRefresh: () => Promise<void>;
   onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onOpenProjects: () => void;
+  onOpenProject: () => void;
   onError: (value: string) => void;
 }) {
   const entries = projects.flatMap((project) =>
@@ -1766,8 +1828,9 @@ function WorkflowsPage({
     draft?.status === "published" || draft?.status === "archived";
   return (
     <section className="page-stack">
+      <ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
       <BuildNavigation step="pipeline" onNavigate={onNavigate} />
-      <div className="toolbar-panel">
+      <div className="toolbar-panel workflow-designer-header">
         <div>
           <span className="eyebrow">Draft → validated → immutable version</span>
           <h2>Workflow Designer</h2>
@@ -1787,6 +1850,12 @@ function WorkflowsPage({
           >
             New Draft
           </button>
+        </div>
+      </div>
+      <div className="workflow-command-grid">
+        <section className="workflow-command-card">
+          <span className="eyebrow">Starting point</span>
+          <h3>Template</h3>
           <select
             aria-label="Workflow template"
             value={templateId}
@@ -1805,112 +1874,40 @@ function WorkflowsPage({
           >
             From Template
           </button>
-          <button
-            onClick={suggest}
-            disabled={busy || !activeProjectId}
-            title={
-              !activeProjectId
-                ? "Select a Project first"
-                : "Create a safe registry-bound suggestion"
-            }
-          >
-            Suggest with Advisor
-          </button>
-          <select
-            aria-label="Target task"
-            value={targetTaskId}
-            onChange={(event) => {
+        </section>
+        <details className="workflow-command-card workflow-advisor">
+          <summary>Advisor draft</summary>
+          <div className="workflow-advisor-fields">
+            <button onClick={suggest} disabled={busy || !activeProjectId}>Suggest complete Workflow</button>
+            <select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
-              setTargetLabel(
-                activeProject?.annotation_schema.find((task) => task.id === taskId)
-                  ?.labels[0] ?? "",
-              );
-            }}
-          >
-            {(activeProject?.annotation_schema ?? []).map((task) => (
-              <option key={task.id} value={task.id}>
-                {task.id} · {task.kind}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Target Label"
-            value={targetLabel}
-            onChange={(event) => setTargetLabel(event.target.value)}
-          >
-            {(targetTask?.labels ?? []).map((label) => (
-              <option key={label} value={label}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={suggestLabelPipeline}
-            disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}
-            title="Create an editable registry-bounded Label Pipeline Draft"
-          >
-            Suggest Label Pipeline
-          </button>
-          <select
-            aria-label="Workflow Advisor"
-            value={advisorKind}
-            onChange={(event) =>
-              setAdvisorKind(event.target.value as "mock" | "llm")
-            }
-          >
-            <option value="mock">Mock Advisor · offline</option>
-            <option value="llm">Workspace LLM Advisor</option>
-          </select>
-          <button
-            onClick={save}
-            disabled={busy || !draft || immutable}
-            title={
-              immutable
-                ? "Published and archived drafts are immutable"
-                : "Persist the current draft"
-            }
-          >
-            Save Draft
-          </button>
-          <button onClick={discardChanges} disabled={busy || !draft || immutable}>
-            Discard changes
-          </button>
-          <button
-            onClick={dryRun}
-            disabled={busy || !draft}
-            title={
-              !draft
-                ? "Select or create a draft"
-                : "Validate graph, nodes, and model capabilities"
-            }
-          >
-            Dry Run
-          </button>
-          <button
-            className="primary"
-            onClick={publish}
-            disabled={busy || !draft || immutable}
-            title={
-              immutable
-                ? "This version is already immutable"
-                : "Publishing is blocked if Dry Run finds issues"
-            }
-          >
-            Publish
-          </button>
-          <button onClick={archive} disabled={busy || !draft || immutable}>
-            Archive
-          </button>
-          <button
-            onClick={clonePublished}
-            disabled={
-              busy || !selected?.workflow.source.startsWith("published draft")
-            }
-          >
-            Clone Version to Draft
-          </button>
-        </div>
+              setTargetLabel(activeProject?.annotation_schema.find((task) => task.id === taskId)?.labels[0] ?? "");
+            }}>
+              {(activeProject?.annotation_schema ?? []).map((task) => <option key={task.id} value={task.id}>{task.id} · {task.kind}</option>)}
+            </select>
+            <select aria-label="Target Label" value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
+              {(targetTask?.labels ?? []).map((label) => <option key={label} value={label}>{label}</option>)}
+            </select>
+            <select aria-label="Workflow Advisor" value={advisorKind} onChange={(event) => setAdvisorKind(event.target.value as "mock" | "llm")}>
+              <option value="mock">Mock Advisor · offline</option>
+              <option value="llm">Workspace LLM Advisor</option>
+            </select>
+            <button onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>Suggest Label Pipeline</button>
+          </div>
+        </details>
+        <section className="workflow-command-card workflow-version-actions">
+          <span className="eyebrow">Selected version</span>
+          <h3>{immutable ? "Published version" : "Draft actions"}</h3>
+          <div className="button-row">
+            {!immutable && <button onClick={save} disabled={busy || !draft}>Save Draft</button>}
+            {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
+            <button onClick={dryRun} disabled={busy || !draft}>Dry Run</button>
+            {!immutable && <button className="primary" onClick={publish} disabled={busy || !draft}>Publish</button>}
+            {immutable && <button className="primary" onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
+            {!immutable && draft && <details className="action-menu"><summary>More</summary><div><button onClick={archive} disabled={busy}>Archive</button></div></details>}
+          </div>
+        </section>
       </div>
       {advisorProposal && (
         <Panel title="Proposed changes" eyebrow="Advisor output · Draft only">
@@ -3529,6 +3526,7 @@ function ModelsPage({
 function RunsPage({
   runs,
   projects,
+  activeProject,
   route,
   onNavigate,
   onRefresh,
@@ -3536,11 +3534,13 @@ function RunsPage({
 }: {
   runs: HistoryRun[];
   projects: ProjectSummary[];
+  activeProject?: ProjectSummary;
   route: Extract<WorkspaceRoute, { kind: "runs" }>;
   onNavigate: (path: string, replace?: boolean) => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
+  const [statusFilter, setStatusFilter] = useState("all");
   const run = runs.find((item) => item.id === route.runId);
   if (route.runId && run)
     return (
@@ -3553,21 +3553,38 @@ function RunsPage({
         onError={onError}
       />
     );
+  const projectRuns = runsForContext(runs, activeProject);
+  const visibleRuns = runsForContext(runs, activeProject, statusFilter);
   return (
     <section className="page-stack">
+      <ProjectBreadcrumb
+        project={activeProject}
+        current="Runs"
+        onOpenProjects={() => onNavigate("/projects")}
+        onOpenProject={activeProject ? () => onNavigate(`/projects/${encodeURIComponent(activeProject.id)}`) : undefined}
+      />
       <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
-      <Panel title="Run history" eyebrow={`${runs.length} recorded`}>
+      <Panel title="Run history" eyebrow={`${visibleRuns.length} visible · ${runs.length} recorded`}>
+        <div className="list-filters">
+          <label>Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All statuses</option>
+              {[...new Set(projectRuns.map((item) => item.status))].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
+            </select>
+          </label>
+          {activeProject && <span>Project: <strong>{activeProject.name}</strong></span>}
+        </div>
         <div className="runs-table">
-          {runs.map((item) => (
-            <article key={item.id} className="clickable-run" onClick={() => onNavigate(`/runs/${item.id}`)}>
+          {visibleRuns.map((item) => (
+            <button key={item.id} className="run-row" onClick={() => onNavigate(`/runs/${item.id}`)}>
               <span className="event-rail" />
               <div><strong>{item.project_name}</strong><small>{item.workflow_name}@v{item.workflow_version}</small><code>{item.model_identity} · {item.artifact_count} Artifacts</code>{item.terminal_reason && <small className="run-reason">{item.terminal_reason}</small>}</div>
               <div className="run-usage"><span>{(item.input_tokens + item.output_tokens).toLocaleString()} tokens</span><span>${item.cost}</span></div>
               <Status status={item.status} />
-              <button onClick={(event) => { event.stopPropagation(); onNavigate(`/runs/${item.id}`); }}>Open</button>
-            </article>
+              <span className="row-arrow" aria-hidden="true">→</span>
+            </button>
           ))}
-          {runs.length === 0 && <Empty title="No runs recorded" detail="Start a Project Run to create auditable history." />}
+          {visibleRuns.length === 0 && <Empty title="No matching runs" detail="Change the active Project or status filter to see more Run history." />}
         </div>
       </Panel>
       {route.runId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
@@ -3664,10 +3681,21 @@ function RunDetailWorkspace({
       : "No node trace";
   return (
     <section className="page-stack run-detail-page">
-      <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← All runs</button>
+      <ProjectBreadcrumb
+        project={project}
+        current={`Run ${run.id.slice(0, 8)}`}
+        onOpenProjects={() => onNavigate("/projects")}
+        onOpenProject={project ? () => onNavigate(`/projects/${encodeURIComponent(project.id)}`) : undefined}
+      />
+      <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← Run history</button>
       <div className="toolbar-panel run-detail-header">
         <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{runAnnotations.length} Annotations</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
-        <div className="button-row">{runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Edit bounding box</button>}<button disabled={busy || run.status !== "running"} onClick={() => control("pause")}>Pause</button><button disabled={busy || run.status !== "paused"} onClick={() => control("resume")}>Resume</button><button className="danger" disabled={busy || !run.controllable} onClick={() => control("cancel")}>Cancel</button></div>
+        <div className="button-row">
+          {runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review result</button>}
+          {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
+          {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
+          {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
+        </div>
       </div>
       <div className="run-workspace">
         <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
@@ -3879,6 +3907,7 @@ function ReviewPage({
   events,
   route,
   onNavigate,
+  onProjectContext,
   onError,
 }: {
   project?: ProjectSummary;
@@ -3886,6 +3915,7 @@ function ReviewPage({
   events: RunEvent[];
   route: Extract<WorkspaceRoute, { kind: "review" }>;
   onNavigate: (path: string, replace?: boolean) => void;
+  onProjectContext: (projectId: string) => void;
   onError: (value: string) => void;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
@@ -3902,20 +3932,20 @@ function ReviewPage({
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
   useEffect(() => setSelectedId(route.reviewItemId ?? ""), [route.reviewItemId]);
-  const visibleReviews = project
+  const routeReview = route.reviewItemId
+    ? reviews.find((review) => review.id === route.reviewItemId)
+    : undefined;
+  const contextualProject = projectForReview(projects, routeReview) ?? project;
+  const visibleReviews = contextualProject
     ? reviews.filter(
         (review) =>
-          review.project_id === project.id ||
-          (!review.project_id && review.project_name === project.name),
+          review.project_id === contextualProject.id ||
+          (!review.project_id && review.project_name === contextualProject.name),
       )
     : reviews;
   const selected =
-    visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
-  const reviewProject = project ?? projects.find(
-    (candidate) =>
-      candidate.id === selected?.project_id ||
-      (!selected?.project_id && candidate.name === selected?.project_name),
-  );
+    routeReview ?? visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
+  const reviewProject = contextualProject ?? projectForReview(projects, selected);
   const refresh = () =>
     api
       .reviews()
@@ -3957,6 +3987,9 @@ function ReviewPage({
         .then((value) => setImages(value.images))
         .catch((error: Error) => onError(error.message));
     else setImages([]);
+  }, [reviewProject?.id]);
+  useEffect(() => {
+    if (reviewProject) onProjectContext(reviewProject.id);
   }, [reviewProject?.id]);
   useEffect(() => {
     setDraft(selected?.annotation);
@@ -4085,6 +4118,17 @@ function ReviewPage({
       reviewProject?.enabled_skills.map((skill) => skill.id) ?? [],
     ),
   };
+  const availableShapeKinds = reviewProject?.annotation_schema
+    .map((task) => task.kind)
+    .filter((kind): kind is "bounding_box" | "keypoints" | "polyline" | "polygon" =>
+      ["bounding_box", "keypoints", "polyline", "polygon"].includes(kind),
+    ) ?? [];
+  const shapeLabels = {
+    bounding_box: "New box",
+    keypoints: "New keypoint",
+    polyline: "New polyline",
+    polygon: "New polygon",
+  } as const;
   return (
     <section className="review-layout">
       <aside className="review-queue panel">
@@ -4130,22 +4174,9 @@ function ReviewPage({
         <div className="review-edit-toolbar" aria-label="Annotation editing controls">
           <button onClick={undo} disabled={!past.length} aria-label="Undo annotation edit">Undo</button>
           <button onClick={redo} disabled={!future.length} aria-label="Redo annotation edit">Redo</button>
-          <button
-            onClick={() => createShape("bounding_box")}
-            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "bounding_box")}
-          >New box</button>
-          <button
-            onClick={() => createShape("keypoints")}
-            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "keypoints")}
-          >New keypoint</button>
-          <button
-            onClick={() => createShape("polyline")}
-            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "polyline")}
-          >New polyline</button>
-          <button
-            onClick={() => createShape("polygon")}
-            disabled={!reviewProject?.annotation_schema.some((task) => task.kind === "polygon")}
-          >New polygon</button>
+          {availableShapeKinds.map((kind) => (
+            <button key={kind} onClick={() => createShape(kind)}>{shapeLabels[kind]}</button>
+          ))}
           <select
             aria-label="Before and after comparison"
             value={compareMode}
@@ -4181,13 +4212,29 @@ function ReviewPage({
             /></div>
           )}
         </div>
-        <Trace
-          events={
-            selected
-              ? events.filter((event) => event.run_id === selected.run_id)
-              : events.slice(-12)
-          }
-        />
+        <div className="review-footer-stack">
+          <Trace
+            events={
+              selected
+                ? events.filter((event) => event.run_id === selected.run_id)
+                : events.slice(-12)
+            }
+          />
+          {draft && selected && (
+            <div className="review-action-bar" aria-label="Review decision controls">
+              <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
+              <button className="primary" onClick={() => decide("accept")}>Accept &amp; commit</button>
+              <details className="action-menu">
+                <summary>More</summary>
+                <div>
+                  <button onClick={() => decide("reject")}>Reject</button>
+                  <button className="danger" onClick={() => decide("delete")}>Delete</button>
+                  <button onClick={() => api.revisions(draft.id).then((value) => alert(JSON.stringify(value.revisions, null, 2)))}>Revision history</button>
+                </div>
+              </details>
+            </div>
+          )}
+        </div>
       </div>
       <aside className="inspector panel">
         <span className="eyebrow">Validator evidence</span>
@@ -4210,7 +4257,10 @@ function ReviewPage({
                 <Fact label="Review reason" value={selected.review_reason} />
                 <Fact label="Confidence" value={`${Math.round((selected.confidence ?? selected.annotation.confidence ?? 0) * 100)}%`} />
                 <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
-                <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+                <div className="button-row review-context-actions">
+                  {reviewProject && <button className="text-button" onClick={() => onNavigate(`/projects/${encodeURIComponent(reviewProject.id)}`)}>Open project</button>}
+                  <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+                </div>
               </div>
             )}
             <label>
@@ -4280,28 +4330,6 @@ function ReviewPage({
                 the same Skill, task and Label; reviewer notes are never treated as instructions.
               </div>
             )}
-            <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
-            <div className="decision-row">
-              <button className="primary" onClick={() => decide("accept")}>
-                Accept &amp; commit
-              </button>
-              <button onClick={() => decide("reject")}>Reject</button>
-              <button className="danger" onClick={() => decide("delete")}>
-                Delete
-              </button>
-            </div>
-            <button
-              className="text-button"
-              onClick={() =>
-                api
-                  .revisions(draft.id)
-                  .then((value) =>
-                    alert(JSON.stringify(value.revisions, null, 2)),
-                  )
-              }
-            >
-              View revision history →
-            </button>
           </>
         )}
       </aside>
@@ -4536,6 +4564,7 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
 
 function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const [settings, setSettings] = useState<Record<string, any>>();
+  const [savedSignature, setSavedSignature] = useState("");
   const [presetId, setPresetId] = useState("mock");
   const [key, setKey] = useState("");
   const [message, setMessage] = useState("");
@@ -4546,6 +4575,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
       .settings()
       .then((value) => {
         setSettings(value);
+        setSavedSignature(JSON.stringify(value));
         setPresetId(inferProviderPreset(value).id);
         credentialPresetRef.current = inferConfiguredProviderPreset(value).id;
       })
@@ -4584,6 +4614,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
     updateCredential = false,
   ) => {
     setSettings(value);
+    setSavedSignature(JSON.stringify(value));
     setKey("");
     setMessage(nextMessage);
     if (updateCredential && !preset.offline)
@@ -4621,6 +4652,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
       .catch((error: Error) => onError(error.message))
       .finally(() => setSaving(false));
   };
+  const dirty = Boolean(key) || JSON.stringify(settings) !== savedSignature;
   return (
     <section className="settings-grid">
       <Panel title="Vision model provider" eyebrow="Workspace default binding">
@@ -4887,21 +4919,25 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
       </Panel>
       <div className="settings-save" aria-live="polite">
         <span>
-          {message ||
+          {dirty
+            ? "Unsaved workspace settings"
+            : message ||
             (settings.settings_persisted
               ? `Saved at ${settings.settings_path}`
               : "Save once to keep these settings across restarts.")}
         </span>
-        <button
-          className="primary"
-          onClick={save}
-          disabled={
-            saving ||
-            (!preset.offline && (!provider.endpoint || !provider.model))
-          }
-        >
-          {saving ? "Saving…" : "Save settings"}
-        </button>
+        {dirty && (
+          <button
+            className="primary"
+            onClick={save}
+            disabled={
+              saving ||
+              (!preset.offline && (!provider.endpoint || !provider.model))
+            }
+          >
+            {saving ? "Saving…" : "Save settings"}
+          </button>
+        )}
       </div>
     </section>
   );

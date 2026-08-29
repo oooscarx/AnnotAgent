@@ -185,8 +185,8 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
 
 test("open Run Artifact from history without entering an ID", async ({ page }) => {
   await page.goto("/runs");
-  const row = page.locator(".clickable-run").filter({ hasText: projectName });
-  await row.getByRole("button", { name: "Open" }).click();
+  const row = page.locator(".run-row").filter({ hasText: projectName });
+  await row.click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
   await expect(page.getByText("Pipeline steps")).toBeVisible();
   await expect(page.locator(".run-node-timeline button").first()).toBeVisible();
@@ -210,7 +210,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.goto(`/review/${reviewId}`);
   await page.getByRole("button", { name: /Open run context/ }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
-  await page.getByRole("button", { name: "Open review item" }).click();
+  await page.getByRole("button", { name: "Review result" }).click();
   await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
 });
 
