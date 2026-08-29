@@ -4202,9 +4202,9 @@ function ReviewPage({
           {availableShapeKinds.length > 0 && (
             <details className="review-add-menu">
               <summary aria-label="Add annotation">
-                <span aria-hidden="true">+</span>
-                Add
-                <span aria-hidden="true">⌄</span>
+                <span className="review-add-icon" aria-hidden="true" />
+                <span className="review-add-label">Add</span>
+                <span className="review-add-caret" aria-hidden="true" />
               </summary>
               <div role="menu" aria-label="Annotation types">
                 {availableShapeKinds.map((kind) => (
