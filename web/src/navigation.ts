@@ -142,13 +142,13 @@ export function parseWorkspaceRoute(
   if (review) {
     const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
     const context = new URLSearchParams();
-    if (!review[1] && projectId) context.set("project_id", projectId);
+    if (projectId) context.set("project_id", projectId);
     const suffix = context.size ? `?${context.toString()}` : "";
     return {
       kind: "review",
       reviewItemId: review[1] ? decodeURIComponent(review[1]) : undefined,
       projectId,
-      canonicalPath: review[1] ? `/review/${review[1]}` : `/review${suffix}`,
+      canonicalPath: review[1] ? `/review/${review[1]}${suffix}` : `/review${suffix}`,
     };
   }
   const settings = clean.match(/^\/settings(?:\/([^/]+))?$/);

@@ -73,3 +73,7 @@ The Application scales measured sample duration, exact decimal cost, and Review 
 ## GE-018 — Results and Debug are two projections of one immutable Run
 
 Results reads a server-owned outcome summary derived from persisted formal Annotations, with typed checkpoint Candidate, Classification, and Detection Artifacts as the fallback for Pipelines that have not emitted a formal Annotation. Debug reads the same Run history and checkpoint but exposes execution state, lineage, payloads, Provider context, errors, and Replay. `view=debug` is explicit URL state; legacy Node or Artifact links infer it for compatibility. This keeps Guided and technical presentations consistent without persisting a second Run model or rerunning the Workflow.
+
+## GE-019 — Inbox advancement is a server decision result
+
+Review progress and the item after a human decision are derived from persisted Annotation statuses and stable queue order. Accept-and-next and reject-and-next apply the decision first, then return the exact remaining item and updated progress; React does not remove an optimistic local row and guess what comes next. Project scope is explicit in the queue request and URL. Generic reasons belong to Core Review UX, while additional taxonomy values come only from Skills enabled by the Project. Correction evidence is saved against a real enabled Skill when available, but a generic human decision cannot be blocked merely because a Project has no correction taxonomy.

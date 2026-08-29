@@ -14,7 +14,10 @@ import type {
   RunResultSummary,
   RunDebugSummary,
   RunAnnotationInspection,
+  ReviewDecisionOutcome,
   ReviewItem,
+  ReviewNavigation,
+  ReviewQueueProgress,
   RunEvent,
   SkillDetail,
   WorkflowDraft,
@@ -246,8 +249,15 @@ export const api = {
       }),
     }),
   models: () => request<{ models: ModelBinding[] }>("/api/models"),
-  reviews: () => request<{ reviews: ReviewItem[] }>("/api/reviews"),
+  reviews: (projectId?: string) =>
+    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
+      `/api/reviews${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
   review: (id: string) => request<ReviewItem>(`/api/reviews/${id}`),
+  reviewNext: (id: string, projectId?: string) =>
+    request<ReviewNavigation>(
+      `/api/reviews/${id}/next${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
   revise: (annotation: Annotation, reason: string) =>
     request(`/api/annotations/${annotation.id}`, {
       method: "PATCH",
@@ -276,6 +286,29 @@ export const api = {
         skill_id: skillId,
       }),
     }),
+  decideAndNext: (
+    id: string,
+    projectId: string,
+    decision: "accept" | "reject",
+    reasonCode: string,
+    note: string,
+    skillId?: string,
+    queueProjectId?: string,
+  ) =>
+    request<ReviewDecisionOutcome>(
+      `/api/reviews/${id}/${decision}-and-next`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          project_id: projectId,
+          decision,
+          reason_code: reasonCode,
+          note,
+          skill_id: skillId,
+          queue_project_id: queueProjectId,
+        }),
+      },
+    ),
   revisions: (id: string) =>
     request<{ revisions: unknown[] }>(`/api/annotations/${id}/revisions`),
   skills: () => request<SkillDetail[]>("/api/skills"),

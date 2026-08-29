@@ -44,6 +44,8 @@ import type {
   ProjectGuidance,
   ProjectWorkspaceSummary,
   ReviewItem,
+  ReviewNavigation,
+  ReviewQueueProgress,
   RunEvent,
   RunAnnotationInspection,
   RunDebugSummary,
@@ -4423,6 +4425,22 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
   );
 }
 
+const GENERIC_REVIEW_REASONS = [
+  { value: "not_target", label: "Not the target" },
+  { value: "wrong_box", label: "Wrong box" },
+  { value: "duplicate", label: "Duplicate" },
+  { value: "wrong_label", label: "Wrong label" },
+  { value: "other", label: "Other" },
+] as const;
+
+function reviewReasonExplanation(item: ReviewItem) {
+  if (item.review_reason === "low_confidence")
+    return "The model confidence is below this Automation's acceptance threshold.";
+  if (item.review_reason === "validation_issue")
+    return `Validation needs a human decision${item.validation_issues.length ? `: ${item.validation_issues.join(", ").replaceAll("_", " ")}.` : "."}`;
+  return "This Automation routes the result through a Human Review gate.";
+}
+
 function ReviewPage({
   project,
   projects,
@@ -4439,18 +4457,32 @@ function ReviewPage({
   onError: (value: string) => void;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
+  const [queueLoaded, setQueueLoaded] = useState(false);
+  const [progress, setProgress] = useState<ReviewQueueProgress>({
+    reviewed_count: 0,
+    total_count: 0,
+    remaining_count: 0,
+  });
+  const [queueNavigation, setQueueNavigation] = useState<ReviewNavigation>();
   const [selectedId, setSelectedId] = useState(route.reviewItemId ?? "");
   const [draft, setDraft] = useState<Annotation>();
   const [past, setPast] = useState<Annotation[]>([]);
   const [future, setFuture] = useState<Annotation[]>([]);
   const [isNew, setIsNew] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [decisionBusy, setDecisionBusy] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("not_target");
+  const [completedProject, setCompletedProject] = useState<ProjectSummary>();
   const [compareMode, setCompareMode] = useState<"after" | "before" | "split">("after");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() =>
     window.localStorage.getItem("annotagent.reviewInspectorCollapsed") === "true",
   );
   const [attributesText, setAttributesText] = useState("{}");
   const [reason, setReason] = useState("");
-  const [reasonOptions, setReasonOptions] = useState<string[]>([]);
+  const [skillReasonOptions, setSkillReasonOptions] = useState<
+    { value: string; label: string; skillId: string }[]
+  >([]);
   const [correctionSkillId, setCorrectionSkillId] = useState("");
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
@@ -4458,33 +4490,35 @@ function ReviewPage({
   const routeReview = route.reviewItemId
     ? reviews.find((review) => review.id === route.reviewItemId)
     : undefined;
-  const contextualProject = projectForReview(projects, routeReview) ?? project;
-  const visibleReviews = contextualProject
+  const scopedProject = route.projectId
+    ? projects.find((candidate) => candidate.id === route.projectId) ?? project
+    : undefined;
+  const visibleReviews = scopedProject
     ? reviews.filter(
         (review) =>
-          review.project_id === contextualProject.id ||
-          (!review.project_id && review.project_name === contextualProject.name),
+          review.project_id === scopedProject.id ||
+          (!review.project_id && review.project_name === scopedProject.name),
       )
     : reviews;
   const selected =
     routeReview ?? visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
-  const reviewProject = contextualProject ?? projectForReview(projects, selected);
-  const refresh = () =>
-    api
-      .reviews()
+  const reviewProject = projectForReview(projects, selected) ?? scopedProject;
+  const reviewHref = (reviewId: string) =>
+    `/review/${reviewId}${route.projectId ? `?project_id=${encodeURIComponent(route.projectId)}` : ""}`;
+  const refresh = () => {
+    setQueueLoaded(false);
+    return api
+      .reviews(route.projectId)
       .then((value) => {
         setReviews(value.reviews);
-        const first = project
-          ? value.reviews.find(
-              (review) =>
-                review.project_id === project.id ||
-                (!review.project_id && review.project_name === project.name),
-            )
-          : value.reviews[0];
+        setProgress(value.progress);
+        const first = value.reviews[0];
         if (!value.reviews.some((review) => review.id === selectedId) && first)
-          onNavigate(`/review/${first.id}`, true);
+          onNavigate(reviewHref(first.id), true);
       })
-      .catch((error: Error) => onError(error.message));
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setQueueLoaded(true));
+  };
   useEffect(() => {
     if (!route.reviewItemId) return;
     void api
@@ -4498,22 +4532,41 @@ function ReviewPage({
   }, [route.reviewItemId]);
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [route.projectId]);
+  useEffect(() => {
+    if (!selected?.id) {
+      setQueueNavigation(undefined);
+      return;
+    }
+    void api
+      .reviewNext(selected.id, route.projectId)
+      .then((value) => {
+        setQueueNavigation(value);
+        setProgress(value.progress);
+      })
+      .catch((error: Error) => onError(error.message));
+  }, [selected?.id, route.projectId]);
   useEffect(() => {
     void api
       .skills()
       .then((skills) => {
         const ids = reviewProject?.enabled_skills.map((skill) => skill.id) ?? [];
-        const correctionSkill = skills.find(
-          (skill) => ids.includes(skill.id) && skill.correction_taxonomy.length,
+        const enabled = skills.filter((skill) => ids.includes(skill.id));
+        const options = enabled.flatMap((skill) => skill.correction_taxonomy.map((value) => ({
+          value,
+          label: value.replaceAll("_", " "),
+          skillId: skill.id,
+        })));
+        setCorrectionSkillId(
+          selected?.source_skill_id && ids.includes(selected.source_skill_id)
+            ? selected.source_skill_id
+            : enabled[0]?.id ?? "",
         );
-        const options = correctionSkill?.correction_taxonomy ?? [];
-        setCorrectionSkillId(correctionSkill?.id ?? "");
-        setReasonOptions(options);
-        setReason(options[0] || "manual_edit");
+        setSkillReasonOptions(options);
+        setReason("manual_edit");
       })
       .catch((error: Error) => onError(error.message));
-  }, [reviewProject?.id]);
+  }, [reviewProject?.id, selected?.source_skill_id]);
   useEffect(() => {
     if (reviewProject)
       void api
@@ -4528,6 +4581,8 @@ function ReviewPage({
     setPast([]);
     setFuture([]);
     setIsNew(false);
+    setEditing(false);
+    setRejectOpen(false);
   }, [selected?.id]);
   const beginEdit = () => {
     if (!draft) return;
@@ -4566,31 +4621,38 @@ function ReviewPage({
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   }, [draft, past, future]);
-  const persistDraft = () => {
-    if (!draft || !selected) return;
+  const persistDraft = async (): Promise<boolean> => {
+    if (!draft || !selected) return false;
     let attributes: Record<string, unknown>;
     try {
       attributes = JSON.parse(attributesText) as Record<string, unknown>;
     } catch {
-      return onError("Attributes must be a valid JSON object.");
+      onError("Attributes must be a valid JSON object.");
+      return false;
     }
-    if (!attributes || Array.isArray(attributes) || typeof attributes !== "object")
-      return onError("Attributes must be a JSON object.");
+    if (!attributes || Array.isArray(attributes) || typeof attributes !== "object") {
+      onError("Attributes must be a JSON object.");
+      return false;
+    }
     const annotation = { ...draft, attributes };
-    const operation = isNew
-      ? api.createAnnotation(selected.run_id, annotation)
-      : api.revise(annotation, reason);
-    return operation
-      .then(() => {
-        if (isNew) setSelectedId(annotation.id);
-        setIsNew(false);
-        setPast([]);
-        setFuture([]);
-        return refresh();
-      })
-      .catch((error: Error) => onError(error.message));
+    try {
+      if (isNew) await api.createAnnotation(selected.run_id, annotation);
+      else await api.revise(annotation, reason);
+      if (isNew) {
+        setSelectedId(annotation.id);
+        onNavigate(reviewHref(annotation.id), true);
+      }
+      setIsNew(false);
+      setPast([]);
+      setFuture([]);
+      await refresh();
+      return true;
+    } catch (error) {
+      onError((error as Error).message);
+      return false;
+    }
   };
-  const save = () => persistDraft();
+  const save = () => void persistDraft();
   const createShape = (kind: "bounding_box" | "keypoints" | "polyline" | "polygon") => {
     if (!selected) return onError("Select a review item before creating an annotation.");
     const task = reviewProject?.annotation_schema.find((candidate) => candidate.kind === kind);
@@ -4632,23 +4694,86 @@ function ReviewPage({
       attributesText !== JSON.stringify(selected.annotation.attributes ?? {}, null, 2)
     )),
   );
-  const decide = (decision: "accept" | "reject" | "delete") => {
-    if (!selected || !reviewProject)
-      return onError(
-        "Select the Review item's Project before recording a decision.",
-      );
-    const persist = hasUnsavedAnnotationChanges ? persistDraft() : Promise.resolve();
-    return persist?.then(() => api.decide(
+  const moveQueueSelection = (item?: ReviewItem) => {
+    if (!item) return;
+    setSelectedId(item.id);
+    onNavigate(reviewHref(item.id));
+  };
+  const decideAndAdvance = async (
+    decision: "accept" | "reject",
+    reasonCode: string,
+  ) => {
+    if (!selected || !reviewProject) {
+      onError("Select the Review item's Project before recording a decision.");
+      return;
+    }
+    if (isNew) {
+      onError("Create the new annotation before deciding the original result.");
+      return;
+    }
+    setDecisionBusy(true);
+    try {
+      if (hasUnsavedAnnotationChanges && !(await persistDraft())) return;
+      const reasonSkill = skillReasonOptions.find((option) => option.value === reasonCode)?.skillId;
+      const outcome = await api.decideAndNext(
         selected.id,
         reviewProject.id,
         decision,
-        reason,
+        reasonCode,
         note,
-        correctionSkillId || undefined,
-      ))
-      .then(refresh)
-      .catch((error: Error) => onError(error.message));
+        reasonSkill || selected.source_skill_id || correctionSkillId || undefined,
+        route.projectId,
+      );
+      setCompletedProject(reviewProject);
+      setProgress(outcome.progress);
+      setRejectOpen(false);
+      setEditing(false);
+      const queue = await api.reviews(route.projectId);
+      setReviews(queue.reviews);
+      setProgress(queue.progress);
+      if (outcome.next_review) {
+        setSelectedId(outcome.next_review.id);
+        onNavigate(reviewHref(outcome.next_review.id), true);
+      } else {
+        setSelectedId("");
+        onNavigate(`/review?project_id=${encodeURIComponent(reviewProject.id)}`, true);
+      }
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setDecisionBusy(false);
+    }
   };
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, button, [contenteditable='true']")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || decisionBusy || !selected) return;
+      const key = event.key.toLowerCase();
+      if (key === "a") {
+        event.preventDefault();
+        void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is");
+      } else if (key === "r") {
+        event.preventDefault();
+        setRejectOpen(true);
+      } else if (key === "e") {
+        event.preventDefault();
+        setEditing(true);
+        setInspectorVisibility(false);
+      } else if (event.key === " ") {
+        event.preventDefault();
+        setCompareMode((mode) => mode === "before" ? "after" : "before");
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveQueueSelection(queueNavigation?.previous_review);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveQueueSelection(queueNavigation?.next_review);
+      }
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  }, [selected?.id, queueNavigation, decisionBusy, hasUnsavedAnnotationChanges, reason]);
   const visualContext = {
     skillProfiles: visualProfilesForSkills(
       reviewProject?.enabled_skills.map((skill) => skill.id) ?? [],
@@ -4677,13 +4802,13 @@ function ReviewPage({
       <aside className="review-queue panel">
         <span className="eyebrow">Human attention</span>
         <h2>
-          Review queue <b>{visibleReviews.length}</b>
+          Review queue <b>{queueLoaded ? progress.remaining_count : "…"}</b>
         </h2>
         <label className="review-project-filter">
           Project
           <select
             aria-label="Project filter"
-            value={contextualProject?.id ?? ""}
+            value={scopedProject?.id ?? ""}
             onChange={(event) =>
               onNavigate(event.target.value
                 ? `/review?project_id=${encodeURIComponent(event.target.value)}`
@@ -4704,7 +4829,7 @@ function ReviewPage({
               className={selected?.id === review.id ? "active" : ""}
               onClick={() => {
                 setSelectedId(review.id);
-                onNavigate(`/review/${review.id}`);
+                onNavigate(reviewHref(review.id));
               }}
             >
               <span aria-hidden="true">
@@ -4731,8 +4856,20 @@ function ReviewPage({
         )}
       </aside>
       <div className="review-center">
-        <div className="review-edit-toolbar" aria-label="Annotation editing controls">
-          {availableShapeKinds.length > 0 && (
+        <div className="review-progress-header" aria-label="Review progress" role="status">
+          <div>
+            <span className="eyebrow">Inbox progress</span>
+            <strong>{queueLoaded ? `${progress.reviewed_count} of ${progress.total_count} results reviewed` : "Loading review progress…"}</strong>
+            <small>{queueLoaded ? `${progress.remaining_count} remaining${progress.current_position ? ` · item ${progress.current_position}` : ""}` : "Reading the persisted Project queue"}</small>
+          </div>
+          <div className="review-progress-navigation" aria-label="Review queue navigation">
+            <button aria-label="Previous review result" disabled={!queueNavigation?.previous_review} onClick={() => moveQueueSelection(queueNavigation?.previous_review)}>←</button>
+            <button aria-label="Next review result" disabled={!queueNavigation?.next_review} onClick={() => moveQueueSelection(queueNavigation?.next_review)}>→</button>
+          </div>
+        </div>
+        {selected && <div className="review-edit-toolbar" aria-label="Annotation editing controls">
+          <button className={editing ? "active" : ""} aria-pressed={editing} onClick={() => { setEditing((value) => !value); setInspectorVisibility(false); }}>Edit <kbd>E</kbd></button>
+          {editing && availableShapeKinds.length > 0 && (
             <details className="review-add-menu">
               <summary aria-label="Add annotation">
                 <span className="review-add-icon" aria-hidden="true" />
@@ -4790,8 +4927,8 @@ function ReviewPage({
               Details <span aria-hidden="true">{inspectorCollapsed ? "›" : "‹"}</span>
             </button>
           </div>
-        </div>
-        <div
+        </div>}
+        {selected ? <div
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
         >
           {(compareMode === "before" || compareMode === "split") && (
@@ -4811,33 +4948,55 @@ function ReviewPage({
               selectedId={draft?.id}
               visualContext={visualContext}
               onSelect={() => undefined}
-              onEditStart={beginEdit}
-              onChange={setDraft}
+              onEditStart={editing ? beginEdit : undefined}
+              onChange={editing ? setDraft : () => undefined}
             /></div>
           )}
-        </div>
+        </div> : queueLoaded ? <section className="review-complete panel">
+          <span className="eyebrow">Inbox complete</span>
+          <h2>{progress.total_count > 0 ? "Review complete" : "Nothing needs review"}</h2>
+          <p>{progress.total_count > 0 ? `All ${progress.total_count} queued results have a human decision.` : "Uncertain results will appear here when an Automation routes them to Human Review."}</p>
+          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => onNavigate(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}`)}>Continue to export</button>}
+        </section> : <section className="review-complete panel" aria-busy="true">
+          <span className="eyebrow">Review inbox</span>
+          <h2>Loading review results…</h2>
+          <p>Reading the persisted queue and human decisions.</p>
+        </section>}
         <div className="review-footer-stack">
-          <Trace
-            events={
-              selected
-                ? events.filter((event) => event.run_id === selected.run_id)
-                : events.slice(-12)
-            }
-          />
-          {draft && selected && (
+          {rejectOpen && selected && <section className="review-reject-panel" role="dialog" aria-labelledby="reject-review-title">
+            <div>
+              <span className="eyebrow">Reject result</span>
+              <h3 id="reject-review-title">Why is this result incorrect?</h3>
+              <p>A reason is required before the result leaves the Inbox.</p>
+            </div>
+            <label>
+              Reason
+              <select aria-label="Reject reason" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)}>
+                <optgroup label="Common reasons">
+                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </optgroup>
+                {skillReasonOptions.length > 0 && <optgroup label="Enabled Skill reasons">
+                  {skillReasonOptions.map((option) => <option key={`${option.skillId}:${option.value}`} value={option.value}>{option.label}</option>)}
+                </optgroup>}
+              </select>
+            </label>
+            <label>
+              Note {rejectReason === "other" ? "(required)" : "(optional)"}
+              <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add useful context for this decision" />
+            </label>
+            <div className="button-row">
+              <button onClick={() => setRejectOpen(false)}>Cancel</button>
+              <button className="danger" disabled={decisionBusy || (rejectReason === "other" && !note.trim())} onClick={() => void decideAndAdvance("reject", rejectReason)}>{decisionBusy ? "Rejecting…" : "Reject & next"}</button>
+            </div>
+          </section>}
+          {draft && selected && !rejectOpen && (
             <div className="review-action-bar" aria-label="Review decision controls">
-              {hasUnsavedAnnotationChanges && (
+              <span className="review-shortcuts" aria-label="Keyboard shortcuts"><kbd>A</kbd> accept <kbd>R</kbd> reject <kbd>Space</kbd> original/result</span>
+              {editing && hasUnsavedAnnotationChanges && (
                 <button onClick={save}>{isNew ? "Create annotation" : "Save changes"}</button>
               )}
-              <button className="primary" onClick={() => decide("accept")} aria-label="Accept and commit annotation">Accept result</button>
-              <details className="action-menu">
-                <summary>More</summary>
-                <div>
-                  <button onClick={() => decide("reject")}>Reject</button>
-                  <button className="danger" onClick={() => decide("delete")}>Delete</button>
-                  <button onClick={() => api.revisions(draft.id).then((value) => alert(JSON.stringify(value.revisions, null, 2)))}>Revision history</button>
-                </div>
-              </details>
+              <button onClick={() => setRejectOpen(true)} disabled={decisionBusy}>Reject & next</button>
+              <button className="primary" disabled={decisionBusy || isNew} onClick={() => void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is")} aria-label="Accept and next">{decisionBusy ? "Saving decision…" : "Accept & next"}</button>
             </div>
           )}
         </div>
@@ -4845,101 +5004,62 @@ function ReviewPage({
       {!inspectorCollapsed && <aside className="inspector panel review-inspector">
         <div className="review-inspector-header">
           <div>
-            <span className="eyebrow">Validator evidence</span>
+            <span className="eyebrow">Review details</span>
             <h2>{draft?.label ?? "No selection"}</h2>
           </div>
         </div>
-        {draft && (
+        {draft && selected && (
           <>
-            {selected && (
-              <div className="review-source-context">
-                <Fact label="Source Run" value={selected.run_id.slice(0, 8)} />
-                <Fact label="Workflow Version" value={selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`} />
-                <Fact label="Source Node" value={selected.source_node ?? "Unknown"} />
-                <Fact
-                  label="Refinement"
-                  value={selected.refinement_chain?.map((refiner) => {
-                    if (refiner === "sam_prompted_refiner") return "SAM 2.1 multi-prompt";
-                    if (refiner === "ball_foreground_refiner") return "Local foreground fallback (no SAM)";
-                    return refiner;
-                  }).join(" → ") || "None recorded"}
-                />
-                <Fact label="Review reason" value={selected.review_reason} />
-                <Fact label="Confidence" value={`${Math.round((selected.confidence ?? selected.annotation.confidence ?? 0) * 100)}%`} />
-                <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
-                <div className="button-row review-context-actions">
-                  {reviewProject && <button className="text-button" onClick={() => onNavigate(`/projects/${encodeURIComponent(reviewProject.id)}`)}>Open project</button>}
-                  <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
-                </div>
-              </div>
-            )}
-            <label>
-              Label
-              <input
-                value={draft.label ?? ""}
-                onChange={(event) =>
-                  edit({ ...draft, label: event.target.value })
-                }
-              />
-            </label>
-            <div className="fact-grid">
-              <span>
-                Confidence
-                <strong>{Math.round((draft.confidence ?? 0) * 100)}%</strong>
-              </span>
-              <span>
-                Source<strong>{draft.source}</strong>
-              </span>
-              <span>
-                Task<strong>{draft.task_id}</strong>
-              </span>
-              <span>
-                Status<strong>{draft.review_status}</strong>
-              </span>
+            <div className="review-reason-summary">
+              <span className="eyebrow">Why this needs review</span>
+              <p>{reviewReasonExplanation(selected)}</p>
             </div>
-            <label>
-              Attributes (JSON)
-              <textarea
-                aria-label="Annotation attributes JSON"
-                value={attributesText}
-                onChange={(event) => setAttributesText(event.target.value)}
-              />
-            </label>
-            <label>
-              Correction reason
-              {reasonOptions.length ? (
-                <select
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                >
-                  {reasonOptions.map((value) => (
-                    <option key={value}>{value}</option>
-                  ))}
+            <dl className="review-essential-facts">
+              <div><dt>Confidence</dt><dd>{Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%</dd></div>
+              <div><dt>Source Run</dt><dd>{selected.run_id.slice(0, 8)}</dd></div>
+              <div><dt>Automation Version</dt><dd>{selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`}</dd></div>
+              <div><dt>Source Step</dt><dd>{selected.source_node ?? "Unknown"}</dd></div>
+            </dl>
+            <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+            {editing && <section className="review-edit-details" aria-label="Annotation edit details">
+              <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
+              <label>
+                Label
+                <input value={draft.label ?? ""} onChange={(event) => edit({ ...draft, label: event.target.value })} />
+              </label>
+              <label>
+                Correction reason
+                <select aria-label="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)}>
+                  <option value="manual_edit">Manual edit</option>
+                  {GENERIC_REVIEW_REASONS.filter((option) => option.value === "wrong_box" || option.value === "wrong_label" || option.value === "other").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {skillReasonOptions.map((option) => <option key={`${option.skillId}:${option.value}`} value={option.value}>{option.label}</option>)}
                 </select>
-              ) : (
-                <input
-                  aria-label="Correction reason"
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  placeholder="manual_edit"
-                />
-              )}
-            </label>
-            <label>
-              Reviewer note
-              <textarea
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="What changed, and why?"
-              />
-            </label>
-            {reasonOptions.includes(reason) && (
-              <div className="credential-notice" role="status">
-                Saving this decision records controlled Project-specific correction evidence.
-                Future recovery may use <strong>{reason.replaceAll("_", " ")}</strong> only for
-                the same Skill, task and Label; reviewer notes are never treated as instructions.
+              </label>
+              <label>
+                Reviewer note
+                <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What changed, and why?" />
+              </label>
+              {hasUnsavedAnnotationChanges && <div className="correction-impact" role="status">
+                <strong>Correction impact</strong>
+                <span>This correction will make similar candidates more likely to be reviewed.</span>
               </div>
-            )}
+              }
+            </section>}
+            <details className="review-execution-details">
+              <summary>Execution details</summary>
+              <div className="fact-grid">
+                <Fact label="Refinement" value={selected.refinement_chain?.map((refiner) => refiner === "sam_prompted_refiner" ? "SAM 2.1 multi-prompt" : refiner === "ball_foreground_refiner" ? "Local foreground fallback (no SAM)" : refiner).join(" → ") || "None recorded"} />
+                <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
+                <Fact label="Task" value={draft.task_id} />
+                <Fact label="Status" value={draft.review_status} />
+              </div>
+              {editing && <label>
+                Attributes (JSON)
+                <textarea aria-label="Annotation attributes JSON" value={attributesText} onChange={(event) => setAttributesText(event.target.value)} />
+              </label>}
+              <button onClick={() => api.revisions(draft.id).then((value) => alert(JSON.stringify(value.revisions, null, 2)))}>View revision history</button>
+              <Trace events={events.filter((event) => event.run_id === selected.run_id)} />
+            </details>
           </>
         )}
       </aside>}

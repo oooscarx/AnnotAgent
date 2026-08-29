@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 9 — Inbox Review
-- Last completed Milestone: 8 — Results-first Run Workspace
-- Latest Milestone commit: this document's containing Milestone 8 commit
+- Active Milestone: 10 — Guided Export
+- Last completed Milestone: 9 — Inbox Review
+- Latest Milestone commit: this document's containing Milestone 9 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -24,8 +24,8 @@ Updated: 2026-08-30
 | 6 Recipe + Advisor | Complete | Natural Recipe, Shared Stages, per-Label Pipelines, Node Drawer, same-Draft Expert Graph, and a compare/apply Advisor proposal are real and never auto-publish. |
 | 7 Dry Run | Complete | Rust SampleTestSummary now reports outcomes, empty/failure counts, usage, Review workload, and Full Run estimates; the UI leads with Gallery and keeps diagnostics collapsed. |
 | 8 Run Workspace | Complete | Results is the default outcome workspace; Debug is an explicit URL-backed mode with Inspector, deep links, Replay, provider context, and repair actions. |
-| 9 Inbox Review | In progress | Geometry editing/decisions are real; next-item actions/progress remain. |
-| 10 Guided Export | Pending | Export is real; readiness, recommendation, compatibility, and completion UX remain. |
+| 9 Inbox Review | Complete | Server-owned progress and next-item decisions drive a keyboard-operable Inbox with controlled reasons, correction impact, deep links, and terminal guidance. |
+| 10 Guided Export | In progress | Export is real; readiness, recommendation, compatibility, and completion UX remain. |
 | 11 Reliability | Pending | URL/SSE/server recovery foundations exist; new guided state needs end-to-end recovery coverage. |
 | 12 Release | Pending | Full matrix, documentation, responsiveness, accessibility, and E2E expansion remain. |
 
@@ -105,6 +105,16 @@ Milestone 8 focused checks:
 - Application 21 and Server 9 focused tests pass; strict focused Clippy passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass. One Crop lineage test remains conditional on fixture availability.
 - Browser evidence covers Results and Debug at desktop size and verifies the Results workspace has no horizontal overflow at 720×450.
 
+Milestone 9 focused checks:
+
+- `GET /api/reviews/:id/next`, `POST /accept-and-next`, and `POST /reject-and-next` return server-owned queue progress and the exact next persisted Review item; the existing decision endpoint remains compatible.
+- Review defaults to one decision Inbox: reviewed/total/remaining progress, previous/next navigation, Original/Result toggle, one Accept primary action, and a reason-gated Reject path. Loading never presents false zero counts.
+- Details defaults to Why, Confidence, Source Run, Automation Version, and Source Step. Execution events, validation evidence, revision history, and technical metadata remain closed under Execution details.
+- Generic reject reasons are always available. Skill-specific reasons are added only from enabled Skill registries and correction evidence remains scoped to a real enabled Skill when one exists.
+- `A`, `R`, `E`, `Space`, and arrow-key paths are browser-covered without stealing keys from form controls. Manual edits show their correction impact before a decision.
+- Server 9 tests and strict Server Clippy pass. Web typecheck, 31 unit tests, production build, and 15 executable Chromium E2E scenarios pass in a fresh temporary workspace; one Crop lineage scenario remains conditional.
+- Desktop and 390px browser evidence show no horizontal overflow, and the last decision restores a Project-scoped completed Inbox with a Continue to export action after reload.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -118,13 +128,13 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Project Overview now presents one server-selected next action, Journey progress, and blocker repairs before Recent Activity and Usage; schema, bindings, versions, import/export, and image records are collapsed under Advanced Project Details.
 - Build now behaves as one gated sequence rather than four unrelated management screens; URL refresh preserves the step and server prerequisites prevent manual URL bypass.
 - Sample Test now leads with outcomes and Full Run impact; node statuses, timings, usage, and Artifact types are collapsed diagnostics.
-- Run now defaults to outcome-first Results and preserves technical inspection in explicit Debug. Review remains the next dense surface to convert into an inbox.
+- Run defaults to outcome-first Results and Review is now a fast decision Inbox. Export remains the next management-heavy surface to convert into the journey endpoint.
 
 ## Release Blocking remaining
 
-- `PASS`: 71
-- `PARTIAL`: 13
-- `OPEN`: 10
+- `PASS`: 79
+- `PARTIAL`: 10
+- `OPEN`: 5
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.

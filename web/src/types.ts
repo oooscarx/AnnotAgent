@@ -721,11 +721,31 @@ export interface ReviewItem {
   workflow_version: number;
   image_index?: number;
   source_node?: string;
+  source_skill_id?: string;
   source_artifact_id?: string;
   refinement_chain: string[];
   review_reason: string;
   confidence?: number;
   validation_issues: string[];
+}
+
+export interface ReviewQueueProgress {
+  reviewed_count: number;
+  total_count: number;
+  remaining_count: number;
+  current_position?: number;
+}
+
+export interface ReviewNavigation {
+  previous_review?: ReviewItem;
+  next_review?: ReviewItem;
+  progress: ReviewQueueProgress;
+}
+
+export interface ReviewDecisionOutcome {
+  annotation: Annotation;
+  next_review?: ReviewItem;
+  progress: ReviewQueueProgress;
 }
 
 export interface RunEvent {

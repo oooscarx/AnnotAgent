@@ -499,7 +499,16 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         )
         .route("/api/reviews", get(list_reviews))
         .route("/api/reviews/{review_id}", get(get_review))
+        .route("/api/reviews/{review_id}/next", get(get_next_review))
         .route("/api/reviews/{review_id}/decision", post(review_decision))
+        .route(
+            "/api/reviews/{review_id}/accept-and-next",
+            post(accept_review_and_next),
+        )
+        .route(
+            "/api/reviews/{review_id}/reject-and-next",
+            post(reject_review_and_next),
+        )
         .route(
             "/api/agent-sessions/{session_id}/cancel",
             post(cancel_agent_session),
@@ -2183,6 +2192,16 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                         .then_some(node.node_id.as_str())
                 })
             });
+            let source_skill_id = source_node.and_then(|source_node| {
+                inspection.as_ref().and_then(|inspection| {
+                    inspection
+                        .nodes
+                        .iter()
+                        .find(|node| node.node_id == source_node)
+                        .and_then(|node| node.configuration.required_skills.first())
+                        .map(String::as_str)
+                })
+            });
             reviews.push(json!({
                     "id": annotation.id,
                     "run_id": run.id,
@@ -2196,6 +2215,7 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                     ),
                     "image_index": image_index,
                     "source_node": source_node.or(current_node.as_deref()),
+                    "source_skill_id": source_skill_id,
                     "source_artifact_id": source_artifact_id,
                     "refinement_chain": refinement_chain,
                     "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
@@ -2204,11 +2224,118 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                 }));
         }
     }
+    reviews.sort_by(|left, right| {
+        left.pointer("/annotation/created_at")
+            .and_then(Value::as_str)
+            .cmp(
+                &right
+                    .pointer("/annotation/created_at")
+                    .and_then(Value::as_str),
+            )
+            .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+    });
     Ok(reviews)
 }
 
-async fn list_reviews(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({"reviews": reviews(&state, None)?})))
+#[derive(Debug, Default, Deserialize)]
+struct ReviewQueueQuery {
+    project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ReviewQueueProgress {
+    reviewed_count: usize,
+    total_count: usize,
+    remaining_count: usize,
+    current_position: Option<usize>,
+}
+
+fn reviews_in_scope(items: Vec<Value>, project_id: Option<&str>) -> Vec<Value> {
+    items
+        .into_iter()
+        .filter(|item| project_id.is_none_or(|project_id| item["project_id"] == json!(project_id)))
+        .collect()
+}
+
+fn review_queue_progress(
+    state: &ServerState,
+    project_id: Option<&str>,
+    pending: &[Value],
+    current: Option<AnnotationId>,
+) -> ApiResult<ReviewQueueProgress> {
+    let projects = state
+        .application
+        .list_projects()
+        .map_err(ApiError::internal)?;
+    let project_ids = projects
+        .iter()
+        .filter_map(|project| {
+            let path = state.application.project_path(&project.id).ok()?;
+            Some((stable_project_id(path.parent()?), project.id.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut reviewed_count = 0;
+    for run in state.application.list_runs().map_err(ApiError::internal)? {
+        let run_project_id = run
+            .project_id
+            .as_ref()
+            .and_then(|id| project_ids.get(id))
+            .map(String::as_str);
+        if project_id.is_some_and(|project_id| run_project_id != Some(project_id)) {
+            continue;
+        }
+        reviewed_count += state
+            .application
+            .store()
+            .list_annotations(run.id)
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .filter(|annotation| {
+                matches!(
+                    annotation.review_status,
+                    ReviewStatus::HumanAccepted | ReviewStatus::Rejected
+                )
+            })
+            .count();
+    }
+    let current_position = current.and_then(|current| {
+        pending
+            .iter()
+            .position(|item| item["id"] == json!(current))
+            .map(|position| position + 1)
+    });
+    Ok(ReviewQueueProgress {
+        reviewed_count,
+        total_count: reviewed_count + pending.len(),
+        remaining_count: pending.len(),
+        current_position,
+    })
+}
+
+fn review_navigation(
+    state: &ServerState,
+    review_id: AnnotationId,
+    project_id: Option<&str>,
+) -> ApiResult<Value> {
+    let pending = reviews_in_scope(reviews(state, None)?, project_id);
+    let current = pending
+        .iter()
+        .position(|item| item["id"] == json!(review_id))
+        .ok_or_else(|| ApiError::not_found("review was not found in this queue"))?;
+    Ok(json!({
+        "previous_review": current.checked_sub(1).and_then(|index| pending.get(index)),
+        "next_review": pending.get(current + 1),
+        "progress": review_queue_progress(state, project_id, &pending, Some(review_id))?,
+    }))
+}
+
+async fn list_reviews(
+    State(state): State<ServerState>,
+    Query(query): Query<ReviewQueueQuery>,
+) -> ApiResult<Json<Value>> {
+    let pending = reviews_in_scope(reviews(&state, None)?, query.project_id.as_deref());
+    let progress = review_queue_progress(&state, query.project_id.as_deref(), &pending, None)?;
+    Ok(Json(json!({"reviews": pending, "progress": progress})))
 }
 
 fn parse_annotation_id(value: &str) -> ApiResult<AnnotationId> {
@@ -2225,6 +2352,19 @@ async fn get_review(
         .find(|item| item["id"] == json!(id))
         .ok_or_else(|| ApiError::not_found("review was not found"))?;
     Ok(Json(item))
+}
+
+async fn get_next_review(
+    State(state): State<ServerState>,
+    AxumPath(review_id): AxumPath<String>,
+    Query(query): Query<ReviewQueueQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = parse_annotation_id(&review_id)?;
+    Ok(Json(review_navigation(
+        &state,
+        id,
+        query.project_id.as_deref(),
+    )?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2283,10 +2423,11 @@ async fn patch_annotation(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ReviewDecisionRequest {
     decision: String,
     project_id: String,
+    queue_project_id: Option<String>,
     skill_id: Option<String>,
     reason_code: String,
     note: Option<String>,
@@ -2299,6 +2440,14 @@ async fn review_decision(
     Json(request): Json<ReviewDecisionRequest>,
 ) -> ApiResult<Json<Value>> {
     let id = parse_annotation_id(&review_id)?;
+    apply_review_decision(&state, id, request).await
+}
+
+async fn apply_review_decision(
+    state: &ServerState,
+    id: AnnotationId,
+    request: ReviewDecisionRequest,
+) -> ApiResult<Json<Value>> {
     let (run_id, mut annotation) = state
         .application
         .store()
@@ -2340,50 +2489,51 @@ async fn review_decision(
     )
     .map_err(ApiError::bad_request)?;
     let configured_skills = project.project.enabled_skill_versions();
-    let skill_id = request
+    let requested_skill_id = request
         .skill_id
         .clone()
-        .or_else(|| {
-            (configured_skills.len() == 1)
-                .then(|| configured_skills.keys().next().cloned())
-                .flatten()
-        })
-        .filter(|id| configured_skills.contains_key(id))
-        .ok_or_else(|| {
-            ApiError::bad_request(
-                "Review correction must identify one Skill enabled by the Project",
-            )
-        })?;
-    let record = CorrectionRecord {
-        id: uuid::Uuid::new_v4(),
-        project_id: stable_project_id(
-            project_path
-                .parent()
-                .unwrap_or(state.application.workspace()),
-        ),
-        skill_id,
-        task_id: annotation.task_id.clone(),
-        predicted_label: original.label.clone(),
-        corrected_label: annotation.label.clone(),
-        reason_code: request.reason_code.clone(),
-        original_annotation: Some(original),
-        corrected_annotation: Some(annotation.snapshot()),
-        note: request.note.clone(),
-        image_features: CorrectionFeatures {
-            geometry: BTreeMap::new(),
-            colors: BTreeMap::new(),
-        },
-        created_at: Utc::now(),
-    };
+        .or_else(|| configured_skills.keys().next().cloned());
+    if request
+        .skill_id
+        .as_ref()
+        .is_some_and(|id| !configured_skills.contains_key(id))
+    {
+        return Err(ApiError::bad_request(
+            "Review correction referenced a Skill not enabled by the Project",
+        ));
+    }
     let correction_id = if already_applied {
         None
-    } else {
+    } else if let Some(skill_id) = requested_skill_id {
+        let record = CorrectionRecord {
+            id: uuid::Uuid::new_v4(),
+            project_id: stable_project_id(
+                project_path
+                    .parent()
+                    .unwrap_or(state.application.workspace()),
+            ),
+            skill_id,
+            task_id: annotation.task_id.clone(),
+            predicted_label: original.label.clone(),
+            corrected_label: annotation.label.clone(),
+            reason_code: request.reason_code.clone(),
+            original_annotation: Some(original),
+            corrected_annotation: Some(annotation.snapshot()),
+            note: request.note.clone(),
+            image_features: CorrectionFeatures {
+                geometry: BTreeMap::new(),
+                colors: BTreeMap::new(),
+            },
+            created_at: Utc::now(),
+        };
         state
             .application
             .store()
             .save_correction(&record)
             .map_err(ApiError::internal)?;
         Some(record.id)
+    } else {
+        None
     };
     if annotation.review_status == ReviewStatus::HumanAccepted {
         let settings = state.settings.read().await.clone();
@@ -2485,6 +2635,57 @@ async fn review_decision(
     Ok(Json(
         json!({"annotation": annotation, "revision": revision, "correction_id": correction_id}),
     ))
+}
+
+async fn review_and_next(
+    state: &ServerState,
+    review_id: AnnotationId,
+    mut request: ReviewDecisionRequest,
+    decision: &str,
+) -> ApiResult<Json<Value>> {
+    let queue_project_id = request.queue_project_id.clone();
+    let pending = reviews_in_scope(reviews(state, None)?, queue_project_id.as_deref());
+    let current = pending
+        .iter()
+        .position(|item| item["id"] == json!(review_id))
+        .ok_or_else(|| ApiError::not_found("review was not found in this Project queue"))?;
+    let candidate_ids = pending
+        .iter()
+        .cycle()
+        .skip(current + 1)
+        .take(pending.len().saturating_sub(1))
+        .filter_map(|item| item["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    request.decision = decision.to_owned();
+    let Json(mut response) = apply_review_decision(state, review_id, request.clone()).await?;
+    let remaining = reviews_in_scope(reviews(state, None)?, queue_project_id.as_deref());
+    let next_review = candidate_ids.iter().find_map(|candidate_id| {
+        remaining
+            .iter()
+            .find(|item| item["id"] == json!(candidate_id))
+    });
+    let progress = review_queue_progress(state, queue_project_id.as_deref(), &remaining, None)?;
+    if let Some(object) = response.as_object_mut() {
+        object.insert("next_review".to_owned(), json!(next_review));
+        object.insert("progress".to_owned(), json!(progress));
+    }
+    Ok(Json(response))
+}
+
+async fn accept_review_and_next(
+    State(state): State<ServerState>,
+    AxumPath(review_id): AxumPath<String>,
+    Json(request): Json<ReviewDecisionRequest>,
+) -> ApiResult<Json<Value>> {
+    review_and_next(&state, parse_annotation_id(&review_id)?, request, "accept").await
+}
+
+async fn reject_review_and_next(
+    State(state): State<ServerState>,
+    AxumPath(review_id): AxumPath<String>,
+    Json(request): Json<ReviewDecisionRequest>,
+) -> ApiResult<Json<Value>> {
+    review_and_next(&state, parse_annotation_id(&review_id)?, request, "reject").await
 }
 
 async fn annotation_revisions(
@@ -3364,6 +3565,22 @@ mod tests {
         assert!(reviews["reviews"][0]["review_reason"].is_string());
         assert!(reviews["reviews"][0]["refinement_chain"].is_array());
         assert!(reviews["reviews"][0]["validation_issues"].is_array());
+        assert_eq!(reviews["progress"]["reviewed_count"], json!(0));
+        assert_eq!(reviews["progress"]["remaining_count"], json!(1));
+        assert_eq!(reviews["progress"]["total_count"], json!(1));
+        let navigation = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/reviews/{review_id}/next?project_id=review-demo"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(navigation["progress"]["current_position"], json!(1));
+        assert!(navigation["previous_review"].is_null());
+        assert!(navigation["next_review"].is_null());
         let import_directory = temp.path().join("review-demo/import");
         std::fs::create_dir_all(&import_directory).expect("import directory");
         let import_file = import_directory.join("labels.json");
@@ -3414,6 +3631,9 @@ mod tests {
         .await;
         assert_eq!(imported["imported_count"], json!(1));
         assert_eq!(imported["annotations"][0]["source"], json!("imported"));
+        let imported_review_id = imported["annotations"][0]["id"]
+            .as_str()
+            .expect("imported review id");
         let reviews_after_import =
             response_json(request(&service, axum::http::Method::GET, "/api/reviews", None).await)
                 .await;
@@ -3470,9 +3690,10 @@ mod tests {
         let decision = request(
             &service,
             axum::http::Method::POST,
-            &format!("/api/reviews/{review_id}/decision"),
+            &format!("/api/reviews/{imported_review_id}/reject-and-next"),
             Some(json!({
                 "project_id": "review-demo",
+                "queue_project_id": "review-demo",
                 "decision": "reject",
                 "reason_code": reason_code,
                 "note": "deterministic server test"
@@ -3480,6 +3701,11 @@ mod tests {
         )
         .await;
         assert_eq!(decision.status(), StatusCode::OK);
+        let decision = response_json(decision).await;
+        assert!(decision["next_review"].is_object());
+        assert_eq!(decision["progress"]["reviewed_count"], json!(1));
+        assert_eq!(decision["progress"]["remaining_count"], json!(2));
+        assert_eq!(decision["progress"]["total_count"], json!(3));
         let memory = response_json(
             request(
                 &service,
@@ -3496,13 +3722,32 @@ mod tests {
             request(
                 &service,
                 axum::http::Method::GET,
-                &format!("/api/annotations/{review_id}/revisions"),
+                &format!("/api/annotations/{imported_review_id}/revisions"),
                 None,
             )
             .await,
         )
         .await;
-        assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(2));
+        assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(1));
+        let accepted = request(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/reviews/{review_id}/accept-and-next"),
+            Some(json!({
+                "project_id": "review-demo",
+                "queue_project_id": "review-demo",
+                "decision": "accept",
+                "reason_code": "accepted_as_is",
+                "note": "deterministic accept-and-next test"
+            })),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let accepted = response_json(accepted).await;
+        assert!(accepted["next_review"].is_object());
+        assert_eq!(accepted["progress"]["reviewed_count"], json!(2));
+        assert_eq!(accepted["progress"]["remaining_count"], json!(1));
+        assert_eq!(accepted["progress"]["total_count"], json!(3));
 
         let mut settings =
             response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)

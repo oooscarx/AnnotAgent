@@ -57,6 +57,12 @@ describe("guided workspace routing", () => {
       projectId: "alpha",
       canonicalPath: "/review?project_id=alpha",
     });
+    expect(parseWorkspaceRoute("/review/item-1", "?project_id=alpha")).toMatchObject({
+      kind: "review",
+      reviewItemId: "item-1",
+      projectId: "alpha",
+      canonicalPath: "/review/item-1?project_id=alpha",
+    });
     expect(parseWorkspaceRoute("/runs")).not.toHaveProperty("projectId", "alpha");
     expect(parseWorkspaceRoute("/review")).not.toHaveProperty("projectId", "alpha");
   });

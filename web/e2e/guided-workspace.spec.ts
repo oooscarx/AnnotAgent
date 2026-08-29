@@ -1,6 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 test.describe.configure({ mode: "serial" });
@@ -9,16 +8,9 @@ const stamp = Date.now();
 const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
-const imageSource = resolve(process.cwd(), `../workspace/e2e-guided/import-${stamp}`);
 const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
 let reviewId = "";
-
-mkdirSync(imageSource, { recursive: true });
-copyFileSync(
-  resolve(process.cwd(), "../examples/robocup/images/synthetic-robocup.png"),
-  resolve(imageSource, "synthetic-robocup.png"),
-);
 
 async function dashboard(request: APIRequestContext) {
   const response = await request.get("/api/projects");
@@ -66,7 +58,8 @@ test("empty workspace stays generic and contains no RoboCup product content", as
   await page.screenshot({ path: `${screenshots}/01-empty-workspace.png`, fullPage: true });
 });
 
-test("create and open a generic Project", async ({ page, request }) => {
+test("create and open a generic Project", async ({ page, request }, testInfo) => {
+  const imageSource = String(testInfo.config.metadata.e2eImport);
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
   await expect(dialog).toBeVisible();
@@ -301,11 +294,11 @@ test("global Runs and Review ignore hidden active Project state", async ({ page 
 
   await page.goto("/review");
   await expect(page.getByLabel("Project filter")).toHaveValue("");
-  await expect(page).toHaveURL(/\/review$/);
+  await expect(page).toHaveURL(/\/review(?:\/[^?]+)?$/);
 
   await page.goto(`/review?project_id=${projectId}`);
   await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
-  await expect(page).toHaveURL(new RegExp(`/review\\?project_id=${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/review(?:/[^?]+)?\\?project_id=${projectId}$`));
 });
 
 test("Run URL refresh restores image and node context", async ({ page }) => {
@@ -355,7 +348,8 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.goto(`/review/${reviewId}`);
   await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
   await page.reload();
-  await expect(page.getByRole("button", { name: "Accept and commit annotation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
+  await expect(page.getByLabel("Review progress")).toContainText("0 of 1 results reviewed");
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   await expect(page.locator(".review-add-menu")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Box", exact: true })).toHaveCount(0);
@@ -390,7 +384,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
 test("Review workspace has tablet and mobile layouts without horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto(`/review/${reviewId}`);
-  await expect(page.getByRole("button", { name: "Accept and commit annotation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
   await expect(page.locator(".review-layout")).toHaveCSS("display", "grid");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(900);
 
@@ -491,4 +485,39 @@ test("generic Project routes contain no RoboCup-specific copy", async ({ page })
   await page.goto(`/projects/${projectId}/build/pipeline`);
   await expect(page.locator("body")).not.toContainText("RoboCup");
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
+});
+
+test("Review behaves as a keyboard-operable decision inbox", async ({ page }) => {
+  await page.goto(`/review/${reviewId}?project_id=${projectId}`);
+  await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
+  await page.reload();
+  await expect(page.getByLabel("Review progress")).toContainText("0 of 1 results reviewed");
+  await expect(page.getByText("Why this needs review", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reject & next" })).toBeVisible();
+  await expect(page.locator(".review-execution-details")).not.toHaveAttribute("open", "");
+
+  await page.keyboard.press("E");
+  await expect(page.getByLabel("Annotation edit details")).toBeVisible();
+  const label = page.getByLabel("Label", { exact: true });
+  await label.fill("day corrected");
+  await expect(page.getByText("This correction will make similar candidates more likely to be reviewed.")).toBeVisible();
+  await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
+  await page.locator("body").press("Space");
+  await expect(page.getByLabel("Canvas view", { exact: true })).toHaveValue("before");
+  await page.locator("body").press("R");
+  await expect(page.getByRole("dialog", { name: "Why is this result incorrect?" })).toBeVisible();
+  await expect(page.getByLabel("Reject reason").locator("option")).toHaveCount(5);
+  await expect(page.locator('optgroup[label="Enabled Skill reasons"]')).toHaveCount(0);
+  await page.screenshot({ path: `${screenshots}/10-review-reject.png`, fullPage: true });
+  await page.getByRole("dialog", { name: "Why is this result incorrect?" }).getByRole("button", { name: "Reject & next" }).click();
+  await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue to export" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/review\\?project_id=${projectId}$`));
+  await page.reload();
+  await expect(page.getByLabel("Review progress")).toContainText("1 of 1 results reviewed");
+  await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
 });

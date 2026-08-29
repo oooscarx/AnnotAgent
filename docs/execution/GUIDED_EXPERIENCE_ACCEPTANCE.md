@@ -92,16 +92,16 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Accept & Next | OPEN | Accept exists; next-item transaction/action does not. |
-| Reject & Next | OPEN | Reject exists; next-item transaction/action does not. |
-| Review progress | OPEN | Queue count exists; position/progress does not. |
+| Accept & Next | PASS | The server applies acceptance and returns the exact next persisted item plus updated progress; browser and HTTP tests pass. |
+| Reject & Next | PASS | Reject requires a controlled reason, applies once, and advances using the same server-owned queue contract. |
+| Review progress | PASS | Reviewed, total, remaining, and current-position facts come from persisted statuses and render without false loading zeros. |
 | Explains why item needs Review | PASS | Reason and validation issue codes are shown. |
-| Keyboard operation | PARTIAL | Editing shortcuts exist; inbox decision path needs coverage. |
-| Skill-specific reason only for enabled Skill | PARTIAL | Skill reason support exists; visibility regression needed. |
+| Keyboard operation | PASS | Browser coverage exercises A, R, E, Space, and arrow navigation while form controls retain native keyboard behavior. |
+| Skill-specific reason only for enabled Skill | PASS | Generic reasons are always present; registry taxonomy options appear only for Skills enabled by the selected Project. |
 | Review → source Run and Node | PASS | Deep link exists. |
 | Run → corresponding Review | PASS | Matching review link exists. |
-| Returning preserves selection | PARTIAL | URL identity exists; round-trip selection needs explicit test. |
-| Last item guides Export | OPEN | No journey completion action. |
+| Returning preserves selection | PASS | Review ID and optional Project scope are canonical URL state; Run round-trip and reload preserve the exact item. |
+| Last item guides Export | PASS | The completed Project-scoped Inbox survives reload and offers Continue to export through Project Guidance. |
 
 ## H. Export
 
@@ -150,7 +150,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | 720×450-equivalent viewport is operable | PARTIAL | 720-wide Review E2E exists; full journey and height need coverage. |
 | Actual 200% Zoom | MANUAL | Must be manually verified if the environment permits. |
 | Primary journey is keyboard-operable | PARTIAL | Baseline controls/focus exist; new journey needs end-to-end proof. |
-| Review can be completed by keyboard | OPEN | Inbox decisions not implemented. |
+| Review can be completed by keyboard | PASS | The decision Inbox exposes documented A/R/E/Space/arrow shortcuts and browser coverage completes its keyboard path. |
 | Focus is visible | PARTIAL | Base focus styles exist; new components need audit. |
 | Status is not color-only | PASS | TUI/Web patterns and tests use text labels. |
 | Canvas has equivalent annotation list | PARTIAL | Review/Run lists exist; equivalence needs explicit accessibility proof. |
@@ -246,3 +246,14 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Application 21 and Server 9 focused tests pass; strict Clippy for both crates passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass, with one fixture-dependent Crop test explicitly skipped.
 - E2E proves Results is the default, Debug requires a switch, a technical deep link canonicalizes to Debug, selection survives reload, Review remains reachable, and 720×450 Results has no horizontal overflow.
 - Browser evidence: `docs/execution/screenshots/07-run-results.png` and `docs/execution/screenshots/08-run-debug.png`.
+
+## Milestone 9 evidence
+
+- Added stable queue ordering, `ReviewQueueProgress`, adjacent Review navigation, and decision-and-next responses. Progress derives reviewed and pending counts from persisted `HumanAccepted`, `Rejected`, and `NeedsReview` statuses rather than client session counters.
+- `GET /api/reviews` accepts explicit Project scope and returns queue plus progress. `GET /api/reviews/:id/next` returns previous/next/current position. Accept-and-next and reject-and-next select the next item from the pre-decision order and return the post-decision progress.
+- Generic decisions no longer fail for Projects without a correction taxonomy. An explicitly supplied Skill must still be enabled; otherwise the server rejects it. Review items expose the source Skill when runtime lineage records one.
+- Review renders Queue, Canvas, and Details as one Inbox. Details defaults to Why, Confidence, Source Run, Automation Version, and Source Step; Execution details is closed. Reject first opens a required controlled reason step, and Skill reasons are absent in the generic Classification browser fixture.
+- Editing is explicit and retains existing geometry, undo/redo, Label, attribute, zoom, and comparison behavior. Any unsaved manual correction displays: `This correction will make similar candidates more likely to be reviewed.`
+- The final decision navigates to a Project-scoped completed Inbox, remains completed after reload, and exposes Continue to export. Run → Review → Run retains the exact selected Review URL.
+- Server 9 tests pass, including real reject-and-next and accept-and-next transactions over persisted annotations; strict Server Clippy passes. Web typecheck, 31 unit tests, production build, and 15 executable Chromium E2E scenarios pass in a fresh temporary workspace; one external Crop fixture scenario is explicitly skipped.
+- Browser evidence: `docs/execution/screenshots/09-review-inbox.png`, `docs/execution/screenshots/10-review-reject.png`, and the responsive `docs/execution/screenshots/03-review-mobile.png`.
