@@ -201,6 +201,10 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
 test("Run URL refresh restores image and node context", async ({ page }) => {
   await page.goto(`/runs/${runId}?image=0&node=core.image_input`);
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
+  const nodeInspector = page.getByRole("region", { name: "Node inspector" });
+  await expect(nodeInspector).toBeVisible();
+  await expect(nodeInspector.locator(".run-node-metrics article")).toHaveCount(3);
+  await expect(nodeInspector.locator(".node-payload-section").filter({ has: page.getByText("Output", { exact: true }) })).toHaveAttribute("open", "");
   const pipelineTextFits = await page.locator(".run-node-timeline button strong, .run-node-timeline button small").evaluateAll((elements) =>
     elements.every((element) => {
       const bounds = element.getBoundingClientRect();

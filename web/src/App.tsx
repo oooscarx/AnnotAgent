@@ -3706,17 +3706,69 @@ function RunDetailWorkspace({
         <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong title={node.operation}>{node.operation}</strong><small title={`${node.status} · ${node.latency_ms} ms`}>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
       </div>
       {selectedNode && (
-        <Panel title={selectedNode.node_id} eyebrow="Selected Artifact and node detail">
-          <div className="button-row"><Status status={selectedNode.status} /><Fact label="Duration" value={`${selectedNode.latency_ms} ms`} /><Fact label="Model usage" value={`${selectedNode.usage.input_tokens + selectedNode.usage.output_tokens} tokens · $${selectedNode.usage.cost}`} /><button disabled={busy} onClick={replayNode}>Replay from node</button></div>
-          <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}>{artifact.kind.replaceAll("_", " ")} <code>{id.slice(0, 8)}</code></button>; })}</div>
+        <section className="panel run-node-inspector" aria-label="Node inspector">
+          <header className="run-node-inspector-header">
+            <div>
+              <span className="eyebrow">Node inspector</span>
+              <h2>{selectedNode.operation}</h2>
+              <code>Node ID · {selectedNode.node_id}</code>
+            </div>
+            <button disabled={busy} onClick={replayNode}>Replay from this node</button>
+          </header>
+          <div className="run-node-metrics" aria-label="Node execution summary">
+            <article><span>Status</span><Status status={selectedNode.status} /></article>
+            <article><span>Duration</span><strong>{selectedNode.latency_ms.toLocaleString()} ms</strong></article>
+            <article><span>Model usage</span><strong>{selectedNode.usage.input_tokens + selectedNode.usage.output_tokens} tokens</strong><small>${selectedNode.usage.cost}</small></article>
+          </div>
+          <section className="run-node-artifacts" aria-labelledby="node-output-artifacts">
+            <header><div><span className="eyebrow">Artifacts</span><h3 id="node-output-artifacts">Node outputs</h3></div><b>{selectedNode.outputs.length}</b></header>
+            <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}><span>{artifact.kind.replaceAll("_", " ")}</span><code>{id.slice(0, 8)}</code></button>; })}</div>
+            {selectedNode.outputs.length === 0 && <p className="node-payload-empty">This node did not produce an Artifact.</p>}
+          </section>
           {selectedNode.error && <div className="error-banner"><span>{selectedNode.error.code}: {selectedNode.error.summary}</span></div>}
-          <details><summary>Input · {selectedNode.inputs.length}</summary><pre>{JSON.stringify(selectedNode.inputs, null, 2)}</pre></details>
-          <details open><summary>Output · {selectedNode.outputs.length}</summary><pre>{JSON.stringify(selectedNode.outputs, null, 2)}</pre></details>
-          <details><summary>Configuration</summary><pre>{JSON.stringify(selectedNode.configuration, null, 2)}</pre></details>
+          <div className="node-payload-sections">
+            <NodePayloadSection title="Input" description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
+            <NodePayloadSection title="Output" description="Artifacts emitted by this node" badge={selectedNode.outputs.length} value={selectedNode.outputs} open />
+            <NodePayloadSection title="Configuration" description="Resolved runtime configuration" badge="JSON" value={selectedNode.configuration} />
+          </div>
           {replay?.replayed_from === selectedNode.node_id && <div className="validation-report valid"><strong>Sandbox Replay completed</strong><small>Preserved upstream: {replay.preserved_upstream_nodes.join(", ") || "None"}</small><small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small></div>}
-        </Panel>
+        </section>
       )}
     </section>
+  );
+}
+
+function NodePayloadSection({
+  title,
+  description,
+  badge,
+  value,
+  open = false,
+}: {
+  title: string;
+  description: string;
+  badge: string | number;
+  value: unknown;
+  open?: boolean;
+}) {
+  const empty = Array.isArray(value)
+    ? value.length === 0
+    : Boolean(value) && typeof value === "object"
+      ? Object.keys(value as Record<string, unknown>).length === 0
+      : value === undefined || value === null;
+  return (
+    <details className="node-payload-section" open={open}>
+      <summary>
+        <span><strong>{title}</strong><small>{description}</small></span>
+        <b>{badge}</b>
+        <i aria-hidden="true" />
+      </summary>
+      <div>
+        {empty
+          ? <p className="node-payload-empty">No {title.toLowerCase()} data recorded.</p>
+          : <pre>{JSON.stringify(value, null, 2)}</pre>}
+      </div>
+    </details>
   );
 }
 
