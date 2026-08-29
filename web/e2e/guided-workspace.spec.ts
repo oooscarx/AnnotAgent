@@ -242,6 +242,31 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
 });
 
+test("Review workspace has tablet and mobile layouts without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 900 });
+  await page.goto(`/review/${reviewId}`);
+  await expect(page.getByRole("button", { name: "Accept and commit annotation" })).toBeVisible();
+  await expect(page.locator(".review-layout")).toHaveCSS("display", "grid");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(900);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".review-layout")).toHaveCSS("display", "flex");
+  await expect(page.locator(".review-queue .queue-items")).toHaveCSS("display", "flex");
+  await expect(page.locator(".review-action-bar")).toHaveCSS("position", "static");
+  await expect(page.getByRole("heading", { name: "Review", level: 1 })).toHaveCSS("outline-style", "none");
+  await expect(page.locator(".project-switch select")).toBeVisible();
+  const mobileLayout = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    queueWidth: document.querySelector<HTMLElement>(".review-queue")?.getBoundingClientRect().width ?? 0,
+    centerWidth: document.querySelector<HTMLElement>(".review-center")?.getBoundingClientRect().width ?? 0,
+  }));
+  expect(mobileLayout.scrollWidth).toBeLessThanOrEqual(mobileLayout.viewport);
+  expect(mobileLayout.queueWidth).toBeLessThanOrEqual(mobileLayout.viewport);
+  expect(mobileLayout.centerWidth).toBeLessThanOrEqual(mobileLayout.viewport);
+  await page.screenshot({ path: `${screenshots}/03-review-mobile.png`, fullPage: true });
+});
+
 test("an active Run restores from the server and locks duplicate Start", async ({ page, request }) => {
   const state = await dashboard(request);
   const project = state.projects.find((item: { id: string }) => item.id === projectId);
