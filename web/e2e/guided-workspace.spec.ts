@@ -205,6 +205,12 @@ test("Run URL refresh restores image and node context", async ({ page }) => {
   await expect(nodeInspector).toBeVisible();
   await expect(nodeInspector.locator(".run-node-metrics article")).toHaveCount(3);
   await expect(nodeInspector.locator(".node-payload-section").filter({ has: page.getByText("Output", { exact: true }) })).toHaveAttribute("open", "");
+  const imageControlGaps = await page.locator(".run-image-browser input, .run-image-browser select, .run-image-browser > div > button").evaluateAll((elements) =>
+    elements.slice(1).map((element, index) =>
+      element.getBoundingClientRect().top - elements[index].getBoundingClientRect().bottom,
+    ),
+  );
+  expect(imageControlGaps.every((gap) => gap >= 7)).toBeTruthy();
   const pipelineTextFits = await page.locator(".run-node-timeline button strong, .run-node-timeline button small").evaluateAll((elements) =>
     elements.every((element) => {
       const bounds = element.getBoundingClientRect();

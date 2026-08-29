@@ -69,6 +69,7 @@ code, pre { font-family: var(--aa-font-mono); }
 .run-workspace { display: grid; grid-template-columns: 210px minmax(0, 1fr) 250px; gap: 14px; align-items: stretch; min-height: 580px; }
 .run-workspace > * { min-width: 0; }
 .run-image-browser, .run-node-timeline { overflow: auto; }
+.run-image-browser { display: grid; align-content: start; gap: 8px; }
 .run-node-timeline { padding: 16px; }
 .run-image-browser > div, .run-node-timeline { display: grid; align-content: start; gap: 8px; }
 .run-image-browser button { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; text-align: left; }
