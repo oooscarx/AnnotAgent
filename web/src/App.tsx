@@ -3891,7 +3891,15 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
   const legend = [...new Map(detections.map((item) => [item.label, item])).values()];
   return (
     <div className="run-artifact-canvas" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
-      <div className="preview-toggle"><button className={mode === "image" ? "active" : ""} onClick={() => setMode("image")}>Image</button><button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crops ({crops.length})</button><label>Zoom <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label><span>{Math.round(zoom * 100)}%</span></div>
+      <div className="preview-toggle">
+        <button className={mode === "image" ? "active" : ""} onClick={() => setMode("image")}>Image</button>
+        <button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crops ({crops.length})</button>
+        <label className="preview-zoom-control">
+          <span>Zoom</span>
+          <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
+          <output aria-live="polite">{Math.round(zoom * 100)}%</output>
+        </label>
+      </div>
       {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
       {mode === "image" ? (
         <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt="Original Run input" /><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label} ${rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)} percent`}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label} {rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)}%`}</text></g>)}</svg></div></div>

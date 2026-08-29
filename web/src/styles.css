@@ -81,7 +81,9 @@ code, pre { font-family: var(--aa-font-mono); }
 .run-visual-workspace { display: grid; align-content: start; gap: 12px; }
 .run-artifact-canvas { display: grid; gap: 12px; }
 .preview-toggle, .artifact-choice { display: flex; flex-wrap: wrap; gap: 8px; }
-.preview-toggle label { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.preview-zoom-control { min-height: 38px; display: grid; grid-template-columns: auto minmax(96px, 150px) 46px; align-items: center; gap: 8px; margin-left: auto; color: var(--aa-text-muted); font-size: 11px; line-height: 1; }
+.preview-zoom-control input[type="range"] { width: 100%; min-height: 20px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; accent-color: var(--aa-primary); }
+.preview-zoom-control output { min-width: 46px; height: 20px; display: grid; place-items: center end; color: var(--aa-text); font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .canvas-pan { overflow: auto; min-height: 360px; display: grid; align-items: start; }
 .canvas-pan .artifact-image-stage { transform-origin: top left; transition: transform .16s ease; }
 .crop-preview-list.enlarged { min-height: 360px; align-content: start; overflow: auto; }
@@ -544,6 +546,7 @@ main { min-width: 0; padding-bottom: 48px; }
   .review-action-bar { gap: 6px; padding: 8px; }
   .review-action-bar > button { min-width: 0; flex-basis: 120px; }
   .review-inspector { width: 100%; padding: 16px; }
+  .preview-zoom-control { width: 100%; grid-template-columns: auto minmax(0, 1fr) 46px; margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

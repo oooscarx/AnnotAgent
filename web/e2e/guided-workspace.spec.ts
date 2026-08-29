@@ -195,6 +195,14 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
 test("Run URL refresh restores image and node context", async ({ page }) => {
   await page.goto(`/runs/${runId}?image=0&node=core.image_input`);
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
+  const previewZoom = page.getByLabel("Preview zoom");
+  await expect(previewZoom).toBeVisible();
+  const zoomAlignment = await page.locator(".preview-zoom-control").evaluate((control) => {
+    const range = control.querySelector("input")!.getBoundingClientRect();
+    const output = control.querySelector("output")!.getBoundingClientRect();
+    return Math.abs((range.top + range.height / 2) - (output.top + output.height / 2));
+  });
+  expect(zoomAlignment).toBeLessThanOrEqual(1);
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?image=0&node=core.image_input`));
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
