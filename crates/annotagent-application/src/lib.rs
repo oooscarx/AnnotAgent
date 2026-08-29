@@ -390,7 +390,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             checked_at: Some(chrono::Utc::now()),
         },
         limits: VisionModelLimits {
-            max_images: Some(1),
+            max_images: Some(2),
             timeout_seconds: Some(settings.provider.request_timeout_seconds),
             ..VisionModelLimits::default()
         },

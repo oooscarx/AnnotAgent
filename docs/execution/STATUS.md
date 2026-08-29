@@ -279,3 +279,32 @@ Published editable-review pipeline status: `PASS`.
 
 Multi-prompt SAM recovery status: `PASS` (real local SAM2.1 worker; Human Review remains required
 by the configured 0.99 confidence gate).
+
+## Grid-assisted Qwen grounding experiment — 2026-08-29
+
+- The VLM detector can now opt into a bounded `localization_grid`. It sends the untouched source as
+  Image 1 and a same-size dashed magenta grid copy as Image 2. The prompt requires recognition from
+  Image 1 and coordinate calibration only from Image 2, so SAM and saved source pixels remain clean.
+- The adapter now honors the RoboCup template's existing `target_description` alias. Previously the
+  precise football description was silently replaced by the detector's generic default.
+- Qwen 3.7 models default to their native integer `0..1000` XYXY grounding convention. The adapter
+  normalizes this at the Provider boundary, records the effective coordinate format and grid
+  configuration, and keeps non-Qwen providers on normalized XYWH.
+- A normalized-coordinate A/B run showed that the grid moved the VLM box from
+  `[0.430, 0.375, 0.040, 0.040]` to `[0.440, 0.340, 0.040, 0.050]`, closer to the small football,
+  but two-image normalized grounding was slower and still missed one of three batch images.
+- The final Grid + native Qwen grounding batch localized all three inspected images correctly in
+  2.36–3.74 seconds per VLM node. SAM produced final confidences of 82%, 93%, and 86%; all remained
+  in Review because the experimental Workflow intentionally retains a 0.99 gate.
+- The experiment exposed a separate SAM ranking defect: a 61.9% oversized mask could outrank a
+  91.5% tight mask. Ranking now caps implausible area expansion, gives more weight to SAM confidence
+  and overlap, and records the selection score for every plausible mask.
+- Published Workflow `83c2af7b-9ae2-4a37-b91a-8e5c47795494@v1`, named
+  `RoboCup Ball · Grid + Qwen Grounding + SAM`, is the Project default. Experimental Batches were
+  cancelled after evidence collection so they do not block Start Run; their immutable child Runs
+  and Review evidence remain inspectable.
+- `./scripts/acceptance.sh` passes the domain boundary check, formatting, MSRV-aware strict Clippy,
+  all workspace Rust/doc tests, production build, all 25 Web tests, doctor, and all offline demos.
+
+Grid-assisted Qwen grounding status: `PASS` on the three-image exploratory batch. This is evidence
+of improvement, not a dataset-wide accuracy claim.

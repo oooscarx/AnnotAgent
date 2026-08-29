@@ -237,6 +237,14 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                     "target_description".to_owned(),
                     serde_json::json!("the compact round RoboCup football itself; return a pixel-tight box around the visible ball, ignore white field markings and green turf, and verify that every box edge encloses the ball"),
                 );
+                detector_node.parameters.insert(
+                    "instruction".to_owned(),
+                    serde_json::json!("Use the untouched image for recognition and the grid copy only to calibrate the small ball position. Inspect the full frame before returning exactly the visible football."),
+                );
+                detector_node.parameters.insert(
+                    "localization_grid".to_owned(),
+                    serde_json::json!({"rows": 8, "columns": 8}),
+                );
                 detector_node
             },
             {

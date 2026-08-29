@@ -759,3 +759,35 @@ Published editable-review pipeline status: `PASS`.
    passed after adding Pipeline Artifact lineage reporting.
 
 Multi-prompt SAM recovery status: `PASS`.
+
+## Grid-assisted Qwen grounding experiment — 2026-08-29
+
+1. Control Run `f6aa2b5b-e933-4681-9ddb-0ff646edc06a`, after fixing target-description delivery but
+   without a grid, returned VLM box `[0.430, 0.375, 0.040, 0.040]` in 8,963 ms and SAM box
+   `[0.439338, 0.366071, 0.034926, 0.040179]` at confidence `0.68752`.
+2. Grid Run `b6f77746-8913-40f2-a49c-3ef0e9bf62ad` returned VLM box
+   `[0.440, 0.340, 0.040, 0.050]`. After the ranking fix, SAM selected its 91.5% mask and produced
+   `[0.441176, 0.357143, 0.033088, 0.044643]` at final confidence `0.824372`. The selected mask had
+   selection score `0.785485`; all plausible candidates now retain their scores as Artifacts.
+3. The first normalized-coordinate grid batch found two of three images accurately but placed the
+   small ball in `color_1001525.png` one grid row too low. This disproves the hypothesis that a grid
+   alone is sufficient and motivated testing Qwen's native grounding coordinate convention.
+4. Final Batch `9d1a5900-ab11-46e5-b652-66c988ef9be7`, using immutable Workflow
+   `83c2af7b-9ae2-4a37-b91a-8e5c47795494@v1`, produced:
+   - `color_1001525.png`: VLM `[0.496,0.438,0.021,0.024]` in 2,364 ms; SAM
+     `[0.496324,0.4375,0.023897,0.029018]`, confidence `0.818036`.
+   - `color_289771.png`: VLM `[0.425,0.528,0.098,0.119]` in 2,668 ms; SAM
+     `[0.428309,0.533482,0.099265,0.116071]`, confidence `0.928246`.
+   - `color_548575.png`: VLM `[0.498,0.556,0.064,0.067]` in 3,743 ms; SAM
+     `[0.509191,0.5625,0.049632,0.0625]`, confidence `0.855573`.
+5. Original-image inspection and GUI overlay verification place all three boxes on their visible
+   footballs. Browser verification of Run `74dc3137-cf22-4896-8c9f-c85260565592` showed the exact
+   final Workflow, 6/7 nodes, 15 Artifacts, one editable `ball 82%` overlay, VLM latency 2,364 ms,
+   and SAM latency 689 ms.
+6. `./scripts/acceptance.sh` passes the domain boundary check, formatting, MSRV-aware strict Clippy,
+   all workspace Rust/doc tests (including the durable 100-image batch), production build, all 25
+   Web tests, doctor, and three offline demos. Tests explicitly cover dual-image grid preservation,
+   Qwen coordinate normalization, and rejection of an oversized lower-confidence SAM distractor.
+
+Grid-assisted Qwen grounding exploratory status: `PASS` (3/3 inspected images; no claim beyond
+this bounded sample).

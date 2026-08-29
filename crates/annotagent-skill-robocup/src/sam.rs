@@ -192,6 +192,11 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
                 Some((index, rect, score))
             })
             .collect::<Vec<_>>();
+        for (index, _, score) in &candidates {
+            artifacts[*index]
+                .metadata
+                .insert("ball_selection_score".to_owned(), serde_json::json!(score));
+        }
         candidates.sort_by(|left, right| right.2.total_cmp(&left.2));
         let Some((selected_index, refined, selection_score)) = candidates.first().copied() else {
             return self
@@ -202,10 +207,6 @@ impl AnnotationRefiner for RoboCupSamHttpRefiner {
                 .await;
         };
         let sam_confidence = artifacts[selected_index].confidence.unwrap_or(0.0);
-        artifacts[selected_index].metadata.insert(
-            "ball_selection_score".to_owned(),
-            serde_json::json!(selection_score),
-        );
         artifacts[selected_index]
             .metadata
             .insert("selected".to_owned(), serde_json::json!(true));
@@ -360,7 +361,7 @@ fn ball_mask_score(
     let refined_center = refined.center();
     let distance = ((refined_center.x() - coarse_center.x()) / coarse.width().max(0.005))
         .hypot((refined_center.y() - coarse_center.y()) / coarse.height().max(0.005));
-    if !(0.15..=12.0).contains(&area_ratio)
+    if !(0.15..=4.5).contains(&area_ratio)
         || !(0.35..=2.5).contains(&aspect)
         || distance > 5.0
         || refined.area() > 0.15
@@ -374,13 +375,16 @@ fn ball_mask_score(
     let aspect_score = (1.0 - aspect.ln().abs() / 1.2).clamp(0.0, 1.0);
     let size_score = (1.0 - area_ratio.ln().abs() / 2.5).clamp(0.0, 1.0);
     let proximity_score = (1.0 - distance / 5.0).clamp(0.0, 1.0);
+    let overlap_score =
+        coarse.intersection_area(refined) / coarse.area().min(refined.area()).max(f32::EPSILON);
     Ok(Some(
-        (sam_confidence.clamp(0.0, 1.0) * 0.2
-            + aspect_score * 0.15
-            + size_score * 0.1
-            + proximity_score * 0.1
-            + non_field_ratio * 0.25
-            + distinctive_ratio * 0.2)
+        (sam_confidence.clamp(0.0, 1.0) * 0.35
+            + aspect_score * 0.1
+            + size_score * 0.15
+            + proximity_score * 0.08
+            + overlap_score * 0.12
+            + non_field_ratio * 0.12
+            + distinctive_ratio * 0.08)
             .clamp(0.0, 1.0),
     ))
 }
@@ -471,5 +475,33 @@ mod tests {
                 && center.y() >= prompt.y()
                 && center.y() <= prompt.y() + prompt.height()
         }));
+    }
+
+    #[test]
+    fn high_confidence_tight_mask_beats_a_large_distractor() {
+        let image = annotagent_core::ImageFrame {
+            metadata: annotagent_core::ImageMetadata {
+                width: 10,
+                height: 10,
+                mime_type: "image/png".to_owned(),
+                sha256: "fixture".to_owned(),
+            },
+            rgb: vec![0; 10 * 10 * 3],
+        };
+        let coarse = NormalizedRect::new(0.4, 0.4, 0.04, 0.04).expect("coarse");
+        let tight = NormalizedRect::new(0.4, 0.39, 0.04, 0.05).expect("tight");
+        let distractor = NormalizedRect::new(0.38, 0.32, 0.09, 0.09).expect("distractor");
+        let polygon = MaskEncoding::Polygon { rings: Vec::new() };
+
+        let tight_score = ball_mask_score(&image, coarse, tight, &polygon, 0.91)
+            .expect("score")
+            .expect("plausible tight mask");
+        assert!(
+            ball_mask_score(&image, coarse, distractor, &polygon, 0.62)
+                .expect("score")
+                .is_none(),
+            "a mask over five times the VLM box area must not outrank a tight high-confidence mask"
+        );
+        assert!(tight_score > 0.7);
     }
 }
