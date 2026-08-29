@@ -110,11 +110,11 @@ main { min-width: 0; padding-bottom: 48px; }
 .topbar h1 { margin: 3px 0 0; font-size: 27px; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; }
 .product-tagline { color: var(--aa-text-muted); font-family: var(--aa-font-sans); font-size: 13px; font-weight: 500; line-height: 1.4; letter-spacing: 0; }
 .eyebrow, .kicker { color: var(--aa-teal-text); font: 600 12px var(--aa-font-sans); letter-spacing: 0; }
-.project-switch { display: flex; align-items: center; gap: 11px; }
-.project-switch > span:not(.skill-badge) { color: var(--aa-text-muted); font-size: 12px; }
+.project-switch { min-width: 0; display: flex; align-items: center; gap: 11px; flex-wrap: nowrap; }
+.project-switch > span:not(.skill-badge) { flex: 0 0 auto; color: var(--aa-text-muted); font-size: 12px; line-height: 1; white-space: nowrap; }
 .project-switch select { min-width: 205px; }
-.skill-badge { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 9px; border-radius: var(--aa-radius-pill); background: var(--aa-violet-soft); color: var(--aa-violet); font-size: 11px; font-weight: 700; }
-.skill-badge img { width: 22px; height: 22px; }
+.skill-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 9px; border-radius: var(--aa-radius-pill); background: var(--aa-violet-soft); color: var(--aa-violet); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.skill-badge img { flex: 0 0 auto; width: 22px; height: 22px; }
 
 .page-stack { display: grid; gap: 20px; width: min(100%, var(--aa-content-max, 96rem)); margin-inline: auto; padding: 28px 32px; }
 .hero-panel { position: relative; overflow: hidden; min-height: 245px; padding: 34px 38px; background: var(--aa-bg); color: var(--aa-text); display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-lg); box-shadow: var(--aa-shadow-md); }
