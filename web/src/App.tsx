@@ -3925,6 +3925,9 @@ function ReviewPage({
   const [future, setFuture] = useState<Annotation[]>([]);
   const [isNew, setIsNew] = useState(false);
   const [compareMode, setCompareMode] = useState<"after" | "before" | "split">("after");
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() =>
+    window.localStorage.getItem("annotagent.reviewInspectorCollapsed") === "true",
+  );
   const [attributesText, setAttributesText] = useState("{}");
   const [reason, setReason] = useState("");
   const [reasonOptions, setReasonOptions] = useState<string[]>([]);
@@ -4129,8 +4132,15 @@ function ReviewPage({
     polyline: "New polyline",
     polygon: "New polygon",
   } as const;
+  const setInspectorVisibility = (collapsed: boolean) => {
+    setInspectorCollapsed(collapsed);
+    window.localStorage.setItem(
+      "annotagent.reviewInspectorCollapsed",
+      String(collapsed),
+    );
+  };
   return (
-    <section className="review-layout">
+    <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <aside className="review-queue panel">
         <span className="eyebrow">Human attention</span>
         <h2>
@@ -4186,6 +4196,15 @@ function ReviewPage({
             <option value="before">Before</option>
             <option value="split">Before / after</option>
           </select>
+          {inspectorCollapsed && (
+            <button
+              className="details-toggle"
+              onClick={() => setInspectorVisibility(false)}
+              aria-expanded="false"
+            >
+              Show details
+            </button>
+          )}
         </div>
         <div
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
@@ -4236,9 +4255,21 @@ function ReviewPage({
           )}
         </div>
       </div>
-      <aside className="inspector panel">
-        <span className="eyebrow">Validator evidence</span>
-        <h2>{draft?.label ?? "No selection"}</h2>
+      {!inspectorCollapsed && <aside className="inspector panel review-inspector">
+        <div className="review-inspector-header">
+          <div>
+            <span className="eyebrow">Validator evidence</span>
+            <h2>{draft?.label ?? "No selection"}</h2>
+          </div>
+          <button
+            className="text-button"
+            onClick={() => setInspectorVisibility(true)}
+            aria-label="Collapse details panel"
+            aria-expanded="true"
+          >
+            Hide
+          </button>
+        </div>
         {draft && (
           <>
             {selected && (
@@ -4332,7 +4363,7 @@ function ReviewPage({
             )}
           </>
         )}
-      </aside>
+      </aside>}
     </section>
   );
 }

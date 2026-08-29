@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
+import { clampCanvasZoom, zoomAroundPoint } from "../canvasViewport";
 import type { Annotation, Point } from "../types";
 
 interface Props {
@@ -69,16 +70,24 @@ export function AnnotationCanvas({
 
   const [width, height] = canvasSize;
 
+  const canvasPoint = (clientX: number, clientY: number): Point => {
+    const matrix = svgRef.current?.getScreenCTM();
+    if (!matrix) return [width / 2, height / 2];
+    const point = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+    return [point.x, point.y];
+  };
+
+  const applyZoom = (requestedZoom: number, anchor: Point = [width / 2, height / 2]) => {
+    const next = zoomAroundPoint(zoom, pan, anchor, requestedZoom);
+    setPan(next.pan);
+    setZoom(next.zoom);
+  };
+
   const localPoint = (event: React.PointerEvent<Element>): Point => {
-    const svg = svgRef.current;
-    const matrix = svg?.getScreenCTM();
-    if (!svg || !matrix) return [0, 0];
-    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
-      matrix.inverse(),
-    );
+    const point = canvasPoint(event.clientX, event.clientY);
     return [
-      Math.max(0, Math.min(1, (point.x - pan[0]) / zoom / width)),
-      Math.max(0, Math.min(1, (point.y - pan[1]) / zoom / height)),
+      Math.max(0, Math.min(1, (point[0] - pan[0]) / zoom / width)),
+      Math.max(0, Math.min(1, (point[1] - pan[1]) / zoom / height)),
     ];
   };
 
@@ -176,10 +185,10 @@ export function AnnotationCanvas({
     <div className="canvas-shell aa-dark">
       <div className="canvas-tools">
         <span>Annotation workspace</span>
-        <button aria-label="Zoom out" title="Zoom out" onClick={() => setZoom((value) => Math.max(0.5, value - 0.2))}>−</button>
+        <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
         <strong>{Math.round(zoom * 100)}%</strong>
-        <button aria-label="Zoom in" title="Zoom in" onClick={() => setZoom((value) => Math.min(4, value + 0.2))}>+</button>
-        <button aria-label="Reset canvas view" title="Reset canvas view" onClick={() => { setZoom(1); setPan([0, 0]); }}>Reset</button>
+        <button aria-label="Zoom in" title="Zoom in" onClick={() => applyZoom(zoom + 0.1)}>+</button>
+        <button aria-label="Fit image" title="Fit image" onClick={() => { setZoom(1); setPan([0, 0]); }}>Fit</button>
       </div>
       <ul className="canvas-annotation-list" aria-label="Annotations on canvas">
         {annotations.map((annotation) => {
@@ -205,7 +214,11 @@ export function AnnotationCanvas({
         }}
         onWheel={(event) => {
           event.preventDefault();
-          setZoom((value) => Math.max(0.5, Math.min(4, value - event.deltaY * 0.001)));
+          const anchor = canvasPoint(event.clientX, event.clientY);
+          applyZoom(
+            clampCanvasZoom(zoom * Math.exp(-event.deltaY * 0.001)),
+            anchor,
+          );
         }}
       >
         <defs>

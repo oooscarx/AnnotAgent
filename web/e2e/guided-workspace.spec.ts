@@ -208,6 +208,17 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   )?.id;
   expect(reviewId).toBeTruthy();
   await page.goto(`/review/${reviewId}`);
+  await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
+  await page.reload();
+  const widthWithInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
+  await page.getByRole("button", { name: "Collapse details panel" }).click();
+  const widthWithoutInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
+  expect(widthWithoutInspector).toBeGreaterThan(widthWithInspector);
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.locator(".canvas-tools strong")).toHaveText("110%");
+  await page.getByRole("button", { name: "Fit image" }).click();
+  await expect(page.locator(".canvas-tools strong")).toHaveText("100%");
+  await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: /Open run context/ }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
   await page.getByRole("button", { name: "Review result" }).click();
