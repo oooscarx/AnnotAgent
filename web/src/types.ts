@@ -12,6 +12,68 @@ export type RunStatus =
   | "interrupted";
 
 export type ProjectReadiness = "incomplete" | "ready" | "configuration_issue";
+export type ProjectStage =
+  | "needs_data"
+  | "needs_labels"
+  | "needs_automation"
+  | "needs_model_binding"
+  | "ready_for_sample_test"
+  | "sample_test_needs_attention"
+  | "ready_to_activate"
+  | "ready_to_run"
+  | "running"
+  | "needs_review"
+  | "ready_to_export"
+  | "configuration_issue";
+
+export interface GuidedAction {
+  kind:
+    | "add_images"
+    | "define_labels"
+    | "choose_automation"
+    | "connect_model"
+    | "fix_automation"
+    | "test_samples"
+    | "review_test_results"
+    | "activate_automation"
+    | "run_dataset"
+    | "open_active_run"
+    | "review_results"
+    | "export_dataset"
+    | "view_automation"
+    | "view_runs";
+  label: string;
+  destination?: string;
+  enabled: boolean;
+  disabled_reason?: string;
+}
+
+export interface GuidanceBlocker {
+  code: string;
+  title: string;
+  explanation: string;
+  repair_action?: GuidedAction;
+}
+
+export interface ProjectGuidance {
+  project_id: string;
+  stage: ProjectStage;
+  completed_steps: number;
+  total_steps: number;
+  headline: string;
+  explanation: string;
+  primary_action: GuidedAction;
+  secondary_actions: GuidedAction[];
+  blockers: GuidanceBlocker[];
+  journey: {
+    id: string;
+    label: string;
+    state: "complete" | "current" | "upcoming" | "needs_attention" | "ready";
+    detail: string;
+    destination?: string;
+  }[];
+  updated_at: string;
+}
 export type ReviewStatus =
   | "needs_review"
   | "auto_accepted"
@@ -187,6 +249,18 @@ export interface ProjectSummary {
     status: RunStatus;
     terminal_reason?: string;
     created_at: string;
+    updated_at: string;
+  };
+}
+
+export interface ProjectWorkspaceSummary {
+  project: ProjectSummary;
+  guidance: ProjectGuidance;
+  readiness: {
+    project_id: string;
+    readiness: ProjectReadiness;
+    stage: ProjectStage;
+    blockers: GuidanceBlocker[];
     updated_at: string;
   };
 }

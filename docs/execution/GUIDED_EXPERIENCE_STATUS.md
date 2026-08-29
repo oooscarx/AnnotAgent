@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 4 — Guidance-led Project Journey
-- Last completed Milestone: 3 — Guided Project Creation
-- Latest Milestone commit: this document's containing Milestone 3 commit
+- Active Milestone: 5 — Guided Build
+- Last completed Milestone: 4 — Guidance-led Project Journey
+- Latest Milestone commit: this document's containing Milestone 4 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -19,8 +19,8 @@ Updated: 2026-08-30
 | 1 Guidance Domain | Complete | Rust derives one action from persisted data, Automation, sample-test, model, Run, and Review state; three HTTP projections pass. |
 | 2 Global IA | Complete | Five task entries, canonical legacy routes, Project-scoped Workflow, Settings registries, and explicit global filters pass. |
 | 3 Project Creation | Complete | Four-step wizard creates a real generic Project, imports real data, persists a model choice, and creates a registry-bounded Draft without requiring internal IDs. |
-| 4 Project Journey | In progress | Existing overview has real state but lacks Guidance Hero/timeline/one backend action. |
-| 5 Guided Build | Pending | Four persistent routes exist; language and server-guided completion remain. |
+| 4 Project Journey | Complete | Project Overview consumes one server summary containing Guidance, an eight-step Journey, readiness, blockers, repairs, Active Run, and at most two secondary actions. |
+| 5 Guided Build | In progress | Four persistent routes exist; language and server-guided completion remain. |
 | 6 Recipe + Advisor | Pending | Registry-bounded Advisor and label lanes exist; guided recipe/proposal hierarchy needs completion. |
 | 7 Dry Run | Pending | Sandbox execution is real; result-first summary/activation flow remains. |
 | 8 Run Workspace | Pending | Artifact/Replay context is real; Results/Debug modes and repair guidance remain. |
@@ -38,7 +38,7 @@ Updated: 2026-08-30
 | `npm run typecheck` | PASS |
 | `npm test` | PASS — 12 files, 31 tests |
 | `npm run build` | PASS — production bundle built |
-| `npm run test:e2e` | PASS — 11 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
+| `npm run test:e2e` | PASS — 12 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
 
 Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
 
@@ -64,6 +64,14 @@ Milestone 3 focused checks:
 - Mock is the offline path; external presets require both a concrete model ID and a workspace-private credential before creation. Custom-model placeholders cannot be persisted as model IDs.
 - Chromium at 720×450 has no horizontal overflow and keeps the scrollable wizard actions operable.
 
+Milestone 4 focused checks:
+
+- Rust Guidance emits eight ordered Journey steps, one current/attention/ready step, exactly one primary action, and at most two secondary actions for every covered state.
+- Project Overview reads `/api/projects/:id/summary`; React no longer uses its former parallel `deriveProjectNextAction` decision helper.
+- Project header always exposes images, Labels, active Automation, Active Run, Review count, and readiness. The Guidance Hero precedes activity and technical details.
+- A no-data Project shows the server blocker and `Add images` repair path; an Active Run restores as `Open active run` across reload without exposing a second Start action.
+- Focused Rust suites: Application 20 and Server 9 passed. Web typecheck, 31 unit tests, production build, and 12 executable Chromium E2E scenarios passed.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -74,14 +82,15 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Existing backend data and Artifact/Review paths render.
 - Initial route content waits for dashboard state; the false zero-Project loading flash is no longer present.
 - Guided Project creation presents annotation intent, data source, priority, and a recommended Automation before exposing generated YAML or internal IDs.
+- Project Overview now presents one server-selected next action, Journey progress, and blocker repairs before Recent Activity and Usage; schema, bindings, versions, import/export, and image records are collapsed under Advanced Project Details.
 - Project Overview exposes several equally prominent actions.
 - Run and Review default surfaces remain technically dense.
 
 ## Release Blocking remaining
 
-- `PASS`: 53
-- `PARTIAL`: 20
-- `OPEN`: 21
+- `PASS`: 54
+- `PARTIAL`: 21
+- `OPEN`: 19
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.

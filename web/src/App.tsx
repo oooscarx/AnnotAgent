@@ -13,7 +13,6 @@ import {
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
-import { deriveProjectNextAction } from "./projectWorkspace";
 import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
@@ -40,7 +39,9 @@ import type {
   PipelineArtifactType,
   PipelineSource,
   PipelineStep,
+  GuidedAction,
   ProjectSummary,
+  ProjectWorkspaceSummary,
   ReviewItem,
   RunEvent,
   RunAnnotationInspection,
@@ -354,6 +355,7 @@ export function App() {
             onOpenReview={() =>
               navigate(`/review?project_id=${encodeURIComponent(route.projectId)}`)
             }
+            onNavigate={navigate}
             onError={setError}
           />
         )}
@@ -993,7 +995,7 @@ function ProjectList({
 }
 
 function ProjectPage({
-  project,
+  project: initialProject,
   runs,
   events,
   onRefresh,
@@ -1001,18 +1003,24 @@ function ProjectPage({
   onOpenBuild,
   onOpenRun,
   onOpenReview,
+  onNavigate,
   onError,
 }: {
   project?: ProjectSummary;
   runs: HistoryRun[];
   events: RunEvent[];
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
   onOpenWorkflows: () => void;
   onOpenBuild: (step: "data" | "labels" | "pipeline" | "test") => void;
   onOpenRun: (runId: string) => void;
   onOpenReview: () => void;
+  onNavigate: (destination: string) => void;
   onError: (value: string) => void;
 }) {
+  const [workspace, setWorkspace] = useState<ProjectWorkspaceSummary>();
+  const activeWorkspace =
+    workspace?.project.id === initialProject?.id ? workspace : undefined;
+  const project = activeWorkspace?.project ?? initialProject;
   const [images, setImages] = useState<ImageItem[]>([]);
   const [starting, setStarting] = useState(false);
   const [workflowKey, setWorkflowKey] = useState("");
@@ -1026,6 +1034,27 @@ function ProjectPage({
   const [newLabel, setNewLabel] = useState("");
   const [skillCatalog, setSkillCatalog] = useState<SkillDetail[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const refreshWorkspace = async () => {
+    await onRefresh();
+    if (initialProject)
+      setWorkspace(await api.projectSummary(initialProject.id));
+  };
+  useEffect(() => {
+    if (!initialProject) {
+      setWorkspace(undefined);
+      return;
+    }
+    void api
+      .projectSummary(initialProject.id)
+      .then(setWorkspace)
+      .catch((error: Error) => onError(error.message));
+  }, [
+    initialProject?.id,
+    initialProject?.active_run?.updated_at,
+    initialProject?.active_batch?.event_sequence,
+    initialProject?.review_count,
+    initialProject?.readiness,
+  ]);
   useEffect(() => {
     if (project)
       void api
@@ -1062,6 +1091,12 @@ function ProjectPage({
         />
       </section>
     );
+  if (!activeWorkspace)
+    return (
+      <section className="page-stack">
+        <div className="loading-banner" role="status">Loading Project guidance…</div>
+      </section>
+    );
   const projectRuns = runs.filter((run) => run.project_name === project.name);
   const restoredRun = deriveProjectRunView(project);
   const activeRun = restoredRun.activeRunId;
@@ -1085,7 +1120,7 @@ function ProjectPage({
       (workflow) =>
         `${workflow.workflow_id}:${workflow.version}` === workflowKey,
     ) ?? project.active_workflow;
-  const primaryAction = deriveProjectNextAction(project);
+  const guidance = activeWorkspace.guidance;
   const exportAnnotations = (format: string) => {
     setExporting(format);
     setExportResult("");
@@ -1098,24 +1133,6 @@ function ProjectPage({
       )
       .catch((error: Error) => onError(error.message))
       .finally(() => setExporting(""));
-  };
-  const start = () => {
-    setStarting(true);
-    void api
-      .startRun(
-        project.id,
-        undefined,
-        crypto.randomUUID(),
-        selectedWorkflow.source.startsWith("published draft")
-          ? {
-              workflow_id: selectedWorkflow.workflow_id,
-              version: Number(selectedWorkflow.version),
-            }
-          : undefined,
-      )
-      .then(onRefresh)
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setStarting(false));
   };
   const startBatch = () => {
     setStarting(true);
@@ -1131,16 +1148,21 @@ function ProjectPage({
             }
           : undefined,
       )
-      .then(onRefresh)
+      .then(refreshWorkspace)
       .catch((error: Error) => onError(error.message))
       .finally(() => setStarting(false));
   };
-  const control = (action: "pause" | "resume" | "cancel") =>
-    activeRun &&
-    api
-      .control(activeRun, action)
-      .then(onRefresh)
-      .catch((error: Error) => onError(error.message));
+  const control = (action: "pause" | "resume" | "cancel") => {
+    const request = project.active_batch
+      ? api.controlBatch(project.active_batch.id, action)
+      : activeRun
+        ? api.control(activeRun, action)
+        : undefined;
+    if (request)
+      void request
+        .then(refreshWorkspace)
+        .catch((error: Error) => onError(error.message));
+  };
   const importAnnotations = () => {
     if (!importSource.trim()) return onError("Choose a workspace-local annotation file or directory.");
     setImportResult("Import running…");
@@ -1150,7 +1172,7 @@ function ProjectPage({
         setImportResult(
           `${report.dry_run ? "Dry run" : "Imported"}: ${report.imported_count} accepted, ${report.skipped_count} skipped\n${[...report.warnings, ...report.issues.map((issue) => `${issue.record}: ${issue.message}`)].join("\n")}`,
         );
-        if (!report.dry_run) onRefresh();
+        if (!report.dry_run) void refreshWorkspace();
       })
       .catch((error: Error) => {
         setImportResult("");
@@ -1164,7 +1186,7 @@ function ProjectPage({
       .addProjectLabel(project.id, labelTaskId, newLabel.trim())
       .then(() => {
         setNewLabel("");
-        onRefresh();
+        void refreshWorkspace();
       })
       .catch((error: Error) => onError(error.message));
   };
@@ -1195,96 +1217,114 @@ function ProjectPage({
     });
     void api
       .setProjectSkills(project.id, enabled)
-      .then(onRefresh)
+      .then(refreshWorkspace)
       .catch((error: Error) => onError(error.message));
   };
-  const runPrimaryAction = () => {
-    if (primaryAction.kind === "active_run") return onOpenRun(primaryAction.runId);
-    if (primaryAction.kind === "active_batch")
-      return document.getElementById("project-active-run")?.scrollIntoView();
-    if (primaryAction.kind === "build") return onOpenBuild(primaryAction.step);
-    if (primaryAction.kind === "review") return onOpenReview();
-    return start();
+  const runGuidedAction = (action: GuidedAction) => {
+    if (!action.enabled) return;
+    if (action.kind === "run_dataset") return startBatch();
+    if (action.kind === "export_dataset") {
+      const details = document.getElementById("project-advanced-details") as HTMLDetailsElement | null;
+      if (details) details.open = true;
+      return window.requestAnimationFrame(() =>
+        document.getElementById("project-export")?.scrollIntoView({ behavior: "smooth" }),
+      );
+    }
+    if (action.kind === "open_active_run" && project.active_batch)
+      return document.getElementById("project-active-run")?.scrollIntoView({ behavior: "smooth" });
+    if (action.destination) return onNavigate(action.destination);
   };
+  const openJourneyStep = (step: ProjectWorkspaceSummary["guidance"]["journey"][number]) => {
+    if (!step.destination) return;
+    if (step.id === "export")
+      return runGuidedAction({
+        kind: "export_dataset",
+        label: "Export dataset",
+        destination: step.destination,
+        enabled: true,
+      });
+    onNavigate(step.destination);
+  };
+  const labelCount = project.annotation_schema.reduce(
+    (count, task) => count + task.labels.length,
+    0,
+  );
+  const projectUsage = projectRuns.reduce(
+    (usage, run) => ({
+      tokens: usage.tokens + run.input_tokens + run.output_tokens,
+      cost: usage.cost + Number(run.cost || 0),
+    }),
+    { tokens: 0, cost: 0 },
+  );
   return (
     <section className="page-stack">
       <nav className="section-tabs" aria-label={`${project.name} workspace`}>
         <button className="active" aria-current="page">Overview</button>
         <button onClick={() => onOpenBuild("data")}>Build</button>
-        <button onClick={() => project.last_run && onOpenRun(project.last_run.id)}>Runs</button>
+        <button onClick={() => onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`)}>Runs</button>
         <button onClick={onOpenReview}>Review</button>
-        <button onClick={() => document.getElementById("project-export")?.scrollIntoView()}>Export</button>
+        <button onClick={() => runGuidedAction({ kind: "export_dataset", label: "Export dataset", enabled: true })}>Export</button>
       </nav>
-      <div className="toolbar-panel project-heading">
+      <header className="project-context-header">
         <div>
-          <span className="eyebrow">Project · {project.id}</span>
+          <span className="eyebrow">Project workspace</span>
           <h2>{project.name}</h2>
           <p>{project.description || "No Project description provided."}</p>
-          <div className="context-line">
-            <span>{project.image_count} images</span>
-            <span>Pipeline: {project.default_workflow_version?.name ?? "Not published"}</span>
-            <span>Active run: {project.active_run?.id.slice(0, 8) ?? project.active_batch?.id.slice(0, 8) ?? "None"}</span>
-            <span>{project.review_count} need review</span>
-            <Status status={project.readiness} />
-          </div>
-          <label>
-            Workflow Version for next Run
-            <select
-              value={workflowKey}
-              disabled={Boolean(activeRun)}
-              onChange={(event) => setWorkflowKey(event.target.value)}
-            >
-              {project.available_workflow_versions.map((workflow) => (
-                <option
-                  key={`${workflow.workflow_id}:${workflow.version}`}
-                  value={`${workflow.workflow_id}:${workflow.version}`}
-                >
-                  {workflow.name} · v{workflow.version}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
-        <div className="button-row" aria-label="Run controls">
+        <div className="project-context-facts" aria-label="Project status">
+          <span><b>{project.image_count}</b> Images</span>
+          <span><b>{labelCount}</b> Labels</span>
+          <span><b>{project.default_workflow_version?.name ?? "Not active"}</b> Automation</span>
+          <span><b>{project.active_run?.status ?? project.active_batch?.status ?? "None"}</b> Active run</span>
+          <span><b>{project.review_count}</b> Needs review</span>
+          <span><b>{guidance.stage.replaceAll("_", " ")}</b> Readiness</span>
+        </div>
+      </header>
+
+      <section className="guidance-hero" aria-labelledby="project-guidance-title">
+        <div className="guidance-copy">
+          <span className="eyebrow">Next step · {guidance.completed_steps} of {guidance.total_steps} complete</span>
+          <h2 id="project-guidance-title">{guidance.headline}</h2>
+          <p>{guidance.explanation}</p>
+          <div className="guidance-progress" aria-label={`${guidance.completed_steps} of ${guidance.total_steps} journey steps complete`}>
+            <i style={{ width: `${(guidance.completed_steps / guidance.total_steps) * 100}%` }} />
+          </div>
+        </div>
+        <div className="guidance-actions">
           <button
             className="primary"
-            disabled={starting}
-            onClick={runPrimaryAction}
+            disabled={starting || !guidance.primary_action.enabled}
+            title={guidance.primary_action.disabled_reason}
+            onClick={() => runGuidedAction(guidance.primary_action)}
           >
-            {starting ? "Starting…" : primaryAction.label}
+            {starting ? "Starting…" : guidance.primary_action.label}
           </button>
-          <button
-            disabled={restoredRun.startDisabled || starting || project.readiness !== "ready"}
-            title={
-              activeRun
-                ? "This Project already has an active Run or Dataset Batch"
-                : undefined
-            }
-            onClick={startBatch}
-          >
-            {starting ? "Starting…" : "Start dataset batch"}
-          </button>
-          {activeRun && visibleStatus === "running" && (
-            <button onClick={() => control("pause")}>
-              <img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" />
-              Pause
-            </button>
-          )}
-          {activeRun && visibleStatus === "paused" && (
-            <button onClick={() => control("resume")}>
-              <img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" />
-              Resume
-            </button>
-          )}
-          {activeRun && (
-            <button className="danger" onClick={() => control("cancel")}>
-              <img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" />
-              Cancel
-            </button>
-          )}
+          {guidance.secondary_actions.slice(0, 2).map((action) => (
+            <button key={`${action.kind}:${action.destination}`} disabled={!action.enabled} title={action.disabled_reason} onClick={() => runGuidedAction(action)}>{action.label}</button>
+          ))}
         </div>
-      </div>
-      <div className="run-state-grid" id="project-active-run">
+        {guidance.blockers.length > 0 && <div className="guidance-blockers" aria-label="Project blockers">
+          {guidance.blockers.map((blocker) => <article key={blocker.code}>
+            <span aria-hidden="true">!</span>
+            <div><strong>{blocker.title}</strong><small>{blocker.explanation}</small></div>
+            {blocker.repair_action && blocker.repair_action.kind !== guidance.primary_action.kind && <button onClick={() => runGuidedAction(blocker.repair_action!)}>{blocker.repair_action.label}</button>}
+          </article>)}
+        </div>}
+      </section>
+
+      <section className="journey-panel" aria-labelledby="project-journey-title">
+        <div className="section-heading"><div><span className="eyebrow">Project journey</span><h2 id="project-journey-title">From data to compatible export</h2></div><small>Server-owned state · updated {new Date(guidance.updated_at).toLocaleString()}</small></div>
+        <ol className="journey-timeline">
+          {guidance.journey.map((step, index) => <li key={step.id} className={step.state}>
+            <button onClick={() => openJourneyStep(step)} disabled={!step.destination} aria-label={`${step.label}: ${step.detail}`}>
+              <i aria-hidden="true">{step.state === "complete" ? "✓" : index + 1}</i>
+              <span><strong>{step.label}</strong><small>{step.detail}</small></span>
+              <b>{step.state.replaceAll("_", " ")}</b>
+            </button>
+          </li>)}
+        </ol>
+      </section>
+      {(project.active_batch || project.active_run || project.last_run) && <div className="run-state-grid" id="project-active-run">
         <Panel title="Active Run" eyebrow="Server-owned state">
           {project.active_batch ? (
             <>
@@ -1300,11 +1340,21 @@ function ProjectPage({
                 label="Progress events"
                 value={String(project.active_batch.event_sequence)}
               />
+              <div className="button-row" aria-label="Active Batch controls">
+                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" /> Pause</button>}
+                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" /> Resume</button>}
+                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" /> Cancel</button>
+              </div>
             </>
           ) : project.active_run ? (
             <>
               <Fact label="Run" value={project.active_run.id.slice(0, 8)} />
               <Status status={project.active_run.status} />
+              <div className="button-row" aria-label="Active Run controls">
+                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" /> Pause</button>}
+                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" /> Resume</button>}
+                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" /> Cancel</button>
+              </div>
             </>
           ) : (
             <Empty
@@ -1331,7 +1381,7 @@ function ProjectPage({
             />
           )}
         </Panel>
-      </div>
+      </div>}
       {activeRun && (
         <div className="run-progress aa-dark" aria-live="polite">
           <div>
@@ -1359,7 +1409,40 @@ function ProjectPage({
           </pre>
         </div>
       )}
-      <div className="project-overview-grid">
+      <div className="project-support-grid">
+        <Panel title="Recent activity" eyebrow="Latest dataset work">
+          {projectRuns.length ? <div className="activity-list">
+            {projectRuns.slice(0, 3).map((run) => <button key={run.id} onClick={() => onOpenRun(run.id)}><span><strong>{run.workflow_name}</strong><small>{new Date(run.updated_at).toLocaleString()}</small></span><Status status={run.status} /></button>)}
+          </div> : <Empty title="No Runs yet" detail="Dataset activity will appear after the first active Automation Run." />}
+        </Panel>
+        <Panel title="Usage" eyebrow="Persisted across Project Runs">
+          <div className="usage-summary"><span><b>{projectRuns.length}</b> Runs</span><span><b>{projectUsage.tokens.toLocaleString()}</b> Tokens</span><span><b>${projectUsage.cost.toFixed(4)}</b> Cost</span></div>
+        </Panel>
+      </div>
+
+      <details className="advanced-project-details" id="project-advanced-details">
+        <summary><span><strong>Advanced Project Details</strong><small>Schema, model bindings, Skills, versions, import, export, and image records</small></span><b aria-hidden="true">⌄</b></summary>
+        <div className="project-overview-grid">
+        <Panel title="Run configuration" eyebrow="Immutable Workflow selection">
+          <label>
+            Workflow Version for next Run
+            <select
+              value={workflowKey}
+              disabled={Boolean(activeRun || project.active_batch)}
+              onChange={(event) => setWorkflowKey(event.target.value)}
+            >
+              {project.available_workflow_versions.map((workflow) => (
+                <option
+                  key={`${workflow.workflow_id}:${workflow.version}`}
+                  value={`${workflow.workflow_id}:${workflow.version}`}
+                >
+                  {workflow.name} · v{workflow.version}
+                </option>
+              ))}
+            </select>
+          </label>
+          <small>The Guidance action starts the Dataset with this exact immutable Version.</small>
+        </Panel>
         <Panel title="Dataset" eyebrow="Project-owned">
           <Fact label="Root" value={project.dataset.root} />
           <Fact label="Images" value={project.dataset.image_count} />
@@ -1542,8 +1625,8 @@ function ProjectPage({
           <button onClick={importAnnotations}>{importDryRun ? "Preview import" : "Import to Review"}</button>
           {importResult && <pre className="import-report" aria-live="polite">{importResult}</pre>}
         </Panel>
-      </div>
-      <ProjectAgentActivity projectId={project.id} onError={onError} />
+        </div>
+        <ProjectAgentActivity projectId={project.id} onError={onError} />
       <Panel title="Dataset images" eyebrow={`${images.length} visible`}>
         <div className="image-grid">
           {images.map((image) => (
@@ -1566,6 +1649,7 @@ function ProjectPage({
           )}
         </div>
       </Panel>
+      </details>
     </section>
   );
 }

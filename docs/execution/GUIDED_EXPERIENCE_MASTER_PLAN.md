@@ -85,8 +85,8 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | 1 | deterministic Rust Guidance domain, engine, and API | complete |
 | 2 | task-centered global information architecture | complete |
 | 3 | guided Project creation | complete |
-| 4 | Guidance-led Project Journey workspace | in progress |
-| 5 | guided four-step Build | pending |
+| 4 | Guidance-led Project Journey workspace | complete |
+| 5 | guided four-step Build | in progress |
 | 6 | Automation Recipe and controlled Advisor proposal | pending |
 | 7 | outcome-first sample testing and activation | pending |
 | 8 | Results-first Run workspace with optional Debug | pending |

@@ -5,7 +5,8 @@ mod published_run;
 
 pub use guidance::{
     GuidanceBlocker, GuidedAction, GuidedActionKind, ProjectGuidance, ProjectGuidanceInput,
-    ProjectReadinessSummary, ProjectStage, SampleTestState, derive_project_guidance,
+    ProjectJourneyState, ProjectJourneyStep, ProjectReadinessSummary, ProjectStage,
+    SampleTestState, derive_project_guidance,
 };
 
 use std::{

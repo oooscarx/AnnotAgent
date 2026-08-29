@@ -16,6 +16,8 @@
   --aa-primary: #2563EB;
   --aa-primary-hover: #1D4ED8;
   --aa-primary-soft: #DBEAFE;
+  --aa-accent: var(--aa-primary);
+  --aa-accent-strong: var(--aa-primary-hover);
   --aa-teal: #00B3A4;
   --aa-teal-text: #0F766E;
   --aa-teal-soft: #CCFBF1;

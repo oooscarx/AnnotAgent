@@ -91,6 +91,50 @@ test("create and open a generic Project", async ({ page, request }) => {
   await page.goto(`/projects/${projectId}`);
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(page.locator(".guidance-hero h2")).toBeVisible();
+  await expect(page.locator(".guidance-actions .primary")).toHaveCount(1);
+  await expect(page.locator(".guidance-actions .primary")).toHaveText(/Test on samples|Activate automation/);
+  const restoredAction = await page.locator(".guidance-actions .primary").textContent();
+  await expect(page.locator(".journey-timeline li")).toHaveCount(8);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: `${screenshots}/03-project-guidance.png`, fullPage: true });
+  await page.reload();
+  await expect(page.locator(".guidance-actions .primary")).toHaveText(restoredAction ?? "");
+});
+
+test("Project blocker exposes one server-owned repair action", async ({ page, request }) => {
+  const emptyId = `guided-empty-${stamp}`;
+  const created = await request.post("/api/projects", {
+    data: {
+      id: emptyId,
+      yaml: `version: 1
+project:
+  name: Empty Guidance ${stamp}
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: subject-class
+    display_name: Subject
+    kind: classification
+    labels: [subject]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`,
+    },
+  });
+  expect(created.status()).toBe(201);
+  await page.goto(`/projects/${emptyId}`);
+  await expect(page.locator(".guidance-actions .primary")).toHaveText("Add images");
+  await expect(page.getByLabel("Project blockers")).toContainText("No images yet");
+  await expect(page.locator(".journey-timeline li.current")).toContainText("Data");
 });
 
 test("Build navigation preserves the Project and imports real data", async ({ page }) => {
@@ -296,9 +340,26 @@ test("Review workspace has tablet and mobile layouts without horizontal overflow
 test("an active Run restores from the server and locks duplicate Start", async ({ page, request }) => {
   const state = await dashboard(request);
   const project = state.projects.find((item: { id: string }) => item.id === projectId);
+  const summaryResponse = await request.get(`/api/projects/${projectId}/summary`);
+  expect(summaryResponse.ok()).toBeTruthy();
+  const summary = await summaryResponse.json();
   const activeId = "00000000-0000-4000-8000-000000000001";
   project.active_run = { id: activeId, status: "running" };
   project.last_run = project.active_run;
+  summary.project.active_run = project.active_run;
+  summary.guidance.stage = "running";
+  summary.guidance.headline = "Your dataset run is in progress.";
+  summary.guidance.explanation = "Open the active Run to follow server-owned progress.";
+  summary.guidance.primary_action = {
+    kind: "open_active_run",
+    label: "Open active run",
+    destination: `/runs/${activeId}`,
+    enabled: true,
+    disabled_reason: null,
+  };
+  summary.guidance.journey = summary.guidance.journey.map((step: { id: string; state: string; detail: string }) =>
+    step.id === "full_run" ? { ...step, state: "current", detail: "In progress" } : step,
+  );
   state.runs.unshift({
     id: activeId,
     project_name: projectName,
@@ -325,9 +386,11 @@ test("an active Run restores from the server and locks duplicate Start", async (
     updated_at: new Date().toISOString(),
   });
   await page.route("**/api/projects", (route) => route.fulfill({ json: state }));
+  await page.route(`**/api/projects/${projectId}/summary`, (route) => route.fulfill({ json: summary }));
   await page.goto(`/projects/${projectId}`);
   await expect(page.getByRole("button", { name: "Open active run" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start dataset batch" })).toBeDisabled();
+  await expect(page.locator(".guidance-actions .primary")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Run dataset" })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("button", { name: "Open active run" })).toBeVisible();
 });

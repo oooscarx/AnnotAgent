@@ -35,6 +35,8 @@ pub enum GuidedActionKind {
     OpenActiveRun,
     ReviewResults,
     ExportDataset,
+    ViewAutomation,
+    ViewRuns,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -54,6 +56,25 @@ pub struct GuidanceBlocker {
     pub repair_action: Option<GuidedAction>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectJourneyState {
+    Complete,
+    Current,
+    Upcoming,
+    NeedsAttention,
+    Ready,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectJourneyStep {
+    pub id: String,
+    pub label: String,
+    pub state: ProjectJourneyState,
+    pub detail: String,
+    pub destination: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectGuidance {
     pub project_id: String,
@@ -65,6 +86,7 @@ pub struct ProjectGuidance {
     pub primary_action: GuidedAction,
     pub secondary_actions: Vec<GuidedAction>,
     pub blockers: Vec<GuidanceBlocker>,
+    pub journey: Vec<ProjectJourneyStep>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -155,6 +177,7 @@ pub fn derive_project_guidance(input: ProjectGuidanceInput) -> ProjectGuidance {
     let labels_complete = input.has_labels;
     let automation_complete = input.has_automation;
     let binding_complete = input.has_automation && input.has_model_binding;
+    let automation_ready = automation_complete && input.automation_valid && binding_complete;
     let sample_complete = input.sample_test == SampleTestState::Passed;
     let activation_complete = input.automation_activated;
     let run_complete = input.has_completed_run;
@@ -162,8 +185,7 @@ pub fn derive_project_guidance(input: ProjectGuidanceInput) -> ProjectGuidance {
     let completed_steps = [
         data_complete,
         labels_complete,
-        automation_complete,
-        binding_complete,
+        automation_ready,
         sample_complete,
         activation_complete,
         run_complete,
@@ -360,10 +382,200 @@ pub fn derive_project_guidance(input: ProjectGuidanceInput) -> ProjectGuidance {
             ProjectStage::ReadyToRun,
             "Run the active Automation on your dataset.",
             "The Project has data, Labels, a tested model connection, and an immutable Automation Version.",
-            action(GuidedActionKind::RunDataset, "Run dataset", project_path),
+            action(
+                GuidedActionKind::RunDataset,
+                "Run dataset",
+                project_path.clone(),
+            ),
             Vec::new(),
         )
     };
+
+    let mut secondary_actions = Vec::new();
+    if automation_complete
+        && !matches!(
+            primary_action.kind,
+            GuidedActionKind::ChooseAutomation | GuidedActionKind::FixAutomation
+        )
+    {
+        secondary_actions.push(action(
+            GuidedActionKind::ViewAutomation,
+            "View automation",
+            build_path("pipeline"),
+        ));
+    }
+    if (input.has_completed_run || input.active_run_id.is_some() || input.active_batch_id.is_some())
+        && secondary_actions.len() < 2
+    {
+        secondary_actions.push(action(
+            GuidedActionKind::ViewRuns,
+            "View runs",
+            format!("/runs?project_id={}", input.project_id),
+        ));
+    }
+
+    let journey_step = |id: &str,
+                        label: &str,
+                        state: ProjectJourneyState,
+                        detail: String,
+                        destination: Option<String>| ProjectJourneyStep {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        state,
+        detail,
+        destination,
+    };
+    let journey = vec![
+        journey_step(
+            "data",
+            "Data",
+            if data_complete {
+                ProjectJourneyState::Complete
+            } else if stage == ProjectStage::NeedsData {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if data_complete {
+                format!("Complete · {} images", input.image_count)
+            } else {
+                "Add at least one supported image".to_owned()
+            },
+            Some(build_path("data")),
+        ),
+        journey_step(
+            "labels",
+            "Labels",
+            if labels_complete {
+                ProjectJourneyState::Complete
+            } else if stage == ProjectStage::NeedsLabels {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if labels_complete {
+                "Complete · Label Schema defined".to_owned()
+            } else {
+                "Define what the Project should annotate".to_owned()
+            },
+            Some(build_path("labels")),
+        ),
+        journey_step(
+            "automation",
+            "Automation",
+            if automation_ready {
+                ProjectJourneyState::Complete
+            } else if matches!(
+                stage,
+                ProjectStage::NeedsModelBinding | ProjectStage::ConfigurationIssue
+            ) {
+                ProjectJourneyState::NeedsAttention
+            } else if stage == ProjectStage::NeedsAutomation {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if automation_ready {
+                "Draft ready · model connection available".to_owned()
+            } else if automation_complete && !input.automation_valid {
+                "Resolve blocking validation issues".to_owned()
+            } else if automation_complete && !binding_complete {
+                "Connect the model used by this Draft".to_owned()
+            } else {
+                "Choose a recipe or Advisor proposal".to_owned()
+            },
+            Some(build_path("pipeline")),
+        ),
+        journey_step(
+            "sample_test",
+            "Sample test",
+            if sample_complete {
+                ProjectJourneyState::Complete
+            } else if stage == ProjectStage::SampleTestNeedsAttention {
+                ProjectJourneyState::NeedsAttention
+            } else if stage == ProjectStage::ReadyForSampleTest {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            match input.sample_test {
+                SampleTestState::Passed => "Complete · sandbox checks passed".to_owned(),
+                SampleTestState::NeedsAttention => "Results need attention".to_owned(),
+                SampleTestState::NotRun => "Not run".to_owned(),
+            },
+            Some(build_path("test")),
+        ),
+        journey_step(
+            "activation",
+            "Activation",
+            if activation_complete {
+                ProjectJourneyState::Complete
+            } else if stage == ProjectStage::ReadyToActivate {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if activation_complete {
+                "Complete · immutable Version active".to_owned()
+            } else {
+                "Not activated".to_owned()
+            },
+            Some(build_path("test")),
+        ),
+        journey_step(
+            "full_run",
+            "Full run",
+            if run_complete {
+                ProjectJourneyState::Complete
+            } else if matches!(stage, ProjectStage::ReadyToRun | ProjectStage::Running) {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if run_complete {
+                "Complete · results persisted".to_owned()
+            } else if input.active_run_id.is_some() || input.active_batch_id.is_some() {
+                "In progress".to_owned()
+            } else {
+                "Not started".to_owned()
+            },
+            Some(format!("/runs?project_id={}", input.project_id)),
+        ),
+        journey_step(
+            "review",
+            "Review",
+            if review_complete {
+                ProjectJourneyState::Complete
+            } else if stage == ProjectStage::NeedsReview {
+                ProjectJourneyState::Current
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if input.review_count > 0 {
+                format!("{} items need a decision", input.review_count)
+            } else if run_complete {
+                "Complete · no unresolved items".to_owned()
+            } else {
+                "No items yet".to_owned()
+            },
+            Some(format!("/review?project_id={}", input.project_id)),
+        ),
+        journey_step(
+            "export",
+            "Export",
+            if stage == ProjectStage::ReadyToExport {
+                ProjectJourneyState::Ready
+            } else {
+                ProjectJourneyState::Upcoming
+            },
+            if run_complete && input.review_count == 0 {
+                "Ready for a compatible format".to_owned()
+            } else {
+                "Not ready".to_owned()
+            },
+            Some(format!("{project_path}/export")),
+        ),
+    ];
 
     ProjectGuidance {
         project_id: input.project_id,
@@ -373,8 +585,9 @@ pub fn derive_project_guidance(input: ProjectGuidanceInput) -> ProjectGuidance {
         headline: headline.to_owned(),
         explanation: explanation.to_owned(),
         primary_action,
-        secondary_actions: Vec::new(),
+        secondary_actions,
         blockers,
+        journey,
         updated_at: input.updated_at,
     }
 }
@@ -409,6 +622,21 @@ mod tests {
         assert_eq!(guidance.primary_action.kind, action);
         assert!(guidance.primary_action.enabled);
         assert_eq!(guidance.total_steps, 8);
+        assert_eq!(guidance.journey.len(), 8);
+        assert!(guidance.secondary_actions.len() <= 2);
+        assert_eq!(
+            guidance
+                .journey
+                .iter()
+                .filter(|step| matches!(
+                    step.state,
+                    ProjectJourneyState::Current
+                        | ProjectJourneyState::NeedsAttention
+                        | ProjectJourneyState::Ready
+                ))
+                .count(),
+            1
+        );
     }
 
     #[test]

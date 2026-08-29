@@ -49,3 +49,7 @@ The remembered Project helps the Project switcher but never filters `/runs` or `
 ## GE-012 — Guided creation composes existing product writes
 
 The four-step creation wizard orchestrates the existing Settings, Project creation, image import, and registry-bounded Advisor endpoints. It does not persist a parallel onboarding record or simulate completion. Project creation remains successful if a later import or recommendation fails; the resulting Project opens with the exact warning and Guidance derives the remaining repair step from server state. Generated IDs and YAML are available under Advanced controls, while user-facing intent and Label names are the default vocabulary.
+
+## GE-013 — Journey steps travel with server Guidance
+
+The Application Guidance projection includes the ordered Data, Labels, Automation, Sample Test, Activation, Full Run, Review, and Export steps. Each carries a semantic state, user-facing detail, and destination. React renders this projection and never reconstructs the primary action from Project fields. A downstream record may remain complete after an upstream configuration changes, but only the backend-selected next step is `current`, `needs_attention`, or `ready`. Project Overview requests the combined summary so header, readiness, blockers, Journey, and actions are one coherent server snapshot.

@@ -2821,6 +2821,12 @@ mod tests {
         .await;
         assert_eq!(guidance["stage"], json!("needs_data"));
         assert_eq!(guidance["primary_action"]["kind"], json!("add_images"));
+        assert_eq!(guidance["journey"].as_array().map(Vec::len), Some(8));
+        assert_eq!(guidance["journey"][0]["state"], json!("current"));
+        assert_eq!(
+            guidance["journey"][0]["detail"],
+            json!("Add at least one supported image")
+        );
         assert_eq!(
             guidance["primary_action"]["destination"],
             json!("/projects/guided-api/build/data")

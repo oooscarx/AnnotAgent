@@ -118,7 +118,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Refresh Project preserves Stage | OPEN | Stage does not exist yet. |
+| Refresh Project preserves Stage | PASS | Browser reload refetches the server summary and preserves the exact Guidance primary action; persisted Dry Run evidence is covered in Rust. |
 | Refresh Run preserves Image | PASS | Image query state exists and E2E passes. |
 | Refresh Debug preserves Node | PARTIAL | Node query exists; Debug mode does not. |
 | URL reopens same Artifact | PASS | Artifact query identity is parsed and used. |
@@ -134,7 +134,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | --- | --- | --- |
 | Guided default hides ArtifactId | OPEN | Run inspector exposes technical IDs in default layout. |
 | Guided default hides full DAG | PARTIAL | Build shows lanes/graph technical content by default. |
-| One Primary Button per page | OPEN | Project and several workspaces expose competing actions. |
+| One Primary Button per page | PARTIAL | Project Overview renders exactly one server-selected solid action; remaining Build/Run/Review/Export surfaces are gated by later Milestones. |
 | No nested Cards | OPEN | Requires component/layout audit after journey refactor. |
 | At most three equal first-screen metrics | OPEN | Existing dashboards and Run surfaces exceed outcome hierarchy. |
 | Technical metadata collapsed by default | PARTIAL | Some details collapse; inspector remains prominent. |
@@ -193,3 +193,13 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Priority and optional maximum cost map into real Advisor latency, accuracy, cost, and Review Gate constraints. Mock remains the deterministic offline option; external providers require a concrete model and a workspace-private credential.
 - `npm run typecheck`, 31 Web unit tests, production build, and 11 executable Chromium E2E scenarios pass. One Crop-link scenario remains explicitly conditional on an available Crop Artifact fixture.
 - Browser evidence: `docs/execution/screenshots/02-guided-project-wizard.png`; the same journey verifies no horizontal overflow at 720×450.
+
+## Milestone 4 evidence
+
+- Extended the Rust Guidance projection with eight ordered `ProjectJourneyStep` records and semantic states while retaining the deterministic precedence of Active Run, missing prerequisites, sample evidence, activation, Review, and Export.
+- The server summary test proves Guidance, readiness, blocker repair, Journey detail, and Project data are returned as one coherent snapshot.
+- Project Overview removed the TypeScript primary-action derivation. It displays the Project Header, one Guidance Hero action, at most two server secondary actions, server blockers, and the Journey before Recent Activity and Usage.
+- Workflow selection, Schema, model bindings, Skills, import/export, Agent evidence, and image records remain functional under collapsed Advanced Project Details. Active Run/Batch controls still invoke their distinct real APIs.
+- Browser coverage creates a no-data Project and verifies its server-owned repair action; restores a mocked server-owned Active Run across reload; verifies one primary action and no duplicate Run action; and checks the 720px Project journey for horizontal overflow.
+- Application 20 tests, Server 9 tests, Web typecheck, 31 Web unit tests, production build, and 12 executable Chromium E2E tests pass. One Crop lineage test remains explicitly conditional on fixture availability.
+- Browser evidence: `docs/execution/screenshots/03-project-guidance.png`.

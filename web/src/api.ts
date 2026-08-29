@@ -8,6 +8,7 @@ import type {
   ModelBinding,
   ProjectWorkflow,
   ProjectSummary,
+  ProjectWorkspaceSummary,
   NodeReplayReport,
   RunNodeArtifactInspection,
   RunAnnotationInspection,
@@ -52,6 +53,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, yaml }),
     }),
+  projectSummary: (projectId: string) =>
+    request<ProjectWorkspaceSummary>(`/api/projects/${projectId}/summary`),
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
   importImages: (projectId: string, source: string) =>
@@ -94,6 +97,8 @@ export const api = {
     ),
   control: (runId: string, action: "pause" | "resume" | "cancel") =>
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),
+  controlBatch: (batchId: string, action: "pause" | "resume" | "cancel") =>
+    request(`/api/batches/${batchId}/${action}`, { method: "POST" }),
   runEvents: (runId: string) =>
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
   runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
