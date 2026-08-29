@@ -228,6 +228,10 @@ main { min-width: 0; padding-bottom: 48px; }
 .aa-annotation-shape { vector-effect: non-scaling-stroke; paint-order: stroke fill; filter: drop-shadow(0 0 2px var(--aa-annotation-halo)); }
 .aa-annotation-label { paint-order: stroke fill; stroke: var(--aa-annotation-halo); stroke-width: 3px; stroke-linejoin: round; }
 .annotation-control { vector-effect: non-scaling-stroke; }
+.bbox-resize-control { cursor: nwse-resize; }
+.bbox-resize-control[data-corner="ne"], .bbox-resize-control[data-corner="sw"] { cursor: nesw-resize; }
+.bbox-resize-hit-area { fill: transparent; stroke: none; }
+.bbox-resize-dot { pointer-events: none; }
 .canvas-hint { margin: 0; padding: 8px 12px; border-top: 1px solid var(--aa-border); color: var(--aa-text-muted); font: 10px var(--aa-font-sans); }
 .inspector { display: flex; flex-direction: column; gap: 14px; }
 .inspector > h2 { margin-bottom: 0; }

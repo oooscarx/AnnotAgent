@@ -353,19 +353,31 @@ function AnnotationShape({
             ["sw", x, y + height],
             ["se", x + width, y + height],
           ] as const).map(([corner, cx, cy]) => (
-            <circle
+            <g
               key={corner}
-              cx={cx * canvasWidth}
-              cy={cy * canvasHeight}
-              r={9}
-              fill="var(--aa-bg)"
-              stroke={color}
-              strokeWidth={3}
+              className="bbox-resize-control"
+              data-corner={corner}
               role="button"
               tabIndex={0}
               aria-label={`Resize bounding box from ${corner} corner`}
               onPointerDown={(event) => onBboxResize(corner, event)}
-            />
+            >
+              <circle
+                cx={cx * canvasWidth}
+                cy={cy * canvasHeight}
+                r={12}
+                className="bbox-resize-hit-area"
+              />
+              <circle
+                cx={cx * canvasWidth}
+                cy={cy * canvasHeight}
+                r={5.5}
+                fill="var(--aa-bg)"
+                stroke={color}
+                strokeWidth={2}
+                className="annotation-control bbox-resize-dot"
+              />
+            </g>
           ))}
       </g>
     );
