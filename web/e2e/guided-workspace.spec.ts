@@ -198,6 +198,22 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   await expect(page.locator(".run-node-timeline button").first()).toBeVisible();
 });
 
+test("global Runs and Review ignore hidden active Project state", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate((id) => window.localStorage.setItem("annotagent.activeProjectId", id), projectId);
+  await page.goto("/runs");
+  await expect(page.getByLabel("Project filter")).toHaveValue("");
+  await expect(page).toHaveURL(/\/runs$/);
+
+  await page.goto("/review");
+  await expect(page.getByLabel("Project filter")).toHaveValue("");
+  await expect(page).toHaveURL(/\/review$/);
+
+  await page.goto(`/review?project_id=${projectId}`);
+  await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
+  await expect(page).toHaveURL(new RegExp(`/review\\?project_id=${projectId}$`));
+});
+
 test("Run URL refresh restores image and node context", async ({ page }) => {
   await page.goto(`/runs/${runId}?image=0&node=core.image_input`);
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
@@ -288,7 +304,7 @@ test("Review workspace has tablet and mobile layouts without horizontal overflow
   await expect(page.locator(".review-queue .queue-items")).toHaveCSS("display", "flex");
   await expect(page.locator(".review-action-bar")).toHaveCSS("position", "static");
   await expect(page.getByRole("heading", { name: "Review", level: 1 })).toHaveCSS("outline-style", "none");
-  await expect(page.locator(".project-switch select")).toBeVisible();
+  await expect(page.getByLabel("Project filter")).toBeVisible();
   const mobileLayout = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,

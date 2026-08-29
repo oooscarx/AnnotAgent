@@ -226,6 +226,7 @@ main { min-width: 0; padding-bottom: 48px; }
 .review-layout.inspector-collapsed { grid-template-columns: minmax(210px, 15rem) minmax(0, 1fr); }
 .review-queue, .inspector { position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow: auto; }
 .review-queue h2 b { color: var(--aa-teal-text); font: 650 13px var(--aa-font-sans); }
+.review-project-filter { display: grid; gap: 5px; margin: 10px 0 12px; color: var(--aa-text-muted); font-size: 11px; }
 .queue-items button { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--aa-border); border-radius: 0; padding: 12px 5px; }
 .queue-items button.active { background: var(--aa-primary-soft); box-shadow: inset 3px 0 var(--aa-primary); }
 .queue-items button > span:first-child { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--aa-radius-sm); color: var(--aa-primary); border: 1px solid var(--aa-primary); font: 650 11px var(--aa-font-sans); }

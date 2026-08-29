@@ -178,7 +178,9 @@ export function App() {
     ? runs.find((run) => run.id === route.runId)
     : undefined;
   const routeRunProject = projectForRun(projects, routeRun);
-  const projectId = routeProjectId || routeRunProject?.id || activeProjectId;
+  const routeScopeProjectId =
+    route.kind === "runs" || route.kind === "review" ? route.projectId ?? "" : "";
+  const projectId = routeProjectId || routeRunProject?.id || routeScopeProjectId;
   const selectedProject = projects.find((project) => project.id === projectId);
   const setProjectContext = (id: string) => {
     setActiveProjectId(id);
@@ -269,7 +271,7 @@ export function App() {
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
             <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
           </div>
-          {(route.kind === "project" || route.kind === "build" || route.kind === "runs" || route.kind === "review") && <div className="project-switch">
+          {(route.kind === "project" || route.kind === "build") && <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
               const profile = visualProfilesForSkills([skill.id])[0];
               return (
@@ -281,7 +283,7 @@ export function App() {
                 </span>
               );
             })}
-            <span aria-hidden="true">Active project</span>
+            <span aria-hidden="true">Project context</span>
             <label className="sr-only" htmlFor="active-project">
               Active project
             </label>
@@ -311,7 +313,7 @@ export function App() {
           </div>
         )}
         {!loaded && <div className="loading-banner" role="status">Loading workspace state…</div>}
-        {route.kind === "home" && (
+        {loaded && route.kind === "home" && (
           <Dashboard
             projects={projects}
             runs={runs}
@@ -323,7 +325,7 @@ export function App() {
             onRefresh={refresh}
           />
         )}
-        {route.kind === "projects" && (
+        {loaded && route.kind === "projects" && (
           <ProjectsPage
             projects={projects}
             createOnOpen={route.create}
@@ -332,7 +334,7 @@ export function App() {
             onError={setError}
           />
         )}
-        {route.kind === "project" && (
+        {loaded && route.kind === "project" && (
           <ProjectPage
             project={selectedProject}
             runs={runs}
@@ -345,11 +347,13 @@ export function App() {
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
             onOpenRun={(runId) => navigate(`/runs/${encodeURIComponent(runId)}`)}
-            onOpenReview={() => navigate("/review")}
+            onOpenReview={() =>
+              navigate(`/review?project_id=${encodeURIComponent(route.projectId)}`)
+            }
             onError={setError}
           />
         )}
-        {route.kind === "build" && route.step === "pipeline" && (
+        {loaded && route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
             projects={projects}
             activeProjectId={projectId}
@@ -365,7 +369,7 @@ export function App() {
             onError={setError}
           />
         )}
-        {route.kind === "build" && route.step !== "pipeline" && (
+        {loaded && route.kind === "build" && route.step !== "pipeline" && (
           <BuildWorkspace
             project={selectedProject}
             step={route.step}
@@ -378,7 +382,7 @@ export function App() {
             onError={setError}
           />
         )}
-        {route.kind === "runs" && (
+        {loaded && route.kind === "runs" && (
           <RunsPage
             runs={runs}
             projects={projects}
@@ -389,18 +393,17 @@ export function App() {
             onError={setError}
           />
         )}
-        {route.kind === "review" && (
+        {loaded && route.kind === "review" && (
           <ReviewPage
             project={selectedProject}
             projects={projects}
             events={events}
             route={route}
             onNavigate={navigate}
-            onProjectContext={setProjectContext}
             onError={setError}
           />
         )}
-        {route.kind === "settings" && (
+        {loaded && route.kind === "settings" && (
           <SettingsWorkspace
             section={route.section}
             models={models}
@@ -3527,7 +3530,7 @@ function ModelsPage({
 function RunsPage({
   runs,
   projects,
-  activeProject,
+  activeProject: scopeProject,
   route,
   onNavigate,
   onRefresh,
@@ -3554,26 +3557,39 @@ function RunsPage({
         onError={onError}
       />
     );
-  const projectRuns = runsForContext(runs, activeProject);
-  const visibleRuns = runsForContext(runs, activeProject, statusFilter);
+  const projectRuns = runsForContext(runs, scopeProject);
+  const visibleRuns = runsForContext(runs, scopeProject, statusFilter);
   return (
     <section className="page-stack">
-      <ProjectBreadcrumb
-        project={activeProject}
+      {scopeProject && <ProjectBreadcrumb
+        project={scopeProject}
         current="Runs"
         onOpenProjects={() => onNavigate("/projects")}
-        onOpenProject={activeProject ? () => onNavigate(`/projects/${encodeURIComponent(activeProject.id)}`) : undefined}
-      />
+        onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)}
+      />}
       <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
       <Panel title="Run history" eyebrow={`${visibleRuns.length} visible · ${runs.length} recorded`}>
         <div className="list-filters">
+          <label>Project
+            <select
+              aria-label="Project filter"
+              value={scopeProject?.id ?? ""}
+              onChange={(event) =>
+                onNavigate(event.target.value
+                  ? `/runs?project_id=${encodeURIComponent(event.target.value)}`
+                  : "/runs")
+              }
+            >
+              <option value="">All projects</option>
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>
           <label>Status
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">All statuses</option>
               {[...new Set(projectRuns.map((item) => item.status))].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
             </select>
           </label>
-          {activeProject && <span>Project: <strong>{activeProject.name}</strong></span>}
         </div>
         <div className="runs-table">
           {visibleRuns.map((item) => (
@@ -3585,7 +3601,7 @@ function RunsPage({
               <span className="row-arrow" aria-hidden="true">→</span>
             </button>
           ))}
-          {visibleRuns.length === 0 && <Empty title="No matching runs" detail="Change the active Project or status filter to see more Run history." />}
+          {visibleRuns.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
       </Panel>
       {route.runId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
@@ -3968,7 +3984,6 @@ function ReviewPage({
   events,
   route,
   onNavigate,
-  onProjectContext,
   onError,
 }: {
   project?: ProjectSummary;
@@ -3976,7 +3991,6 @@ function ReviewPage({
   events: RunEvent[];
   route: Extract<WorkspaceRoute, { kind: "review" }>;
   onNavigate: (path: string, replace?: boolean) => void;
-  onProjectContext: (projectId: string) => void;
   onError: (value: string) => void;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
@@ -4062,9 +4076,6 @@ function ReviewPage({
         .then((value) => setImages(value.images))
         .catch((error: Error) => onError(error.message));
     else setImages([]);
-  }, [reviewProject?.id]);
-  useEffect(() => {
-    if (reviewProject) onProjectContext(reviewProject.id);
   }, [reviewProject?.id]);
   useEffect(() => {
     setDraft(selected?.annotation);
@@ -4223,6 +4234,23 @@ function ReviewPage({
         <h2>
           Review queue <b>{visibleReviews.length}</b>
         </h2>
+        <label className="review-project-filter">
+          Project
+          <select
+            aria-label="Project filter"
+            value={contextualProject?.id ?? ""}
+            onChange={(event) =>
+              onNavigate(event.target.value
+                ? `/review?project_id=${encodeURIComponent(event.target.value)}`
+                : "/review")
+            }
+          >
+            <option value="">All projects</option>
+            {projects.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+            ))}
+          </select>
+        </label>
         <div className="queue-items" aria-label="Annotations requiring review">
           {visibleReviews.map((review) => (
             <button

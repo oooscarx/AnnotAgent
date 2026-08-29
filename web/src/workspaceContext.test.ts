@@ -18,7 +18,12 @@ describe("workspace Project context", () => {
     expect(projectForReview([project, other], review)?.id).toBe(project.id);
   });
 
-  it("filters Run history by active Project and status", () => {
+  it("shows every Run unless an explicit Project scope is supplied", () => {
+    expect(runsForContext([run, running, foreign]).map((item) => item.id)).toEqual([
+      "run-1",
+      "run-2",
+      "run-3",
+    ]);
     expect(runsForContext([run, running, foreign], project).map((item) => item.id)).toEqual(["run-1", "run-2"]);
     expect(runsForContext([run, running, foreign], project, "running").map((item) => item.id)).toEqual(["run-2"]);
   });

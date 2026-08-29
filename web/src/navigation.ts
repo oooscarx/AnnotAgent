@@ -15,11 +15,17 @@ export type WorkspaceRoute =
       kind: "runs";
       canonicalPath: string;
       runId?: string;
+      projectId?: string;
       imageId?: string;
       nodeId?: string;
       artifactId?: string;
     }
-  | { kind: "review"; canonicalPath: string; reviewItemId?: string }
+  | {
+      kind: "review";
+      canonicalPath: string;
+      reviewItemId?: string;
+      projectId?: string;
+    }
   | {
       kind: "settings";
       canonicalPath: string;
@@ -109,6 +115,8 @@ export function parseWorkspaceRoute(
   const run = clean.match(/^\/runs(?:\/([^/]+))?$/);
   if (run) {
     const context = new URLSearchParams();
+    const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
+    if (!run[1] && projectId) context.set("project_id", projectId);
     for (const key of ["image", "node", "artifact"] as const) {
       const value = params.get(key);
       if (value) context.set(key, value);
@@ -117,19 +125,26 @@ export function parseWorkspaceRoute(
     return {
       kind: "runs",
       runId: run[1] ? decodeURIComponent(run[1]) : undefined,
+      projectId,
       imageId: params.get("image") ?? undefined,
       nodeId: params.get("node") ?? undefined,
       artifactId: params.get("artifact") ?? undefined,
-      canonicalPath: run[1] ? `/runs/${run[1]}${suffix}` : "/runs",
+      canonicalPath: run[1] ? `/runs/${run[1]}${suffix}` : `/runs${suffix}`,
     };
   }
   const review = clean.match(/^\/review(?:\/([^/]+))?$/);
-  if (review)
+  if (review) {
+    const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
+    const context = new URLSearchParams();
+    if (!review[1] && projectId) context.set("project_id", projectId);
+    const suffix = context.size ? `?${context.toString()}` : "";
     return {
       kind: "review",
       reviewItemId: review[1] ? decodeURIComponent(review[1]) : undefined,
-      canonicalPath: review[1] ? `/review/${review[1]}` : "/review",
+      projectId,
+      canonicalPath: review[1] ? `/review/${review[1]}` : `/review${suffix}`,
     };
+  }
   const settings = clean.match(/^\/settings(?:\/([^/]+))?$/);
   if (settings) {
     const candidate = (settings[1] ?? "general") as SettingsSection;

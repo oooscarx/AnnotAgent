@@ -14,9 +14,9 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Workflows is not a primary entry | PASS | Project Build owns Pipeline; legacy route canonicalizes. |
 | Models is in Settings | PASS | `/settings/models`. |
 | Skills/Capabilities is in Settings | PASS | `/settings/capabilities`. |
-| Global Runs is not silently filtered by active Project | PARTIAL | API returns all Runs, but UI context filtering behavior needs explicit regression proof. |
-| Project maintains persistent context | PARTIAL | URL and active Project exist; loading briefly shows contradictory empty context. |
-| No duplicate Workflow or Inspector entry | PARTIAL | Workflow is scoped correctly; complete duplicate-action audit remains. |
+| Global Runs is not silently filtered by active Project | PASS | URL/E2E proves hidden local state is ignored; an explicit filter is visible. |
+| Project maintains persistent context | PASS | Project and Build use canonical Project URLs; route content waits for server load. |
+| No duplicate Workflow or Inspector entry | PASS | Automation edits only under Project Build; Artifact Inspector only under Run Detail. |
 
 ## B. Guidance
 
@@ -174,3 +174,13 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - `GET /api/projects/:id/guidance`, `/readiness`, and `/summary` return consistent projections; HTTP equality assertions pass.
 - `cargo test -p annotagent-application -p annotagent-storage -p annotagent-server --lib`: 20 + 8 + 9 passed.
 - Strict Clippy for all targets/features of those crates: PASS.
+
+## Milestone 2 evidence
+
+- `PRIMARY_NAVIGATION` remains exactly Home, Projects, Runs, Review, and Settings.
+- Workflow authoring remains `/projects/:id/build/pipeline`; Models and Capabilities remain Settings sections; legacy routes canonicalize.
+- Run/Review route DTOs now preserve optional `project_id` query scope.
+- Global Runs and Review render an explicit `All projects` filter and no longer consume the remembered Active Project.
+- Detail context derives from the Run/Review record; Project-origin Review links carry an explicit query scope.
+- Main route content waits for the initial dashboard response, eliminating simultaneous loading and false empty-state rendering.
+- Web: 31 unit tests, production build, and 11/11 executable E2E scenarios pass; the independent Crop fixture test remains conditional.

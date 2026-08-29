@@ -44,4 +44,19 @@ describe("guided workspace routing", () => {
       artifactId: "det-1",
     });
   });
+
+  it("keeps global Project filters explicit in the URL", () => {
+    expect(parseWorkspaceRoute("/runs", "?project_id=alpha")).toMatchObject({
+      kind: "runs",
+      projectId: "alpha",
+      canonicalPath: "/runs?project_id=alpha",
+    });
+    expect(parseWorkspaceRoute("/review", "?project_id=alpha")).toMatchObject({
+      kind: "review",
+      projectId: "alpha",
+      canonicalPath: "/review?project_id=alpha",
+    });
+    expect(parseWorkspaceRoute("/runs")).not.toHaveProperty("projectId", "alpha");
+    expect(parseWorkspaceRoute("/review")).not.toHaveProperty("projectId", "alpha");
+  });
 });

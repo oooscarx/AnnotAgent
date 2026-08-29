@@ -41,3 +41,7 @@ Provider settings may expose only whether a workspace-local credential exists. T
 ## GE-010 — Sample tests are durable evidence, not a Draft-status guess
 
 Migration v5 stores the complete sandbox `WorkflowDryRunReport` per Draft. Guidance reads this report after restart and distinguishes not tested, passed, and needs attention. Publishing counts as activated evidence for historical versions; a Dry Run still creates no formal Run or Annotation.
+
+## GE-011 — Project scope on global pages is URL-only
+
+The remembered Project helps the Project switcher but never filters `/runs` or `/review`. Global lists use all Projects by default; `?project_id=...` is the explicit, shareable filter. A Run or Review detail derives its Project from the persisted record, not from local storage.

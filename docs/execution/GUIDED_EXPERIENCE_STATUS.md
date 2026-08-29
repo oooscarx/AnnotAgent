@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 2 — Global information architecture
-- Last completed Milestone: 1 — Guidance Domain Model
-- Latest Milestone commit: this document's containing Milestone 1 commit
+- Active Milestone: 3 — Guided Project Creation
+- Last completed Milestone: 2 — Global information architecture
+- Latest Milestone commit: this document's containing Milestone 2 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -17,8 +17,8 @@ Updated: 2026-08-30
 | --- | --- | --- |
 | 0 Baseline | Complete | Repository, routes, APIs/DTOs, browser behavior, tests, and Release Matrix verified against code. |
 | 1 Guidance Domain | Complete | Rust derives one action from persisted data, Automation, sample-test, model, Run, and Review state; three HTTP projections pass. |
-| 2 Global IA | In progress | Existing five-entry navigation is reusable; global scope behavior needs explicit regression coverage. |
-| 3 Project Creation | Pending | Existing one-form dialog creates real Projects but is not the required guided wizard. |
+| 2 Global IA | Complete | Five task entries, canonical legacy routes, Project-scoped Workflow, Settings registries, and explicit global filters pass. |
+| 3 Project Creation | In progress | Existing one-form dialog creates real Projects but is not the required guided wizard. |
 | 4 Project Journey | Pending | Existing overview has real state but lacks Guidance Hero/timeline/one backend action. |
 | 5 Guided Build | Pending | Four persistent routes exist; language and server-guided completion remain. |
 | 6 Recipe + Advisor | Pending | Registry-bounded Advisor and label lanes exist; guided recipe/proposal hierarchy needs completion. |
@@ -49,6 +49,14 @@ Milestone 1 focused checks:
 - Server: 9 passed, including Guidance/Readiness/Summary HTTP parity.
 - Strict Clippy for Application, Storage, and Server: PASS.
 
+Milestone 2 focused checks:
+
+- Web typecheck: PASS.
+- Web unit suite: 12 files, 31 tests PASS.
+- Web production build: PASS.
+- Chromium E2E: 11 passed; 1 Crop-data conditional test skipped.
+- Browser journey proves `/runs` and `/review` ignore hidden local Active Project state and apply Project scope only from the URL.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -63,8 +71,8 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 
 ## Release Blocking remaining
 
-- `PASS`: 47
-- `PARTIAL`: 25
+- `PASS`: 50
+- `PARTIAL`: 22
 - `OPEN`: 22
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
