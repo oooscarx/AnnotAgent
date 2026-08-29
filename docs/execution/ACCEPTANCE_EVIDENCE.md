@@ -791,3 +791,28 @@ Multi-prompt SAM recovery status: `PASS`.
 
 Grid-assisted Qwen grounding exploratory status: `PASS` (3/3 inspected images; no claim beyond
 this bounded sample).
+
+## Review priority rendering and API latency — 2026-08-29
+
+1. Repeated live measurements before the fix showed `/api/projects` at 5.08–5.31 seconds and
+   `/api/reviews` at 5.17 seconds. `/api/projects/robocup-ball/images` and the 358 KB image content
+   endpoint each completed in roughly 1 ms, isolating the bottleneck to Review aggregation.
+2. The Dashboard now obtains `review_queue` through one direct `review_status` count. Five live
+   post-fix requests completed in 81–102 ms, and a storage test covers the count semantics.
+3. Full Review aggregation now filters Runs without pending annotations before loading evidence,
+   parses each Run snapshot directly, constructs the Project SHA-to-index map once, hashes encoded
+   files without pixel decoding, and retains the legacy inspection fallback only when indexed
+   metadata is unavailable. Three live requests completed in 566–590 ms.
+4. `GET /api/reviews/{id}` now performs a targeted lookup. For Review
+   `f28eb9bf-4ee4-4693-8dbb-32c9946d9a01`, three requests completed in 95–105 ms with the same
+   source Run, Workflow, image index, refinement lineage, confidence, and validation evidence as
+   the full queue response.
+5. The Review frontend requests routed detail and the full queue concurrently. Browser verification
+   after restarting the live 8787 service reached a decoded 544×448 image and editable overlay in
+   399 ms with one priority-rendered queue item; the full 16-item queue hydrated about 0.6 seconds
+   later without losing selection.
+6. The first SSE open no longer triggers a duplicate Dashboard refresh; reconnects still refresh
+   after the connection is re-established. Eight server tests, 30 Web unit tests, production build,
+   and the full E2E suite pass (9 passed, 1 fixture-dependent test skipped).
+
+Review priority-rendering status: `PASS`.

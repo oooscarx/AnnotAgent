@@ -308,3 +308,23 @@ by the configured 0.99 confidence gate).
 
 Grid-assisted Qwen grounding status: `PASS` on the three-image exploratory batch. This is evidence
 of improvement, not a dataset-wide accuracy claim.
+
+## Review priority rendering and API latency — 2026-08-29
+
+- Review startup was traced to backend aggregation rather than static assets or image delivery.
+  Before the fix, `/api/projects` took 5.08–5.31 seconds and `/api/reviews` took about 5.17 seconds;
+  the image list and 358 KB source image each took about 1 ms.
+- Dashboard review count now uses one direct SQLite status-column count instead of materializing every Review
+  Artifact. Initial SSE connection no longer duplicates the Dashboard request.
+- Review aggregation filters pending annotations before loading Run evidence, reuses one SHA index
+  per Project, hashes encoded bytes without decoding pixels, and avoids repeated full History scans.
+- A routed Review fetches its 1.1 KB detail first while the complete queue loads in the background.
+  On the live workspace, `/api/projects` is now 81–102 ms, routed Review detail is 95–105 ms, and
+  the complete 16-item queue is 566–590 ms.
+- In-app browser measurement on the restarted `127.0.0.1:8787` service reached the selected Review,
+  decoded 544×448 source image, and editable overlay in 399 ms. The full queue then hydrated without
+  replacing or shifting the selected Review.
+- Storage and server tests, 30 Web unit tests, production build, and the full Web E2E suite pass
+  (9 passed, 1 fixture-dependent test skipped).
+
+Review priority-rendering status: `PASS`.

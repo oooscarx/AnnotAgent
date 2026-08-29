@@ -788,6 +788,23 @@ struct RunSummary {
     updated_at: String,
 }
 
+fn validation_issue_codes(events: &[RunEvent]) -> Vec<String> {
+    let mut codes = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            annotagent_core::RunEventPayload::Validation { issue_codes, .. } => {
+                Some(issue_codes.as_slice())
+            }
+            _ => None,
+        })
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
 fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let project = serde_json::from_str::<ProjectSchema>(&run.project_schema_json).ok();
     let workflow_snapshot = run
@@ -858,20 +875,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let current_node = current_task.map(|task| task.task_id.to_string());
     let current_node_status =
         current_task.map(|task| format!("{:?}", task.status).to_ascii_lowercase());
-    let mut validation_issue_codes = history
-        .events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            annotagent_core::RunEventPayload::Validation { issue_codes, .. } => {
-                Some(issue_codes.as_slice())
-            }
-            _ => None,
-        })
-        .flatten()
-        .cloned()
-        .collect::<Vec<_>>();
-    validation_issue_codes.sort();
-    validation_issue_codes.dedup();
+    let validation_issue_codes = validation_issue_codes(&history.events);
     let fallback_nodes = workflow_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot.pointer("/checkpoint/activated_fallbacks"))
@@ -1019,7 +1023,11 @@ async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value
             })
         })
         .collect::<Vec<_>>();
-    let review_queue = reviews(&state)?.len();
+    let review_queue = state
+        .application
+        .store()
+        .pending_review_count()
+        .map_err(ApiError::internal)?;
     Ok(Json(json!({
         "projects": projects,
         "runs": runs,
@@ -1870,14 +1878,86 @@ async fn run_events(
     Ok(Json(json!({"events": events})))
 }
 
-fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
+fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<Value>> {
     let mut reviews = Vec::new();
+    let target_annotation = target
+        .map(|id| {
+            state
+                .application
+                .store()
+                .find_annotation(id)
+                .map_err(ApiError::internal)
+        })
+        .transpose()?
+        .flatten();
+    if target.is_some() && target_annotation.is_none() {
+        return Ok(reviews);
+    }
     let projects = state
         .application
         .list_projects()
         .map_err(ApiError::internal)?;
+    let project_ids = projects
+        .iter()
+        .filter_map(|project| {
+            let path = state.application.project_path(&project.id).ok()?;
+            Some((stable_project_id(path.parent()?), project.id.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let image_indices = projects
+        .iter()
+        .map(|project| {
+            state
+                .application
+                .project_image_indices_by_sha256(&project.id)
+                .map(|indices| (project.id.clone(), indices))
+                .map_err(ApiError::internal)
+        })
+        .collect::<ApiResult<BTreeMap<_, _>>>()?;
     for run in state.application.list_runs().map_err(ApiError::internal)? {
-        let summary = run_summary(state, run.clone())?;
+        let annotations = if let Some((target_run_id, annotation)) = target_annotation.as_ref() {
+            if *target_run_id != run.id {
+                continue;
+            }
+            (annotation.review_status == ReviewStatus::NeedsReview)
+                .then(|| vec![annotation.clone()])
+                .unwrap_or_default()
+        } else {
+            state
+                .application
+                .store()
+                .list_annotations(run.id)
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
+                .collect::<Vec<_>>()
+        };
+        if annotations.is_empty() {
+            continue;
+        }
+        let project_id = run
+            .project_id
+            .as_ref()
+            .and_then(|id| project_ids.get(id))
+            .map(String::as_str);
+        let image_sha256 = run
+            .workflow_snapshot_json
+            .as_deref()
+            .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok())
+            .and_then(|snapshot| {
+                snapshot
+                    .pointer("/image/sha256")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let indexed_image = project_id
+            .and_then(|project_id| image_indices.get(project_id))
+            .and_then(|indices| {
+                image_sha256
+                    .as_deref()
+                    .and_then(|sha256| indices.get(sha256))
+            })
+            .copied();
         let artifacts = state
             .application
             .store()
@@ -1885,85 +1965,97 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
             .map_err(ApiError::internal)?;
         let inspection = state
             .application
-            .inspect_run_pipeline_artifacts(run.id)
+            .inspect_run_pipeline_artifacts_from_history(&run, indexed_image)
             .ok();
-        let image_index = state
-            .application
-            .inspect_run_annotations(run.id)
-            .ok()
-            .and_then(|value| value.image_index);
-        let project_id = projects.iter().find_map(|project| {
-            let path = state.application.project_path(&project.id).ok()?;
-            (Some(stable_project_id(path.parent()?)) == run.project_id)
-                .then_some(project.id.as_str())
+        let image_index = indexed_image.or_else(|| {
+            inspection
+                .as_ref()
+                .and_then(|value| value.image_index)
+                .or_else(|| {
+                    state
+                        .application
+                        .inspect_run_annotations(run.id)
+                        .ok()
+                        .and_then(|value| value.image_index)
+                })
         });
-        for annotation in state
+        let events = state
             .application
             .store()
-            .list_annotations(run.id)
+            .list_events(run.id)
+            .map_err(ApiError::internal)?;
+        let validation_issue_codes = validation_issue_codes(&events);
+        let current_node = state
+            .application
+            .store()
+            .list_task_runs(run.id)
             .map_err(ApiError::internal)?
-        {
-            if annotation.review_status == ReviewStatus::NeedsReview {
-                let source_artifact_id = annotation.provenance.artifact_ids.first().copied();
-                let mut lineage_ids = annotation
-                    .provenance
-                    .artifact_ids
-                    .iter()
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                let mut refinement_chain = BTreeSet::new();
-                let mut changed = true;
-                while changed {
-                    changed = false;
-                    for artifact in &artifacts {
-                        if !lineage_ids.contains(&artifact.id) {
-                            continue;
-                        }
-                        if let Some(tool) = artifact.provenance.tool.as_deref() {
-                            if tool.contains("refiner") || tool.contains("sam") {
-                                refinement_chain.insert(tool.to_owned());
-                            }
-                        }
-                        for parent in &artifact.provenance.input_artifact_ids {
-                            changed |= lineage_ids.insert(*parent);
+            .last()
+            .map(|task| task.task_id.to_string());
+        let fallback_workflow_version =
+            serde_json::from_str::<ProjectSchema>(&run.project_schema_json)
+                .map_or(0, |schema| schema.version);
+        for annotation in annotations {
+            let source_artifact_id = annotation.provenance.artifact_ids.first().copied();
+            let mut lineage_ids = annotation
+                .provenance
+                .artifact_ids
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>();
+            let mut refinement_chain = BTreeSet::new();
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for artifact in &artifacts {
+                    if !lineage_ids.contains(&artifact.id) {
+                        continue;
+                    }
+                    if let Some(tool) = artifact.provenance.tool.as_deref() {
+                        if tool.contains("refiner") || tool.contains("sam") {
+                            refinement_chain.insert(tool.to_owned());
                         }
                     }
-                }
-                let pipeline_artifact_ref = annotation
-                    .attributes
-                    .get("pipeline_artifact_ref")
-                    .and_then(|value| match value {
-                        annotagent_core::AttributeValue::String(value) => Some(value.as_str()),
-                        _ => None,
-                    });
-                if let (Some(inspection), Some(reference)) =
-                    (inspection.as_ref(), pipeline_artifact_ref)
-                {
-                    for node in &inspection.nodes {
-                        if node
-                            .outputs
-                            .iter()
-                            .any(|artifact| artifact.reference().artifact_id == reference)
-                        {
-                            refinement_chain.extend(node.configuration.refiners.iter().cloned());
-                        }
+                    for parent in &artifact.provenance.input_artifact_ids {
+                        changed |= lineage_ids.insert(*parent);
                     }
                 }
-                let source_node = inspection.as_ref().and_then(|inspection| {
-                    inspection.nodes.iter().find_map(|node| {
-                        node.outputs
-                            .iter()
-                            .any(|artifact| {
-                                source_artifact_id.is_some_and(|id| {
-                                    artifact.reference().artifact_id == id.to_string()
-                                }) || pipeline_artifact_ref.is_some_and(|reference| {
-                                    artifact.reference().artifact_id == reference
-                                })
-                            })
-                            .then_some(node.node_id.as_str())
-                    })
+            }
+            let pipeline_artifact_ref = annotation
+                .attributes
+                .get("pipeline_artifact_ref")
+                .and_then(|value| match value {
+                    annotagent_core::AttributeValue::String(value) => Some(value.as_str()),
+                    _ => None,
                 });
-                reviews.push(json!({
+            if let (Some(inspection), Some(reference)) =
+                (inspection.as_ref(), pipeline_artifact_ref)
+            {
+                for node in &inspection.nodes {
+                    if node
+                        .outputs
+                        .iter()
+                        .any(|artifact| artifact.reference().artifact_id == reference)
+                    {
+                        refinement_chain.extend(node.configuration.refiners.iter().cloned());
+                    }
+                }
+            }
+            let source_node = inspection.as_ref().and_then(|inspection| {
+                inspection.nodes.iter().find_map(|node| {
+                    node.outputs
+                        .iter()
+                        .any(|artifact| {
+                            source_artifact_id.is_some_and(|id| {
+                                artifact.reference().artifact_id == id.to_string()
+                            }) || pipeline_artifact_ref.is_some_and(|reference| {
+                                artifact.reference().artifact_id == reference
+                            })
+                        })
+                        .then_some(node.node_id.as_str())
+                })
+            });
+            reviews.push(json!({
                     "id": annotation.id,
                     "run_id": run.id,
                     "project_id": project_id,
@@ -1971,25 +2063,24 @@ fn reviews(state: &ServerState) -> ApiResult<Vec<Value>> {
                     "annotation": annotation,
                     "workflow_id": inspection.as_ref().map(|value| value.workflow_id.as_str()),
                     "workflow_version": inspection.as_ref().map_or_else(
-                        || summary.workflow_version.parse().unwrap_or_default(),
+                        || fallback_workflow_version,
                         |value| value.workflow_version,
                     ),
                     "image_index": image_index,
-                    "source_node": source_node.or(summary.current_node.as_deref()),
+                    "source_node": source_node.or(current_node.as_deref()),
                     "source_artifact_id": source_artifact_id,
                     "refinement_chain": refinement_chain,
-                    "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !summary.validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
+                    "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
                     "confidence": annotation.confidence,
-                    "validation_issues": summary.validation_issue_codes,
+                    "validation_issues": validation_issue_codes.clone(),
                 }));
-            }
         }
     }
     Ok(reviews)
 }
 
 async fn list_reviews(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({"reviews": reviews(&state)?})))
+    Ok(Json(json!({"reviews": reviews(&state, None)?})))
 }
 
 fn parse_annotation_id(value: &str) -> ApiResult<AnnotationId> {
@@ -2001,7 +2092,7 @@ async fn get_review(
     AxumPath(review_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
     let id = parse_annotation_id(&review_id)?;
-    let item = reviews(&state)?
+    let item = reviews(&state, Some(id))?
         .into_iter()
         .find(|item| item["id"] == json!(id))
         .ok_or_else(|| ApiError::not_found("review was not found"))?;

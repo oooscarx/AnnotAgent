@@ -32,7 +32,7 @@ use annotagent_core::{
 use annotagent_export::{
     CocoImporter, LabelMeImporter, NativeImporter, YoloDetectionImporter, YoloSegmentationImporter,
 };
-use annotagent_image_tools::{generate_synthetic_robocup, load_image, to_model_image};
+use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
 use annotagent_provider::{
     MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider,
     OpenAiCompatibleConfig, OpenAiCompatibleProvider,
@@ -2301,6 +2301,31 @@ impl LocalApplication {
                 .as_deref()
                 .ok_or_else(|| anyhow!("run {run_id} has no Workflow checkpoint"))?,
         )?;
+        let image_index = snapshot
+            .pointer("/image/sha256")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|sha256| {
+                snapshot
+                    .pointer("/selected_workflow/project_id")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|project_id| self.image_index_by_sha256(project_id, sha256).ok())
+            })
+            .flatten();
+        self.inspect_run_pipeline_artifacts_from_history(&history, image_index)
+    }
+
+    pub fn inspect_run_pipeline_artifacts_from_history(
+        &self,
+        history: &HistoryRun,
+        image_index: Option<usize>,
+    ) -> Result<RunNodeArtifactInspection> {
+        let run_id = history.id;
+        let snapshot: serde_json::Value = serde_json::from_str(
+            history
+                .workflow_snapshot_json
+                .as_deref()
+                .ok_or_else(|| anyhow!("run {run_id} has no Workflow checkpoint"))?,
+        )?;
         let workflow: PublishedWorkflowVersion = serde_json::from_value(
             snapshot
                 .get("selected_workflow")
@@ -2313,20 +2338,27 @@ impl LocalApplication {
                 .cloned()
                 .ok_or_else(|| anyhow!("run {run_id} has no completed node checkpoint"))?,
         )?;
-        let image_index = snapshot
-            .pointer("/image/sha256")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|sha256| {
-                self.image_index_by_sha256(&workflow.project_id, sha256)
-                    .ok()
-            })
-            .flatten();
         Ok(node_artifact_inspection(
             run_id,
             &workflow,
             &checkpoint,
             image_index,
         ))
+    }
+
+    pub fn project_image_indices_by_sha256(
+        &self,
+        project_id: &str,
+    ) -> Result<BTreeMap<String, usize>> {
+        self.list_project_images(project_id)?
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let bytes = std::fs::read(path)
+                    .with_context(|| format!("cannot read image {}", path.display()))?;
+                Ok((sha256(&bytes), index))
+            })
+            .collect()
     }
 
     pub fn inspect_run_annotations(&self, run_id: RunId) -> Result<RunAnnotationInspection> {
@@ -2718,8 +2750,9 @@ impl LocalApplication {
 
     fn image_index_by_sha256(&self, project_id: &str, sha256: &str) -> Result<Option<usize>> {
         for (index, path) in self.list_project_images(project_id)?.iter().enumerate() {
-            let image = load_image(path, 40_000_000).map_err(|error| anyhow!(error))?;
-            if image.metadata.sha256 == sha256 {
+            let bytes = std::fs::read(path)
+                .with_context(|| format!("cannot read image {}", path.display()))?;
+            if annotagent_image_tools::sha256(&bytes) == sha256 {
                 return Ok(Some(index));
             }
         }

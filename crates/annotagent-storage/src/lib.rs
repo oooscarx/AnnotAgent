@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, path::Path, sync::Mutex};
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
     ArtifactId, ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage,
-    ProjectId, PublishedWorkflowVersion, RelationEndpoint, RevisionActor, RunEvent,
+    ProjectId, PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
     RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
     ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
     WorkflowSnapshot,
@@ -346,6 +346,18 @@ impl SqliteStore {
                     serde_json::from_str(&json).map_err(StorageError::from)
                 })
                 .collect()
+        })
+    }
+
+    pub fn pending_review_count(&self) -> Result<usize, StorageError> {
+        let review_status = enum_string(ReviewStatus::NeedsReview)?;
+        self.with_connection(|connection| {
+            let count = connection.query_row(
+                "SELECT COUNT(*) FROM annotations WHERE review_status = ?1",
+                [review_status],
+                |row| row.get::<_, i64>(0),
+            )?;
+            Ok(usize::try_from(count).unwrap_or(usize::MAX))
         })
     }
 
@@ -2070,6 +2082,30 @@ mod tests {
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn pending_review_count_uses_the_status_column() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        store
+            .with_connection(|connection| {
+                for (id, status) in [
+                    ("review-a", "needs_review"),
+                    ("review-b", "needs_review"),
+                    ("accepted", "accepted"),
+                ] {
+                    connection.execute(
+                        "INSERT INTO annotations
+                         (id, run_id, image_id, task_id, label, review_status, annotation_json, created_at)
+                         VALUES (?1, 'run', 'image', 'objects', 'ball', ?2, '{}', '2026-01-01T00:00:00Z')",
+                        params![id, status],
+                    )?;
+                }
+                Ok(())
+            })
+            .expect("fixture annotations");
+
+        assert_eq!(store.pending_review_count().expect("pending reviews"), 2);
     }
 
     #[test]

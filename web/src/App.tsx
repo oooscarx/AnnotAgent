@@ -80,6 +80,7 @@ export function App() {
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
+  const hasConnectedRef = useRef(false);
   const [activeProjectId, setActiveProjectId] = useState(() =>
     window.localStorage.getItem("annotagent.activeProjectId") ?? "",
   );
@@ -156,11 +157,11 @@ export function App() {
         },
         () => {
           setConnection("reconnecting");
-          void refresh();
         },
         () => {
           setConnection("connected");
-          void refresh();
+          if (hasConnectedRef.current) void refresh();
+          hasConnectedRef.current = true;
         },
       ),
     [],
@@ -3965,6 +3966,17 @@ function ReviewPage({
           onNavigate(`/review/${first.id}`, true);
       })
       .catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    if (!route.reviewItemId) return;
+    void api
+      .review(route.reviewItemId)
+      .then((review) =>
+        setReviews((items) =>
+          items.some((item) => item.id === review.id) ? items : [review, ...items],
+        ),
+      )
+      .catch((error: Error) => onError(error.message));
+  }, [route.reviewItemId]);
   useEffect(() => {
     void refresh();
   }, []);
