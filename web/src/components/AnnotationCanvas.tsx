@@ -53,19 +53,7 @@ export function AnnotationCanvas({
   );
 
   useEffect(() => {
-    if (!imageUrl) {
-      setCanvasSize([DEFAULT_WIDTH, DEFAULT_HEIGHT]);
-      return;
-    }
-    const image = new Image();
-    image.onload = () => {
-      if (image.naturalWidth > 0 && image.naturalHeight > 0)
-        setCanvasSize([image.naturalWidth, image.naturalHeight]);
-    };
-    image.src = imageUrl;
-    return () => {
-      image.onload = null;
-    };
+    setCanvasSize([DEFAULT_WIDTH, DEFAULT_HEIGHT]);
   }, [imageUrl]);
 
   const [width, height] = canvasSize;
@@ -182,7 +170,7 @@ export function AnnotationCanvas({
   };
 
   return (
-    <div className="canvas-shell aa-dark">
+    <div className="canvas-shell">
       <div className="canvas-tools">
         <span>Annotation workspace</span>
         <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
@@ -197,9 +185,23 @@ export function AnnotationCanvas({
         })}
         {annotations.length === 0 && <li className="canvas-annotation-empty">No annotations selected</li>}
       </ul>
+      {imageUrl && (
+        <img
+          className="canvas-dimension-probe"
+          src={imageUrl}
+          alt=""
+          aria-hidden="true"
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth > 0 && naturalHeight > 0)
+              setCanvasSize([naturalWidth, naturalHeight]);
+          }}
+        />
+      )}
       <svg
         ref={svgRef}
         className="annotation-canvas"
+        style={{ aspectRatio: `${width} / ${height}` }}
         role="img"
         aria-label={`${annotations.length} annotations over the active image`}
         viewBox={`0 0 ${width} ${height}`}
@@ -229,7 +231,7 @@ export function AnnotationCanvas({
           ))}
         </defs>
         <g transform={`translate(${pan[0]} ${pan[1]}) scale(${zoom})`}>
-          <rect width={width} height={height} fill="var(--aa-bg)" />
+          <rect width={width} height={height} fill="var(--aa-surface-muted)" />
           {imageUrl ? (
             <image href={imageUrl} width={width} height={height} />
           ) : (

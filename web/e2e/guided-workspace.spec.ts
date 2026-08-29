@@ -214,6 +214,19 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.getByRole("button", { name: "Collapse details panel" }).click();
   const widthWithoutInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
   expect(widthWithoutInspector).toBeGreaterThan(widthWithInspector);
+  const canvasPresentation = await page.locator(".annotation-canvas").evaluate((element) => {
+    const canvas = element as SVGSVGElement;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      renderedRatio: rect.width / rect.height,
+      sourceRatio: canvas.viewBox.baseVal.width / canvas.viewBox.baseVal.height,
+      shellBackground: getComputedStyle(canvas.closest(".canvas-shell")!).backgroundColor,
+      usesDarkTheme: canvas.closest(".aa-dark") !== null,
+    };
+  });
+  expect(canvasPresentation.usesDarkTheme).toBeFalsy();
+  expect(canvasPresentation.shellBackground).toBe("rgb(255, 255, 255)");
+  expect(Math.abs(canvasPresentation.renderedRatio - canvasPresentation.sourceRatio)).toBeLessThan(0.02);
   await page.getByRole("button", { name: "Zoom in" }).click();
   await expect(page.locator(".canvas-tools strong")).toHaveText("110%");
   await page.getByRole("button", { name: "Fit image" }).click();
