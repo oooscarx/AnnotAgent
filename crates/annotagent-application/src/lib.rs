@@ -1,6 +1,12 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
+mod guidance;
 mod published_run;
+
+pub use guidance::{
+    GuidanceBlocker, GuidedAction, GuidedActionKind, ProjectGuidance, ProjectGuidanceInput,
+    ProjectReadinessSummary, ProjectStage, SampleTestState, derive_project_guidance,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -45,7 +51,9 @@ use annotagent_skill_robocup::{
     ROBOCUP_BALL_SKILL_ID, RoboCupBallRecoveryAgent, RoboCupBallRecoveryReport,
     RoboCupBallRecoveryRequest, RoboCupBallSkill, RoboCupPackSkill, RoboCupSkill,
 };
-use annotagent_storage::{BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore};
+use annotagent_storage::{
+    BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore, WorkflowSampleTest,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
@@ -144,6 +152,13 @@ pub struct ProjectSummary {
     pub active_batch_progress: Option<BatchProgress>,
     pub active_run: Option<HistoryRun>,
     pub last_run: Option<HistoryRun>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectWorkspaceSummary {
+    pub project: ProjectSummary,
+    pub guidance: ProjectGuidance,
+    pub readiness: ProjectReadinessSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -2273,6 +2288,166 @@ impl LocalApplication {
         })
     }
 
+    pub fn project_guidance(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        workspace_model_connected: bool,
+    ) -> Result<ProjectGuidance> {
+        let summary = self.get_project(project_id)?;
+        let project_path = self.project_path(project_id)?;
+        let mut updated_at = project_path
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map_or_else(
+                |_| chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+                chrono::DateTime::<chrono::Utc>::from,
+            );
+        let mut drafts = self
+            .store
+            .list_workflow_drafts(Some(project_id))?
+            .into_iter()
+            .filter(|draft| draft.status != WorkflowDraftStatus::Archived)
+            .collect::<Vec<_>>();
+        drafts.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        if let Some(draft) = drafts.first() {
+            updated_at = updated_at.max(draft.updated_at);
+        }
+        let published = self
+            .store
+            .list_published_workflow_versions(Some(project_id))?
+            .into_iter()
+            .max_by_key(|version| version.published_at);
+        if let Some(version) = &published {
+            updated_at = updated_at.max(version.published_at);
+        }
+        for run in summary.active_run.iter().chain(summary.last_run.iter()) {
+            if let Ok(value) = chrono::DateTime::parse_from_rfc3339(&run.updated_at) {
+                updated_at = updated_at.max(value.with_timezone(&chrono::Utc));
+            }
+        }
+
+        let editable_draft = drafts.iter().find(|draft| {
+            matches!(
+                draft.status,
+                WorkflowDraftStatus::Suggested
+                    | WorkflowDraftStatus::Editing
+                    | WorkflowDraftStatus::Validated
+            )
+        });
+        let automation = published
+            .as_ref()
+            .map(|version| &version.draft)
+            .or(editable_draft);
+        let has_automation = automation.is_some();
+        let automation_valid = if published.is_some() {
+            true
+        } else if let Some(draft) = editable_draft {
+            self.validate_workflow_draft(draft, settings, false)?
+                .issues
+                .iter()
+                .all(|issue| !issue.blocking || issue.code == "unresolved_model_binding")
+        } else {
+            true
+        };
+        let model_nodes = automation
+            .into_iter()
+            .flat_map(|draft| draft.nodes.iter())
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+                )
+            })
+            .collect::<Vec<_>>();
+        let all_model_nodes_bound = model_nodes.iter().all(|node| node.model_binding.is_some());
+        let needs_workspace_connection = model_nodes.iter().any(|node| {
+            node.model_binding
+                .as_deref()
+                .is_some_and(|binding| !binding.starts_with("mock"))
+        });
+        let has_model_binding =
+            all_model_nodes_bound && (!needs_workspace_connection || workspace_model_connected);
+
+        let sample_test = if published.is_some() {
+            SampleTestState::Passed
+        } else if let Some(draft) = editable_draft {
+            self.store.get_workflow_sample_test(&draft.id)?.map_or(
+                SampleTestState::NotRun,
+                |record| {
+                    updated_at = updated_at.max(record.completed_at);
+                    if record.report.validation.valid
+                        && record.report.summary.failed_count == 0
+                        && record.report.summary.needs_review_count == 0
+                    {
+                        SampleTestState::Passed
+                    } else {
+                        SampleTestState::NeedsAttention
+                    }
+                },
+            )
+        } else {
+            SampleTestState::NotRun
+        };
+        let project_root = project_path.parent().unwrap_or(&self.workspace);
+        let stable_id = stable_project_id(project_root);
+        let project_runs = self
+            .store
+            .list_runs()?
+            .into_iter()
+            .filter(|run| {
+                run.project_id == Some(stable_id)
+                    || (run.project_id.is_none() && run.project_name == summary.name)
+            })
+            .collect::<Vec<_>>();
+        let has_completed_run = project_runs.iter().any(|run| {
+            matches!(
+                run.status,
+                RunStatus::Completed | RunStatus::CompletedWithReview | RunStatus::Partial
+            )
+        });
+        let has_labels = !summary.annotation_schema.is_empty()
+            && summary
+                .annotation_schema
+                .iter()
+                .any(|task| !task.labels.is_empty());
+        let guidance = derive_project_guidance(ProjectGuidanceInput {
+            project_id: project_id.to_owned(),
+            image_count: summary.image_count,
+            has_labels,
+            has_automation,
+            has_model_binding,
+            automation_valid,
+            sample_test,
+            automation_activated: published.is_some(),
+            active_run_id: summary.active_run.as_ref().map(|run| run.id.to_string()),
+            active_batch_id: summary
+                .active_batch
+                .as_ref()
+                .map(|batch| batch.id.to_string()),
+            review_count: summary.review_count,
+            has_completed_run,
+            updated_at,
+        });
+        Ok(guidance)
+    }
+
+    pub fn project_workspace_summary(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        workspace_model_connected: bool,
+    ) -> Result<ProjectWorkspaceSummary> {
+        let project = self.get_project(project_id)?;
+        let guidance = self.project_guidance(project_id, settings, workspace_model_connected)?;
+        let readiness = guidance.readiness_summary();
+        Ok(ProjectWorkspaceSummary {
+            project,
+            guidance,
+            readiness,
+        })
+    }
+
     pub fn list_project_images(&self, project_id: &str) -> Result<Vec<PathBuf>> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
@@ -3562,12 +3737,12 @@ impl LocalApplication {
         Ok(draft)
     }
 
-    pub fn dry_run_workflow(
+    fn validate_workflow_draft(
         &self,
-        draft_id: &str,
+        draft: &WorkflowDraft,
         settings: &Settings,
+        require_publish_ready: bool,
     ) -> Result<WorkflowValidationReport> {
-        let draft = self.store.get_workflow_draft(draft_id)?;
         let project_path = self.project_path(&draft.project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
@@ -3579,17 +3754,27 @@ impl LocalApplication {
         let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
         let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
         let mut report = WorkflowStaticValidator.validate_for_publish(
-            &draft,
+            draft,
             &nodes,
             &models,
             &validation_catalog,
             &enabled_skills,
-            false,
+            require_publish_ready,
         );
         report
             .issues
-            .extend(label_projection_issues(&draft, &project, &nodes, &models));
+            .extend(label_projection_issues(draft, &project, &nodes, &models));
         report.valid = report.issues.iter().all(|issue| !issue.blocking);
+        Ok(report)
+    }
+
+    pub fn dry_run_workflow(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+    ) -> Result<WorkflowValidationReport> {
+        let draft = self.store.get_workflow_draft(draft_id)?;
+        let report = self.validate_workflow_draft(&draft, settings, false)?;
         if report.valid
             && !matches!(
                 draft.status,
@@ -3631,7 +3816,8 @@ impl LocalApplication {
             image_indices.iter().copied().take(10).collect::<Vec<_>>()
         };
         if draft.label_pipeline.is_some() && validation.valid {
-            return self
+            let project_id = draft.project_id.clone();
+            let report = self
                 .dry_run_label_pipeline_samples(
                     draft,
                     settings,
@@ -3640,7 +3826,14 @@ impl LocalApplication {
                     started,
                     temporary_api_key,
                 )
-                .await;
+                .await?;
+            self.store.save_workflow_sample_test(&WorkflowSampleTest {
+                draft_id: draft_id.to_owned(),
+                project_id,
+                report: report.clone(),
+                completed_at: chrono::Utc::now(),
+            })?;
+            return Ok(report);
         }
         let (nodes, models) = workflow_catalog(settings)?;
         let mut samples = Vec::new();
@@ -3756,7 +3949,7 @@ impl LocalApplication {
             validation.valid = false;
             validation.issues.extend(execution_issues);
         }
-        Ok(WorkflowDryRunReport {
+        let report = WorkflowDryRunReport {
             sandbox: true,
             validation,
             summary: WorkflowDryRunSummary {
@@ -3770,7 +3963,14 @@ impl LocalApplication {
             samples,
             total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
             estimated_cost: "0".to_owned(),
-        })
+        };
+        self.store.save_workflow_sample_test(&WorkflowSampleTest {
+            draft_id: draft_id.to_owned(),
+            project_id: draft.project_id,
+            report: report.clone(),
+            completed_at: chrono::Utc::now(),
+        })?;
+        Ok(report)
     }
 
     async fn dry_run_label_pipeline_samples(
@@ -5897,6 +6097,70 @@ export:
                 .iter()
                 .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
         );
+    }
+
+    #[tokio::test]
+    async fn project_guidance_uses_persisted_sample_test_and_published_state() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let settings = load_settings(None).expect("settings");
+        let draft_id = {
+            let application = LocalApplication::new(temporary.path()).expect("application");
+            application
+                .create_project("guided", GENERIC_BBOX_PROJECT)
+                .expect("Project");
+            let guidance = application
+                .project_guidance("guided", &settings, true)
+                .expect("data guidance");
+            assert_eq!(guidance.stage, ProjectStage::NeedsData);
+
+            let image_root = temporary.path().join("guided/images");
+            annotagent_image_tools::generate_synthetic_inspection(&image_root.join("sample.png"))
+                .expect("sample image");
+            let guidance = application
+                .project_guidance("guided", &settings, true)
+                .expect("automation guidance");
+            assert_eq!(guidance.stage, ProjectStage::NeedsAutomation);
+
+            let suggestion = application
+                .suggest_workflow("guided", &settings, &WorkflowConstraints::default())
+                .expect("Workflow Draft");
+            let guidance = application
+                .project_guidance("guided", &settings, true)
+                .expect("test guidance");
+            assert_eq!(guidance.stage, ProjectStage::ReadyForSampleTest);
+            let report = application
+                .dry_run_workflow_samples(&suggestion.draft.id, &settings, &[0])
+                .await
+                .expect("sample test");
+            assert!(report.validation.valid);
+            assert_eq!(report.summary.failed_count, 0);
+            assert_eq!(
+                application
+                    .project_guidance("guided", &settings, true)
+                    .expect("activation guidance")
+                    .stage,
+                ProjectStage::ReadyToActivate
+            );
+            suggestion.draft.id
+        };
+
+        let restarted = LocalApplication::new(temporary.path()).expect("restarted application");
+        assert_eq!(
+            restarted
+                .project_guidance("guided", &settings, true)
+                .expect("restored guidance")
+                .stage,
+            ProjectStage::ReadyToActivate
+        );
+        restarted
+            .publish_workflow(&draft_id, &settings)
+            .expect("activate Automation");
+        let summary = restarted
+            .project_workspace_summary("guided", &settings, true)
+            .expect("workspace summary");
+        assert_eq!(summary.guidance.stage, ProjectStage::ReadyToRun);
+        assert_eq!(summary.readiness.readiness, ProjectReadiness::Ready);
+        assert_eq!(summary.guidance.primary_action.label, "Run dataset");
     }
 
     #[test]

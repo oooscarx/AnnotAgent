@@ -12,11 +12,11 @@ use annotagent_core::{
     ProjectId, PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
     RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
     ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowSnapshot,
+    WorkflowDryRunReport, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 use uuid::Uuid;
@@ -25,6 +25,8 @@ const INITIAL_MIGRATION: &str = include_str!("../../../migrations/0001_initial.s
 const BATCH_MIGRATION: &str =
     include_str!("../../../migrations/0003_persistent_dataset_batches.sql");
 const AGENT_SESSION_MIGRATION: &str = include_str!("../../../migrations/0004_agent_sessions.sql");
+const WORKFLOW_SAMPLE_TEST_MIGRATION: &str =
+    include_str!("../../../migrations/0005_workflow_sample_tests.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -114,6 +116,14 @@ pub struct HistoryImportReport {
     pub run_id: RunId,
     pub ids_remapped: bool,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowSampleTest {
+    pub draft_id: String,
+    pub project_id: String,
+    pub report: WorkflowDryRunReport,
+    pub completed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,7 +240,74 @@ impl SqliteStore {
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (4, ?1, ?2)",
                 params!["agent_sessions", Utc::now().to_rfc3339()],
             )?;
+            connection.execute_batch(WORKFLOW_SAMPLE_TEST_MIGRATION)?;
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (5, ?1, ?2)",
+                params!["workflow_sample_tests", Utc::now().to_rfc3339()],
+            )?;
             Ok(())
+        })
+    }
+
+    pub fn save_workflow_sample_test(
+        &self,
+        sample_test: &WorkflowSampleTest,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO workflow_sample_tests
+                 (draft_id, project_id, report_json, completed_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(draft_id) DO UPDATE SET
+                   project_id = excluded.project_id,
+                   report_json = excluded.report_json,
+                   completed_at = excluded.completed_at",
+                params![
+                    sample_test.draft_id,
+                    sample_test.project_id,
+                    serde_json::to_string(&sample_test.report)?,
+                    sample_test.completed_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_workflow_sample_test(
+        &self,
+        draft_id: &str,
+    ) -> Result<Option<WorkflowSampleTest>, StorageError> {
+        self.with_connection(|connection| {
+            let row = connection
+                .query_row(
+                    "SELECT draft_id, project_id, report_json, completed_at
+                     FROM workflow_sample_tests WHERE draft_id = ?1",
+                    [draft_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            row.map(|(draft_id, project_id, report_json, completed_at)| {
+                Ok(WorkflowSampleTest {
+                    draft_id,
+                    project_id,
+                    report: serde_json::from_str(&report_json)?,
+                    completed_at: DateTime::parse_from_rfc3339(&completed_at)
+                        .map_err(|error| {
+                            StorageError::InvalidEnum(format!(
+                                "invalid sample test timestamp: {error}"
+                            ))
+                        })?
+                        .with_timezone(&Utc),
+                })
+            })
+            .transpose()
         })
     }
 
@@ -2076,12 +2153,47 @@ mod tests {
             "batch_images",
             "batch_events",
             "agent_sessions",
+            "workflow_sample_tests",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn workflow_sample_test_is_persisted_per_draft() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let completed_at = Utc::now();
+        let sample_test = WorkflowSampleTest {
+            draft_id: "draft-1".to_owned(),
+            project_id: "project-1".to_owned(),
+            report: WorkflowDryRunReport {
+                sandbox: true,
+                validation: annotagent_core::WorkflowValidationReport {
+                    valid: true,
+                    issues: Vec::new(),
+                    execution_order: vec!["image".to_owned()],
+                },
+                samples: Vec::new(),
+                summary: annotagent_core::WorkflowDryRunSummary {
+                    image_count: 3,
+                    ..annotagent_core::WorkflowDryRunSummary::default()
+                },
+                total_latency_ms: 12,
+                estimated_cost: "0".to_owned(),
+            },
+            completed_at,
+        };
+        store
+            .save_workflow_sample_test(&sample_test)
+            .expect("save sample test");
+        let restored = store
+            .get_workflow_sample_test("draft-1")
+            .expect("load sample test")
+            .expect("sample test exists");
+        assert_eq!(restored, sample_test);
     }
 
     #[test]

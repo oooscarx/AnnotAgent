@@ -22,16 +22,16 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Rust backend computes Project Guidance | OPEN | Only three-state readiness exists; primary action is TypeScript. |
-| Exactly one Primary Action per Project state | OPEN | Overview exposes competing actions. |
-| No data → Add images | PARTIAL | Client helper does this; backend contract missing. |
-| No Label → Define labels | PARTIAL | Client helper does this; backend contract missing. |
-| No Automation → Choose automation | PARTIAL | Existing blocker uses Pipeline terminology; Guidance contract missing. |
-| Missing model has a repair action | OPEN | No Guidance repair action DTO. |
-| Untested → Test samples | OPEN | Dry-run evidence is not part of Project guidance. |
-| Active Run → Open active run | PARTIAL | Existing summary/helper works; backend must choose it. |
-| Review exists → Review results | PARTIAL | Existing helper works; stage/action API missing. |
-| Completed work → Export | OPEN | No export-terminal guidance. |
+| Rust backend computes Project Guidance | PASS | Application `derive_project_guidance` and persisted projection are authoritative. |
+| Exactly one Primary Action per Project state | PASS | DTO has one required `primary_action`; state-priority tests cover every stage. |
+| No data → Add images | PASS | Engine and HTTP endpoint return `add_images` with the Data URL. |
+| No Label → Define labels | PASS | Deterministic state test passes. |
+| No Automation → Choose automation | PASS | Real application lifecycle reaches `needs_automation`. |
+| Missing model has a repair action | PASS | `needs_model_binding` returns a Settings repair action. |
+| Untested → Test samples | PASS | Persisted sample-test absence returns `ready_for_sample_test`. |
+| Active Run → Open active run | PASS | Active Run/Batch have highest priority; deterministic conflict test passes. |
+| Review exists → Review results | PASS | Completed Run with pending review returns `needs_review`. |
+| Completed work → Export | PASS | Completed reviewed Run returns `ready_to_export`. |
 
 ## C. Creation and Build
 
@@ -166,3 +166,11 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - `npm run test:e2e`: 10 passed, 1 skipped for missing Crop fixture.
 - Browser audit exercised all primary and Project Build routes against the running product.
 
+## Milestone 1 evidence
+
+- Added `ProjectStage`, `ProjectGuidance`, `GuidedActionKind`, `GuidedAction`, `GuidanceBlocker`, `ProjectReadinessSummary`, and `ProjectWorkspaceSummary` in the Rust Application boundary.
+- The pure engine covers `NeedsData`, `NeedsLabels`, `NeedsAutomation`, `NeedsModelBinding`, `ConfigurationIssue`, `ReadyForSampleTest`, `SampleTestNeedsAttention`, `ReadyToActivate`, `ReadyToRun`, `Running`, `NeedsReview`, and `ReadyToExport` with exactly one primary action.
+- Migration v5 persists complete sample-test reports per Draft; restart evidence preserves `ReadyToActivate` and publication advances to `ReadyToRun`.
+- `GET /api/projects/:id/guidance`, `/readiness`, and `/summary` return consistent projections; HTTP equality assertions pass.
+- `cargo test -p annotagent-application -p annotagent-storage -p annotagent-server --lib`: 20 + 8 + 9 passed.
+- Strict Clippy for all targets/features of those crates: PASS.

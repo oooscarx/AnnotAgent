@@ -38,3 +38,6 @@ Mock and deterministic backends must complete the full journey. Live VLM/SAM/YOL
 
 Provider settings may expose only whether a workspace-local credential exists. The API never returns the secret; logs, Guidance, Run summaries, evidence documents, and commits contain no credential material.
 
+## GE-010 — Sample tests are durable evidence, not a Draft-status guess
+
+Migration v5 stores the complete sandbox `WorkflowDryRunReport` per Draft. Guidance reads this report after restart and distinguishes not tested, passed, and needs attention. Publishing counts as activated evidence for historical versions; a Dry Run still creates no formal Run or Annotation.

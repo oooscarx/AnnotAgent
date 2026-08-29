@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 1 — Guidance Domain Model
-- Last completed Milestone: 0 — Baseline and acceptance ledger
-- Latest Milestone commit: this document's containing Milestone 0 commit
+- Active Milestone: 2 — Global information architecture
+- Last completed Milestone: 1 — Guidance Domain Model
+- Latest Milestone commit: this document's containing Milestone 1 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -16,8 +16,8 @@ Updated: 2026-08-30
 | Milestone | Status | Evidence summary |
 | --- | --- | --- |
 | 0 Baseline | Complete | Repository, routes, APIs/DTOs, browser behavior, tests, and Release Matrix verified against code. |
-| 1 Guidance Domain | In progress | Existing three-state readiness and client-derived action identified as the replacement boundary. |
-| 2 Global IA | Pending | Existing five-entry navigation is reusable; global scope behavior needs explicit regression coverage. |
+| 1 Guidance Domain | Complete | Rust derives one action from persisted data, Automation, sample-test, model, Run, and Review state; three HTTP projections pass. |
+| 2 Global IA | In progress | Existing five-entry navigation is reusable; global scope behavior needs explicit regression coverage. |
 | 3 Project Creation | Pending | Existing one-form dialog creates real Projects but is not the required guided wizard. |
 | 4 Project Journey | Pending | Existing overview has real state but lacks Guidance Hero/timeline/one backend action. |
 | 5 Guided Build | Pending | Four persistent routes exist; language and server-guided completion remain. |
@@ -42,6 +42,13 @@ Updated: 2026-08-30
 
 Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
 
+Milestone 1 focused checks:
+
+- Application: 20 passed.
+- Storage: 8 passed, including migration v5 and sample-test round trip.
+- Server: 9 passed, including Guidance/Readiness/Summary HTTP parity.
+- Strict Clippy for Application, Storage, and Server: PASS.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -56,9 +63,9 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 
 ## Release Blocking remaining
 
-- `PASS`: 37
-- `PARTIAL`: 30
-- `OPEN`: 27
+- `PASS`: 47
+- `PARTIAL`: 25
+- `OPEN`: 22
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
-Counts are the Milestone 0 baseline and will be recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.
+Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.

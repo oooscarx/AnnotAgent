@@ -415,6 +415,18 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route(
+            "/api/projects/{project_id}/guidance",
+            get(get_project_guidance),
+        )
+        .route(
+            "/api/projects/{project_id}/readiness",
+            get(get_project_readiness),
+        )
+        .route(
+            "/api/projects/{project_id}/summary",
+            get(get_project_summary),
+        )
+        .route(
             "/api/projects/{project_id}/schema/labels",
             post(add_project_label),
         )
@@ -1357,6 +1369,69 @@ async fn get_project(
     Ok(Json(json!(project)))
 }
 
+async fn guidance_context(state: &ServerState, project_id: &str) -> ApiResult<(Settings, bool)> {
+    let settings = state.settings.read().await.clone();
+    let workspace_model_connected =
+        settings.default_provider == "mock" || *state.api_key_persisted.read().await;
+    state
+        .application
+        .get_project(project_id)
+        .map_err(ApiError::not_found)?;
+    Ok((settings, workspace_model_connected))
+}
+
+async fn get_project_guidance(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let (settings, workspace_model_connected) = guidance_context(&state, &project_id).await?;
+    let guidance = state
+        .application
+        .project_guidance(&project_id, &settings, workspace_model_connected)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!(guidance)))
+}
+
+async fn get_project_readiness(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let (settings, workspace_model_connected) = guidance_context(&state, &project_id).await?;
+    let readiness = state
+        .application
+        .project_guidance(&project_id, &settings, workspace_model_connected)
+        .map_err(ApiError::internal)?
+        .readiness_summary();
+    Ok(Json(json!(readiness)))
+}
+
+async fn get_project_summary(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let (settings, workspace_model_connected) = guidance_context(&state, &project_id).await?;
+    let mut summary = state
+        .application
+        .project_workspace_summary(&project_id, &settings, workspace_model_connected)
+        .map_err(ApiError::internal)?;
+    let binding = workspace_model_binding(&settings);
+    summary.project.model_bindings = vec![binding.clone()];
+    summary.project.readiness = summary.readiness.readiness;
+    for node in &mut summary.project.active_workflow.nodes {
+        if node.model_binding.is_some() {
+            node.model_binding = Some(binding.id.clone());
+        }
+    }
+    for workflow in &mut summary.project.available_workflow_versions {
+        for node in &mut workflow.nodes {
+            if node.model_binding.is_some() {
+                node.model_binding = Some(binding.id.clone());
+            }
+        }
+    }
+    Ok(Json(json!(summary)))
+}
+
 #[derive(Debug, Deserialize)]
 struct AddProjectLabelRequest {
     task_id: String,
@@ -1919,9 +1994,11 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             if *target_run_id != run.id {
                 continue;
             }
-            (annotation.review_status == ReviewStatus::NeedsReview)
-                .then(|| vec![annotation.clone()])
-                .unwrap_or_default()
+            if annotation.review_status == ReviewStatus::NeedsReview {
+                vec![annotation.clone()]
+            } else {
+                Vec::new()
+            }
         } else {
             state
                 .application
@@ -2714,6 +2791,67 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
         ));
+    }
+
+    #[tokio::test]
+    async fn guidance_readiness_and_summary_are_server_owned() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        app.create_project(
+            "guided-api",
+            include_str!(
+                "../../../examples/label-pipelines/whole-image-classification/project.yaml"
+            ),
+        )
+        .expect("Project");
+        let service = router(
+            test_state(app, Arc::new(MemorySecretStore::default())),
+            None,
+        );
+
+        let guidance = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/guided-api/guidance",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(guidance["stage"], json!("needs_data"));
+        assert_eq!(guidance["primary_action"]["kind"], json!("add_images"));
+        assert_eq!(
+            guidance["primary_action"]["destination"],
+            json!("/projects/guided-api/build/data")
+        );
+
+        let readiness = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/guided-api/readiness",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(readiness["readiness"], json!("incomplete"));
+        assert_eq!(readiness["stage"], guidance["stage"]);
+
+        let summary = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/guided-api/summary",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(summary["project"]["id"], json!("guided-api"));
+        assert_eq!(summary["guidance"], guidance);
+        assert_eq!(summary["readiness"], readiness);
     }
 
     #[tokio::test]

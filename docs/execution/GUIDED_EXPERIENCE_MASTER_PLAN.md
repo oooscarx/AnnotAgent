@@ -82,8 +82,8 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | Milestone | Outcome | Status |
 | --- | --- | --- |
 | 0 | verified baseline and acceptance ledger | complete |
-| 1 | deterministic Rust Guidance domain, engine, and API | in progress |
-| 2 | task-centered global information architecture | pending |
+| 1 | deterministic Rust Guidance domain, engine, and API | complete |
+| 2 | task-centered global information architecture | in progress |
 | 3 | guided Project creation | pending |
 | 4 | Guidance-led Project Journey workspace | pending |
 | 5 | guided four-step Build | pending |
@@ -98,4 +98,3 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 ## Verification policy
 
 Each Milestone updates the status and acceptance ledger, runs proportionate Rust/Web/browser tests, fixes regressions, and creates the exact independent local commit specified by the master prompt. A matrix item becomes `PASS` only when linked to code plus executable or browser evidence. Existing green tests are a baseline, not proof of new Guided Experience behavior.
-
