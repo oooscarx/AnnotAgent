@@ -330,6 +330,10 @@ export function App() {
             projects={projects}
             createOnOpen={route.create}
             onSelect={openProject}
+            onCustomize={(id) => {
+              setProjectContext(id);
+              navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`);
+            }}
             onRefresh={refresh}
             onError={setError}
           />
@@ -901,13 +905,15 @@ function ProjectsPage({
   projects,
   createOnOpen,
   onSelect,
+  onCustomize,
   onRefresh,
   onError,
 }: {
   projects: ProjectSummary[];
   createOnOpen?: boolean;
   onSelect: (id: string) => void;
-  onRefresh: () => void;
+  onCustomize: (id: string) => void;
+  onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
   const [creating, setCreating] = useState(Boolean(createOnOpen));
@@ -932,9 +938,11 @@ function ProjectsPage({
       {creating && (
         <CreateProject
           onClose={() => setCreating(false)}
-          onCreated={() => {
+          onCreated={(projectId, customize) => {
             setCreating(false);
-            onRefresh();
+            void onRefresh().then(() =>
+              customize ? onCustomize(projectId) : onSelect(projectId),
+            );
           }}
           onError={onError}
         />
@@ -5108,19 +5116,93 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
   );
 }
 
+type GuidedIntent = "classification" | "detection" | "segmentation" | "custom";
+type GuidedPriority = "faster" | "balanced" | "accuracy";
+
+function guidedId(value: string, fallback: string): string {
+  const normalized = value
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || fallback;
+}
+
+function guidedProjectYaml({
+  name,
+  taskDisplayName,
+  taskId,
+  labelId,
+  kind,
+  priority,
+}: {
+  name: string;
+  taskDisplayName: string;
+  taskId: string;
+  labelId: string;
+  kind: string;
+  priority: GuidedPriority;
+}): string {
+  const parallel = priority === "faster" ? 4 : priority === "accuracy" ? 1 : 2;
+  const autoAccept = priority === "faster" ? 0.82 : priority === "accuracy" ? 0.94 : 0.9;
+  const formats =
+    kind === "bounding_box"
+      ? "[native, coco, yolo]"
+      : kind === "semantic_mask"
+        ? "[native, coco, yolo_segmentation]"
+        : "[native]";
+  return `version: 1
+project:
+  name: ${JSON.stringify(name)}
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: ${parallel}
+tasks:
+  - id: ${taskId}
+    display_name: ${JSON.stringify(taskDisplayName)}
+    kind: ${kind}
+    labels: [${JSON.stringify(labelId)}]
+    required: true
+review:
+  auto_accept_confidence: ${autoAccept}
+  force_review_below: 0.5
+export:
+  formats: ${formats}
+`;
+}
+
 function CreateProject({
   onClose,
   onCreated,
   onError,
 }: {
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (projectId: string, customize: boolean) => void;
   onError: (value: string) => void;
 }) {
-  const [id, setId] = useState("new-project");
-  const [skills, setSkills] = useState<SkillDetail[]>([]);
-  const [skillId, setSkillId] = useState("");
-  const [yaml, setYaml] = useState("");
+  const [step, setStep] = useState(1);
+  const [intent, setIntent] = useState<GuidedIntent>("detection");
+  const [projectName, setProjectName] = useState("Football annotations");
+  const [labelName, setLabelName] = useState("Football");
+  const [customKind, setCustomKind] = useState("bounding_box");
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [labelId, setLabelId] = useState("");
+  const [dataSource, setDataSource] = useState("");
+  const [priority, setPriority] = useState<GuidedPriority>("balanced");
+  const [maximumCost, setMaximumCost] = useState("");
+  const [targetReviewRate, setTargetReviewRate] = useState("10");
+  const [offlineOnly, setOfflineOnly] = useState(false);
+  const [localModels, setLocalModels] = useState("");
+  const [settings, setSettings] = useState<Record<string, any>>();
+  const [providerId, setProviderId] = useState("mock");
+  const [customModel, setCustomModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -5129,63 +5211,212 @@ function CreateProject({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
   useEffect(() => {
-    void api
-      .skills()
-      .then((items) => {
-        setSkills(items);
-        const starter = items.find((item) => item.project_template);
-        setSkillId(starter?.id ?? "");
-        setYaml(starter?.project_template ?? "");
+    void api.settings()
+      .then((value) => {
+        setSettings(value);
+        setProviderId(inferProviderPreset(value).id);
       })
       .catch((error: Error) => onError(error.message));
   }, []);
-  const chooseSkill = (value: string) => {
-    setSkillId(value);
-    setYaml(skills.find((skill) => skill.id === value)?.project_template ?? "");
+  const resolvedWorkspaceId = workspaceId || guidedId(projectName, "vision-project");
+  const resolvedLabelId = labelId || guidedId(labelName, "target");
+  const resolvedTaskId = taskId || `${resolvedLabelId}-${
+    intent === "classification" ? "class" : intent === "segmentation" ? "regions" : "objects"
+  }`;
+  const kind =
+    intent === "classification"
+      ? "classification"
+      : intent === "segmentation"
+        ? "semantic_mask"
+        : intent === "detection"
+          ? "bounding_box"
+          : customKind;
+  const preset = getProviderPreset(offlineOnly ? "mock" : providerId);
+  const provider = settings?.provider ?? {};
+  const selectedModel = provider.model === CUSTOM_MODEL ? customModel.trim() : provider.model;
+  const modelConnected =
+    preset.offline ||
+    (Boolean(selectedModel) && (settings?.api_key_persisted || Boolean(apiKey.trim())));
+  const chooseProvider = (id: string) => {
+    setProviderId(id);
+    setSettings((current) => {
+      const next = applyProviderPreset(current ?? {}, id);
+      const providerPreset = getProviderPreset(id);
+      return providerPreset.offline
+        ? next
+        : {
+            ...next,
+            provider: {
+              ...next.provider,
+              model: providerPreset.models[0]?.id ?? next.provider?.model,
+            },
+          };
+    });
   };
+  const finish = async (customize: boolean) => {
+    if (!settings || !projectName.trim() || !labelName.trim()) return;
+    setBusy(true);
+    setProgress("Saving model connection…");
+    try {
+      let configured = offlineOnly ? applyProviderPreset(settings, "mock") : settings;
+      if (!preset.offline) {
+        configured = {
+          ...configured,
+          provider: {
+            ...configured.provider,
+            model: selectedModel || preset.models[0]?.id,
+          },
+          ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+        };
+      }
+      await api.saveSettings(configured);
+      setProgress("Creating the Project…");
+      await api.createProject(
+        resolvedWorkspaceId,
+        guidedProjectYaml({
+          name: projectName.trim(),
+          taskDisplayName: labelName.trim(),
+          taskId: resolvedTaskId,
+          labelId: resolvedLabelId,
+          kind,
+          priority,
+        }),
+      );
+      const warnings: string[] = [];
+      if (dataSource.trim()) {
+        setProgress("Importing images…");
+        try {
+          const report = await api.importImages(resolvedWorkspaceId, dataSource.trim());
+          setProgress(`Imported ${report.imported}; skipped ${report.duplicates} duplicates.`);
+        } catch (error) {
+          warnings.push(`Images were not imported: ${(error as Error).message}`);
+        }
+      }
+      setProgress("Preparing the recommended Automation Draft…");
+      try {
+        await api.suggestWorkflow(
+          resolvedWorkspaceId,
+          "mock",
+          { task_id: resolvedTaskId, label: resolvedLabelId },
+          {
+            max_cost_per_image: maximumCost.trim() || undefined,
+            max_latency_ms: priority === "faster" ? 1_000 : priority === "accuracy" ? 10_000 : 4_000,
+            minimum_accuracy: priority === "faster" ? 0.75 : priority === "accuracy" ? 0.92 : 0.85,
+            require_review_gate: Number(targetReviewRate) > 0,
+          },
+        );
+      } catch (error) {
+        warnings.push(`The Project was created, but its recommendation needs attention: ${(error as Error).message}`);
+      }
+      onCreated(resolvedWorkspaceId, customize);
+      if (warnings.length) onError(warnings.join(" "));
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
+  };
+  const nextDisabled =
+    (step === 1 && (!projectName.trim() || !labelName.trim())) ||
+    (step === 4 && (!settings || !modelConnected));
   return (
     <div className="modal-backdrop">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="create-project-title">
-        <span className="eyebrow">Validated Project schema</span>
-        <h2 id="create-project-title">Create Project</h2>
-        <label>
-          Workspace ID
-          <input autoFocus value={id} onChange={(event) => setId(event.target.value)} />
-        </label>
-        <label>
-          Starter Skill
-          <select
-            value={skillId}
-            onChange={(event) => chooseSkill(event.target.value)}
-          >
-            {skills.filter((skill) => skill.project_template).map((skill) => (
-              <option key={skill.id} value={skill.id}>
-                {skill.display_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          project.yaml
-          <textarea
-            className="yaml-editor"
-            value={yaml}
-            onChange={(event) => setYaml(event.target.value)}
-          />
-        </label>
-        <div className="button-row">
-          <button onClick={onClose}>Cancel</button>
-          <button
-            className="primary"
-            onClick={() =>
-              api
-                .createProject(id, yaml)
-                .then(onCreated)
-                .catch((error: Error) => onError(error.message))
-            }
-          >
-            Validate & create
-          </button>
+      <div className="modal guided-project-wizard" role="dialog" aria-modal="true" aria-label="Create Project">
+        <header>
+          <span className="eyebrow">New Project · Step {step} of 4</span>
+          <h2 id="create-project-title">{
+            step === 1 ? "What do you want to annotate?" :
+            step === 2 ? "Add data" :
+            step === 3 ? "Choose a priority" :
+            "Recommended automation"
+          }</h2>
+          <div className="wizard-progress" aria-label={`Step ${step} of 4`}>
+            {[1, 2, 3, 4].map((item) => <i key={item} className={item <= step ? "complete" : ""} />)}
+          </div>
+        </header>
+
+        {step === 1 && <div className="wizard-step">
+          <div className="choice-grid" role="radiogroup" aria-label="Annotation intent">
+            {([
+              ["classification", "Classify images", "Assign one or more labels to each image"],
+              ["detection", "Find objects", "Locate each object with a bounding box"],
+              ["segmentation", "Segment regions", "Trace regions with semantic masks"],
+              ["custom", "Custom", "Choose an annotation output explicitly"],
+            ] as const).map(([value, title, detail]) => <label key={value} className={intent === value ? "selected" : ""}>
+              <input type="radio" name="intent" value={value} checked={intent === value} onChange={() => setIntent(value)} />
+              <span><strong>{title}</strong><small>{detail}</small></span>
+            </label>)}
+          </div>
+          <div className="form-grid">
+            <label>Project name<input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Football annotations" /></label>
+            <label>{intent === "classification" ? "Class name" : intent === "segmentation" ? "Region name" : "Object name"}<input value={labelName} onChange={(event) => setLabelName(event.target.value)} placeholder="Football" /></label>
+            {intent === "custom" && <label>Output<select value={customKind} onChange={(event) => setCustomKind(event.target.value)}><option value="classification">Classification</option><option value="bounding_box">Bounding boxes</option><option value="semantic_mask">Semantic masks</option><option value="polygon">Polygons</option><option value="keypoints">Keypoints</option></select></label>}
+            {intent !== "custom" && <div className="wizard-fact"><span>Output</span><strong>{kind.replaceAll("_", " ")}</strong></div>}
+          </div>
+          <details className="advanced-settings"><summary>Advanced IDs</summary><div className="form-grid">
+            <label>Workspace ID<input value={resolvedWorkspaceId} onChange={(event) => setWorkspaceId(event.target.value)} /></label>
+            <label>Task ID<input value={resolvedTaskId} onChange={(event) => setTaskId(event.target.value)} /></label>
+            <label>Label ID<input value={resolvedLabelId} onChange={(event) => setLabelId(event.target.value)} /></label>
+          </div><small>AnnotAgent generates stable IDs. Change them only for an existing integration.</small></details>
+        </div>}
+
+        {step === 2 && <div className="wizard-step">
+          <label>Image file or folder<input autoFocus value={dataSource} onChange={(event) => setDataSource(event.target.value)} placeholder="/workspace/dataset/images" /></label>
+          <div className="wizard-summary"><strong>{dataSource.trim() ? "Ready to scan this source" : "You can add data later"}</strong><span>PNG and JPEG · recursive folder discovery · content duplicates skipped</span><small>Decode errors and actual imported/duplicate counts are reported by the real import operation when you finish setup.</small></div>
+        </div>}
+
+        {step === 3 && <div className="wizard-step">
+          <div className="choice-grid priority-grid" role="radiogroup" aria-label="Automation priority">
+            {([
+              ["faster", "Faster", "More parallel work and a lower acceptance threshold"],
+              ["balanced", "Balanced", "Recommended trade-off for a first Project"],
+              ["accuracy", "Higher accuracy", "More conservative automatic acceptance"],
+            ] as const).map(([value, title, detail]) => <label key={value} className={priority === value ? "selected" : ""}>
+              <input type="radio" name="priority" value={value} checked={priority === value} onChange={() => setPriority(value)} />
+              <span><strong>{title}</strong><small>{detail}</small></span>
+            </label>)}
+          </div>
+          <details className="advanced-settings"><summary>Cost, review, and local constraints</summary><div className="form-grid">
+            <label>Maximum expected cost<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder="Optional" /></label>
+            <label>Target human review rate (%)<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
+            <label>Available local models<input value={localModels} onChange={(event) => setLocalModels(event.target.value)} placeholder="Optional model IDs" /></label>
+            <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} /> Offline only</label>
+          </div></details>
+        </div>}
+
+        {step === 4 && <div className="wizard-step">
+          <div className="recommendation-card">
+            <span className="status status-auto-accepted">Recommended</span>
+            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : `Find ${labelName} candidates`}</h3>
+            <ol>
+              <li>Use <strong>{preset.offline ? "the deterministic Mock model" : selectedModel || preset.models[0]?.label}</strong> through the registered model binding.</li>
+              {kind === "bounding_box" && <li>Keep the detector output as editable bounding boxes.</li>}
+              <li>Automatically accept high-confidence results.</li>
+              <li>Send uncertain results to Review.</li>
+            </ol>
+            <div className="recommendation-estimate"><span><b>{priority === "faster" ? "Low" : priority === "accuracy" ? "Higher" : "Medium"}</b> latency</span><span><b>Low</b> setup effort</span><span><b>{targetReviewRate || "10"}%</b> target review</span></div>
+          </div>
+          <div className="inline-model-connection">
+            <div><span className="eyebrow">Model connection</span><strong>{modelConnected ? "Ready" : "Connection required"}</strong></div>
+            <label>Provider<select value={offlineOnly ? "mock" : providerId} disabled={offlineOnly} onChange={(event) => chooseProvider(event.target.value)}>{PROVIDER_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+            {!preset.offline && <>
+              <label>Vision model<select value={provider.model ?? ""} onChange={(event) => setSettings((current) => ({ ...current, provider: { ...current?.provider, model: event.target.value } }))}>{preset.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}<option value={CUSTOM_MODEL}>Another model ID…</option></select></label>
+              {provider.model === CUSTOM_MODEL && <label>Model ID<input value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="provider/model-name" /></label>}
+              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored in the workspace-private credential file" /></label>}
+            </>}
+            {!modelConnected && <small role="alert">Enter a key, select Mock, or choose Offline only before using the recommendation.</small>}
+          </div>
+          <details className="advanced-settings"><summary>Generated Project definition</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
+        </div>}
+
+        {progress && <div className="wizard-running" role="status">{progress}</div>}
+        <div className="wizard-actions">
+          <button onClick={step === 1 ? onClose : () => setStep((value) => value - 1)} disabled={busy}>{step === 1 ? "Cancel" : "Back"}</button>
+          {step < 4 ? <button className="primary" disabled={nextDisabled} onClick={() => setStep((value) => value + 1)}>Continue</button> : <>
+            <button disabled={busy} onClick={() => void finish(true)}>Customize</button>
+            <button className="primary" disabled={busy || nextDisabled} onClick={() => void finish(false)}>{busy ? "Creating…" : "Use recommendation"}</button>
+          </>}
         </div>
       </div>
     </div>

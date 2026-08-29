@@ -37,11 +37,11 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| User need not enter an internal ID | OPEN | Current creation form asks for ID/YAML-oriented inputs. |
-| New Project wizard creates a real Project | PARTIAL | Real create API exists; wizard does not. |
+| User need not enter an internal ID | PASS | Browser journey creates and reopens a Project using generated workspace/task/Label IDs; Advanced overrides remain optional. |
+| New Project wizard creates a real Project | PASS | Four guided steps call real Settings/create/import/Advisor APIs and open the persisted Project. |
 | Build is a continuous four-step flow | PASS | Data, Labels, Pipeline, Test & Publish routes exist. |
 | Refresh restores Build step | PASS | Step is encoded in URL and covered by route tests. |
-| Labels default to user language | PARTIAL | Display names exist; creation hierarchy remains technical. |
+| Labels default to user language | PASS | Intent and Label display name are primary; generated schema/YAML and IDs are collapsed under Advanced. |
 | Automation defaults to Recipe | OPEN | Workflow Designer is the default presentation. |
 | Expert Graph edits the same Workflow | PASS | Existing guided lanes/graph share `label_pipeline`. |
 | Draft autosaves | PASS | Existing PATCH autosave is implemented. |
@@ -184,3 +184,12 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Detail context derives from the Run/Review record; Project-origin Review links carry an explicit query scope.
 - Main route content waits for the initial dashboard response, eliminating simultaneous loading and false empty-state rendering.
 - Web: 31 unit tests, production build, and 11/11 executable E2E scenarios pass; the independent Crop fixture test remains conditional.
+
+## Milestone 3 evidence
+
+- Replaced the YAML-first modal with four guided steps: annotation intent and Label, data source, speed/accuracy/cost constraints, and recommended Automation/model connection.
+- Internal workspace/task/Label IDs are generated deterministically and are only exposed as Advanced overrides. The E2E journey deliberately creates its Project without touching those controls.
+- Finishing the wizard persists provider settings, creates the real Project, imports the selected image source with duplicate/error reporting, and creates a registry-validated Advisor Draft. `Customize` opens that same Draft in Project Build.
+- Priority and optional maximum cost map into real Advisor latency, accuracy, cost, and Review Gate constraints. Mock remains the deterministic offline option; external providers require a concrete model and a workspace-private credential.
+- `npm run typecheck`, 31 Web unit tests, production build, and 11 executable Chromium E2E scenarios pass. One Crop-link scenario remains explicitly conditional on an available Crop Artifact fixture.
+- Browser evidence: `docs/execution/screenshots/02-guided-project-wizard.png`; the same journey verifies no horizontal overflow at 720×450.

@@ -127,6 +127,12 @@ export const api = {
     projectId: string,
     advisor: "mock" | "llm" = "mock",
     target?: { task_id: string; label: string },
+    constraints?: {
+      require_review_gate?: boolean;
+      max_cost_per_image?: string;
+      max_latency_ms?: number;
+      minimum_accuracy?: number;
+    },
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -136,7 +142,7 @@ export const api = {
         ...(target
           ? { target_task_id: target.task_id, target_label: target.label }
           : {}),
-        constraints: { require_review_gate: true },
+        constraints: { require_review_gate: true, ...constraints },
       }),
     }),
   addProjectLabel: (projectId: string, taskId: string, label: string) =>

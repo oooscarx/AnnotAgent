@@ -13,26 +13,6 @@ const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
 let reviewId = "";
 
-const projectYaml = `version: 1
-project:
-  name: ${projectName}
-  language: en
-dataset:
-  root: images
-runtime:
-  max_parallel_images: 1
-tasks:
-  - id: scene
-    kind: classification
-    labels: [day, night]
-    required: true
-review:
-  auto_accept_confidence: 0.999
-  force_review_below: 0.999
-export:
-  formats: [native]
-`;
-
 mkdirSync(imageSource, { recursive: true });
 copyFileSync(
   resolve(process.cwd(), "../examples/robocup/images/synthetic-robocup.png"),
@@ -89,11 +69,20 @@ test("create and open a generic Project", async ({ page, request }) => {
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("project.yaml")).not.toHaveValue("");
-  await dialog.getByLabel("Workspace ID").fill(projectId);
-  await dialog.getByLabel("project.yaml").fill(projectYaml);
-  await expect(dialog.getByLabel("project.yaml")).toHaveValue(projectYaml);
-  await dialog.getByRole("button", { name: "Validate & create" }).click();
+  await dialog.getByText("Classify images", { exact: true }).click();
+  await dialog.getByLabel("Project name").fill(projectName);
+  await dialog.getByLabel("Class name").fill("Day");
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByLabel("Image file or folder").fill(imageSource);
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByText("Balanced", { exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByLabel("Provider").selectOption("mock");
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.screenshot({ path: `${screenshots}/02-guided-project-wizard.png` });
+  await page.setViewportSize({ width: 720, height: 450 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await dialog.getByRole("button", { name: "Use recommendation" }).click();
   await expect(dialog).toBeHidden();
   await expect.poll(async () => {
     const state = await dashboard(request);
@@ -108,8 +97,6 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
   await openProject(page);
   await page.getByRole("button", { name: "Build", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
-  await page.getByLabel("Workspace-local file or directory").fill(imageSource);
-  await page.getByRole("button", { name: "Add images" }).click();
   await expect(page.getByText(/1 registered/)).toBeVisible();
 
   for (const [name, path] of [
@@ -123,17 +110,6 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
 });
 
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {
-  const suggestion = await request.post("/api/workflow-drafts/suggest", {
-    data: {
-      project_id: projectId,
-      target_task_id: "scene",
-      target_label: "day",
-      advisor: "mock",
-      constraints: { require_review_gate: true },
-    },
-  });
-  expect(suggestion.status()).toBe(201);
-
   await page.goto(`/projects/${projectId}/build/test`);
   await expect(page.getByLabel("Current Draft")).not.toHaveValue("");
   await page.getByRole("spinbutton").fill("1");
@@ -167,7 +143,7 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
       annotation: {
         id: annotationId,
         image_id: randomUUID(),
-        task_id: "scene",
+        task_id: "day-class",
         label: "day",
         value: { kind: "classification", labels: ["day"] },
         attributes: {},

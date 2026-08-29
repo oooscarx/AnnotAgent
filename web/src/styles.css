@@ -423,6 +423,34 @@ main { min-width: 0; padding-bottom: 48px; }
 .modal h2 { margin-bottom: 0; font-size: 28px; }
 .modal .button-row { justify-content: flex-end; }
 .yaml-editor { min-height: 420px; resize: vertical; font: 10px/1.45 var(--aa-font-mono); }
+.guided-project-wizard { width: min(880px, 94vw); }
+.guided-project-wizard > header { display: grid; gap: 8px; }
+.wizard-progress { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.wizard-progress i { height: 4px; border-radius: 999px; background: var(--aa-border); }
+.wizard-progress i.complete { background: var(--aa-accent); }
+.wizard-step { display: grid; gap: 18px; }
+.choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.choice-grid label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; min-width: 0; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); cursor: pointer; }
+.choice-grid label.selected { border-color: var(--aa-accent); background: color-mix(in srgb, var(--aa-surface) 90%, var(--aa-accent) 10%); box-shadow: inset 0 0 0 1px var(--aa-accent); }
+.choice-grid label strong, .choice-grid label small { display: block; }
+.choice-grid label small { margin-top: 3px; color: var(--aa-text-muted); }
+.priority-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wizard-fact, .wizard-summary, .inline-model-connection, .recommendation-card { min-width: 0; padding: 15px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: color-mix(in srgb, var(--aa-surface) 96%, var(--aa-accent) 4%); }
+.wizard-fact span, .wizard-summary span, .wizard-summary small { display: block; color: var(--aa-text-muted); }
+.wizard-summary { display: grid; gap: 5px; }
+.recommendation-card { display: grid; gap: 12px; border-color: color-mix(in srgb, var(--aa-accent) 45%, var(--aa-border)); }
+.recommendation-card h3 { margin: 0; font-size: 21px; }
+.recommendation-card ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; }
+.recommendation-estimate { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.recommendation-estimate span { display: grid; padding: 10px; border-radius: var(--aa-radius-sm); background: var(--aa-surface); color: var(--aa-text-muted); }
+.recommendation-estimate b { color: var(--aa-text); }
+.inline-model-connection { display: grid; grid-template-columns: minmax(130px, .7fr) repeat(2, minmax(170px, 1fr)); gap: 12px; align-items: end; }
+.inline-model-connection > div { display: grid; align-self: center; }
+.inline-model-connection > small { grid-column: 1 / -1; color: var(--aa-danger-text); }
+.wizard-running { padding: 11px 13px; border-left: 3px solid var(--aa-accent); background: color-mix(in srgb, var(--aa-surface) 90%, var(--aa-accent) 10%); }
+.wizard-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 4px; border-top: 1px solid var(--aa-border); }
+.wizard-actions > button:first-child { margin-right: auto; }
+.guided-project-wizard pre { max-height: 220px; overflow: auto; margin: 8px 0 0; white-space: pre-wrap; }
 
 .schema-label-authoring { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(160px, 1fr); gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--aa-border); }
 .schema-label-authoring button { grid-column: 1 / -1; justify-self: start; }
@@ -560,6 +588,8 @@ main { min-width: 0; padding-bottom: 48px; }
   .review-view-controls { width: 100%; margin-left: 0; }
   .review-view-controls select { flex: 1; }
   .list-filters { align-items: stretch; flex-direction: column; }
+  .choice-grid, .priority-grid, .recommendation-estimate, .inline-model-connection { grid-template-columns: 1fr; }
+  .guided-project-wizard { padding: 20px; }
 }
 
 @media (max-width: 480px) {
