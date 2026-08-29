@@ -11,6 +11,8 @@ import type {
   ProjectWorkspaceSummary,
   NodeReplayReport,
   RunNodeArtifactInspection,
+  RunResultSummary,
+  RunDebugSummary,
   RunAnnotationInspection,
   ReviewItem,
   RunEvent,
@@ -195,6 +197,10 @@ export const api = {
     request<RunNodeArtifactInspection>(
       `/api/runs/${runId}/pipeline-artifacts`,
     ),
+  runResultSummary: (runId: string) =>
+    request<RunResultSummary>(`/api/runs/${runId}/result-summary`),
+  runDebugSummary: (runId: string) =>
+    request<RunDebugSummary>(`/api/runs/${runId}/debug-summary`),
   runAnnotations: (runId: string) =>
     request<RunAnnotationInspection>(`/api/runs/${runId}/annotations`),
   replayNode: (runId: string, nodeId: string) =>

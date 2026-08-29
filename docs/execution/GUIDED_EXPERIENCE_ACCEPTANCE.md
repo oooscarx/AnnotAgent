@@ -77,16 +77,16 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Defaults to Results | OPEN | No Results/Debug mode contract. |
-| Debug requires explicit switch | OPEN | Inspector is always part of the workspace. |
-| Results shows result count | PARTIAL | Header counts exist; result summary DTO absent. |
-| Empty result says No target found | OPEN | Generic empty copy is not outcome-specific. |
+| Defaults to Results | PASS | Run Detail opens the persisted outcome summary without selecting or exposing a node. |
+| Debug requires explicit switch | PASS | Inspector, node payloads, Provider context, and Replay render only in the explicit URL-backed Debug mode. |
+| Results shows result count | PASS | Rust `RunResultSummary` aggregates formal Annotations and typed checkpoint result Artifacts without double counting. |
+| Empty result says No target found | PASS | A valid empty Run result uses the explicit non-failure outcome in Results. |
 | bbox shows Label and Confidence | PASS | Canvas marks display both. |
 | bbox and Crop link both directions | PARTIAL | Logic/unit path exists; E2E is skipped without Crop fixture. |
 | Artifact Inspector lives in Run Detail | PASS | Inspector is scoped to Run. |
 | User never enters a Run ID | PASS | History/deep links open Runs. |
 | Replay starts at current node | PASS | Real Replay API and inspector action exist. |
-| Node error includes repair information | OPEN | Structured errors exist, but guided repair action is missing. |
+| Node error includes repair information | PASS | Debug maps structured retryability to Replay failed step or Fix automation and preserves the raw recorded error. |
 
 ## G. Review
 
@@ -120,7 +120,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | --- | --- | --- |
 | Refresh Project preserves Stage | PASS | Browser reload refetches the server summary and preserves the exact Guidance primary action; persisted Dry Run evidence is covered in Rust. |
 | Refresh Run preserves Image | PASS | Image query state exists and E2E passes. |
-| Refresh Debug preserves Node | PARTIAL | Node query exists; Debug mode does not. |
+| Refresh Debug preserves Node | PASS | `view=debug`, Image, Node, and Artifact are canonical URL state; legacy technical links infer Debug. |
 | URL reopens same Artifact | PASS | Artifact query identity is parsed and used. |
 | Browser back/forward is correct | PARTIAL | `popstate` implemented; full journey regression remains. |
 | Active Run restores from server | PASS | Summary and E2E cover server-owned state. |
@@ -132,12 +132,12 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Guided default hides ArtifactId | OPEN | Run inspector exposes technical IDs in default layout. |
+| Guided default hides ArtifactId | PASS | Results contains no Artifact or Node IDs; technical identity is available only after entering Debug. |
 | Guided default hides full DAG | PASS | Natural step cards are the default; full graph JSON and technical node editing require opening the Expert Graph. |
 | One Primary Button per page | PARTIAL | Project Overview renders exactly one server-selected solid action; remaining Build/Run/Review/Export surfaces are gated by later Milestones. |
 | No nested Cards | OPEN | Requires component/layout audit after journey refactor. |
-| At most three equal first-screen metrics | OPEN | Existing dashboards and Run surfaces exceed outcome hierarchy. |
-| Technical metadata collapsed by default | PARTIAL | Some details collapse; inspector remains prominent. |
+| At most three equal first-screen metrics | PARTIAL | Sample Test and Run Results now use exactly three equal outcome metrics; remaining milestone surfaces still require the release-wide audit. |
+| Technical metadata collapsed by default | PASS | Automation hides the graph and Run Results hides the Inspector; payloads and Provider metadata require explicit Expert/Debug entry. |
 | Empty workspace contains no RoboCup | PASS | E2E passes. |
 | Generic Project contains no RoboCup | PASS | Rust and E2E pass. |
 | AnnotAgent remains global brand | PASS | Global shell/brand audit passes. |
@@ -235,3 +235,14 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Application 21, Core 28, Storage 8, and Server 9 focused tests pass. Strict Clippy for those crates passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass; one Crop fixture test remains conditional.
 - Browser E2E verifies the outcome hierarchy, one Gallery result, zero-uncertain success state, collapsed Diagnostics, exactly three equal metrics, immutable activation, and no horizontal overflow at 720×450.
 - Browser evidence: `docs/execution/screenshots/02-dry-run-summary.png`.
+
+## Milestone 8 evidence
+
+- Added domain-neutral `RunResultSummary`, `RunResultLabelSummary`, `RunDebugSummary`, and `RunDebugIssue` Application contracts. Result projection prefers formal non-rejected Annotations and falls back to persisted Candidate, Classification, or Detection output Artifacts using stable item identity.
+- Added `GET /api/runs/:runId/result-summary` and `GET /api/runs/:runId/debug-summary`. HTTP tests execute a real published Label Pipeline and assert both persisted projections.
+- Run Detail defaults to Results and exposes Debug through `?view=debug`. Existing `image`, `node`, and `artifact` deep links remain compatible; technical parameters automatically select Debug and survive reload.
+- Results presents Run outcome, three metrics, Label totals, Image Browser, `Original`/`Result`/`Compare`/linked `Crop` views, Review attention, and valid `No target found` copy. It does not render node or Artifact IDs.
+- Debug retains real Pipeline Steps, Artifact canvas, Node Inspector, input/output/configuration, redacted Provider request context, raw error, Replay, and retry/fix actions. Results and Debug read the same immutable Run checkpoint.
+- Application 21 and Server 9 focused tests pass; strict Clippy for both crates passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass, with one fixture-dependent Crop test explicitly skipped.
+- E2E proves Results is the default, Debug requires a switch, a technical deep link canonicalizes to Debug, selection survives reload, Review remains reachable, and 720×450 Results has no horizontal overflow.
+- Browser evidence: `docs/execution/screenshots/07-run-results.png` and `docs/execution/screenshots/08-run-debug.png`.

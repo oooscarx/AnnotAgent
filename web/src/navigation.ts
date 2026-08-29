@@ -19,6 +19,7 @@ export type WorkspaceRoute =
       imageId?: string;
       nodeId?: string;
       artifactId?: string;
+      view?: "results" | "debug";
     }
   | {
       kind: "review";
@@ -117,6 +118,10 @@ export function parseWorkspaceRoute(
     const context = new URLSearchParams();
     const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
     if (!run[1] && projectId) context.set("project_id", projectId);
+    const view = params.get("view") === "debug" || params.has("node") || params.has("artifact")
+      ? "debug"
+      : undefined;
+    if (view) context.set("view", view);
     for (const key of ["image", "node", "artifact"] as const) {
       const value = params.get(key);
       if (value) context.set(key, value);
@@ -129,6 +134,7 @@ export function parseWorkspaceRoute(
       imageId: params.get("image") ?? undefined,
       nodeId: params.get("node") ?? undefined,
       artifactId: params.get("artifact") ?? undefined,
+      view,
       canonicalPath: run[1] ? `/runs/${run[1]}${suffix}` : `/runs${suffix}`,
     };
   }

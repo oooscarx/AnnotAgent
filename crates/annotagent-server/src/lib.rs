@@ -474,6 +474,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/projects/{project_id}/export", post(export_dataset))
         .route("/api/runs/{run_id}", get(get_run))
         .route(
+            "/api/runs/{run_id}/result-summary",
+            get(get_run_result_summary),
+        )
+        .route(
+            "/api/runs/{run_id}/debug-summary",
+            get(get_run_debug_summary),
+        )
+        .route(
             "/api/runs/{run_id}/pipeline-artifacts",
             get(inspect_run_pipeline_artifacts),
         )
@@ -1886,6 +1894,30 @@ async fn inspect_run_pipeline_artifacts(
         .inspect_run_pipeline_artifacts(run_id)
         .map_err(ApiError::not_found)?;
     Ok(Json(json!(inspection)))
+}
+
+async fn get_run_result_summary(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let run_id = parse_run_id(&run_id)?;
+    let summary = state
+        .application
+        .run_result_summary(run_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!(summary)))
+}
+
+async fn get_run_debug_summary(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let run_id = parse_run_id(&run_id)?;
+    let summary = state
+        .application
+        .run_debug_summary(run_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!(summary)))
 }
 
 async fn replay_run_from_node(
@@ -3969,6 +4001,35 @@ export:
         assert!(classifier["configuration"]["parameters"]["labels"].is_array());
         assert!(classifier["latency_ms"].is_number());
         assert!(classifier["error"].is_null());
+
+        let result_summary = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/result-summary"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(result_summary["result_count"], json!(1));
+        assert_eq!(result_summary["ready_count"], json!(1));
+        assert_eq!(result_summary["needs_review_count"], json!(0));
+        assert_eq!(result_summary["no_target_count"], json!(0));
+        assert_eq!(result_summary["labels"][0]["label"], json!("day"));
+        let debug_summary = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/debug-summary"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(debug_summary["node_count"], json!(4));
+        assert_eq!(debug_summary["failed_node_count"], json!(0));
+        assert_eq!(debug_summary["issues"], json!([]));
 
         let replay = response_json(
             request(

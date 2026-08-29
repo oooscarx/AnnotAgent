@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 8 — Results-first Run Workspace
-- Last completed Milestone: 7 — Outcome-first Dry Run
-- Latest Milestone commit: this document's containing Milestone 7 commit
+- Active Milestone: 9 — Inbox Review
+- Last completed Milestone: 8 — Results-first Run Workspace
+- Latest Milestone commit: this document's containing Milestone 8 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -23,8 +23,8 @@ Updated: 2026-08-30
 | 5 Guided Build | Complete | Four URL-restorable steps share server Journey completion, forward/back navigation, prerequisite gates, real data diagnostics, user-language Labels, autosaved Automation, and Test/Activate vocabulary. |
 | 6 Recipe + Advisor | Complete | Natural Recipe, Shared Stages, per-Label Pipelines, Node Drawer, same-Draft Expert Graph, and a compare/apply Advisor proposal are real and never auto-publish. |
 | 7 Dry Run | Complete | Rust SampleTestSummary now reports outcomes, empty/failure counts, usage, Review workload, and Full Run estimates; the UI leads with Gallery and keeps diagnostics collapsed. |
-| 8 Run Workspace | In progress | Artifact/Replay context is real; explicit Results/Debug modes, result summary, and repair guidance remain. |
-| 9 Inbox Review | Pending | Geometry editing/decisions are real; next-item actions/progress remain. |
+| 8 Run Workspace | Complete | Results is the default outcome workspace; Debug is an explicit URL-backed mode with Inspector, deep links, Replay, provider context, and repair actions. |
+| 9 Inbox Review | In progress | Geometry editing/decisions are real; next-item actions/progress remain. |
 | 10 Guided Export | Pending | Export is real; readiness, recommendation, compatibility, and completion UX remain. |
 | 11 Reliability | Pending | URL/SSE/server recovery foundations exist; new guided state needs end-to-end recovery coverage. |
 | 12 Release | Pending | Full matrix, documentation, responsiveness, accessibility, and E2E expansion remain. |
@@ -96,6 +96,15 @@ Milestone 7 focused checks:
 - Application 21, Core 28, Storage 8, and Server 9 focused tests passed; strict focused Clippy passed. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios passed. One Crop lineage test remains conditional.
 - The complete Test & Activate workspace has no horizontal overflow at 720×450 and keeps its primary activation action operable.
 
+Milestone 8 focused checks:
+
+- Rust `RunResultSummary` derives image, result, ready, Review, no-target, failure, Label, duration, and usage facts from persisted Run history, Annotations, and typed checkpoint Artifacts; `RunDebugSummary` separately projects execution state and retryable issues.
+- Run Detail defaults to Results. Debug requires the explicit URL-backed switch and is also inferred for legacy node/Artifact deep links, so reload preserves the selected Image, Node, and Artifact.
+- Results contains exactly three first-level outcome metrics, an Image Browser, Label summary, Original/Result/Compare/Crop views, a truthful `No target found` state, and exact Review/Debug repair destinations. Technical IDs and payloads remain in Debug.
+- Debug retains the real Pipeline Steps, Artifact lineage, node input/output/configuration, redacted Provider context, raw error, Replay, and failure repair actions without duplicating the runtime definition.
+- Application 21 and Server 9 focused tests pass; strict focused Clippy passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass. One Crop lineage test remains conditional on fixture availability.
+- Browser evidence covers Results and Debug at desktop size and verifies the Results workspace has no horizontal overflow at 720×450.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -109,13 +118,13 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Project Overview now presents one server-selected next action, Journey progress, and blocker repairs before Recent Activity and Usage; schema, bindings, versions, import/export, and image records are collapsed under Advanced Project Details.
 - Build now behaves as one gated sequence rather than four unrelated management screens; URL refresh preserves the step and server prerequisites prevent manual URL bypass.
 - Sample Test now leads with outcomes and Full Run impact; node statuses, timings, usage, and Artifact types are collapsed diagnostics.
-- Run and Review default surfaces remain technically dense.
+- Run now defaults to outcome-first Results and preserves technical inspection in explicit Debug. Review remains the next dense surface to convert into an inbox.
 
 ## Release Blocking remaining
 
-- `PASS`: 63
-- `PARTIAL`: 15
-- `OPEN`: 16
+- `PASS`: 71
+- `PARTIAL`: 13
+- `OPEN`: 10
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.

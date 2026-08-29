@@ -46,7 +46,9 @@ import type {
   ReviewItem,
   RunEvent,
   RunAnnotationInspection,
+  RunDebugSummary,
   RunNodeArtifactInspection,
+  RunResultSummary,
   SkillDetail,
   WorkflowCatalog,
   WorkflowDraft,
@@ -4012,8 +4014,11 @@ function RunDetailWorkspace({
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
+  const view = route.view ?? "results";
   const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
   const [annotationInspection, setAnnotationInspection] = useState<RunAnnotationInspection>();
+  const [resultSummary, setResultSummary] = useState<RunResultSummary>();
+  const [debugSummary, setDebugSummary] = useState<RunDebugSummary>();
   const [replay, setReplay] = useState<NodeReplayReport>();
   const [images, setImages] = useState<ImageItem[]>([]);
   const [runReview, setRunReview] = useState<ReviewItem>();
@@ -4022,16 +4027,12 @@ function RunDetailWorkspace({
   useEffect(() => {
     setInspection(undefined);
     setAnnotationInspection(undefined);
+    setResultSummary(undefined);
+    setDebugSummary(undefined);
     setReplay(undefined);
     if (run.checkpoint_present)
-      void api.pipelineArtifacts(run.id).then((value) => {
-        setInspection(value);
-        if (!route.nodeId && value.nodes[0]) {
-          const image = value.image_index === undefined ? "" : `image=${value.image_index}`;
-          const query = [image, `node=${encodeURIComponent(value.nodes[0].node_id)}`].filter(Boolean).join("&");
-          onNavigate(`/runs/${run.id}?${query}`, true);
-        }
-      }).catch((error: Error) => onError(error.message));
+      void api.pipelineArtifacts(run.id).then(setInspection).catch((error: Error) => onError(error.message));
+    void api.runResultSummary(run.id).then(setResultSummary).catch((error: Error) => onError(error.message));
     void api.runAnnotations(run.id).then(setAnnotationInspection).catch((error: Error) => onError(error.message));
     if (project)
       void api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
@@ -4041,6 +4042,17 @@ function RunDetailWorkspace({
       ) ?? value.reviews.find((review) => review.run_id === run.id),
     )).catch((error: Error) => onError(error.message));
   }, [run.id, project?.id]);
+  useEffect(() => {
+    if (view !== "debug") return;
+    void api.runDebugSummary(run.id).then(setDebugSummary).catch((error: Error) => onError(error.message));
+    if (!route.nodeId && inspection?.nodes[0]) {
+      const params = new URLSearchParams({ view: "debug" });
+      const imageIndex = inspection.image_index ?? annotationInspection?.image_index;
+      if (imageIndex !== undefined) params.set("image", String(imageIndex));
+      params.set("node", inspection.nodes[0].node_id);
+      onNavigate(`/runs/${run.id}?${params.toString()}`, true);
+    }
+  }, [view, run.id, route.nodeId, inspection, annotationInspection?.image_index]);
   const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
   const selectedArtifacts = selectedNode
     ? selectedNode.outputs.filter(
@@ -4052,19 +4064,30 @@ function RunDetailWorkspace({
   const selectedImageIndex = Number(route.imageId ?? runImageIndex ?? 0);
   const visibleImages = images.filter((image) => image.name.toLowerCase().includes(search.toLowerCase()));
   const runAnnotations = annotationInspection?.annotations ?? [];
-  const previewArtifacts = selectedNode
+  const selectedPreviewArtifacts = selectedNode
     ? [...selectedNode.inputs, ...(selectedArtifacts.length ? selectedArtifacts : selectedNode.outputs)]
     : [];
+  const resultArtifacts = inspection?.nodes.flatMap((node) => node.outputs) ?? [];
+  const previewArtifacts = view === "results" ? resultArtifacts : selectedPreviewArtifacts;
   const previewProjectId = inspection?.project_id ?? annotationInspection?.project_id ?? project?.id;
   const canPreview = Boolean(
-    previewProjectId && runImageIndex !== undefined && (selectedNode || runAnnotations.length),
+    previewProjectId && runImageIndex !== undefined && (inspection || runAnnotations.length),
   );
   const setContext = (context: { image?: number; node?: string; artifact?: string }) => {
     const params = new URLSearchParams();
+    params.set("view", "debug");
     params.set("image", String(context.image ?? selectedImageIndex));
     if (context.node ?? selectedNode?.node_id) params.set("node", context.node ?? selectedNode!.node_id);
     if (context.artifact) params.set("artifact", context.artifact);
     onNavigate(`/runs/${run.id}?${params.toString()}`);
+  };
+  const setView = (next: "results" | "debug") => {
+    const params = new URLSearchParams();
+    if (next === "debug") params.set("view", "debug");
+    if (runImageIndex !== undefined) params.set("image", String(selectedImageIndex));
+    if (next === "debug" && selectedNode) params.set("node", selectedNode.node_id);
+    const query = params.size ? `?${params.toString()}` : "";
+    onNavigate(`/runs/${run.id}${query}`);
   };
   const control = (action: "pause" | "resume" | "cancel") => {
     setBusy(true);
@@ -4084,6 +4107,16 @@ function RunDetailWorkspace({
     : run.current_node
       ? `Current: ${run.current_node}`
       : "No node trace";
+  const setResultImage = (image: number) => onNavigate(`/runs/${run.id}?image=${image}`);
+  const resultHeadline = run.status === "running"
+    ? "Run in progress"
+    : run.status === "paused"
+      ? "Run paused"
+      : run.status === "completed" || run.status === "completed_with_review"
+        ? "Run completed"
+        : run.status === "awaiting_review"
+          ? "Results need review"
+          : `Run ${run.status.replaceAll("_", " ")}`;
   return (
     <section className="page-stack run-detail-page">
       <ProjectBreadcrumb
@@ -4093,22 +4126,42 @@ function RunDetailWorkspace({
         onOpenProject={project ? () => onNavigate(`/projects/${encodeURIComponent(project.id)}`) : undefined}
       />
       <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← Run history</button>
+      <nav className="run-view-tabs" aria-label="Run workspace view">
+        <button className={view === "results" ? "active" : ""} aria-current={view === "results" ? "page" : undefined} onClick={() => setView("results")}>Results</button>
+        <button className={view === "debug" ? "active" : ""} aria-current={view === "debug" ? "page" : undefined} onClick={() => setView("debug")}>Debug</button>
+      </nav>
       <div className="toolbar-panel run-detail-header">
-        <div><span className="eyebrow">{run.project_name} · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{runAnnotations.length} Annotations</span><span>{duration.toLocaleString()} ms</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>
+        {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>}
         <div className="button-row">
-          {runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review result</button>}
+          {runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
+          {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button className="primary" onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button>}
           {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
           {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
           {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
         </div>
       </div>
-      <div className="run-workspace">
-        <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
-          <div>{visibleImages.filter((image) => runImageIndex === undefined || image.index === runImageIndex).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setContext({ image: image.index })}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{run.status}</small></span></button>)}</div>
-        </aside>
-        <main className="panel run-visual-workspace"><span className="eyebrow">Result preview · Artifacts + committed Annotations</span>{canPreview ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={previewArtifacts} annotations={runAnnotations} imageIndex={selectedImageIndex} /> : <Empty title="No visual result" detail={run.checkpoint_present ? "Loading the persisted checkpoint and annotations." : "This Run has no bounding-box Annotation to preview."} />}</main>
-        <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong title={node.operation}>{node.operation}</strong><small title={`${node.status} · ${node.latency_ms} ms`}>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
-      </div>
+      {view === "results" ? <>
+        <dl className="run-result-metrics" aria-label="Run result summary">
+          <div><dt>Images</dt><dd>{resultSummary?.image_count ?? 1}</dd><small>processed</small></div>
+          <div><dt>Results found</dt><dd>{resultSummary?.result_count ?? runAnnotations.length}</dd><small>{resultSummary?.ready_count ?? 0} ready</small></div>
+          <div><dt>Needs review</dt><dd>{resultSummary?.needs_review_count ?? (runReview ? 1 : 0)}</dd><small>{resultSummary?.no_target_count ?? 0} no-target · {resultSummary?.failed_count ?? 0} failed</small></div>
+        </dl>
+        <div className="run-results-workspace">
+          <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status.replaceAll("_", " ")}</option></select>
+            <div>{visibleImages.filter((image) => runImageIndex === undefined || image.index === runImageIndex).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setResultImage(image.index)}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{resultSummary?.failed_count ? "Failed" : resultSummary?.no_target_count ? "No target found" : resultSummary?.needs_review_count ? "Needs review" : "Ready"}</small></span></button>)}</div>
+          </aside>
+          <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">Result Preview</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label="Result labels">{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}{canPreview && (resultSummary?.result_count ?? runAnnotations.length) > 0 ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={previewArtifacts} annotations={runAnnotations} imageIndex={selectedImageIndex} /> : resultSummary ? <Empty title={resultSummary.no_target_count ? "No target found" : resultSummary.failed_count ? "No result produced" : "No visual result"} detail={resultSummary.no_target_count ? "The automation completed successfully and found no matching target in this image." : resultSummary.failed_count ? "Open Debug to inspect the failed step and available repair action." : "This result has no bounding-box or Crop preview."} /> : <Empty title="Loading results" detail="Reading persisted Annotations and result Artifacts." />}</main>
+          <aside className="panel run-needs-attention"><span className="eyebrow">Needs Attention</span>{runReview ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>{runReview.review_reason.replaceAll("_", " ")}</p><button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review result</button></> : resultSummary?.needs_review_count && project ? <><h3>{resultSummary.needs_review_count} result needs a decision</h3><p>Open the Project Review inbox to inspect the uncertain result.</p><button className="primary" onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button></> : resultSummary?.failed_count ? <><h3>Run needs repair</h3><p>{run.terminal_reason ?? "A Pipeline step did not produce a usable result."}</p><button className="primary" onClick={() => setView("debug")}>Open Debug</button></> : <div className="positive-empty"><strong>No results need attention</strong><span>{resultSummary?.no_target_count ? "The empty result is valid." : "All results passed the configured gates."}</span></div>}</aside>
+        </div>
+      </> : <>
+        <div className="debug-summary-strip" aria-label="Run debug summary"><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0} steps complete</span><span>{debugSummary?.failed_node_count ?? 0} failed</span><span>{debugSummary?.issues.length ?? 0} issues</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
+        <div className="run-workspace">
+          <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status}</option></select>
+            <div>{visibleImages.filter((image) => runImageIndex === undefined || image.index === runImageIndex).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setContext({ image: image.index })}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{run.status}</small></span></button>)}</div>
+          </aside>
+          <main className="panel run-visual-workspace"><span className="eyebrow">Artifact Preview</span>{canPreview ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={previewArtifacts} annotations={runAnnotations} imageIndex={selectedImageIndex} /> : <Empty title="No visual Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint and annotations." : "This Run has no visual Artifact to preview."} />}</main>
+          <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline Steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong title={node.operation}>{node.operation}</strong><small title={`${node.status} · ${node.latency_ms} ms`}>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
+        </div>
       {selectedNode && (
         <section className="panel run-node-inspector" aria-label="Node inspector">
           <header className="run-node-inspector-header">
@@ -4129,15 +4182,18 @@ function RunDetailWorkspace({
             <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}><span>{artifact.kind.replaceAll("_", " ")}</span><code>{id.slice(0, 8)}</code></button>; })}</div>
             {selectedNode.outputs.length === 0 && <p className="node-payload-empty">This node did not produce an Artifact.</p>}
           </section>
-          {selectedNode.error && <div className="error-banner"><span>{selectedNode.error.code}: {selectedNode.error.summary}</span></div>}
+          {selectedNode.error && <div className="run-repair-card"><div><strong>{selectedNode.error.code}</strong><p>{selectedNode.error.summary}</p></div><div className="button-row">{selectedNode.error.retryable && <button className="primary" disabled={busy} onClick={replayNode}>Replay failed step</button>}{project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Fix automation</button>}</div></div>}
           <div className="node-payload-sections">
             <NodePayloadSection title="Input" description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
             <NodePayloadSection title="Output" description="Artifacts emitted by this node" badge={selectedNode.outputs.length} value={selectedNode.outputs} open />
             <NodePayloadSection title="Configuration" description="Resolved runtime configuration" badge="JSON" value={selectedNode.configuration} />
+            <NodePayloadSection title="Provider request" description="Recorded provider context; credentials and image bytes are redacted" badge={run.provider} value={{ provider: run.provider, model: run.model, operation: selectedNode.operation, parameters: selectedNode.configuration.parameters }} />
+            {selectedNode.error && <NodePayloadSection title="Raw error" description="Structured Runtime failure" badge={selectedNode.error.code} value={selectedNode.error} />}
           </div>
           {replay?.replayed_from === selectedNode.node_id && <div className="validation-report valid"><strong>Sandbox Replay completed</strong><small>Preserved upstream: {replay.preserved_upstream_nodes.join(", ") || "None"}</small><small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small></div>}
         </section>
       )}
+      </>}
     </section>
   );
 }
@@ -4331,7 +4387,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
       !artifactDetections.some((artifact) => sameMark(annotation, artifact))),
   ];
   const crops = artifactCropMarks(artifacts, detections);
-  const [mode, setMode] = useState<"image" | "crops">("image");
+  const [mode, setMode] = useState<"original" | "result" | "compare" | "crops">("result");
   const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState(detections[0]?.id ?? crops[0]?.parentId ?? "");
   useEffect(() => {
@@ -4345,11 +4401,14 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
     setSelectedId(ids[(current + offset + ids.length) % ids.length]);
   };
   const legend = [...new Map(detections.map((item) => [item.label, item])).values()];
+  const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label} ${rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)} percent`}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label} {rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)}%`}</text></g>)}</svg>}</div></div>;
   return (
     <div className="run-artifact-canvas" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle">
-        <button className={mode === "image" ? "active" : ""} onClick={() => setMode("image")}>Image</button>
-        <button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crops ({crops.length})</button>
+        <button className={mode === "original" ? "active" : ""} onClick={() => setMode("original")}>Original</button>
+        <button className={mode === "result" ? "active" : ""} onClick={() => setMode("result")}>Result</button>
+        <button className={mode === "compare" ? "active" : ""} onClick={() => setMode("compare")}>Compare</button>
+        <button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crop ({crops.length})</button>
         <label className="preview-zoom-control">
           <span>Zoom</span>
           <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
@@ -4357,9 +4416,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
         </label>
       </div>
       {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
-      {mode === "image" ? (
-        <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt="Original Run input" /><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label} ${rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)} percent`}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label} {rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)}%`}</text></g>)}</svg></div></div>
-      ) : (
+      {mode === "original" ? imageStage(false, "Original Run input") : mode === "result" ? imageStage(true, "Run result") : mode === "compare" ? <div className="run-result-compare"><section><span>Original</span>{imageStage(false, "Original Run input")}</section><section><span>Result</span>{imageStage(true, "Run result")}</section></div> : (
         <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? "Unknown"}</small><small>Source: {crop.sourceNode ?? "Unknown"}</small></span></button>)}</div>
       )}
     </div>

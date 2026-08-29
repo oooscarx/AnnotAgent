@@ -34,7 +34,7 @@ describe("guided workspace routing", () => {
     expect(
       parseWorkspaceRoute(
         "/runs/run-1",
-        "?image=3&node=detector&artifact=det-1",
+        "?view=debug&image=3&node=detector&artifact=det-1",
       ),
     ).toMatchObject({
       kind: "runs",
@@ -42,6 +42,7 @@ describe("guided workspace routing", () => {
       imageId: "3",
       nodeId: "detector",
       artifactId: "det-1",
+      view: "debug",
     });
   });
 

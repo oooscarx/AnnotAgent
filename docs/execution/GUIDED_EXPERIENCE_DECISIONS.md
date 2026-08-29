@@ -69,3 +69,7 @@ A Sample Test reports business outcomes by de-duplicating the latest Candidate, 
 ## GE-017 — Full Run estimates are explicit projections, not guarantees
 
 The Application scales measured sample duration, exact decimal cost, and Review count to the real Project image count. The DTO records the sample evidence and projected Dataset scope separately; the UI labels the result as an estimate and explains that Provider and image variation can change it. Activation still publishes only the tested immutable Workflow Version and never starts the Dataset automatically.
+
+## GE-018 — Results and Debug are two projections of one immutable Run
+
+Results reads a server-owned outcome summary derived from persisted formal Annotations, with typed checkpoint Candidate, Classification, and Detection Artifacts as the fallback for Pipelines that have not emitted a formal Annotation. Debug reads the same Run history and checkpoint but exposes execution state, lineage, payloads, Provider context, errors, and Replay. `view=debug` is explicit URL state; legacy Node or Artifact links infer it for compatibility. This keeps Guided and technical presentations consistent without persisting a second Run model or rerunning the Workflow.

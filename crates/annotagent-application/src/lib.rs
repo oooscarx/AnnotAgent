@@ -962,6 +962,51 @@ pub struct RunAnnotationInspection {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RunResultSummary {
+    pub run_id: RunId,
+    pub project_id: String,
+    pub status: RunStatus,
+    pub image_count: usize,
+    pub result_count: usize,
+    pub ready_count: usize,
+    pub needs_review_count: usize,
+    pub no_target_count: usize,
+    pub failed_count: usize,
+    pub duration_ms: u64,
+    pub usage: UsageSummary,
+    pub image_index: Option<usize>,
+    pub labels: Vec<RunResultLabelSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunResultLabelSummary {
+    pub label: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunDebugSummary {
+    pub run_id: RunId,
+    pub workflow_id: Option<String>,
+    pub workflow_version: Option<u32>,
+    pub node_count: usize,
+    pub succeeded_node_count: usize,
+    pub failed_node_count: usize,
+    pub current_node: Option<String>,
+    pub issues: Vec<RunDebugIssue>,
+    pub duration_ms: u64,
+    pub usage: UsageSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunDebugIssue {
+    pub node_id: String,
+    pub code: String,
+    pub summary: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct NodeArtifactInspection {
     pub node_id: String,
     pub operation: String,
@@ -2477,6 +2522,202 @@ impl LocalApplication {
         let mut images: Vec<_> = supported_images(&root).collect();
         images.sort();
         Ok(images)
+    }
+
+    pub fn run_result_summary(&self, run_id: RunId) -> Result<RunResultSummary> {
+        let history = self.store.history(run_id)?;
+        let inspection = self.inspect_run_annotations(run_id)?;
+        let results = inspection
+            .annotations
+            .iter()
+            .filter(|annotation| annotation.review_status != ReviewStatus::Rejected)
+            .collect::<Vec<_>>();
+        let mut result_count = results.len();
+        let mut ready_count = results
+            .iter()
+            .filter(|annotation| {
+                matches!(
+                    annotation.review_status,
+                    ReviewStatus::Draft | ReviewStatus::AutoAccepted | ReviewStatus::HumanAccepted
+                )
+            })
+            .count();
+        let mut needs_review_count = results
+            .iter()
+            .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
+            .count();
+        let failed_count = usize::from(matches!(
+            history.run.status,
+            RunStatus::Partial
+                | RunStatus::BudgetExceeded
+                | RunStatus::Failed
+                | RunStatus::Interrupted
+        ));
+        let mut label_counts = BTreeMap::<String, usize>::new();
+        for annotation in &results {
+            let label = annotation
+                .label
+                .as_ref()
+                .map_or_else(|| annotation.task_id.to_string(), ToString::to_string);
+            *label_counts.entry(label).or_default() += 1;
+        }
+        if result_count == 0 {
+            let mut detections = BTreeMap::new();
+            let mut classifications = BTreeMap::new();
+            let mut candidates = BTreeMap::new();
+            if let Ok(pipeline) = self.inspect_run_pipeline_artifacts(run_id) {
+                for artifact in pipeline.nodes.iter().flat_map(|node| &node.outputs) {
+                    match artifact {
+                        PipelineArtifact::DetectionSet(set) => {
+                            for detection in &set.detections {
+                                detections.insert(
+                                    detection.id.clone(),
+                                    (
+                                        detection.label.as_ref().map_or_else(
+                                            || detection.class_id.clone(),
+                                            ToString::to_string,
+                                        ),
+                                        sample_test_outcome_status(Some(set.validation_state)),
+                                    ),
+                                );
+                            }
+                        }
+                        PipelineArtifact::ClassificationSet(set) => {
+                            for classification in &set.classifications {
+                                classifications.insert(
+                                    classification.id.clone(),
+                                    (
+                                        classification.label.to_string(),
+                                        sample_test_outcome_status(Some(set.validation_state)),
+                                    ),
+                                );
+                            }
+                        }
+                        PipelineArtifact::AnnotationCandidateSet(set) => {
+                            for candidate in &set.candidates {
+                                candidates.insert(
+                                    candidate.id.clone(),
+                                    (
+                                        candidate.label.to_string(),
+                                        sample_test_outcome_status(candidate.validation_state),
+                                    ),
+                                );
+                            }
+                        }
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                    }
+                }
+            }
+            let outcomes = if !candidates.is_empty() {
+                candidates
+            } else if !classifications.is_empty() {
+                classifications
+            } else {
+                detections
+            };
+            result_count = outcomes.len();
+            ready_count = outcomes
+                .values()
+                .filter(|(_, status)| *status == SampleTestOutcomeStatus::ReadyToAccept)
+                .count();
+            needs_review_count = outcomes
+                .values()
+                .filter(|(_, status)| *status == SampleTestOutcomeStatus::NeedsReview)
+                .count();
+            for (label, _) in outcomes.into_values() {
+                *label_counts.entry(label).or_default() += 1;
+            }
+        }
+        let no_target_count = usize::from(
+            result_count == 0
+                && failed_count == 0
+                && matches!(
+                    history.run.status,
+                    RunStatus::Completed | RunStatus::CompletedWithReview
+                ),
+        );
+        Ok(RunResultSummary {
+            run_id,
+            project_id: inspection.project_id,
+            status: history.run.status,
+            image_count: 1,
+            result_count,
+            ready_count,
+            needs_review_count,
+            no_target_count,
+            failed_count,
+            duration_ms: history_run_duration_ms(&history.run),
+            usage: history_usage_summary(&history),
+            image_index: inspection.image_index,
+            labels: label_counts
+                .into_iter()
+                .map(|(label, count)| RunResultLabelSummary { label, count })
+                .collect(),
+        })
+    }
+
+    pub fn run_debug_summary(&self, run_id: RunId) -> Result<RunDebugSummary> {
+        let history = self.store.history(run_id)?;
+        let inspection = self.inspect_run_pipeline_artifacts(run_id).ok();
+        let nodes = inspection
+            .as_ref()
+            .map_or(&[][..], |inspection| inspection.nodes.as_slice());
+        let issues = nodes
+            .iter()
+            .filter_map(|node| {
+                node.error.as_ref().map(|error| RunDebugIssue {
+                    node_id: node.node_id.clone(),
+                    code: error.code.clone(),
+                    summary: error.summary.clone(),
+                    retryable: error.retryable,
+                })
+            })
+            .collect::<Vec<_>>();
+        let current_node = nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.status,
+                    DagNodeStatus::Running | DagNodeStatus::AwaitingReview
+                )
+            })
+            .or_else(|| nodes.iter().find(|node| node.error.is_some()))
+            .map(|node| node.node_id.clone());
+        Ok(RunDebugSummary {
+            run_id,
+            workflow_id: inspection
+                .as_ref()
+                .map(|inspection| inspection.workflow_id.clone()),
+            workflow_version: inspection
+                .as_ref()
+                .map(|inspection| inspection.workflow_version),
+            node_count: nodes.len(),
+            succeeded_node_count: nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.status,
+                        DagNodeStatus::Succeeded
+                            | DagNodeStatus::Cached
+                            | DagNodeStatus::Skipped
+                            | DagNodeStatus::FailedWithFallback
+                    )
+                })
+                .count(),
+            failed_node_count: nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.status,
+                        DagNodeStatus::Failed | DagNodeStatus::Cancelled
+                    )
+                })
+                .count(),
+            current_node,
+            issues,
+            duration_ms: history_run_duration_ms(&history.run),
+            usage: history_usage_summary(&history),
+        })
     }
 
     pub fn inspect_run_pipeline_artifacts(
@@ -5363,6 +5604,33 @@ fn finish_sample_test_summary(
     });
 }
 
+fn history_run_duration_ms(run: &HistoryRun) -> u64 {
+    let started = chrono::DateTime::parse_from_rfc3339(&run.created_at).ok();
+    let finished = chrono::DateTime::parse_from_rfc3339(&run.updated_at).ok();
+    started
+        .zip(finished)
+        .map(|(started, finished)| {
+            (finished - started)
+                .num_milliseconds()
+                .max(0)
+                .try_into()
+                .unwrap_or(u64::MAX)
+        })
+        .unwrap_or_default()
+}
+
+fn history_usage_summary(history: &annotagent_storage::HistoryDocument) -> UsageSummary {
+    let mut totals = annotagent_core::UsageTotals::default();
+    for record in &history.usage {
+        totals.add(record);
+    }
+    UsageSummary {
+        input_tokens: totals.input_tokens,
+        output_tokens: totals.output_tokens,
+        estimated_cost: totals.cost.to_string(),
+    }
+}
+
 fn revise_draft_after_failed_dry_run(
     suggestion: &mut WorkflowSuggestion,
     failed_count: usize,
@@ -5735,6 +6003,21 @@ export:
         );
         assert_eq!(classifier_inspection.attempts, 1);
         assert!(classifier_inspection.error.is_none());
+        let result_summary = application
+            .run_result_summary(started.run_id)
+            .expect("Run result summary");
+        assert_eq!(result_summary.result_count, 1);
+        assert_eq!(result_summary.ready_count, 1);
+        assert_eq!(result_summary.needs_review_count, 0);
+        assert_eq!(result_summary.no_target_count, 0);
+        assert_eq!(result_summary.labels[0].label, "day");
+        let debug_summary = application
+            .run_debug_summary(started.run_id)
+            .expect("Run debug summary");
+        assert_eq!(debug_summary.node_count, 3);
+        assert_eq!(debug_summary.succeeded_node_count, 3);
+        assert_eq!(debug_summary.failed_node_count, 0);
+        assert!(debug_summary.issues.is_empty());
         let replay = application
             .replay_run_from_node(started.run_id, "classifier", &settings)
             .await

@@ -89,8 +89,8 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | 5 | guided four-step Build | complete |
 | 6 | Automation Recipe and controlled Advisor proposal | complete |
 | 7 | outcome-first sample testing and activation | complete |
-| 8 | Results-first Run workspace with optional Debug | in progress |
-| 9 | inbox Review | pending |
+| 8 | Results-first Run workspace with optional Debug | complete |
+| 9 | inbox Review | in progress |
 | 10 | guided Export endpoint and completion state | pending |
 | 11 | durable URL, SSE, and server-state recovery | pending |
 | 12 | responsive, accessible, documented Release gate | pending |

@@ -276,7 +276,19 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   const row = page.locator(".run-row").filter({ hasText: projectName });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
-  await expect(page.getByText("Pipeline steps")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Results", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Run result summary")).toContainText("Results found");
+  await expect(page.getByText("Result Preview", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pipeline Steps", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Original", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Result", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Compare", exact: true })).toBeVisible();
+  await page.screenshot({ path: `${screenshots}/07-run-results.png`, fullPage: true });
+  await page.setViewportSize({ width: 720, height: 450 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
+  await page.getByRole("button", { name: "Debug", exact: true }).click();
+  await expect(page).toHaveURL(/view=debug/);
+  await expect(page.getByText("Pipeline Steps", { exact: true })).toBeVisible();
   await expect(page.locator(".run-node-timeline button").first()).toBeVisible();
 });
 
@@ -327,8 +339,9 @@ test("Run URL refresh restores image and node context", async ({ page }) => {
     return Math.abs((range.top + range.height / 2) - (output.top + output.height / 2));
   });
   expect(zoomAlignment).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: `${screenshots}/08-run-debug.png`, fullPage: true });
   await page.reload();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?image=0&node=core.image_input`));
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=debug&image=0&node=core.image_input`));
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
 });
 
@@ -370,7 +383,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: /Open run context/ }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
-  await page.getByRole("button", { name: "Review result" }).click();
+  await page.getByRole("button", { name: /Review \d+ result/ }).click();
   await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
 });
 
@@ -467,9 +480,9 @@ test("bbox and crop selection stay linked through parent references", async ({ p
   const overlay = page.locator('svg[aria-label="Annotation overlay"]');
   await expect(overlay.getByRole("button").first()).toBeVisible();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
-  await page.getByRole("button", { name: /Crops \(1\)/ }).click();
+  await page.getByRole("button", { name: /Crop \(1\)/ }).click();
   await expect(page.locator(".crop-preview-list button.selected")).toHaveCount(1);
-  await page.getByRole("button", { name: "Image", exact: true }).click();
+  await page.getByRole("button", { name: "Result", exact: true }).click();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
   await page.screenshot({ path: `${screenshots}/03-run-artifact-lineage.png`, fullPage: true });
 });

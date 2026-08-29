@@ -648,6 +648,35 @@ export interface RunAnnotationInspection {
   annotations: Annotation[];
 }
 
+export interface RunResultSummary {
+  run_id: string;
+  project_id: string;
+  status: RunStatus;
+  image_count: number;
+  result_count: number;
+  ready_count: number;
+  needs_review_count: number;
+  no_target_count: number;
+  failed_count: number;
+  duration_ms: number;
+  usage: { input_tokens: number; output_tokens: number; estimated_cost: string };
+  image_index?: number;
+  labels: { label: string; count: number }[];
+}
+
+export interface RunDebugSummary {
+  run_id: string;
+  workflow_id?: string;
+  workflow_version?: number;
+  node_count: number;
+  succeeded_node_count: number;
+  failed_node_count: number;
+  current_node?: string;
+  issues: { node_id: string; code: string; summary: string; retryable: boolean }[];
+  duration_ms: number;
+  usage: { input_tokens: number; output_tokens: number; estimated_cost: string };
+}
+
 export type Point = [number, number];
 
 export type AnnotationValue =
