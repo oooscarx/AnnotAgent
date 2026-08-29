@@ -51,6 +51,13 @@ export function AnnotationCanvas({
     () => annotations.find((annotation) => annotation.id === selectedId),
     [annotations, selectedId],
   );
+  const editingHint = !selected
+    ? "Select an annotation to edit it"
+    : selected.value.kind === "bounding_box"
+      ? "Drag the box to move it · drag a corner handle to resize"
+      : selected.value.kind === "keypoints"
+        ? "Drag a keypoint to move it · Delete removes the selected point"
+        : "Drag vertices to move them · double-click to add · Delete removes the selected vertex";
 
   useEffect(() => {
     setCanvasSize([DEFAULT_WIDTH, DEFAULT_HEIGHT]);
@@ -172,7 +179,7 @@ export function AnnotationCanvas({
   return (
     <div className="canvas-shell">
       <div className="canvas-tools">
-        <span>Annotation workspace</span>
+        <span>Canvas</span>
         <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
         <strong>{Math.round(zoom * 100)}%</strong>
         <button aria-label="Zoom in" title="Zoom in" onClick={() => applyZoom(zoom + 0.1)}>+</button>
@@ -283,7 +290,7 @@ export function AnnotationCanvas({
           ))}
         </g>
       </svg>
-      <p className="canvas-hint">Drag boxes, corners, keypoints, and vertices · double-click to add · Delete removes a selected vertex</p>
+      <p className="canvas-hint">{editingHint}</p>
     </div>
   );
 }

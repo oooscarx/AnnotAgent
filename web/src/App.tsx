@@ -4109,14 +4109,19 @@ function ReviewPage({
     setAttributesText("{}");
     setIsNew(true);
   };
+  const hasUnsavedAnnotationChanges = Boolean(
+    isNew ||
+    (draft && selected && (
+      JSON.stringify(draft) !== JSON.stringify(selected.annotation) ||
+      attributesText !== JSON.stringify(selected.annotation.attributes ?? {}, null, 2)
+    )),
+  );
   const decide = (decision: "accept" | "reject" | "delete") => {
     if (!selected || !reviewProject)
       return onError(
         "Select the Review item's Project before recording a decision.",
       );
-    const edited =
-      draft && JSON.stringify(draft) !== JSON.stringify(selected.annotation);
-    const persist = edited ? persistDraft() : Promise.resolve();
+    const persist = hasUnsavedAnnotationChanges ? persistDraft() : Promise.resolve();
     return persist?.then(() => api.decide(
         selected.id,
         reviewProject.id,
@@ -4139,10 +4144,10 @@ function ReviewPage({
       ["bounding_box", "keypoints", "polyline", "polygon"].includes(kind),
     ) ?? [];
   const shapeLabels = {
-    bounding_box: "New box",
-    keypoints: "New keypoint",
-    polyline: "New polyline",
-    polygon: "New polygon",
+    bounding_box: "Box",
+    keypoints: "Keypoint",
+    polyline: "Polyline",
+    polygon: "Polygon",
   } as const;
   const setInspectorVisibility = (collapsed: boolean) => {
     setInspectorCollapsed(collapsed);
@@ -4170,7 +4175,7 @@ function ReviewPage({
               }}
             >
               <span aria-hidden="true">
-                {review.annotation.label?.slice(0, 2).toUpperCase() ?? "?"}
+                {review.image_index === undefined ? "–" : review.image_index + 1}
               </span>
               <span>
                 <strong>
@@ -4178,7 +4183,7 @@ function ReviewPage({
                 </strong>
                 <small>
                   {!project && `${review.project_name} · `}
-                  {review.annotation.task_id} ·{" "}
+                  Image {review.image_index === undefined ? "?" : review.image_index + 1} ·{" "}
                   {Math.round((review.annotation.confidence ?? 0) * 100)}%
                 </small>
               </span>
@@ -4194,35 +4199,54 @@ function ReviewPage({
       </aside>
       <div className="review-center">
         <div className="review-edit-toolbar" aria-label="Annotation editing controls">
-          <button onClick={undo} disabled={!past.length} aria-label="Undo annotation edit">Undo</button>
-          <button onClick={redo} disabled={!future.length} aria-label="Redo annotation edit">Redo</button>
-          {availableShapeKinds.map((kind) => (
-            <button key={kind} onClick={() => createShape(kind)}>{shapeLabels[kind]}</button>
-          ))}
-          <select
-            aria-label="Before and after comparison"
-            value={compareMode}
-            onChange={(event) => setCompareMode(event.target.value as typeof compareMode)}
-          >
-            <option value="after">After</option>
-            <option value="before">Before</option>
-            <option value="split">Before / after</option>
-          </select>
-          {inspectorCollapsed && (
+          <div className="review-tool-group" aria-label="Add annotation">
+            {availableShapeKinds.map((kind) => (
+              <button key={kind} className="review-add-tool" onClick={() => createShape(kind)}>
+                <span aria-hidden="true">+</span> {shapeLabels[kind]}
+              </button>
+            ))}
+          </div>
+          {(past.length > 0 || future.length > 0) && (
+            <div className="review-history-tools" aria-label="Edit history">
+              <button
+                onClick={undo}
+                disabled={!past.length}
+                aria-label="Undo annotation edit"
+                title="Undo (⌘Z)"
+              ><span aria-hidden="true">↶</span></button>
+              <button
+                onClick={redo}
+                disabled={!future.length}
+                aria-label="Redo annotation edit"
+                title="Redo (⇧⌘Z)"
+              ><span aria-hidden="true">↷</span></button>
+            </div>
+          )}
+          <div className="review-view-controls" aria-label="Canvas view controls">
+            <select
+              aria-label="Canvas view"
+              value={compareMode}
+              onChange={(event) => setCompareMode(event.target.value as typeof compareMode)}
+            >
+              <option value="after">Result</option>
+              <option value="before">Original</option>
+              <option value="split">Compare</option>
+            </select>
             <button
               className="details-toggle"
-              onClick={() => setInspectorVisibility(false)}
-              aria-expanded="false"
+              onClick={() => setInspectorVisibility(!inspectorCollapsed)}
+              aria-label={inspectorCollapsed ? "Show details" : "Hide details"}
+              aria-expanded={!inspectorCollapsed}
             >
-              Show details
+              Details <span aria-hidden="true">{inspectorCollapsed ? "›" : "‹"}</span>
             </button>
-          )}
+          </div>
         </div>
         <div
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
         >
           {(compareMode === "before" || compareMode === "split") && (
-            <div><small>Before</small><AnnotationCanvas
+            <div>{compareMode === "split" && <small>Original</small>}<AnnotationCanvas
               imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={selected ? [selected.annotation] : []}
               selectedId={selected?.annotation.id}
@@ -4232,7 +4256,7 @@ function ReviewPage({
             /></div>
           )}
           {(compareMode === "after" || compareMode === "split") && (
-            <div><small>After</small><AnnotationCanvas
+            <div>{compareMode === "split" && <small>Result</small>}<AnnotationCanvas
               imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={draft ? [draft] : []}
               selectedId={draft?.id}
@@ -4253,8 +4277,10 @@ function ReviewPage({
           />
           {draft && selected && (
             <div className="review-action-bar" aria-label="Review decision controls">
-              <button onClick={save}>{isNew ? "Create annotation" : "Save revision"}</button>
-              <button className="primary" onClick={() => decide("accept")}>Accept &amp; commit</button>
+              {hasUnsavedAnnotationChanges && (
+                <button onClick={save}>{isNew ? "Create annotation" : "Save changes"}</button>
+              )}
+              <button className="primary" onClick={() => decide("accept")} aria-label="Accept and commit annotation">Accept result</button>
               <details className="action-menu">
                 <summary>More</summary>
                 <div>
@@ -4273,14 +4299,6 @@ function ReviewPage({
             <span className="eyebrow">Validator evidence</span>
             <h2>{draft?.label ?? "No selection"}</h2>
           </div>
-          <button
-            className="text-button"
-            onClick={() => setInspectorVisibility(true)}
-            aria-label="Collapse details panel"
-            aria-expanded="true"
-          >
-            Hide
-          </button>
         </div>
         {draft && (
           <>
