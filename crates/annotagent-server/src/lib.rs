@@ -33,7 +33,7 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response, Sse, sse::Event},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 use chrono::Utc;
 use futures::{Stream, stream};
@@ -448,6 +448,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(import_annotations),
         )
         .route("/api/projects/{project_id}/images", get(list_images))
+        .route(
+            "/api/projects/{project_id}/images/{index}",
+            delete(remove_image),
+        )
         .route(
             "/api/projects/{project_id}/agent-sessions",
             get(list_project_agent_sessions),
@@ -1564,13 +1568,11 @@ async fn import_images(
     AxumPath(project_id): AxumPath<String>,
     Json(request): Json<ImportRequest>,
 ) -> ApiResult<Json<Value>> {
-    let (imported, duplicates) = state
+    let report = state
         .application
-        .import_images(&project_id, &request.source)
+        .import_images_with_report(&project_id, &request.source)
         .map_err(ApiError::bad_request)?;
-    Ok(Json(
-        json!({"imported": imported, "duplicates": duplicates}),
-    ))
+    Ok(Json(json!(report)))
 }
 
 async fn list_images(
@@ -1581,13 +1583,30 @@ async fn list_images(
         .application
         .list_project_images(&project_id)
         .map_err(ApiError::not_found)?;
+    let project = state
+        .application
+        .get_project(&project_id)
+        .map_err(ApiError::not_found)?;
     Ok(Json(json!({
         "images": images.iter().enumerate().map(|(index, path)| json!({
             "index": index,
             "name": path.file_name().unwrap_or_default().to_string_lossy(),
+            "path": format!("{}/{}", project.dataset.root.trim_end_matches('/'), path.file_name().unwrap_or_default().to_string_lossy()),
+            "size_bytes": path.metadata().map(|metadata| metadata.len()).unwrap_or_default(),
             "url": format!("/api/projects/{project_id}/images/{index}/content"),
         })).collect::<Vec<_>>()
     })))
+}
+
+async fn remove_image(
+    State(state): State<ServerState>,
+    AxumPath((project_id, index)): AxumPath<(String, usize)>,
+) -> ApiResult<Json<Value>> {
+    let removed = state
+        .application
+        .remove_project_image(&project_id, index)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "removed": removed })))
 }
 
 async fn image_content(
@@ -2858,6 +2877,50 @@ mod tests {
         assert_eq!(summary["project"]["id"], json!("guided-api"));
         assert_eq!(summary["guidance"], guidance);
         assert_eq!(summary["readiness"], readiness);
+
+        let incoming = temp.path().join("incoming.png");
+        annotagent_image_tools::generate_synthetic_inspection(&incoming).expect("incoming image");
+        let imported = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/guided-api/import",
+                Some(json!({ "source": incoming })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(imported["discovered"], json!(1));
+        assert_eq!(imported["imported"], json!(1));
+        assert_eq!(imported["corrupt"], json!([]));
+        let images = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/guided-api/images",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(images["images"][0]["path"], json!("images/incoming.png"));
+        assert!(
+            images["images"][0]["size_bytes"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        let removed = response_json(
+            request(
+                &service,
+                axum::http::Method::DELETE,
+                "/api/projects/guided-api/images/0",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(removed["removed"], json!("incoming.png"));
     }
 
     #[tokio::test]

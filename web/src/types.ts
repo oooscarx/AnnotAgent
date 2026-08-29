@@ -609,6 +609,8 @@ export interface NodeReplayReport {
 export interface ImageItem {
   index: number;
   name: string;
+  path: string;
+  size_bytes: number;
   url: string;
 }
 

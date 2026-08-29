@@ -41,6 +41,7 @@ import type {
   PipelineStep,
   GuidedAction,
   ProjectSummary,
+  ProjectGuidance,
   ProjectWorkspaceSummary,
   ReviewItem,
   RunEvent,
@@ -480,6 +481,41 @@ function ProjectBreadcrumb({
   );
 }
 
+const BUILD_SEQUENCE = ["data", "labels", "pipeline", "test"] as const;
+type BuildStep = (typeof BUILD_SEQUENCE)[number];
+
+function useBuildSummary(
+  project: ProjectSummary | undefined,
+  onError: (value: string) => void,
+): ProjectWorkspaceSummary | undefined {
+  const [summary, setSummary] = useState<ProjectWorkspaceSummary>();
+  useEffect(() => {
+    if (!project) {
+      setSummary(undefined);
+      return;
+    }
+    void api
+      .projectSummary(project.id)
+      .then(setSummary)
+      .catch((error: Error) => onError(error.message));
+  }, [project]);
+  return summary?.project.id === project?.id ? summary : undefined;
+}
+
+function journeyForBuildStep(guidance: ProjectGuidance, step: BuildStep) {
+  const id = step === "pipeline" ? "automation" : step === "test" ? "sample_test" : step;
+  return guidance.journey.find((item) => item.id === id);
+}
+
+function buildStepAllowed(guidance: ProjectGuidance, step: BuildStep): boolean {
+  const complete = (id: string) =>
+    guidance.journey.find((item) => item.id === id)?.state === "complete";
+  if (step === "data") return true;
+  if (step === "labels") return complete("data");
+  if (step === "pipeline") return complete("data") && complete("labels");
+  return complete("data") && complete("labels") && complete("automation");
+}
+
 function BuildWorkspace({
   project,
   step,
@@ -491,18 +527,27 @@ function BuildWorkspace({
 }: {
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
-  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onNavigate: (step: BuildStep) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
+  const summary = useBuildSummary(project, onError);
+  const allowed = summary ? buildStepAllowed(summary.guidance, step) : false;
+  const currentIndex = BUILD_SEQUENCE.indexOf(step);
+  const nextStep = BUILD_SEQUENCE[currentIndex + 1];
+  const previousStep = BUILD_SEQUENCE[currentIndex - 1];
   return (
     <section className="page-stack">
       <ProjectBreadcrumb project={project} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
-      <BuildNavigation step={step} onNavigate={onNavigate} />
+      <BuildNavigation step={step} guidance={summary?.guidance} onNavigate={onNavigate} />
       {!project ? (
         <Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." />
+      ) : !summary ? (
+        <div className="loading-banner" role="status">Loading Build readiness…</div>
+      ) : !allowed ? (
+        <BuildBlocker guidance={summary.guidance} onNavigate={onNavigate} />
       ) : step === "data" ? (
         <BuildData project={project} onRefresh={onRefresh} onError={onError} />
       ) : step === "labels" ? (
@@ -510,30 +555,80 @@ function BuildWorkspace({
       ) : (
         <BuildTestPublish project={project} onRefresh={onRefresh} onError={onError} />
       )}
+      {project && summary && allowed && <BuildFooter
+        previous={previousStep}
+        next={nextStep}
+        nextEnabled={nextStep ? buildStepAllowed(summary.guidance, nextStep) : false}
+        onNavigate={onNavigate}
+      />}
     </section>
   );
 }
 
-function BuildNavigation({
-  step,
+function BuildBlocker({
+  guidance,
   onNavigate,
 }: {
-  step: "data" | "labels" | "pipeline" | "test";
-  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  guidance: ProjectGuidance;
+  onNavigate: (step: BuildStep) => void;
+}) {
+  const destination = guidance.primary_action.destination?.match(/\/build\/(data|labels|pipeline|test)$/)?.[1] as BuildStep | undefined;
+  return <section className="build-blocker" aria-label="Build step blocked">
+    <span aria-hidden="true">!</span>
+    <div><span className="eyebrow">Complete the current step first</span><h2>{guidance.headline}</h2><p>{guidance.explanation}</p></div>
+    {destination && <button className="primary" onClick={() => onNavigate(destination)}>{guidance.primary_action.label}</button>}
+  </section>;
+}
+
+function BuildFooter({
+  previous,
+  next,
+  nextEnabled,
+  onNavigate,
+}: {
+  previous?: BuildStep;
+  next?: BuildStep;
+  nextEnabled: boolean;
+  onNavigate: (step: BuildStep) => void;
+}) {
+  const name = (step: BuildStep) => step === "pipeline" ? "Automation" : step === "test" ? "Test & Activate" : step[0].toUpperCase() + step.slice(1);
+  return <footer className="build-footer">
+    <span>Changes in this step are saved to the Project as you complete them.</span>
+    <div className="button-row">
+      {previous && <button onClick={() => onNavigate(previous)}>← {name(previous)}</button>}
+      {next && <button className="primary" disabled={!nextEnabled} title={!nextEnabled ? "Complete this step before continuing" : undefined} onClick={() => onNavigate(next)}>Continue to {name(next)} →</button>}
+    </div>
+  </footer>;
+}
+
+function BuildNavigation({
+  step,
+  guidance,
+  onNavigate,
+}: {
+  step: BuildStep;
+  guidance?: ProjectGuidance;
+  onNavigate: (step: BuildStep) => void;
 }) {
   return (
     <nav className="section-tabs build-steps" aria-label="Build steps">
-      {(["data", "labels", "pipeline", "test"] as const).map((item, index) => (
+      {BUILD_SEQUENCE.map((item, index) => {
+        const journey = guidance && journeyForBuildStep(guidance, item);
+        const complete = journey?.state === "complete" || (item === "test" && guidance?.journey.find((entry) => entry.id === "activation")?.state === "complete");
+        const allowed = guidance ? buildStepAllowed(guidance, item) : item === step;
+        return (
         <button
           key={item}
-          className={step === item ? "active" : ""}
+          className={`${step === item ? "active" : ""} ${complete ? "complete" : ""}`.trim()}
           aria-current={step === item ? "step" : undefined}
+          disabled={!allowed}
+          title={!allowed ? "Complete the earlier Build step first" : journey?.detail}
           onClick={() => onNavigate(item)}
         >
-          <span>{index + 1}</span>
-          {item === "test" ? "Test & Publish" : item[0].toUpperCase() + item.slice(1)}
+          <span>{complete ? "✓" : index + 1}</span>
+          {item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : item[0].toUpperCase() + item.slice(1)}
         </button>
-      ))}
+      )})}
     </nav>
   );
 }
@@ -549,7 +644,7 @@ function BuildData({
 }) {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [source, setSource] = useState("");
-  const [result, setResult] = useState<{ imported: number; duplicates: number }>();
+  const [result, setResult] = useState<Awaited<ReturnType<typeof api.importImages>>>();
   const [busy, setBusy] = useState(false);
   const load = () =>
     api.images(project.id).then((value) => setImages(value.images));
@@ -568,32 +663,49 @@ function BuildData({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
+  const removeImage = (image: ImageItem) => {
+    setBusy(true);
+    void api
+      .removeImage(project.id, image.index)
+      .then(() => Promise.all([load(), onRefresh()]))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
   return (
     <>
-      <div className="metrics-grid">
-        <Metric label="Images" value={images.length} detail="Supported images in this Project" />
-        <Metric label="Duplicates" value={result?.duplicates ?? 0} detail="Skipped by the latest import" />
-        <Metric label="Imported" value={result?.imported ?? 0} detail="Added by the latest import" />
+      <div className="build-step-heading"><span className="eyebrow">Step 1 · Data</span><h2>Add images to your Project</h2><p>Import workspace-local PNG or JPEG files. AnnotAgent validates every image, skips matching content, and keeps the Project copy under its dataset root.</p></div>
+      <div className="metrics-grid build-metrics">
+        <Metric label="Project images" value={images.length} detail="Ready for sample testing" />
+        <Metric label="Latest import" value={result?.imported ?? 0} detail={`${result?.discovered ?? 0} supported files found`} />
+        <Metric label="Needs attention" value={(result?.duplicates ?? 0) + (result?.corrupt.length ?? 0)} detail={`${result?.duplicates ?? 0} duplicate · ${result?.corrupt.length ?? 0} corrupt`} />
       </div>
-      <Panel title="Import images" eyebrow="Build · Data">
+      <Panel title="Add more images" eyebrow="Workspace import">
         <label>
-          Workspace-local file or directory
+          Image file or folder
           <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
         </label>
         <div className="button-row">
-          <button className="primary" disabled={busy || !source.trim()} onClick={importImages}>
+          <button className={images.length === 0 ? "primary" : ""} disabled={busy || !source.trim()} onClick={importImages}>
             {busy ? "Importing…" : "Add images"}
           </button>
-          <small>Files are copied into the Project dataset; duplicate content is skipped.</small>
+          <small>Supported: PNG and JPEG · recursive folder discovery · 100 MP decode safety limit</small>
         </div>
-        <button disabled title="The current import API does not expose decode diagnostics yet">
-          Corrupt image report unavailable
-        </button>
+        {result && <div className="import-outcome" aria-live="polite">
+          <strong>{result.imported} images added</strong>
+          <span>{result.discovered} discovered · {result.duplicates} duplicates skipped · {result.unsupported_files} unsupported files ignored</span>
+          <small>Source: {result.source}</small>
+          {result.corrupt.length > 0 && <details><summary>{result.corrupt.length} corrupt images were not imported</summary><ul>{result.corrupt.map((issue) => <li key={`${issue.name}:${issue.message}`}><strong>{issue.name}</strong> — {issue.message}</li>)}</ul></details>}
+        </div>}
       </Panel>
-      <Panel title="Dataset scope" eyebrow={`${project.dataset.image_count} registered`}>
-        <Fact label="Root" value={project.dataset.root} />
-        <Fact label="Discovery" value={project.dataset.recursive ? "Recursive" : "Top level"} />
-        <TagGroup title="Include patterns" values={project.dataset.include} />
+      <Panel title="Project images" eyebrow={`${images.length} registered · ${project.dataset.root}`}>
+        {images.length ? <div className="build-image-list">
+          {images.map((image) => <article key={image.index}>
+            <img src={image.url} alt="" />
+            <span><strong>{image.name}</strong><small>{image.path} · {(image.size_bytes / 1024).toFixed(1)} KB</small></span>
+            <button className="danger-text" disabled={busy} onClick={() => removeImage(image)} aria-label={`Remove ${image.name} from Project`}>Remove</button>
+          </article>)}
+        </div> : <Empty title="No images yet" detail="Add a supported image or folder to complete the Data step." />}
+        <details className="advanced-settings"><summary>Dataset discovery settings</summary><Fact label="Discovery" value={project.dataset.recursive ? "Recursive" : "Top level"} /><TagGroup title="Include patterns" values={project.dataset.include} /></details>
       </Panel>
     </>
   );
@@ -614,6 +726,20 @@ function BuildLabels({
   const [attributeName, setAttributeName] = useState("");
   const [attributeKind, setAttributeKind] = useState<"enum" | "string" | "number" | "boolean">("string");
   const [busy, setBusy] = useState(false);
+  const kindName = (value: string) => ({
+    classification: "Image classification",
+    bounding_box: "Object detection",
+    keypoints: "Keypoints",
+    polygon: "Polygon regions",
+    semantic_mask: "Semantic segmentation",
+  }[value] ?? value.replaceAll("_", " "));
+  const outputName = (value: string) => ({
+    classification: "Class labels",
+    bounding_box: "Bounding boxes",
+    keypoints: "Named points",
+    polygon: "Polygons",
+    semantic_mask: "Semantic masks",
+  }[value] ?? value.replaceAll("_", " "));
   const create = () => {
     const parsedLabels = labels.split(",").map((value) => value.trim()).filter(Boolean);
     if (!displayName.trim() || parsedLabels.length === 0)
@@ -639,37 +765,41 @@ function BuildLabels({
       .finally(() => setBusy(false));
   };
   return (
-    <div className="build-label-layout">
-      <Panel title="Define what to annotate" eyebrow="Build · Labels">
-        <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
-        <label>Annotation kind<select value={kind} onChange={(event) => setKind(event.target.value)}>
+    <>
+      <div className="build-step-heading"><span className="eyebrow">Step 2 · Labels</span><h2>What do you want to annotate?</h2><p>Labels describe the meaning and output you want. Models and execution order belong to the next Automation step.</p></div>
+      <div className="build-label-layout">
+      <Panel title="Add a Label group" eyebrow="Annotation meaning">
+        <label>What should this group be called?<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
+        <label>What kind of annotation?<select value={kind} onChange={(event) => setKind(event.target.value)}>
           <option value="classification">Classification</option>
           <option value="bounding_box">Bounding box</option>
           <option value="keypoints">Keypoints</option>
           <option value="polygon">Polygon</option>
           <option value="semantic_mask">Semantic mask</option>
         </select></label>
-        <label>Labels<input value={labels} onChange={(event) => setLabels(event.target.value)} placeholder="football, training_ball" /></label>
-        <details className="advanced-settings"><summary>Attributes and advanced</summary>
+        <label>Labels to use<input value={labels} onChange={(event) => setLabels(event.target.value)} placeholder="football, training ball" /></label>
+        <div className="label-output-preview"><span>Output</span><strong>{outputName(kind)}</strong></div>
+        <details className="advanced-settings"><summary>Attributes and internal settings</summary>
           <div className="form-grid">
             <label>Optional attribute<input value={attributeName} onChange={(event) => setAttributeName(event.target.value)} placeholder="occluded" /></label>
             <label>Attribute type<select value={attributeKind} onChange={(event) => setAttributeKind(event.target.value as typeof attributeKind)}>
               <option value="string">Text</option><option value="boolean">Boolean</option><option value="number">Number</option><option value="enum">Choice</option>
             </select></label>
           </div>
-          <small>The internal task ID is generated from the display name and validated by Core.</small>
+          <small>The internal task ID is generated from the display name and validated by Core. Raw Schema fields remain an Advanced concern.</small>
         </details>
-        <button className="primary" disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Creating…" : "Create Label group"}</button>
+        <button className={project.annotation_schema.length === 0 ? "primary" : ""} disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Adding…" : "Add Label group"}</button>
       </Panel>
-      <Panel title="Project Schema" eyebrow={`${project.task_count} Label groups`}>
-        <div className="catalog-list">
+      <Panel title="Current Labels" eyebrow={`${project.task_count} groups`}>
+        <div className="label-definition-list">
           {project.annotation_schema.map((task) => (
-            <article key={task.id}><span className="catalog-monogram">{task.kind.slice(0, 2).toUpperCase()}</span><span><strong>{task.display_name}</strong><small>{task.kind.replaceAll("_", " ")} · {task.labels.join(", ") || "No Labels"}</small><details><summary>Advanced</summary><code>{task.id}</code></details></span></article>
+            <article key={task.id}><span><strong>{kindName(task.kind)}</strong><small>{task.display_name}</small></span><dl><div><dt>Labels</dt><dd>{task.labels.join(", ") || "None"}</dd></div><div><dt>Output</dt><dd>{outputName(task.kind)}</dd></div></dl><details><summary>Advanced internal ID</summary><code>{task.id}</code></details></article>
           ))}
         </div>
         {project.annotation_schema.length === 0 && <Empty title="No Labels defined" detail="Create the first semantic Label group. Models and execution order belong in Pipeline." />}
       </Panel>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -715,15 +845,20 @@ function BuildTestPublish({
   return (
     <>
       <div className="toolbar-panel">
-        <div><span className="eyebrow">Build · Test & Publish</span><h2>Test the result before publishing</h2><p>Dry Run executes 1–10 real Project images in a sandbox and never writes formal annotations.</p></div>
+        <div><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
         <div className="button-row">
           <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => !["published", "archived"].includes(draft.status)).map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
           <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
-          <button onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test"}</button>
-          <button className="primary" onClick={publish} disabled={busy || !report?.validation.valid}>Publish</button>
-          <button onClick={discard} disabled={busy || !draftId}>Discard changes</button>
+          <button onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test samples"}</button>
+          <button className="primary" onClick={publish} disabled={busy || !report?.validation.valid}>Activate automation</button>
         </div>
       </div>
+      <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
+        <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? "Unpublished changes" : "Choose a Draft"}</strong></li>
+        <li className={report?.validation.valid ? "complete" : draftId ? "current" : ""}><span>2</span><strong>Check setup</strong></li>
+        <li className={report ? "complete" : ""}><span>3</span><strong>Test samples</strong></li>
+        <li className={report?.validation.valid ? "current" : ""}><span>4</span><strong>Activate automation</strong></li>
+      </ol>
       {summary ? (
         <>
           <div className="metrics-grid dry-run-summary" aria-label="Dry Run result summary">
@@ -736,13 +871,14 @@ function BuildTestPublish({
             <Metric label="Duration" value={`${report.total_latency_ms} ms`} detail="Sandbox wall time" />
             <Metric label="Usage" value={(summary.input_tokens + summary.output_tokens).toLocaleString()} detail={`${report.estimated_cost} estimated cost`} />
           </div>
-          <Panel title="Pipeline diagnostics" eyebrow={report.validation.valid ? "Ready to publish" : "Publication blocked"}>
+          <Panel title="Setup diagnostics" eyebrow={report.validation.valid ? "Ready to activate" : "Activation blocked"}>
             {report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}
             {!report.validation.issues.length && <p>No blocking static or execution issues.</p>}
             <details><summary>Node trace</summary>{report.samples.map((sample) => <div key={sample.image_name}><strong>{sample.image_name}</strong><TagGroup title="Nodes" values={sample.nodes.map((node) => `${node.node_id}: ${node.status}`)} /></div>)}</details>
           </Panel>
         </>
-      ) : <Empty title="No Dry Run result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+      ) : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+      <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>
     </>
   );
 }
@@ -1703,6 +1839,7 @@ function WorkflowsPage({
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
   const [templateId, setTemplateId] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  const buildSummary = useBuildSummary(activeProject, onError);
   const [targetTaskId, setTargetTaskId] = useState("");
   const [targetLabel, setTargetLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1739,6 +1876,7 @@ function WorkflowsPage({
         .then((saved) => {
           persistedDrafts.current.set(saved.id, JSON.stringify(saved));
           setSavedAt(new Date());
+          return onRefresh();
         })
         .catch((error: Error) => onError(`Draft autosave failed: ${error.message}`));
     }, 800);
@@ -1922,18 +2060,22 @@ function WorkflowsPage({
     });
   const immutable =
     draft?.status === "published" || draft?.status === "archived";
+  if (activeProject && !buildSummary)
+    return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" onNavigate={onNavigate} /><div className="loading-banner" role="status">Loading Build readiness…</div></section>;
+  if (buildSummary && !buildStepAllowed(buildSummary.guidance, "pipeline"))
+    return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" guidance={buildSummary.guidance} onNavigate={onNavigate} /><BuildBlocker guidance={buildSummary.guidance} onNavigate={onNavigate} /></section>;
   return (
     <section className="page-stack">
       <ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
-      <BuildNavigation step="pipeline" onNavigate={onNavigate} />
+      <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={onNavigate} />
       <div className="toolbar-panel workflow-designer-header">
         <div>
-          <span className="eyebrow">Draft → validated → immutable version</span>
-          <h2>Workflow Designer</h2>
+          <span className="eyebrow">Step 3 · Automation</span>
+          <h2>How AnnotAgent will label your data</h2>
           <p>
-            Drafts only reference registered resources. Dry Run executes sample
-            images in an isolated sandbox without creating annotations. Skill
-            templates appear only when the active Project enables that Skill.
+            Start from a registered recipe or Advisor suggestion, then edit the
+            same autosaved Draft. Technical graph details remain available for
+            expert inspection.
           </p>
         </div>
         <div className="button-row">
@@ -2514,6 +2656,7 @@ function WorkflowsPage({
           )}
         </div>
       </div>
+      {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} onNavigate={onNavigate} />}
     </section>
   );
 }

@@ -186,6 +186,23 @@ pub struct ProjectDatasetSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ImageImportIssue {
+    pub name: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImageImportReport {
+    pub source: String,
+    pub discovered: u64,
+    pub imported: u64,
+    pub duplicates: u64,
+    pub corrupt: Vec<ImageImportIssue>,
+    pub unsupported_files: u64,
+    pub supported_formats: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AnnotationTaskSummary {
     pub id: String,
     pub display_name: String,
@@ -4277,6 +4294,15 @@ impl LocalApplication {
     }
 
     pub fn import_images(&self, project_id: &str, source: &Path) -> Result<(u64, u64)> {
+        let report = self.import_images_with_report(project_id, source)?;
+        Ok((report.imported, report.duplicates))
+    }
+
+    pub fn import_images_with_report(
+        &self,
+        project_id: &str,
+        source: &Path,
+    ) -> Result<ImageImportReport> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let destination = project_path
@@ -4296,20 +4322,92 @@ impl LocalApplication {
                 hashes.insert(annotagent_image_tools::sha256(&bytes));
             }
         }
-        let mut imported = 0_u64;
-        let mut duplicates = 0_u64;
-        for source in supported_images(&canonical_source) {
-            let bytes = std::fs::read(&source)?;
+        let candidates = if canonical_source.is_file() {
+            vec![canonical_source.clone()]
+        } else {
+            WalkDir::new(&canonical_source)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_file() && !entry.file_type().is_symlink())
+                .map(walkdir::DirEntry::into_path)
+                .collect::<Vec<_>>()
+        };
+        let mut report = ImageImportReport {
+            source: canonical_source.to_string_lossy().into_owned(),
+            discovered: 0,
+            imported: 0,
+            duplicates: 0,
+            corrupt: Vec::new(),
+            unsupported_files: 0,
+            supported_formats: vec!["PNG".to_owned(), "JPEG".to_owned()],
+        };
+        for source in candidates {
+            if !is_supported_image(&source) {
+                report.unsupported_files += 1;
+                continue;
+            }
+            report.discovered += 1;
+            let bytes = match std::fs::read(&source) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    report.corrupt.push(ImageImportIssue {
+                        name: source
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        message: format!("cannot read image: {error}"),
+                    });
+                    continue;
+                }
+            };
+            if let Err(error) = annotagent_image_tools::load_image(&source, 100_000_000) {
+                report.corrupt.push(ImageImportIssue {
+                    name: source
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    message: error.to_string(),
+                });
+                continue;
+            }
             if !hashes.insert(annotagent_image_tools::sha256(&bytes)) {
-                duplicates += 1;
+                report.duplicates += 1;
                 continue;
             }
             let name = source.file_name().context("image has no file name")?;
             let target = unique_target(&destination, name);
             std::fs::copy(source, target)?;
-            imported += 1;
+            report.imported += 1;
         }
-        Ok((imported, duplicates))
+        Ok(report)
+    }
+
+    pub fn remove_project_image(&self, project_id: &str, index: usize) -> Result<String> {
+        let path = self
+            .list_project_images(project_id)?
+            .get(index)
+            .cloned()
+            .context("image index was not found")?;
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let dataset = project_path
+            .parent()
+            .unwrap_or(&self.workspace)
+            .join(project.dataset.root)
+            .canonicalize()
+            .context("cannot access Project dataset")?;
+        let canonical = path.canonicalize().context("cannot access Project image")?;
+        ensure_within(&dataset, &canonical)?;
+        let name = canonical
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        std::fs::remove_file(canonical)?;
+        Ok(name)
     }
 
     pub fn start_run_path(
@@ -6029,6 +6127,47 @@ export:
             .expect_err("ZIP import must be rejected");
         assert!(error.to_string().contains("path traversal"));
         assert!(!temp.path().join("outside.png").exists());
+    }
+
+    #[test]
+    fn image_import_reports_quality_and_supports_removing_project_copy() {
+        let temp = tempfile::tempdir().expect("temp");
+        let workspace = temp.path().join("workspace");
+        let app = LocalApplication::new(&workspace).expect("app");
+        app.create_project("generic", GENERIC_PROJECT)
+            .expect("project");
+        let incoming = workspace.join("incoming");
+        std::fs::create_dir_all(&incoming).expect("incoming");
+        annotagent_image_tools::generate_synthetic_inspection(&incoming.join("valid.png"))
+            .expect("valid image");
+        std::fs::copy(incoming.join("valid.png"), incoming.join("duplicate.png"))
+            .expect("duplicate");
+        std::fs::write(incoming.join("corrupt.png"), b"not an image").expect("corrupt fixture");
+        std::fs::write(incoming.join("notes.txt"), b"ignore me").expect("unsupported fixture");
+
+        let report = app
+            .import_images_with_report("generic", &incoming)
+            .expect("import report");
+        assert_eq!(report.discovered, 3);
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.duplicates, 1);
+        assert_eq!(report.corrupt.len(), 1);
+        assert_eq!(report.unsupported_files, 1);
+        assert_eq!(app.list_project_images("generic").expect("images").len(), 1);
+
+        let removed = app
+            .remove_project_image("generic", 0)
+            .expect("remove image");
+        assert!(
+            Path::new(&removed)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+        );
+        assert!(
+            app.list_project_images("generic")
+                .expect("images")
+                .is_empty()
+        );
     }
 
     #[test]

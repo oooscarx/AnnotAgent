@@ -86,8 +86,8 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | 2 | task-centered global information architecture | complete |
 | 3 | guided Project creation | complete |
 | 4 | Guidance-led Project Journey workspace | complete |
-| 5 | guided four-step Build | in progress |
-| 6 | Automation Recipe and controlled Advisor proposal | pending |
+| 5 | guided four-step Build | complete |
+| 6 | Automation Recipe and controlled Advisor proposal | in progress |
 | 7 | outcome-first sample testing and activation | pending |
 | 8 | Results-first Run workspace with optional Debug | pending |
 | 9 | inbox Review | pending |

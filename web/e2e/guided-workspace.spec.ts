@@ -8,6 +8,7 @@ test.describe.configure({ mode: "serial" });
 const stamp = Date.now();
 const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
+const emptyProjectId = `guided-empty-${stamp}`;
 const imageSource = resolve(process.cwd(), `../workspace/e2e-guided/import-${stamp}`);
 const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
@@ -104,10 +105,9 @@ test("create and open a generic Project", async ({ page, request }) => {
 });
 
 test("Project blocker exposes one server-owned repair action", async ({ page, request }) => {
-  const emptyId = `guided-empty-${stamp}`;
   const created = await request.post("/api/projects", {
     data: {
-      id: emptyId,
+      id: emptyProjectId,
       yaml: `version: 1
 project:
   name: Empty Guidance ${stamp}
@@ -131,10 +131,17 @@ export:
     },
   });
   expect(created.status()).toBe(201);
-  await page.goto(`/projects/${emptyId}`);
+  await page.goto(`/projects/${emptyProjectId}`);
   await expect(page.locator(".guidance-actions .primary")).toHaveText("Add images");
   await expect(page.getByLabel("Project blockers")).toContainText("No images yet");
   await expect(page.locator(".journey-timeline li.current")).toContainText("Data");
+});
+
+test("Build blocks direct navigation past an incomplete prerequisite", async ({ page }) => {
+  await page.goto(`/projects/${emptyProjectId}/build/test`);
+  await expect(page.getByLabel("Build step blocked")).toContainText("Add images to start this Project");
+  await expect(page.getByRole("button", { name: "Test & Activate" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Add images" })).toBeVisible();
 });
 
 test("Build navigation preserves the Project and imports real data", async ({ page }) => {
@@ -142,14 +149,25 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
   await page.getByRole("button", { name: "Build", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
   await expect(page.getByText(/1 registered/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add images to your Project" })).toBeVisible();
+  await expect(page.locator(".build-image-list article")).toHaveCount(1);
+  await page.screenshot({ path: `${screenshots}/04-build-data.png`, fullPage: true });
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
 
   for (const [name, path] of [
     ["Labels", "labels"],
-    ["Pipeline", "pipeline"],
-    ["Test & Publish", "test"],
+    ["Automation", "pipeline"],
+    ["Test & Activate", "test"],
   ] as const) {
-    await page.getByRole("button", { name }).click();
+    await page.getByLabel("Build steps").getByRole("button").filter({ hasText: name }).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/${path}$`));
+    if (path === "labels") {
+      await expect(page.getByRole("heading", { name: "What do you want to annotate?" })).toBeVisible();
+      await page.screenshot({ path: `${screenshots}/05-build-labels.png`, fullPage: true });
+    }
+    if (path === "pipeline")
+      await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
   }
 });
 
@@ -157,11 +175,11 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await page.goto(`/projects/${projectId}/build/test`);
   await expect(page.getByLabel("Current Draft")).not.toHaveValue("");
   await page.getByRole("spinbutton").fill("1");
-  await page.getByRole("button", { name: "Test", exact: true }).click();
+  await page.getByRole("button", { name: "Test samples", exact: true }).click();
   await expect(page.getByLabel("Dry Run result summary")).toContainText("Images");
-  await expect(page.getByText("Ready to publish")).toBeVisible();
+  await expect(page.getByText("Ready to activate")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/02-dry-run-summary.png`, fullPage: true });
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Activate automation", exact: true }).click();
   await expect(page.getByLabel("Current Draft")).toHaveValue("");
 
   const state = await dashboard(request);

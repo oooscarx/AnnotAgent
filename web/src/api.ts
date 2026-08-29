@@ -58,10 +58,22 @@ export const api = {
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
   importImages: (projectId: string, source: string) =>
-    request<{ imported: number; duplicates: number }>(
+    request<{
+      source: string;
+      discovered: number;
+      imported: number;
+      duplicates: number;
+      corrupt: { name: string; message: string }[];
+      unsupported_files: number;
+      supported_formats: string[];
+    }>(
       `/api/projects/${projectId}/import`,
       { method: "POST", body: JSON.stringify({ source }) },
     ),
+  removeImage: (projectId: string, index: number) =>
+    request<{ removed: string }>(`/api/projects/${projectId}/images/${index}`, {
+      method: "DELETE",
+    }),
   startRun: (
     projectId: string,
     provider?: string,

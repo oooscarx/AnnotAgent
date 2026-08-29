@@ -53,3 +53,11 @@ The four-step creation wizard orchestrates the existing Settings, Project creati
 ## GE-013 — Journey steps travel with server Guidance
 
 The Application Guidance projection includes the ordered Data, Labels, Automation, Sample Test, Activation, Full Run, Review, and Export steps. Each carries a semantic state, user-facing detail, and destination. React renders this projection and never reconstructs the primary action from Project fields. A downstream record may remain complete after an upstream configuration changes, but only the backend-selected next step is `current`, `needs_attention`, or `ready`. Project Overview requests the combined summary so header, readiness, blockers, Journey, and actions are one coherent server snapshot.
+
+## GE-014 — Build routes are addressable but prerequisites are server-gated
+
+Data, Labels, Automation, and Test & Activate retain stable URLs for refresh and back/forward navigation. Their availability comes from the Journey included in the server summary: earlier complete steps remain editable, the next valid step is reachable, and later steps render the current Guidance blocker instead of their editor. Data and Label writes are immediate Project mutations; Automation changes use the existing debounced Draft PATCH autosave. `Test samples` and `Activate automation` are presentation names for the unchanged sandbox Dry Run and immutable publication lifecycle.
+
+## GE-015 — Imported data reports quality before it enters the Project
+
+Workspace imports enumerate regular files without following symlinks, accept PNG/JPEG extensions, perform bounded full decode validation, hash content for deduplication, and copy only valid unique images. The API returns discovered, duplicate, corrupt, unsupported, source, and supported-format facts. Removing an image deletes only the selected Project dataset copy after canonical containment checks; it never operates on the original import source.

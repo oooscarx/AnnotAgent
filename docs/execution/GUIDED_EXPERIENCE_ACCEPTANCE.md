@@ -203,3 +203,14 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Browser coverage creates a no-data Project and verifies its server-owned repair action; restores a mocked server-owned Active Run across reload; verifies one primary action and no duplicate Run action; and checks the 720px Project journey for horizontal overflow.
 - Application 20 tests, Server 9 tests, Web typecheck, 31 Web unit tests, production build, and 12 executable Chromium E2E tests pass. One Crop lineage test remains explicitly conditional on fixture availability.
 - Browser evidence: `docs/execution/screenshots/03-project-guidance.png`.
+
+## Milestone 5 evidence
+
+- Build navigation consumes the server Journey to show Complete/Current states, disables later steps, preserves the step in the URL, and provides explicit Back/Continue actions.
+- Browser coverage opens `/build/test` on a no-data Project and receives the real `Add images` blocker rather than a usable Test surface; a complete Project traverses all four steps and survives a Data-step reload.
+- Data import performs bounded decode checks and reports discovered/imported/duplicate/corrupt/unsupported facts. Rust and HTTP tests prove a valid image imports, corrupt/unsupported files do not, a duplicate is skipped, path/size are returned, and the contained Project copy can be removed.
+- Data UI lists thumbnails, dataset-relative paths, sizes, supported formats, import status, quality issues, and the real Remove action. There is no disabled placeholder for corrupt diagnostics.
+- Labels default to `What do you want to annotate?`, purpose, Labels, and output shape. Internal IDs and raw attribute typing remain in Advanced controls.
+- Automation retains real debounced Draft PATCH autosave and refreshes readiness after saving. Test & Activate maps user language onto the real Draft → validation/Dry Run → immutable publish lifecycle.
+- Application 21 tests, Server 9 tests, Web typecheck, 31 Web unit tests, production build, and 13 executable Chromium E2E tests pass. One Crop lineage test remains conditional.
+- Browser evidence: `docs/execution/screenshots/04-build-data.png` and `docs/execution/screenshots/05-build-labels.png`.
