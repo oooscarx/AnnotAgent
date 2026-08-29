@@ -4199,13 +4199,29 @@ function ReviewPage({
       </aside>
       <div className="review-center">
         <div className="review-edit-toolbar" aria-label="Annotation editing controls">
-          <div className="review-tool-group" aria-label="Add annotation">
-            {availableShapeKinds.map((kind) => (
-              <button key={kind} className="review-add-tool" onClick={() => createShape(kind)}>
-                <span aria-hidden="true">+</span> {shapeLabels[kind]}
-              </button>
-            ))}
-          </div>
+          {availableShapeKinds.length > 0 && (
+            <details className="review-add-menu">
+              <summary aria-label="Add annotation">
+                <span aria-hidden="true">+</span>
+                Add
+                <span aria-hidden="true">⌄</span>
+              </summary>
+              <div role="menu" aria-label="Annotation types">
+                {availableShapeKinds.map((kind) => (
+                  <button
+                    key={kind}
+                    role="menuitem"
+                    onClick={(event) => {
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      createShape(kind);
+                    }}
+                  >
+                    {shapeLabels[kind]}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
           {(past.length > 0 || future.length > 0) && (
             <div className="review-history-tools" aria-label="Edit history">
               <button

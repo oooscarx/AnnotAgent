@@ -212,6 +212,8 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.reload();
   await expect(page.getByRole("button", { name: "Accept and commit annotation" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+  await expect(page.locator(".review-add-menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Box", exact: true })).toHaveCount(0);
   const widthWithInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "Hide details" }).click();
   const widthWithoutInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);

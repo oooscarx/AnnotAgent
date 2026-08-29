@@ -180,10 +180,12 @@ export function AnnotationCanvas({
     <div className="canvas-shell">
       <div className="canvas-tools">
         <span>Canvas</span>
-        <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
-        <strong>{Math.round(zoom * 100)}%</strong>
-        <button aria-label="Zoom in" title="Zoom in" onClick={() => applyZoom(zoom + 0.1)}>+</button>
-        <button aria-label="Fit image" title="Fit image" onClick={() => { setZoom(1); setPan([0, 0]); }}>Fit</button>
+        <div className="canvas-zoom-controls" role="group" aria-label="Canvas zoom">
+          <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
+          <strong aria-live="polite">{Math.round(zoom * 100)}%</strong>
+          <button aria-label="Zoom in" title="Zoom in" onClick={() => applyZoom(zoom + 0.1)}>+</button>
+        </div>
+        <button className="canvas-fit-button" aria-label="Fit image" title="Fit image" onClick={() => { setZoom(1); setPan([0, 0]); }}>Fit</button>
       </div>
       <ul className="canvas-annotation-list" aria-label="Annotations on canvas">
         {annotations.map((annotation) => {

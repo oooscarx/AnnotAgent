@@ -195,8 +195,13 @@ main { min-width: 0; padding-bottom: 48px; }
 .review-center { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; min-width: 0; min-height: 0; padding-bottom: 62px; }
 .canvas-shell { min-height: 0; display: grid; grid-template-rows: auto auto auto; align-content: start; background: var(--aa-surface); border: 1px solid var(--aa-border); border-radius: var(--aa-radius-lg); box-shadow: var(--aa-shadow-sm); overflow: hidden; }
 .canvas-tools { min-height: 48px; display: flex; gap: 8px; align-items: center; padding: 7px 12px; color: var(--aa-text-muted); background: var(--aa-surface); font: 11px var(--aa-font-sans); border-bottom: 1px solid var(--aa-border); }
-.canvas-tools span { margin-right: auto; }
+.canvas-tools > span { margin-right: auto; }
 .canvas-tools button { min-width: 36px; min-height: 36px; padding: 5px 8px; background: var(--aa-surface-muted); color: var(--aa-text); border-color: var(--aa-border); }
+.canvas-zoom-controls { display: inline-grid; grid-template-columns: 36px minmax(54px, auto) 36px; align-items: stretch; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); overflow: hidden; background: var(--aa-surface-muted); }
+.canvas-zoom-controls button { min-width: 36px; min-height: 34px; border: 0; border-radius: 0; background: transparent; }
+.canvas-zoom-controls button:hover { background: var(--aa-surface); }
+.canvas-zoom-controls strong { display: grid; place-items: center; min-width: 54px; padding-inline: 8px; color: var(--aa-text); border-inline: 1px solid var(--aa-border); font-size: 10px; font-variant-numeric: tabular-nums; }
+.canvas-tools .canvas-fit-button { background: transparent; }
 .canvas-annotation-list { display: flex; gap: 7px; margin: 0; padding: 8px 12px; list-style: none; overflow-x: auto; border-bottom: 1px solid var(--aa-border); background: var(--aa-surface); }
 .canvas-annotation-list li { min-width: 0; }
 .canvas-annotation-list button { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 5px 9px; background: transparent; color: var(--aa-text); border-color: var(--aa-border); text-align: left; }
@@ -207,11 +212,18 @@ main { min-width: 0; padding-bottom: 48px; }
 .canvas-annotation-list small, .canvas-annotation-empty { color: var(--aa-text-muted); font-size: 9px; }
 .canvas-annotation-empty { padding-block: 7px; }
 .review-edit-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
-.review-tool-group, .review-history-tools, .review-view-controls { display: flex; align-items: center; gap: 6px; }
+.review-history-tools, .review-view-controls { display: flex; align-items: center; gap: 6px; }
 .review-history-tools { padding-left: 8px; border-left: 1px solid var(--aa-border); }
 .review-history-tools button { min-width: 36px; padding: 5px 8px; font-size: 18px; line-height: 1; }
-.review-add-tool { white-space: nowrap; }
-.review-add-tool > span { color: var(--aa-primary); font-size: 17px; line-height: 0; }
+.review-add-menu { position: relative; }
+.review-add-menu > summary { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); color: var(--aa-text); cursor: pointer; font-weight: 700; list-style: none; white-space: nowrap; }
+.review-add-menu > summary::-webkit-details-marker { display: none; }
+.review-add-menu > summary > span:first-child { color: var(--aa-primary); font-size: 17px; line-height: 0; }
+.review-add-menu > summary > span:last-child { color: var(--aa-text-muted); font-size: 11px; }
+.review-add-menu[open] > summary { border-color: var(--aa-primary); background: var(--aa-primary-soft); color: var(--aa-primary); }
+.review-add-menu > div { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 154px; display: grid; gap: 4px; padding: 7px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); box-shadow: var(--aa-shadow-md); }
+.review-add-menu > div button { width: 100%; justify-content: flex-start; background: transparent; color: var(--aa-text); border-color: transparent; text-align: left; }
+.review-add-menu > div button:hover { background: var(--aa-surface-muted); }
 .review-view-controls { margin-left: auto; }
 .review-view-controls select { width: auto; min-width: 122px; }
 .review-edit-toolbar .details-toggle { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 96px; white-space: nowrap; }
