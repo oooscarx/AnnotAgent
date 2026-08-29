@@ -85,15 +85,21 @@ test("empty workspace stays generic and contains no RoboCup product content", as
   await page.screenshot({ path: `${screenshots}/01-empty-workspace.png`, fullPage: true });
 });
 
-test("create and open a generic Project", async ({ page }) => {
+test("create and open a generic Project", async ({ page, request }) => {
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("project.yaml")).not.toHaveValue("");
   await dialog.getByLabel("Workspace ID").fill(projectId);
   await dialog.getByLabel("project.yaml").fill(projectYaml);
+  await expect(dialog.getByLabel("project.yaml")).toHaveValue(projectYaml);
   await dialog.getByRole("button", { name: "Validate & create" }).click();
   await expect(dialog).toBeHidden();
-  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect.poll(async () => {
+    const state = await dashboard(request);
+    return state.projects.some((project: { id: string }) => project.id === projectId);
+  }).toBeTruthy();
+  await page.goto(`/projects/${projectId}`);
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
 });
@@ -195,6 +201,16 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
 test("Run URL refresh restores image and node context", async ({ page }) => {
   await page.goto(`/runs/${runId}?image=0&node=core.image_input`);
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
+  const pipelineTextFits = await page.locator(".run-node-timeline button strong, .run-node-timeline button small").evaluateAll((elements) =>
+    elements.every((element) => {
+      const bounds = element.getBoundingClientRect();
+      const buttonBounds = element.closest("button")!.getBoundingClientRect();
+      return bounds.left >= buttonBounds.left && bounds.right <= buttonBounds.right + 1
+        && getComputedStyle(element).overflow === "hidden";
+    }),
+  );
+  expect(pipelineTextFits).toBeTruthy();
+  await expect(page.locator(".run-node-timeline button strong").first()).toHaveCSS("text-overflow", "ellipsis");
   const previewZoom = page.getByLabel("Preview zoom");
   await expect(previewZoom).toBeVisible();
   const zoomAlignment = await page.locator(".preview-zoom-control").evaluate((control) => {
