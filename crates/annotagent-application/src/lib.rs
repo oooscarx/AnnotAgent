@@ -20,19 +20,20 @@ use annotagent_core::{
     AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BatchBudgetLedger,
     BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
     BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
-    EnabledSkillConfig, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
-    LabelPipelineStaticValidator, LabelWorkflowComposition, ModelBinding as PipelineModelBinding,
-    ModelMessage, ModelRegistry, ModelRequest, ModelRole, NodeRegistry, PipelineArtifact,
-    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
-    WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowDryRunSummary, WorkflowNodeKind, WorkflowSnapshot,
+    EnabledSkillConfig, FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest,
+    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
+    ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry, ModelRequest, ModelRole,
+    NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep, PricingConfig, ProjectId,
+    ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements,
+    RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
+    RunStatus, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary, SharedWorkflowStage,
+    SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition,
+    UsageSource, UsageSummary, VisionArtifactValue, VisionCapability, VisionInferenceRequest,
+    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
+    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot,
     WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
@@ -3947,6 +3948,7 @@ impl LocalApplication {
                     });
                 }
                 samples.push(WorkflowDryRunSampleResult {
+                    image_index: index,
                     image_name: path
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -3954,6 +3956,12 @@ impl LocalApplication {
                         .to_owned(),
                     width: image.metadata.width,
                     height: image.metadata.height,
+                    result_count: 0,
+                    auto_accepted_count: 0,
+                    review_count: 0,
+                    failed: node_results.iter().any(|node| !node.issues.is_empty()),
+                    empty: node_results.iter().all(|node| node.issues.is_empty()),
+                    outcomes: Vec::new(),
                     nodes: node_results,
                 });
             }
@@ -3967,19 +3975,20 @@ impl LocalApplication {
             validation.valid = false;
             validation.issues.extend(execution_issues);
         }
+        let total_latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+        let mut summary = SampleTestSummary {
+            image_count: samples.len(),
+            failed_count: samples.iter().filter(|sample| sample.failed).count(),
+            empty_count: samples.iter().filter(|sample| sample.empty).count(),
+            ..SampleTestSummary::default()
+        };
+        finish_sample_test_summary(&mut summary, images.len(), total_latency_ms, "0");
         let report = WorkflowDryRunReport {
             sandbox: true,
             validation,
-            summary: WorkflowDryRunSummary {
-                image_count: samples.len(),
-                failed_count: samples
-                    .iter()
-                    .filter(|sample| sample.nodes.iter().any(|node| !node.issues.is_empty()))
-                    .count(),
-                ..WorkflowDryRunSummary::default()
-            },
+            summary,
             samples,
-            total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            total_latency_ms,
             estimated_cost: "0".to_owned(),
         };
         self.store.save_workflow_sample_test(&WorkflowSampleTest {
@@ -4060,7 +4069,7 @@ impl LocalApplication {
             .to_path_buf();
         let mut samples = Vec::new();
         let mut execution_issues = Vec::new();
-        let mut summary = WorkflowDryRunSummary::default();
+        let mut summary = SampleTestSummary::default();
         let mut total_cost = rust_decimal::Decimal::ZERO;
         for index in selected {
             let path = images
@@ -4083,6 +4092,9 @@ impl LocalApplication {
             let mut sample_detections = 0;
             let mut sample_candidates = 0;
             let mut sample_failed = false;
+            let mut detection_outcomes = BTreeMap::new();
+            let mut classification_outcomes = BTreeMap::new();
+            let mut candidate_outcomes = BTreeMap::new();
             for trace in &result.checkpoint.traces {
                 summary.input_tokens = summary
                     .input_tokens
@@ -4096,19 +4108,59 @@ impl LocalApplication {
                     match artifact {
                         PipelineArtifact::DetectionSet(set) => {
                             sample_detections = sample_detections.max(set.detections.len());
+                            for detection in &set.detections {
+                                detection_outcomes.insert(
+                                    detection.id.clone(),
+                                    SampleTestOutcome {
+                                        id: detection.id.clone(),
+                                        label: detection.label.as_ref().map_or_else(
+                                            || detection.class_id.clone(),
+                                            ToString::to_string,
+                                        ),
+                                        confidence: Some(detection.confidence),
+                                        status: sample_test_outcome_status(Some(
+                                            set.validation_state,
+                                        )),
+                                        value: Some(VisionArtifactValue::BoundingBox {
+                                            rect: detection.rect,
+                                        }),
+                                    },
+                                );
+                            }
                         }
                         PipelineArtifact::AnnotationCandidateSet(set) => {
                             sample_candidates = sample_candidates.max(set.candidates.len());
                             for candidate in &set.candidates {
-                                match candidate.validation_state {
-                                    Some(annotagent_core::ArtifactValidationState::Valid) => {
-                                        summary.auto_accepted_count += 1;
-                                    }
-                                    Some(annotagent_core::ArtifactValidationState::NeedsReview) => {
-                                        summary.needs_review_count += 1;
-                                    }
-                                    _ => {}
-                                }
+                                candidate_outcomes.insert(
+                                    candidate.id.clone(),
+                                    SampleTestOutcome {
+                                        id: candidate.id.clone(),
+                                        label: candidate.label.to_string(),
+                                        confidence: candidate.confidence,
+                                        status: sample_test_outcome_status(
+                                            candidate.validation_state,
+                                        ),
+                                        value: candidate.value.clone(),
+                                    },
+                                );
+                            }
+                        }
+                        PipelineArtifact::ClassificationSet(set) => {
+                            for classification in &set.classifications {
+                                classification_outcomes.insert(
+                                    classification.id.clone(),
+                                    SampleTestOutcome {
+                                        id: classification.id.clone(),
+                                        label: classification.label.to_string(),
+                                        confidence: Some(classification.confidence),
+                                        status: sample_test_outcome_status(Some(
+                                            set.validation_state,
+                                        )),
+                                        value: Some(VisionArtifactValue::Classification {
+                                            labels: vec![classification.label.clone()],
+                                        }),
+                                    },
+                                );
                             }
                         }
                         _ => {}
@@ -4118,6 +4170,27 @@ impl LocalApplication {
             summary.detection_count += sample_detections;
             summary.candidate_count += sample_candidates;
             summary.failed_count += usize::from(sample_failed);
+            let outcomes = if candidate_outcomes.is_empty() {
+                if classification_outcomes.is_empty() {
+                    detection_outcomes.into_values().collect::<Vec<_>>()
+                } else {
+                    classification_outcomes.into_values().collect::<Vec<_>>()
+                }
+            } else {
+                candidate_outcomes.into_values().collect::<Vec<_>>()
+            };
+            let sample_auto_accepted = outcomes
+                .iter()
+                .filter(|outcome| outcome.status == SampleTestOutcomeStatus::ReadyToAccept)
+                .count();
+            let sample_review = outcomes
+                .iter()
+                .filter(|outcome| outcome.status == SampleTestOutcomeStatus::NeedsReview)
+                .count();
+            let sample_empty = outcomes.is_empty() && !sample_failed;
+            summary.auto_accepted_count += sample_auto_accepted;
+            summary.needs_review_count += sample_review;
+            summary.empty_count += usize::from(sample_empty);
             let nodes = result
                 .checkpoint
                 .traces
@@ -4153,6 +4226,7 @@ impl LocalApplication {
                 })
                 .collect();
             samples.push(WorkflowDryRunSampleResult {
+                image_index: *index,
                 image_name: path
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -4160,9 +4234,18 @@ impl LocalApplication {
                     .to_owned(),
                 width: image.metadata.width,
                 height: image.metadata.height,
+                result_count: outcomes.len(),
+                auto_accepted_count: sample_auto_accepted,
+                review_count: sample_review,
+                failed: sample_failed,
+                empty: sample_empty,
+                outcomes,
                 nodes,
             });
         }
+        let total_latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+        let total_cost = total_cost.to_string();
+        finish_sample_test_summary(&mut summary, images.len(), total_latency_ms, &total_cost);
         Ok(WorkflowDryRunReport {
             sandbox: true,
             validation: WorkflowValidationReport {
@@ -4172,8 +4255,8 @@ impl LocalApplication {
             },
             summary,
             samples,
-            total_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-            estimated_cost: total_cost.to_string(),
+            total_latency_ms,
+            estimated_cost: total_cost,
         })
     }
 
@@ -5222,6 +5305,64 @@ fn unique_target(directory: &Path, name: &std::ffi::OsStr) -> PathBuf {
     unreachable!()
 }
 
+fn sample_test_outcome_status(
+    state: Option<annotagent_core::ArtifactValidationState>,
+) -> SampleTestOutcomeStatus {
+    match state {
+        Some(annotagent_core::ArtifactValidationState::Valid) => {
+            SampleTestOutcomeStatus::ReadyToAccept
+        }
+        Some(annotagent_core::ArtifactValidationState::Invalid) => SampleTestOutcomeStatus::Invalid,
+        Some(
+            annotagent_core::ArtifactValidationState::NeedsReview
+            | annotagent_core::ArtifactValidationState::Unvalidated,
+        )
+        | None => SampleTestOutcomeStatus::NeedsReview,
+    }
+}
+
+fn finish_sample_test_summary(
+    summary: &mut SampleTestSummary,
+    full_image_count: usize,
+    duration_ms: u64,
+    estimated_cost: &str,
+) {
+    summary.duration_ms = duration_ms;
+    summary.usage = UsageSummary {
+        input_tokens: summary.input_tokens,
+        output_tokens: summary.output_tokens,
+        estimated_cost: estimated_cost.to_owned(),
+    };
+    if summary.image_count == 0 {
+        summary.estimated_full_run = None;
+        return;
+    }
+    let sample_count = summary.image_count;
+    let projected_duration = duration_ms
+        .saturating_mul(full_image_count.try_into().unwrap_or(u64::MAX))
+        .saturating_add(
+            sample_count
+                .saturating_sub(1)
+                .try_into()
+                .unwrap_or(u64::MAX),
+        )
+        / u64::try_from(sample_count).unwrap_or(u64::MAX);
+    let projected_cost = estimated_cost
+        .parse::<rust_decimal::Decimal>()
+        .unwrap_or_default()
+        * rust_decimal::Decimal::from(u64::try_from(full_image_count).unwrap_or(u64::MAX))
+        / rust_decimal::Decimal::from(u64::try_from(sample_count).unwrap_or(u64::MAX));
+    let review_numerator = summary.needs_review_count.saturating_mul(full_image_count);
+    summary.estimated_full_run = Some(FullRunEstimate {
+        image_count: full_image_count,
+        duration_ms: projected_duration,
+        estimated_cost: projected_cost.to_string(),
+        review_count_min: review_numerator / sample_count,
+        review_count_max: review_numerator.saturating_add(sample_count.saturating_sub(1))
+            / sample_count,
+    });
+}
+
 fn revise_draft_after_failed_dry_run(
     suggestion: &mut WorkflowSuggestion,
     failed_count: usize,
@@ -5709,6 +5850,28 @@ export:
         assert!(dry_run.sandbox);
         assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
         assert_eq!(dry_run.samples.len(), 1);
+        assert_eq!(dry_run.samples[0].image_index, 0);
+        assert_eq!(dry_run.samples[0].result_count, 1);
+        assert_eq!(dry_run.samples[0].outcomes[0].label, "day");
+        assert_eq!(
+            dry_run.samples[0].outcomes[0].status,
+            SampleTestOutcomeStatus::ReadyToAccept
+        );
+        assert_eq!(dry_run.summary.auto_accepted_count, 1);
+        assert_eq!(dry_run.summary.empty_count, 0);
+        assert_eq!(
+            dry_run.summary.usage.input_tokens,
+            dry_run.summary.input_tokens
+        );
+        assert_eq!(
+            dry_run
+                .summary
+                .estimated_full_run
+                .as_ref()
+                .expect("full Run estimate")
+                .image_count,
+            1
+        );
         assert!(dry_run.samples[0].nodes.iter().any(|node| {
             node.node_id.ends_with("classifier")
                 && node.output_types.contains(&ArtifactKind::ClassificationSet)
@@ -6274,6 +6437,17 @@ export:
                 .expect("sample test");
             assert!(report.validation.valid);
             assert_eq!(report.summary.failed_count, 0);
+            assert_eq!(report.summary.empty_count, 1);
+            assert_eq!(report.summary.usage.estimated_cost, "0");
+            assert_eq!(
+                report
+                    .summary
+                    .estimated_full_run
+                    .as_ref()
+                    .expect("full Run estimate")
+                    .image_count,
+                1
+            );
             assert_eq!(
                 application
                     .project_guidance("guided", &settings, true)

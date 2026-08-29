@@ -61,3 +61,11 @@ Data, Labels, Automation, and Test & Activate retain stable URLs for refresh and
 ## GE-015 — Imported data reports quality before it enters the Project
 
 Workspace imports enumerate regular files without following symlinks, accept PNG/JPEG extensions, perform bounded full decode validation, hash content for deduplication, and copy only valid unique images. The API returns discovered, duplicate, corrupt, unsupported, source, and supported-format facts. Removing an image deletes only the selected Project dataset copy after canonical containment checks; it never operates on the original import source.
+
+## GE-016 — Sample Test outcomes are derived at the Artifact boundary
+
+A Sample Test reports business outcomes by de-duplicating the latest Candidate, Classification, or Detection Artifact state for each stable item identity. Candidate output takes precedence over Classification, which takes precedence over raw Detection, so downstream enrichment does not double-count one result. An image with no outcome and no execution error is a valid empty result, not a failed image. Node traces stay intact for Diagnostics but do not define annotation success.
+
+## GE-017 — Full Run estimates are explicit projections, not guarantees
+
+The Application scales measured sample duration, exact decimal cost, and Review count to the real Project image count. The DTO records the sample evidence and projected Dataset scope separately; the UI labels the result as an estimate and explains that Provider and image variation can change it. Activation still publishes only the tested immutable Workflow Version and never starts the Dataset automatically.

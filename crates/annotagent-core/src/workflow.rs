@@ -325,10 +325,41 @@ pub struct WorkflowDryRunNodeResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDryRunSampleResult {
+    #[serde(default)]
+    pub image_index: usize,
     pub image_name: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub result_count: usize,
+    #[serde(default)]
+    pub auto_accepted_count: usize,
+    #[serde(default)]
+    pub review_count: usize,
+    #[serde(default)]
+    pub failed: bool,
+    #[serde(default)]
+    pub empty: bool,
+    #[serde(default)]
+    pub outcomes: Vec<SampleTestOutcome>,
     pub nodes: Vec<WorkflowDryRunNodeResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SampleTestOutcomeStatus {
+    ReadyToAccept,
+    NeedsReview,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SampleTestOutcome {
+    pub id: String,
+    pub label: String,
+    pub confidence: Option<f32>,
+    pub status: SampleTestOutcomeStatus,
+    pub value: Option<crate::VisionArtifactValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -337,21 +368,48 @@ pub struct WorkflowDryRunReport {
     pub validation: WorkflowValidationReport,
     pub samples: Vec<WorkflowDryRunSampleResult>,
     #[serde(default)]
-    pub summary: WorkflowDryRunSummary,
+    pub summary: SampleTestSummary,
     pub total_latency_ms: u64,
     pub estimated_cost: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct WorkflowDryRunSummary {
+pub struct SampleTestSummary {
     pub image_count: usize,
     pub detection_count: usize,
     pub candidate_count: usize,
     pub auto_accepted_count: usize,
     pub needs_review_count: usize,
     pub failed_count: usize,
+    #[serde(default)]
+    pub empty_count: usize,
+    #[serde(default)]
+    pub duration_ms: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default)]
+    pub usage: UsageSummary,
+    #[serde(default)]
+    pub estimated_full_run: Option<FullRunEstimate>,
+}
+
+/// Compatibility name retained for persisted sample-test records and downstream clients.
+pub type WorkflowDryRunSummary = SampleTestSummary;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct UsageSummary {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub estimated_cost: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FullRunEstimate {
+    pub image_count: usize,
+    pub duration_ms: u64,
+    pub estimated_cost: String,
+    pub review_count_min: usize,
+    pub review_count_max: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

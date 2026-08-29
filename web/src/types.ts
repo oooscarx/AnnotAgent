@@ -502,9 +502,22 @@ export interface WorkflowDryRunReport {
   sandbox: boolean;
   validation: WorkflowValidationReport;
   samples: {
+    image_index: number;
     image_name: string;
     width: number;
     height: number;
+    result_count: number;
+    auto_accepted_count: number;
+    review_count: number;
+    failed: boolean;
+    empty: boolean;
+    outcomes: {
+      id: string;
+      label: string;
+      confidence?: number | null;
+      status: "ready_to_accept" | "needs_review" | "invalid";
+      value?: AnnotationValue | null;
+    }[];
     nodes: {
       node_id: string;
       status: string;
@@ -521,8 +534,22 @@ export interface WorkflowDryRunReport {
     auto_accepted_count: number;
     needs_review_count: number;
     failed_count: number;
+    empty_count: number;
+    duration_ms: number;
     input_tokens: number;
     output_tokens: number;
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      estimated_cost: string;
+    };
+    estimated_full_run?: {
+      image_count: number;
+      duration_ms: number;
+      estimated_cost: string;
+      review_count_min: number;
+      review_count_max: number;
+    } | null;
   };
   total_latency_ms: number;
   estimated_cost: string;

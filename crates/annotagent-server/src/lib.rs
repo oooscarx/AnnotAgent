@@ -3890,6 +3890,14 @@ export:
         assert_eq!(dry_run["sandbox"], json!(true));
         assert_eq!(dry_run["validation"]["valid"], json!(true));
         assert_eq!(dry_run["summary"]["image_count"], json!(1));
+        assert_eq!(dry_run["summary"]["auto_accepted_count"], json!(1));
+        assert_eq!(dry_run["summary"]["empty_count"], json!(0));
+        assert_eq!(
+            dry_run["summary"]["estimated_full_run"]["image_count"],
+            json!(1)
+        );
+        assert_eq!(dry_run["samples"][0]["result_count"], json!(1));
+        assert_eq!(dry_run["samples"][0]["outcomes"][0]["label"], json!("day"));
         assert!(
             dry_run["samples"][0]["nodes"]
                 .as_array()

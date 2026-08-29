@@ -64,13 +64,13 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| First screen shows images and result count | PARTIAL | Real summary exists after execution; outcome hierarchy needs redesign. |
-| First screen shows review count | PARTIAL | Gate metrics exist; explicit workload presentation remains. |
-| First screen shows failures | PARTIAL | Failure metrics exist. |
+| First screen shows images and result count | PASS | Sample Test hero leads with tested images and de-duplicated business outcomes from Candidate, Classification, or Detection Artifacts. |
+| First screen shows review count | PASS | Needs-attention metric and Full Run Estimate show measured and projected Review workload. |
+| First screen shows failures | PASS | Node execution failures are counted separately from valid empty/no-target results. |
 | First screen shows duration and cost | PASS | Dry Run DTO/UI contains both. |
-| Node status is not first-level visual content | PARTIAL | Diagnostics are present but hierarchy needs browser proof. |
-| Open uncertain result directly | OPEN | No dedicated uncertain-result gallery/deep link. |
-| Success can Activate Automation | OPEN | Current action is Publish, not guided activation. |
+| Node status is not first-level visual content | PASS | Browser proof shows all node status/timing/Artifact content closed under Diagnostics after Gallery and Uncertain Results. |
+| Open uncertain result directly | PASS | The outcome-dependent primary action scrolls directly to the dedicated uncertain-result cards. |
+| Success can Activate Automation | PASS | A valid Sample Test exposes one primary Activate action backed by immutable publication. |
 | Dry Run writes no formal Annotation | PASS | Sandbox behavior has Rust/HTTP/E2E coverage. |
 
 ## F. Run
@@ -224,3 +224,14 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Project-scoped filtering prevents unrelated Published Versions from appearing in the open Project's Automation history or compare controls.
 - `npm run typecheck`, 31 Web unit tests, and the production build pass. Chromium E2E proves recommendation preview, compare, Apply-to-Draft, Node Drawer autosave, collapsed Expert Graph, and absence of a Publish action; 14 scenarios pass and one Crop fixture scenario is explicitly conditional.
 - Browser evidence: `docs/execution/screenshots/06-automation-recipe.png`.
+
+## Milestone 7 evidence
+
+- Added the domain-neutral `SampleTestSummary`, `UsageSummary`, `FullRunEstimate`, `SampleTestOutcome`, and outcome status contracts. Persisted older WorkflowDryRun reports remain compatible because every new projection field has a serde default.
+- Label Pipeline sample execution aggregates the latest state of repeated Candidate, Classification, and Detection Artifacts by stable item identity. Whole-image Classification is a first-class result even when the Recipe commits a ClassificationSet without an AnnotationCandidateSet.
+- Every sample now exposes image identity, result/accept/review/failure/empty facts and safe result geometry. Summary estimates scale measured sample duration, exact decimal cost, and Review count to the real Project image count.
+- Test & Activate uses three equal first-screen outcome metrics, a separate Full Run Estimate, real image Gallery, valid `No target found` language, a dedicated Uncertain Results section, and closed Pipeline/Usage/Timing/Artifact diagnostics.
+- The primary action is outcome-dependent: Fix Automation on failures, Review Uncertain Result when human attention is predicted, otherwise Activate Automation. Activation invokes the existing immutable publish endpoint; sandbox execution still writes no formal Run or Annotation.
+- Application 21, Core 28, Storage 8, and Server 9 focused tests pass. Strict Clippy for those crates passes. Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios pass; one Crop fixture test remains conditional.
+- Browser E2E verifies the outcome hierarchy, one Gallery result, zero-uncertain success state, collapsed Diagnostics, exactly three equal metrics, immutable activation, and no horizontal overflow at 720×450.
+- Browser evidence: `docs/execution/screenshots/02-dry-run-summary.png`.

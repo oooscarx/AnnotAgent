@@ -553,7 +553,7 @@ function BuildWorkspace({
       ) : step === "labels" ? (
         <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
       ) : (
-        <BuildTestPublish project={project} onRefresh={onRefresh} onError={onError} />
+        <BuildTestPublish project={project} onNavigate={onNavigate} onRefresh={onRefresh} onError={onError} />
       )}
       {project && summary && allowed && <BuildFooter
         previous={previousStep}
@@ -805,10 +805,12 @@ function BuildLabels({
 
 function BuildTestPublish({
   project,
+  onNavigate,
   onRefresh,
   onError,
 }: {
   project: ProjectSummary;
+  onNavigate: (step: BuildStep) => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
@@ -816,17 +818,23 @@ function BuildTestPublish({
   const [draftId, setDraftId] = useState("");
   const [sampleCount, setSampleCount] = useState(3);
   const [report, setReport] = useState<WorkflowDryRunReport>();
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const load = () => api.workflowDrafts(project.id).then((value) => {
     setDrafts(value.drafts);
-    setDraftId((current) => value.drafts.some((draft) => draft.id === current) ? current : (value.drafts[0]?.id ?? ""));
+    const editable = value.drafts.filter((draft) => !["published", "archived"].includes(draft.status));
+    setDraftId((current) => editable.some((draft) => draft.id === current) ? current : (editable[0]?.id ?? ""));
   });
-  useEffect(() => { void load().catch((error: Error) => onError(error.message)); }, [project.id]);
+  useEffect(() => {
+    void Promise.all([load(), api.images(project.id).then((value) => setImages(value.images))])
+      .catch((error: Error) => onError(error.message));
+  }, [project.id]);
   const test = () => {
     if (!draftId) return;
     setBusy(true);
     void api.dryRunWorkflow(draftId, Array.from({ length: sampleCount }, (_, index) => index))
-      .then(setReport)
+      .then((value) => { setActivated(undefined); setReport(value); })
       .then(load)
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
@@ -834,7 +842,14 @@ function BuildTestPublish({
   const publish = () => {
     if (!draftId || !report?.validation.valid) return;
     setBusy(true);
-    void api.publishWorkflow(draftId).then(() => Promise.all([load(), onRefresh()])).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+    void api.publishWorkflow(draftId)
+      .then((version) => {
+        setActivated(version);
+        setDraftId("");
+        return onRefresh();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
   };
   const discard = () => {
     if (!draftId) return;
@@ -842,45 +857,104 @@ function BuildTestPublish({
     void api.archiveWorkflowDraft(draftId).then(() => { setReport(undefined); return load(); }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
   };
   const summary = report?.summary;
+  const resultCount = report?.samples.reduce((total, sample) => total + sample.result_count, 0) ?? 0;
+  const uncertainSamples = report?.samples.filter((sample) => sample.review_count > 0 || sample.failed) ?? [];
+  const needsAttention = (summary?.needs_review_count ?? 0) + (summary?.failed_count ?? 0);
+  const fullRun = summary?.estimated_full_run;
+  const draftControls = <>
+    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => !["published", "archived"].includes(draft.status)).map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
+    <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
+    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test samples"}</button>
+  </>;
   return (
     <>
       <div className="toolbar-panel">
         <div><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
-        <div className="button-row">
-          <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => !["published", "archived"].includes(draft.status)).map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
-          <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
-          <button onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test samples"}</button>
-          <button className="primary" onClick={publish} disabled={busy || !report?.validation.valid}>Activate automation</button>
-        </div>
+        {!report ? <div className="button-row sample-test-controls">{draftControls}</div> : <details className="retest-controls"><summary>Test another sample</summary><div className="sample-test-controls">{draftControls}</div></details>}
       </div>
-      <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
+      {!report && <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
         <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? "Unpublished changes" : "Choose a Draft"}</strong></li>
-        <li className={report?.validation.valid ? "complete" : draftId ? "current" : ""}><span>2</span><strong>Check setup</strong></li>
-        <li className={report ? "complete" : ""}><span>3</span><strong>Test samples</strong></li>
-        <li className={report?.validation.valid ? "current" : ""}><span>4</span><strong>Activate automation</strong></li>
-      </ol>
+        <li className={draftId ? "current" : ""}><span>2</span><strong>Check setup</strong></li>
+        <li><span>3</span><strong>Test samples</strong></li>
+        <li><span>4</span><strong>Activate automation</strong></li>
+      </ol>}
       {summary ? (
         <>
-          <div className="metrics-grid dry-run-summary" aria-label="Dry Run result summary">
-            <Metric label="Images" value={summary.image_count} detail="Sandbox samples" />
-            <Metric label="Detections" value={summary.detection_count} detail="Detected subjects" />
-            <Metric label="Candidates" value={summary.candidate_count} detail="Annotation candidates" />
-            <Metric label="Auto accepted" value={summary.auto_accepted_count} detail="Passed automatic gates" />
-            <Metric label="Needs review" value={summary.needs_review_count} detail="Human decision required" />
-            <Metric label="Failed" value={summary.failed_count} detail="Images with node errors" />
-            <Metric label="Duration" value={`${report.total_latency_ms} ms`} detail="Sandbox wall time" />
-            <Metric label="Usage" value={(summary.input_tokens + summary.output_tokens).toLocaleString()} detail={`${report.estimated_cost} estimated cost`} />
-          </div>
-          <Panel title="Setup diagnostics" eyebrow={report.validation.valid ? "Ready to activate" : "Activation blocked"}>
-            {report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}
-            {!report.validation.issues.length && <p>No blocking static or execution issues.</p>}
-            <details><summary>Node trace</summary>{report.samples.map((sample) => <div key={sample.image_name}><strong>{sample.image_name}</strong><TagGroup title="Nodes" values={sample.nodes.map((node) => `${node.node_id}: ${node.status}`)} /></div>)}</details>
-          </Panel>
+          <section className={`sample-test-hero ${report.validation.valid ? "ready" : "blocked"}`} aria-label="Dry Run result summary">
+            <div className="sample-test-hero-copy">
+              <span className="eyebrow">{report.validation.valid ? "Ready to activate" : "Automation needs changes"}</span>
+              <h2>Sample test complete</h2>
+              <p>AnnotAgent tested real Project images in a sandbox. No formal Annotations were written.</p>
+            </div>
+            <dl className="sample-outcome-metrics">
+              <div><dt>Images</dt><dd>{summary.image_count}</dd><small>tested</small></div>
+              <div><dt>Results found</dt><dd>{resultCount}</dd><small>{summary.auto_accepted_count} ready to accept</small></div>
+              <div><dt>Needs attention</dt><dd>{needsAttention}</dd><small>{summary.needs_review_count} review · {summary.failed_count} failed</small></div>
+            </dl>
+            <div className="sample-test-context">
+              <span>{summary.empty_count} no-target result{summary.empty_count === 1 ? "" : "s"}</span>
+              <span>{formatSampleDuration(summary.duration_ms)}</span>
+              <span>${summary.usage.estimated_cost} sample cost</span>
+            </div>
+            <div className="button-row">
+              {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline")}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
+              {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
+            </div>
+            {activated && <div className="activation-success" role="status"><strong>Automation activated</strong><span>Immutable Version v{activated.version} is ready for the full Dataset Run.</span></div>}
+          </section>
+          {fullRun && <section className="full-run-estimate" aria-label="Full Run Estimate">
+            <div><span className="eyebrow">Full Run Estimate</span><h2>{fullRun.image_count} Project images</h2><p>Projected from this Sample Test; actual usage can vary with image content and Provider behavior.</p></div>
+            <dl><div><dt>Estimated cost</dt><dd>${fullRun.estimated_cost}</dd></div><div><dt>Estimated duration</dt><dd>{formatSampleDuration(fullRun.duration_ms)}</dd></div><div><dt>Review workload</dt><dd>{fullRun.review_count_min === fullRun.review_count_max ? fullRun.review_count_min : `${fullRun.review_count_min}–${fullRun.review_count_max}`} results</dd></div></dl>
+          </section>}
+          <section className="sample-results-section" aria-labelledby="sample-results-title">
+            <div className="section-heading"><div><span className="eyebrow">Results Gallery</span><h2 id="sample-results-title">What the automation found</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : "s"}</small></div>
+            <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} />)}</div>
+          </section>
+          <section className="sample-results-section uncertain-results" id="uncertain-results" aria-labelledby="uncertain-results-title">
+            <div className="section-heading"><div><span className="eyebrow">Uncertain Results</span><h2 id="uncertain-results-title">What needs a human decision</h2></div><small>{uncertainSamples.length} image{uncertainSamples.length === 1 ? "" : "s"}</small></div>
+            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact />)}</div> : <div className="positive-empty"><strong>No uncertain results in this sample</strong><span>The configured confidence and Review gates accepted every result.</span></div>}
+          </section>
+          <section className="sample-diagnostics" aria-label="Sample Test diagnostics">
+            <div className="section-heading"><div><span className="eyebrow">Diagnostics</span><h2>Inspect only when you need to troubleshoot</h2></div></div>
+            <details><summary>Pipeline Diagnostics</summary><div>{report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}{!report.validation.issues.length && <p>No blocking static or execution issues.</p>}</div></details>
+            <details><summary>Model Usage</summary><dl className="diagnostic-facts"><div><dt>Input tokens</dt><dd>{summary.usage.input_tokens.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{summary.usage.output_tokens.toLocaleString()}</dd></div><div><dt>Estimated cost</dt><dd>${summary.usage.estimated_cost}</dd></div></dl></details>
+            <details><summary>Node Timings</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`timing-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.map((node) => <span key={node.node_id}>{node.node_id}<small>{node.latency_ms} ms · {node.status}</small></span>)}</div>)}</details>
+            <details><summary>Technical Artifacts</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`artifacts-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.filter((node) => node.output_types.length).map((node) => <span key={node.node_id}>{node.node_id}<small>{node.output_types.join(", ")}</small></span>)}</div>)}</details>
+          </section>
         </>
       ) : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
       <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>
     </>
   );
+}
+
+function formatSampleDuration(durationMs: number) {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)} sec`;
+  return `${Math.ceil(durationMs / 60_000)} min`;
+}
+
+function SampleResultCard({
+  sample,
+  image,
+  compact = false,
+}: {
+  sample: WorkflowDryRunReport["samples"][number];
+  image?: ImageItem;
+  compact?: boolean;
+}) {
+  const boxes = sample.outcomes.filter((outcome) => outcome.value?.kind === "bounding_box");
+  const state = sample.failed ? "Failed" : sample.review_count ? "Needs review" : sample.empty ? "No target found" : "Ready";
+  return <article className={`sample-result-card ${sample.failed ? "failed" : sample.review_count ? "review" : "ready"} ${compact ? "compact" : ""}`}>
+    <figure className="sample-result-preview" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
+      {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">Preview unavailable</div>}
+      {boxes.map((outcome) => {
+        const rect = outcome.value?.kind === "bounding_box" ? outcome.value.rect : undefined;
+        return rect ? <span className="sample-result-box" key={outcome.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{outcome.label}{outcome.confidence != null ? ` ${Math.round(outcome.confidence * 100)}%` : ""}</b></span> : null;
+      })}
+    </figure>
+    <div className="sample-result-body"><div><strong>{sample.image_name}</strong><Status status={state} /></div><p>{sample.failed ? "A Pipeline step failed on this image." : sample.empty ? "No target found. This is a valid empty result." : `${sample.result_count} result${sample.result_count === 1 ? "" : "s"} · ${sample.auto_accepted_count} ready · ${sample.review_count} review`}</p>{sample.outcomes.length > 0 && <ul>{sample.outcomes.map((outcome) => <li key={`summary-${outcome.id}`}><span>{outcome.label}</span><small>{outcome.status.replaceAll("_", " ")}{outcome.confidence != null ? ` · ${Math.round(outcome.confidence * 100)}%` : ""}</small></li>)}</ul>}</div>
+  </article>;
 }
 
 function SettingsWorkspace({

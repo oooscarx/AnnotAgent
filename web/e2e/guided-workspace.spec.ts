@@ -210,8 +210,19 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await page.getByRole("spinbutton").fill("1");
   await page.getByRole("button", { name: "Test samples", exact: true }).click();
   await expect(page.getByLabel("Dry Run result summary")).toContainText("Images");
+  await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();
   await expect(page.getByText("Ready to activate")).toBeVisible();
+  await expect(page.getByLabel("Full Run Estimate")).toContainText("Review workload");
+  await expect(page.getByRole("heading", { name: "What the automation found" })).toBeVisible();
+  await expect(page.locator(".sample-result-card").first()).toContainText("day");
+  await expect(page.getByRole("heading", { name: "What needs a human decision" })).toBeVisible();
+  await expect(page.getByText("No uncertain results in this sample")).toBeVisible();
+  await expect(page.locator(".sample-diagnostics details[open]")).toHaveCount(0);
+  await expect(page.locator(".sample-outcome-metrics > div")).toHaveCount(3);
   await page.screenshot({ path: `${screenshots}/02-dry-run-summary.png`, fullPage: true });
+  await page.setViewportSize({ width: 720, height: 450 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
+  await expect(page.getByRole("button", { name: "Activate automation", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Activate automation", exact: true }).click();
   await expect(page.getByLabel("Current Draft")).toHaveValue("");
 
