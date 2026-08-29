@@ -1834,6 +1834,7 @@ function WorkflowsPage({
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [comparison, setComparison] = useState<WorkflowVersionComparison>();
   const [advisorProposal, setAdvisorProposal] = useState<WorkflowSuggestion>();
+  const [showProposalComparison, setShowProposalComparison] = useState(true);
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
@@ -1924,6 +1925,7 @@ function WorkflowsPage({
       .suggestWorkflow(activeProjectId, advisorKind, target)
       .then((proposal) => {
         setAdvisorProposal(proposal);
+        setShowProposalComparison(true);
         return refreshDrafts();
       })
       .catch((error: Error) => onError(error.message))
@@ -1937,23 +1939,12 @@ function WorkflowsPage({
   const targetTask = activeProject?.annotation_schema.find(
     (task) => task.id === targetTaskId,
   );
-  const save = () => draft && finish(api.saveWorkflowDraft(draft));
   const discardChanges = () => {
     if (!draft) return;
     const persisted = persistedDrafts.current.get(draft.id);
     if (persisted) setDraft(JSON.parse(persisted) as WorkflowDraft);
     setReport(undefined);
   };
-  const dryRun = () =>
-    draft &&
-    (setBusy(true),
-    void api
-      .dryRunWorkflow(draft.id)
-      .then(setReport)
-      .then(refreshDrafts)
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setBusy(false)));
-  const publish = () => draft && finish(api.publishWorkflow(draft.id));
   const archive = () => draft && finish(api.archiveWorkflowDraft(draft.id));
   const clonePublished = () =>
     selected &&
@@ -1963,8 +1954,8 @@ function WorkflowsPage({
         Number(selected.workflow.version),
       ),
     );
-  const publishedEntries = entries.filter(({ workflow }) =>
-    workflow.source.startsWith("published draft"),
+  const publishedEntries = entries.filter(({ project, workflow }) =>
+    project.id === activeProjectId && workflow.source.startsWith("published draft"),
   );
   const compareVersions = () => {
     const left = publishedEntries.find(
@@ -2113,10 +2104,12 @@ function WorkflowsPage({
             From Template
           </button>
         </section>
-        <details className="workflow-command-card workflow-advisor">
-          <summary>Advisor draft</summary>
-          <div className="workflow-advisor-fields">
-            <button onClick={suggest} disabled={busy || !activeProjectId}>Suggest complete Workflow</button>
+        <section className="workflow-command-card workflow-advisor-recommendation">
+          <span className="eyebrow">Contextual suggestion</span>
+          <h3>AnnotAgent recommendation</h3>
+          <p>{targetLabel ? `Build a registered Automation Recipe for ${targetLabel}, using only Models, Skills, Validators, and Refiners available to this Project.` : "Choose a Label to preview a registry-bounded Automation Recipe."}</p>
+          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>{busy ? "Preparing preview…" : "Preview recommendation"}</button>
+          <details className="advanced-settings"><summary>Recommendation scope</summary><div className="workflow-advisor-fields">
             <select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
@@ -2131,31 +2124,28 @@ function WorkflowsPage({
               <option value="mock">Mock Advisor · offline</option>
               <option value="llm">Workspace LLM Advisor</option>
             </select>
-            <button onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>Suggest Label Pipeline</button>
-          </div>
-        </details>
+            <button onClick={suggest} disabled={busy || !activeProjectId}>Preview complete Workflow</button>
+          </div></details>
+        </section>
         <section className="workflow-command-card workflow-version-actions">
-          <span className="eyebrow">Selected version</span>
-          <h3>{immutable ? "Published version" : "Draft actions"}</h3>
+          <span className="eyebrow">Current Automation</span>
+          <h3>{immutable ? "Immutable Version" : "Autosaved Draft"}</h3>
+          <p>{immutable ? "Clone this Version before making changes." : "Edits stay unpublished until you test and activate them in the next step."}</p>
           <div className="button-row">
-            {!immutable && <button onClick={save} disabled={busy || !draft}>Save Draft</button>}
             {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
-            <button onClick={dryRun} disabled={busy || !draft}>Dry Run</button>
-            {!immutable && <button className="primary" onClick={publish} disabled={busy || !draft}>Publish</button>}
-            {immutable && <button className="primary" onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
+            {!immutable && <button onClick={() => onNavigate("test")} disabled={busy || !draft}>Open Test &amp; Activate</button>}
+            {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
             {!immutable && draft && <details className="action-menu"><summary>More</summary><div><button onClick={archive} disabled={busy}>Archive</button></div></details>}
           </div>
         </section>
       </div>
       {advisorProposal && (
-        <Panel title="Proposed changes" eyebrow="Advisor output · Draft only">
+        <Panel title="Proposed Changes" eyebrow="Advisor preview · Draft only · never activated automatically">
           <div className="advisor-proposal-grid">
             <div>
-              <h3>Suggested steps</h3>
-              <ol>
-                {advisorProposal.draft.nodes.map((node) => (
-                  <li key={node.id}>{node.node_type} <small>{node.model_binding ?? "Core"}</small></li>
-                ))}
+              <h3>Automation Recipe</h3>
+              <ol className="advisor-recipe-list">
+                {advisorProposal.draft.nodes.map((node) => <li key={node.id}>{workflowNodeTitle(node.node_type)} <small>{node.model_binding ?? "Core"}</small></li>)}
               </ol>
             </div>
             <div className="fact-grid">
@@ -2165,6 +2155,11 @@ function WorkflowsPage({
               <Fact label="Compared with current" value={draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
             </div>
           </div>
+          {showProposalComparison && <div className="advisor-change-preview" aria-label="Advisor change preview">
+            <span className="eyebrow">Compared with Current Draft</span>
+            {(draft?.nodes ?? []).filter((node) => !advisorProposal.draft.nodes.some((candidate) => candidate.id === node.id)).map((node) => <div className="removed" key={`removed-${node.id}`}>− {workflowNodeTitle(node.node_type)}</div>)}
+            {advisorProposal.draft.nodes.map((node) => <div className={draft?.nodes.some((candidate) => candidate.id === node.id) ? "unchanged" : "added"} key={`proposal-${node.id}`}>{draft?.nodes.some((candidate) => candidate.id === node.id) ? "  " : "+ "}{workflowNodeTitle(node.node_type)}</div>)}
+          </div>}
           <TagGroup title="Why" values={advisorProposal.rationale} />
           <TagGroup title="Unresolved bindings" values={advisorProposal.unresolved_model_bindings} />
           <TagGroup title="Warnings" values={advisorProposal.warnings} />
@@ -2187,7 +2182,8 @@ function WorkflowsPage({
             />
           )}
           <div className="button-row">
-            <button className="primary" onClick={() => setDraft(advisorProposal.draft)}>Apply to Draft</button>
+            <button className="primary" onClick={() => { setDraft(advisorProposal.draft); setAdvisorProposal(undefined); }}>Apply to Draft</button>
+            <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
             <button onClick={() => setAdvisorProposal(undefined)}>Dismiss proposal</button>
           </div>
         </Panel>
@@ -2285,7 +2281,7 @@ function WorkflowsPage({
           <span className="eyebrow workflow-published-title">
             Default Published Version
           </span>
-          {entries.filter(({ workflow }) => workflow.is_default).map(({ project, workflow }) => (
+          {entries.filter(({ project, workflow }) => project.id === activeProjectId && workflow.is_default).map(({ project, workflow }) => (
             <button
               key={`${project.id}-${workflow.workflow_id}-${workflow.version}`}
               onClick={() => {
@@ -2311,29 +2307,8 @@ function WorkflowsPage({
           {draft ? (
             <Panel
               title={draft.name}
-              eyebrow={`${draft.status} · ${draft.id.slice(0, 8)}`}
+              eyebrow={`${draft.status} · autosaved Automation Draft`}
             >
-              <div className="button-row">
-                <button
-                  onClick={addNode}
-                  disabled={immutable || Boolean(draft.label_pipeline)}
-                  title={
-                    draft.label_pipeline
-                      ? "Use the Label Pipeline Node Catalog below"
-                      : undefined
-                  }
-                >
-                  Add node
-                </button>
-                <button
-                  onClick={addEdge}
-                  disabled={
-                    immutable || Boolean(draft.label_pipeline) || draft.nodes.length < 2
-                  }
-                >
-                  Add connection
-                </button>
-              </div>
               {draft.label_pipeline && (
                 <LabelPipelineEditor
                   draft={draft}
@@ -2344,6 +2319,15 @@ function WorkflowsPage({
               )}
               {!draft.label_pipeline && (
                 <>
+              <div className="natural-workflow-recipe">
+                <span className="eyebrow">Automation Recipe</span>
+                <ol>{draft.nodes.map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : "Deterministic Core step"}</small></li>)}</ol>
+                {!draft.nodes.length && <Empty title="No Automation steps" detail="Start from a template or preview an AnnotAgent recommendation." />}
+              </div>
+              <details className="advanced-graph">
+                <summary>View technical graph</summary>
+                <p>These technical nodes and connections edit the same autosaved Draft shown above.</p>
+                <div className="button-row"><button onClick={addNode} disabled={immutable}>Add node</button><button onClick={addEdge} disabled={immutable || draft.nodes.length < 2}>Add connection</button></div>
               <div className="workflow-nodes editable-workflow">
                 {draft.nodes.map((node, index) => (
                   <article key={node.id}>
@@ -2604,6 +2588,7 @@ function WorkflowsPage({
                   </article>
                 ))}
               </div>
+              </details>
                 </>
               )}
               {report && (
@@ -2661,6 +2646,97 @@ function WorkflowsPage({
   );
 }
 
+function workflowNodeTitle(nodeType: string): string {
+  const known: Record<string, string> = {
+    "core.image_input": "Read each image",
+    "vlm_detection.detect": "Find object candidates",
+    "yolo_detection.detect": "Detect objects with YOLO",
+    "classification.classify": "Classify subjects",
+    "core.filter": "Keep matching detections",
+    "core.crop": "Crop each candidate",
+    "core.map_label": "Map model classes to Labels",
+    "core.attach_result": "Attach verification results",
+    "core.attach_attribute": "Attach attributes",
+    "core.confidence_gate": "Apply the auto-accept rule",
+    "core.human_review": "Send uncertain results to Review",
+    "core.commit": "Save annotations",
+    "core.artifact_cache": "Keep replayable artifacts",
+  };
+  return known[nodeType] ?? nodeType.split(".").at(-1)?.replaceAll("_", " ") ?? nodeType;
+}
+
+function pipelineStepTitle(step: PipelineStep, targetLabel?: string): string {
+  const label = targetLabel || (Array.isArray(step.parameters.labels) ? step.parameters.labels.join(", ") : "targets");
+  if (step.node_type.includes("detect")) return `Find ${label} candidates`;
+  if (step.node_type === "core.filter") return `Keep detections labeled ${label}`;
+  if (step.node_type === "core.crop") return "Crop each candidate";
+  if (step.node_type.includes("classify")) return `Verify each crop as ${label}`;
+  if (step.node_type === "core.confidence_gate") return "Automatically accept confident results";
+  if (step.kind === "human_review") return "Send uncertain results to Review";
+  if (step.kind === "commit") return "Save the annotation";
+  return workflowNodeTitle(step.node_type);
+}
+
+function pipelineStepDescription(step: PipelineStep, targetLabel?: string): string {
+  if (step.node_type === "core.crop")
+    return `${Math.round(Number(step.parameters.padding ?? 0) * 100)}% padding around the source detection`;
+  if (step.node_type === "core.confidence_gate")
+    return `Accept confidence ≥ ${Number(step.parameters.threshold ?? 0).toFixed(2)}; route the rest to Review`;
+  if (step.node_type === "core.filter")
+    return `Class filter · minimum confidence ${Number(step.parameters.minimum_confidence ?? 0).toFixed(2)}`;
+  if (step.model_binding)
+    return `Uses ${step.model_binding.model_id} for ${targetLabel || step.model_binding.capability}`;
+  if (step.kind === "commit") return "Produces an editable Project annotation";
+  return "Deterministic Core processing";
+}
+
+function pipelineInputSummary(step: PipelineStep): string {
+  const values = Object.values(step.inputs).map((source) =>
+    source.source === "image" ? "Image" : source.artifact_type.replaceAll("_", " "),
+  );
+  return values.join(" + ") || "None";
+}
+
+function pipelineStepOverview(steps: PipelineStep[], targetLabel: string): string {
+  if (!steps.length) return `No execution steps for ${targetLabel}`;
+  return `${steps.length} guided steps · ${steps.some((step) => step.model_binding) ? "Model + Core" : "Core only"} · editable Draft`;
+}
+
+function ExpertGraphEditor({
+  draft,
+  immutable,
+  onChange,
+}: {
+  draft: WorkflowDraft;
+  immutable: boolean;
+  onChange: (draft: WorkflowDraft) => void;
+}) {
+  const [raw, setRaw] = useState(() => JSON.stringify(draft.label_pipeline, null, 2));
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setRaw(JSON.stringify(draft.label_pipeline, null, 2));
+    setError("");
+  }, [draft.id, draft.label_pipeline]);
+  const apply = () => {
+    try {
+      const next = JSON.parse(raw) as NonNullable<WorkflowDraft["label_pipeline"]>;
+      if (!Array.isArray(next.shared_stages) || !Array.isArray(next.label_pipelines))
+        throw new Error("Technical graph must contain shared_stages and label_pipelines arrays.");
+      onChange({ ...draft, label_pipeline: next });
+      setError("");
+    } catch (reason) {
+      setError((reason as Error).message);
+    }
+  };
+  return <details className="advanced-graph">
+    <summary>View technical graph</summary>
+    <p>This is the same autosaved Workflow Definition shown by the guided Recipe. Applying valid JSON changes the current Draft; it never publishes.</p>
+    <textarea aria-label="Technical graph JSON" value={raw} readOnly={immutable} onChange={(event) => setRaw(event.target.value)} />
+    {error && <small className="field-error" role="alert">{error}</small>}
+    {!immutable && <button onClick={apply}>Apply technical graph to Draft</button>}
+  </details>;
+}
+
 function LabelPipelineEditor({
   draft,
   catalog,
@@ -2685,6 +2761,18 @@ function LabelPipelineEditor({
   const selected =
     composition.label_pipelines.find((pipeline) => pipeline.id === pipelineId) ??
     composition.label_pipelines[0];
+  const stageConsumers = (stage: (typeof composition.shared_stages)[number]) => {
+    const stepIds = new Set(stage.steps.map((step) => step.id));
+    return composition.label_pipelines.filter((pipeline) =>
+      pipeline.steps.some((step) =>
+        Object.values(step.inputs).some((source) =>
+          source.source === "shared_stage"
+            ? source.stage_id === stage.id
+            : source.source === "step" && stepIds.has(source.step_id),
+        ),
+      ),
+    );
+  };
   const replaceComposition = (next: typeof composition) =>
     onChange({ ...draft, label_pipeline: next });
   const updateSharedStep = (
@@ -2928,10 +3016,8 @@ function LabelPipelineEditor({
       model_binding: pipelineModelBinding("vlm_detection.detect", catalog),
       parameters: {
         labels: [selected.target_label],
-        object_description:
-          "A round soccer ball used in RoboCup, usually white with red, blue, or black panel markings, on or near the green playing field. It may be small in the image. Exclude white shoes, penalty marks, line intersections, and robot body parts.",
-        instruction:
-          "Scan the complete field and foreground. In these B-Human images, box each visible soccer ball tightly even when it occupies only a small region.",
+        object_description: `A visible ${selected.target_label}. Return a tight box around each distinct instance and exclude visually similar non-target objects.`,
+        instruction: `Scan the complete image and box every visible ${selected.target_label}, including small or partially occluded instances.`,
         coordinate_format: "qwen_0_1000_xyxy",
         max_detections: 10,
       },
@@ -3014,7 +3100,7 @@ function LabelPipelineEditor({
       <div className="pipeline-section-heading">
         <div>
           <span className="eyebrow">Shared Stages</span>
-          <h3>Execute once per image and configuration</h3>
+          <h3>Runs once per image, then serves every Label Pipeline</h3>
         </div>
         <small>{composition.shared_stages.length} shared stage(s)</small>
       </div>
@@ -3022,8 +3108,7 @@ function LabelPipelineEditor({
         <section className="pipeline-lane shared" key={stage.id}>
           <header>
             <strong>{stage.name}</strong>
-            <span>Runs once per image · used by {composition.label_pipelines.filter((pipeline) => JSON.stringify(pipeline.steps).includes(stage.id) || JSON.stringify(pipeline.steps).includes(stage.steps[0]?.id ?? "")).length || composition.label_pipelines.length} Labels</span>
-            <code>{stage.id}</code>
+            <span>Runs once per image · used by {(stageConsumers(stage).length ? stageConsumers(stage) : composition.label_pipelines).map((pipeline) => pipeline.target_label).join(", ")}</span>
           </header>
           <div className="pipeline-step-row">
             {stage.steps.map((step, stepIndex) => (
@@ -3033,6 +3118,7 @@ function LabelPipelineEditor({
                 catalog={catalog}
                 immutable={immutable}
                 shared
+                targetLabel={(stageConsumers(stage).length ? stageConsumers(stage) : composition.label_pipelines).map((pipeline) => pipeline.target_label).join(", ")}
                 onConfigure={() => setDrawer({ scope: "shared", stageIndex, stepIndex })}
                 onChange={(next) => updateSharedStep(stageIndex, stepIndex, next)}
               />
@@ -3057,6 +3143,7 @@ function LabelPipelineEditor({
               </option>
             ))}
           </select>
+          <details className="recipe-edit-menu"><summary>Edit automation</summary><div>
           <select
             aria-label="Node Catalog"
             value={catalogNode}
@@ -3110,16 +3197,16 @@ function LabelPipelineEditor({
             }
             title="VLM DetectionSet → Filter → Core Crop; bbox Commit remains on the filtered DetectionSet"
           >
-            Apply VLM Football Detect &amp; Crop
+            Apply VLM Detect &amp; Crop
           </button>
+          </div></details>
         </div>
       </div>
       {composition.label_pipelines.map((pipeline) => (
         <section className="pipeline-lane" key={pipeline.id}>
           <header>
             <strong>{pipeline.target_label}</strong>
-            <span>{pipeline.target_task_id}</span>
-            <code>{pipeline.id}</code>
+            <span>{pipelineStepOverview(pipeline.steps, pipeline.target_label)}</span>
           </header>
           <div className="pipeline-step-row">
             {pipeline.steps.map((step, stepIndex) => (
@@ -3128,6 +3215,7 @@ function LabelPipelineEditor({
                 step={step}
                 catalog={catalog}
                 immutable={immutable}
+                targetLabel={pipeline.target_label}
                 onConfigure={() => setDrawer({ scope: "label", pipelineId: pipeline.id, stepIndex })}
                 onChange={(next) =>
                   updatePipelineStep(pipeline.id, stepIndex, next)
@@ -3138,11 +3226,7 @@ function LabelPipelineEditor({
           </div>
         </section>
       ))}
-      <details className="advanced-graph">
-        <summary>Advanced graph</summary>
-        <p>This typed graph is rendered directly from the same Current Draft used by the guided lanes.</p>
-        <pre>{JSON.stringify(composition, null, 2)}</pre>
-      </details>
+      <ExpertGraphEditor draft={draft} immutable={immutable} onChange={onChange} />
       {drawer && (() => {
         const step = drawer.scope === "shared"
           ? composition.shared_stages[drawer.stageIndex]?.steps[drawer.stepIndex]
@@ -3169,6 +3253,7 @@ function PipelineStepCard({
   catalog,
   immutable,
   shared = false,
+  targetLabel,
   onChange,
   onRemove,
   onConfigure,
@@ -3177,6 +3262,7 @@ function PipelineStepCard({
   catalog?: WorkflowCatalog;
   immutable: boolean;
   shared?: boolean;
+  targetLabel?: string;
   onChange: (step: PipelineStep) => void;
   onRemove?: () => void;
   onConfigure: () => void;
@@ -3188,19 +3274,12 @@ function PipelineStepCard({
   return (
     <article className="pipeline-step-card">
       <span className="pipeline-step-kind">{shared ? "shared" : step.kind}</span>
-      <strong>{step.node_type}</strong>
-      <code>{step.id}</code>
-      <small>
-        {Object.values(step.inputs)
-          .map((source) =>
-            source.source === "image" ? "Image" : `${source.step_id}.${source.port}`,
-          )
-          .join(" + ") || "No input"}
-        {" → "}
-        {Object.values(step.outputs).join(", ") || "terminal"}
-      </small>
+      <strong>{pipelineStepTitle(step, targetLabel)}</strong>
+      <small>{pipelineStepDescription(step, targetLabel)}</small>
       <div className="pipeline-card-summary">
         <span>Model <strong>{step.model_binding?.model_id ?? "Core"}</strong></span>
+        <span>Input <strong>{pipelineInputSummary(step)}</strong></span>
+        <span>Output <strong>{Object.values(step.outputs).join(", ").replaceAll("_", " ") || "Annotation"}</strong></span>
         <span>Threshold <strong>{String(step.parameters.threshold ?? step.parameters.minimum_confidence ?? "—")}</strong></span>
         <Status status={immutable ? "published" : "valid"} />
       </div>

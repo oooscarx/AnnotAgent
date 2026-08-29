@@ -42,7 +42,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Build is a continuous four-step flow | PASS | Data, Labels, Pipeline, Test & Publish routes exist. |
 | Refresh restores Build step | PASS | Step is encoded in URL and covered by route tests. |
 | Labels default to user language | PASS | Intent and Label display name are primary; generated schema/YAML and IDs are collapsed under Advanced. |
-| Automation defaults to Recipe | OPEN | Workflow Designer is the default presentation. |
+| Automation defaults to Recipe | PASS | The default surface is a natural Recipe with Shared Stages and per-Label Pipelines; technical graph JSON is collapsed under Expert Mode. |
 | Expert Graph edits the same Workflow | PASS | Existing guided lanes/graph share `label_pipeline`. |
 | Draft autosaves | PASS | Existing PATCH autosave is implemented. |
 | Published Version is immutable | PASS | Backend and UI prevent mutation. |
@@ -52,7 +52,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
 | Contextual suggestion | PASS | Registry-bound advisor consumes Project/catalog context. |
-| Proposed Changes presentation | PARTIAL | Suggestion rationale exists; dedicated proposal hierarchy needs proof. |
+| Proposed Changes presentation | PASS | Browser coverage proves a dedicated Draft-only proposal with Recipe, comparison, rationale, bindings, warnings, alternatives, and estimates before Apply. |
 | Compare | PASS | Version compare API/UI exists. |
 | Apply only to Draft | PASS | Suggestions remain editable Drafts. |
 | Never auto-publishes | PASS | Publication is separate. |
@@ -133,7 +133,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
 | Guided default hides ArtifactId | OPEN | Run inspector exposes technical IDs in default layout. |
-| Guided default hides full DAG | PARTIAL | Build shows lanes/graph technical content by default. |
+| Guided default hides full DAG | PASS | Natural step cards are the default; full graph JSON and technical node editing require opening the Expert Graph. |
 | One Primary Button per page | PARTIAL | Project Overview renders exactly one server-selected solid action; remaining Build/Run/Review/Export surfaces are gated by later Milestones. |
 | No nested Cards | OPEN | Requires component/layout audit after journey refactor. |
 | At most three equal first-screen metrics | OPEN | Existing dashboards and Run surfaces exceed outcome hierarchy. |
@@ -214,3 +214,13 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - Automation retains real debounced Draft PATCH autosave and refreshes readiness after saving. Test & Activate maps user language onto the real Draft → validation/Dry Run → immutable publish lifecycle.
 - Application 21 tests, Server 9 tests, Web typecheck, 31 Web unit tests, production build, and 13 executable Chromium E2E tests pass. One Crop lineage test remains conditional.
 - Browser evidence: `docs/execution/screenshots/04-build-data.png` and `docs/execution/screenshots/05-build-labels.png`.
+
+## Milestone 6 evidence
+
+- Automation renders one natural-language Recipe over the persisted Label Pipeline composition. Shared Stages state that they run once per image and name their Label consumers; Label lanes describe Find, Filter, Crop, Verify, Gate, Review, and Save outcomes.
+- Default node cards expose user-meaningful Model, input, output, threshold, and validation facts without node IDs. The real editable configuration is in a Node Drawer and retains debounced PATCH autosave.
+- Expert Graph is closed by default and applies valid technical JSON back to the same Draft. There is no second Workflow representation and no publication action on the Automation page.
+- Advisor output is presented as `Proposed Changes`, including a natural Recipe, current-Draft diff, rationale, unresolved bindings, warnings, alternatives, model-call estimate, latency, and cost tier. Apply selects the persisted editable Draft; Dismiss never activates it.
+- Project-scoped filtering prevents unrelated Published Versions from appearing in the open Project's Automation history or compare controls.
+- `npm run typecheck`, 31 Web unit tests, and the production build pass. Chromium E2E proves recommendation preview, compare, Apply-to-Draft, Node Drawer autosave, collapsed Expert Graph, and absence of a Publish action; 14 scenarios pass and one Crop fixture scenario is explicitly conditional.
+- Browser evidence: `docs/execution/screenshots/06-automation-recipe.png`.

@@ -171,6 +171,39 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
   }
 });
 
+test("Automation Recipe previews Advisor changes and autosaves Drawer edits", async ({ page }) => {
+  await page.goto(`/projects/${projectId}/build/pipeline`);
+  await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
+  await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Runs once per image/).first()).toBeVisible();
+  await expect(page.locator(".pipeline-step-card > code")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Preview recommendation" }).click();
+  await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeVisible();
+  await expect(page.getByLabel("Advisor change preview")).toBeVisible();
+  await expect(page.getByText("Why", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Apply to Draft" }).click();
+  await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeHidden();
+
+  const configure = page.getByRole("button", { name: "Configure node" }).first();
+  await expect(configure).toBeVisible();
+  await configure.click();
+  const drawer = page.getByRole("dialog");
+  const parameters = drawer.getByLabel("Parameters and class mapping");
+  const current = JSON.parse(await parameters.inputValue());
+  const autosaved = page.waitForResponse((response) =>
+    response.request().method() === "PATCH" && response.url().includes("/api/workflow-drafts/"),
+  );
+  await parameters.fill(JSON.stringify({ ...current, guided_e2e: true }, null, 2));
+  expect((await autosaved).ok()).toBeTruthy();
+  await drawer.getByRole("button", { name: "Close node configuration" }).click();
+
+  await page.getByText("View technical graph", { exact: true }).click();
+  await expect(page.getByLabel("Technical graph JSON")).toBeVisible();
+  await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
+});
+
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {
   await page.goto(`/projects/${projectId}/build/test`);
   await expect(page.getByLabel("Current Draft")).not.toHaveValue("");

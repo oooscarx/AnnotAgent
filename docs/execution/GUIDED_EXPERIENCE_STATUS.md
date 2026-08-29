@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 6 — Automation Recipe and Advisor
-- Last completed Milestone: 5 — Guided Build
-- Latest Milestone commit: this document's containing Milestone 5 commit
+- Active Milestone: 7 — Outcome-first Dry Run
+- Last completed Milestone: 6 — Automation Recipe and Advisor
+- Latest Milestone commit: this document's containing Milestone 6 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -21,8 +21,8 @@ Updated: 2026-08-30
 | 3 Project Creation | Complete | Four-step wizard creates a real generic Project, imports real data, persists a model choice, and creates a registry-bounded Draft without requiring internal IDs. |
 | 4 Project Journey | Complete | Project Overview consumes one server summary containing Guidance, an eight-step Journey, readiness, blockers, repairs, Active Run, and at most two secondary actions. |
 | 5 Guided Build | Complete | Four URL-restorable steps share server Journey completion, forward/back navigation, prerequisite gates, real data diagnostics, user-language Labels, autosaved Automation, and Test/Activate vocabulary. |
-| 6 Recipe + Advisor | In progress | Registry-bounded Advisor and label lanes exist; guided recipe/proposal hierarchy needs completion. |
-| 7 Dry Run | Pending | Sandbox execution is real; result-first summary/activation flow remains. |
+| 6 Recipe + Advisor | Complete | Natural Recipe, Shared Stages, per-Label Pipelines, Node Drawer, same-Draft Expert Graph, and a compare/apply Advisor proposal are real and never auto-publish. |
+| 7 Dry Run | In progress | Sandbox execution is real; result-first summary, uncertain-result gallery, workload estimate, and activation hierarchy remain. |
 | 8 Run Workspace | Pending | Artifact/Replay context is real; Results/Debug modes and repair guidance remain. |
 | 9 Inbox Review | Pending | Geometry editing/decisions are real; next-item actions/progress remain. |
 | 10 Guided Export | Pending | Export is real; readiness, recommendation, compatibility, and completion UX remain. |
@@ -38,7 +38,7 @@ Updated: 2026-08-30
 | `npm run typecheck` | PASS |
 | `npm test` | PASS — 12 files, 31 tests |
 | `npm run build` | PASS — production bundle built |
-| `npm run test:e2e` | PASS — 13 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
+| `npm run test:e2e` | PASS — 14 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
 
 Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
 
@@ -80,6 +80,14 @@ Milestone 5 focused checks:
 - Automation Draft autosave remains the real PATCH path and now refreshes server Build readiness. Test actions use `Test samples` and `Activate automation` while invoking the existing sandbox Dry Run and immutable publication APIs.
 - Focused Rust suites: Application 21 and Server 9 passed. Web typecheck, 31 unit tests, production build, and 13 executable Chromium E2E scenarios passed.
 
+Milestone 6 focused checks:
+
+- Automation defaults to a natural Recipe: Shared Stages explicitly explain one execution per image, each Label owns a readable Pipeline, and step cards summarize Model, input, output, threshold, and validation without exposing IDs.
+- Node configuration lives in a Drawer; the advanced technical graph edits the same autosaved Draft and is collapsed by default.
+- The registry-bounded Advisor opens a Draft-only `Proposed Changes` preview with recipe, comparison, rationale, unresolved bindings, warnings, alternatives, estimated calls, latency, and cost. `Apply to Draft` never publishes or starts a Run.
+- Published history and version comparison are scoped to the open Project, preventing unrelated Project versions from expanding the Automation workspace.
+- Web typecheck, 31 unit tests, production build, and 14 executable Chromium E2E scenarios passed. One Crop lineage test remains conditional.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -92,14 +100,14 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Guided Project creation presents annotation intent, data source, priority, and a recommended Automation before exposing generated YAML or internal IDs.
 - Project Overview now presents one server-selected next action, Journey progress, and blocker repairs before Recent Activity and Usage; schema, bindings, versions, import/export, and image records are collapsed under Advanced Project Details.
 - Build now behaves as one gated sequence rather than four unrelated management screens; URL refresh preserves the step and server prerequisites prevent manual URL bypass.
-- Project Overview exposes several equally prominent actions.
-- Run and Review default surfaces remain technically dense.
+- Automation now keeps expert graph details collapsed and routes activation to the next Build step.
+- Dry Run, Run, and Review default surfaces remain technically dense.
 
 ## Release Blocking remaining
 
-- `PASS`: 54
-- `PARTIAL`: 21
-- `OPEN`: 19
+- `PASS`: 57
+- `PARTIAL`: 19
+- `OPEN`: 18
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.
