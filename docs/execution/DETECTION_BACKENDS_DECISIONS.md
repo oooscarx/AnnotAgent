@@ -155,3 +155,47 @@ The Worker also fails closed if such a request bypasses UI validation.
 
 Rejected: an enabled decorative control that fails only after starting a Run, or frontend-authored
 capability claims that disagree with Worker discovery.
+
+## DB-019 — Trained detection is a generic Capability Skill
+
+`annotagent.object_detection` owns the backend-neutral Object Detection request, options, strict
+schema, Model-to-Project class mapping, post-processing and Review template. RF-DETR and legacy
+YOLO integrations are Model Registry backends for that capability, not Skill identities or Core
+node kinds. Crop remains a Core transform and is never advertised as detector behavior.
+
+The product registry exposes this generic Skill for new Workflows. Existing YOLO operation and
+descriptors remain readable for compatibility while later template migration removes new product
+dependence on them.
+
+## DB-020 — Specialist Workers require immutable identity before enablement
+
+A disabled Worker profile may be incomplete so AnnotAgent can start and explain setup. Enabling a
+versioned specialist Worker requires architecture, model version, checkpoint SHA-256, training
+dataset version, non-empty label space and concrete weight-license metadata. Existing Settings are
+merged additively with new curated profiles; user-edited profiles are never overwritten by a
+default migration.
+
+Rejected: inferring metadata from a checkpoint filename, marking an unknown license as permissive,
+or hiding an unavailable Worker from Models.
+
+## DB-021 — RF-DETR uses an explicit local official checkpoint path
+
+The tracked adapter follows RF-DETR's official `from_checkpoint` and `predict` APIs with safe
+checkpoint loading. It accepts only an explicitly configured existing local checkpoint whose
+bytes match the configured SHA-256 and never installs packages or downloads weights. It reports
+only Object Detection and relative-confidence semantics; segmentation, keypoints, training and
+batch inference are not claimed.
+
+RF-DETR licensing is recorded per concrete model variant because the official repository
+distinguishes Apache-designated artifacts from PML-licensed detection variants. A real GPU run is
+live-conditional until the exact checkpoint and its applicable terms are configured.
+
+## DB-022 — Specialist label space is discovered and enforced exactly
+
+The configured expected label space is compared as a set with Worker capability discovery before
+inference. Every returned model label is then checked against that same set before it becomes a
+typed Detection Artifact. Project label mapping is a separate Skill concern and cannot expand the
+model's declared vocabulary.
+
+Rejected: trusting only a frontend label list, accepting undeclared response labels, or silently
+mapping an unknown class to a Project Label.

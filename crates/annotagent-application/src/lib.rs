@@ -96,6 +96,9 @@ pub struct DetectionWorkerSettings {
     pub enabled: bool,
     #[serde(default)]
     pub allow_remote: bool,
+    /// Require immutable checkpoint/dataset/class metadata before this Worker may be enabled.
+    #[serde(default)]
+    pub requires_checkpoint_metadata: bool,
     pub expected_capabilities: Vec<VisionCapability>,
     pub score_semantics: ScoreSemantics,
     pub version: ModelVersionMetadata,
@@ -121,6 +124,7 @@ impl DetectionWorkerSettings {
             expected_model_id: self.model_id.clone(),
             capabilities: self.expected_capabilities.clone(),
             expected_score_semantics: Some(self.score_semantics),
+            expected_label_space: self.label_space.clone(),
             request_timeout: Duration::from_secs(self.timeout_seconds),
             max_request_bytes: self.max_request_bytes,
             max_response_bytes: self.max_response_bytes,
@@ -132,13 +136,15 @@ impl DetectionWorkerSettings {
 }
 
 fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
-    vec![DetectionWorkerSettings {
+    vec![
+        DetectionWorkerSettings {
         id: "annotagent-locate-anything".to_owned(),
         display_name: "LocateAnything Local".to_owned(),
         model_id: "locate-anything-local".to_owned(),
         base_url: "http://127.0.0.1:8791".to_owned(),
         enabled: false,
         allow_remote: false,
+        requires_checkpoint_metadata: false,
         expected_capabilities: vec![
             VisionCapability::OpenVocabularyDetection,
             VisionCapability::PhraseGrounding,
@@ -180,7 +186,56 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
         max_request_bytes: 44_000_000,
         max_response_bytes: 2_000_000,
         max_retries: 0,
-    }]
+        },
+        DetectionWorkerSettings {
+            id: "annotagent-rfdetr".to_owned(),
+            display_name: "RF-DETR Specialist Local".to_owned(),
+            model_id: "rfdetr-specialist-local".to_owned(),
+            base_url: "http://127.0.0.1:8792".to_owned(),
+            enabled: false,
+            allow_remote: false,
+            requires_checkpoint_metadata: true,
+            expected_capabilities: vec![VisionCapability::ObjectDetection],
+            score_semantics: ScoreSemantics::RelativeConfidence,
+            version: ModelVersionMetadata {
+                architecture: None,
+                model_version: "unconfigured".to_owned(),
+                checkpoint_sha256: None,
+                training_dataset_version: None,
+                backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION
+                    .to_string(),
+            },
+            label_space: Vec::new(),
+            runtime_requirements: RuntimeRequirements {
+                devices: vec!["cuda".to_owned()],
+                minimum_gpu_memory_mb: None,
+                dependencies: vec![
+                    "rfdetr Python package compatible with the configured checkpoint".to_owned(),
+                    "PyTorch CUDA".to_owned(),
+                ],
+                supports_batch: false,
+            },
+            license: LicenseMetadata {
+                code_license: Some("Apache-2.0 for the open-source rfdetr package".to_owned()),
+                weight_license: None,
+                source_url: Some(
+                    "https://github.com/roboflow/rf-detr/blob/develop/LICENSE".to_owned(),
+                ),
+                commercial_use: LicensePermission::Unknown,
+                redistribution: LicensePermission::Unknown,
+                usage_notes: vec![
+                    "Set the concrete checkpoint license before enabling; RF-DETR variants do not all share one weight license."
+                        .to_owned(),
+                    "This metadata is informational and is not legal advice.".to_owned(),
+                ],
+                verified_from_official_source: true,
+            },
+            timeout_seconds: 120,
+            max_request_bytes: 44_000_000,
+            max_response_bytes: 2_000_000,
+            max_retries: 0,
+        },
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +281,28 @@ pub fn validate_settings(settings: &Settings) -> Result<()> {
             || !model_ids.insert(worker.model_id.as_str())
         {
             bail!("Detection Worker ids/model ids must be non-empty and unique");
+        }
+        if worker.enabled
+            && worker.requires_checkpoint_metadata
+            && (worker
+                .version
+                .architecture
+                .as_deref()
+                .is_none_or(str::is_empty)
+                || worker.version.model_version.trim().is_empty()
+                || worker.version.model_version == "unconfigured"
+                || worker.version.checkpoint_sha256.is_none()
+                || worker
+                    .version
+                    .training_dataset_version
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                || worker.label_space.is_empty()
+                || worker.license.weight_license.is_none())
+        {
+            bail!(
+                "enabled versioned Detection Workers require architecture, model version, checkpoint SHA-256, training dataset version, label space, and weight license metadata"
+            );
         }
         HttpVisionWorkerRegistryBackend::new(worker.http_config())
             .map_err(|error| anyhow!(error))?;
@@ -602,6 +679,17 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ..VisionModelDescriptor::default()
     })?;
     for worker in &settings.detection_workers {
+        let supports_text_queries = worker.expected_capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                VisionCapability::OpenVocabularyDetection | VisionCapability::PhraseGrounding
+            )
+        });
+        let worker_input_types = if supports_text_queries {
+            vec![VisionInputType::Image, VisionInputType::Text]
+        } else {
+            vec![VisionInputType::Image]
+        };
         models.register_backend(Arc::new(HttpVisionWorkerRegistryBackend::new(
             worker.http_config(),
         )?))?;
@@ -616,17 +704,17 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
                 endpoint: Some(worker.base_url.clone()),
             },
             capabilities: worker.expected_capabilities.clone(),
-            input_types: vec![VisionInputType::Image, VisionInputType::Text],
+            input_types: worker_input_types.clone(),
             output_types: vec![ArtifactKind::DetectionSet],
             model: worker.model_id.clone(),
             model_version: worker.version.model_version.clone(),
             version: worker.version.clone(),
             endpoint_or_path: Some(worker.base_url.clone()),
             input_contract: ModelInputContract {
-                input_types: vec![VisionInputType::Image, VisionInputType::Text],
-                supports_multiple_queries: true,
+                input_types: worker_input_types,
+                supports_multiple_queries: supports_text_queries,
                 supports_visual_prompt: false,
-                max_queries: Some(100),
+                max_queries: supports_text_queries.then_some(100),
             },
             output_contract: ModelOutputContract {
                 output_types: vec![ArtifactKind::DetectionSet],
@@ -678,6 +766,12 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         (
             "mock-detector",
             "Offline mock detector",
+            VisionCapability::ObjectDetection,
+            ArtifactKind::DetectionSet,
+        ),
+        (
+            "mock-object-detector",
+            "Offline mock trained detector",
             VisionCapability::ObjectDetection,
             ArtifactKind::DetectionSet,
         ),
@@ -781,6 +875,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         annotagent_skill_classification::verifier_node_descriptor(),
         annotagent_skill_open_vocabulary::open_vocabulary_node_descriptor(),
         annotagent_skill_open_vocabulary::phrase_grounding_node_descriptor(),
+        annotagent_skill_object_detection::node_descriptor(),
         annotagent_skill_vlm_detection::node_descriptor(),
         annotagent_skill_yolo::node_descriptor(),
         VisionNodeDescriptor {
@@ -1965,13 +2060,14 @@ impl LocalApplication {
             Arc::new(annotagent_skill_open_vocabulary::OpenVocabularyGroundingSkill::default());
         registry.register_layered(open_vocabulary.clone())?;
         layered_skills.register(open_vocabulary)?;
+        let object_detection =
+            Arc::new(annotagent_skill_object_detection::ObjectDetectionCapabilitySkill::default());
+        registry.register_layered(object_detection.clone())?;
+        layered_skills.register(object_detection)?;
         let vlm_detection =
             Arc::new(annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill::default());
         registry.register_layered(vlm_detection.clone())?;
         layered_skills.register(vlm_detection)?;
-        let yolo = Arc::new(annotagent_skill_yolo::YoloCapabilitySkill::default());
-        registry.register_layered(yolo.clone())?;
-        layered_skills.register(yolo)?;
         let ball = Arc::new(RoboCupBallSkill::new().map_err(|error| anyhow!(error))?);
         registry.register_layered(ball.clone())?;
         layered_skills.register(ball)?;
@@ -5605,7 +5701,16 @@ pub fn load_settings(path: Option<&Path>) -> Result<Settings> {
     } else {
         include_str!("../../../config/default.toml").to_owned()
     };
-    toml::from_str(&contents).context("invalid provider/pricing/budget config")
+    let mut settings: Settings =
+        toml::from_str(&contents).context("invalid provider/pricing/budget config")?;
+    for default_worker in default_detection_workers() {
+        if !settings.detection_workers.iter().any(|worker| {
+            worker.id == default_worker.id || worker.model_id == default_worker.model_id
+        }) {
+            settings.detection_workers.push(default_worker);
+        }
+    }
+    Ok(settings)
 }
 
 pub fn default_database_path() -> Result<PathBuf> {
@@ -6509,11 +6614,35 @@ export:
   formats: [native]
 "#;
 
+    const OBJECT_DETECTION_PROJECT: &str = r#"
+version: 1
+project:
+  name: Generic trained detector demo
+  language: en
+  enabled_skills:
+    - id: annotagent.object_detection
+      version: "1"
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [ball]
+    required: false
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [native]
+"#;
+
     #[test]
     fn open_vocabulary_skill_and_models_are_registered_without_contacting_worker() {
         let settings = load_settings(None).expect("default Settings");
-        assert_eq!(settings.detection_workers.len(), 1);
+        assert_eq!(settings.detection_workers.len(), 2);
         assert!(!settings.detection_workers[0].enabled);
+        assert!(!settings.detection_workers[1].enabled);
         validate_settings(&settings).expect("offline Worker configuration remains valid");
         let (nodes, models) = workflow_catalog(&settings).expect("catalog");
         assert!(
@@ -6535,6 +6664,70 @@ export:
                     && model.status == ModelAvailabilityStatus::Disabled)
         );
         assert!(models.resolve("locate-anything-local").is_err());
+    }
+
+    #[test]
+    fn object_detection_skill_and_versioned_specialist_profile_are_registered_offline() {
+        let mut settings = load_settings(None).expect("default Settings");
+        let temporary = tempfile::tempdir().expect("temporary settings");
+        let settings_path = temporary.path().join("legacy-settings.toml");
+        let mut legacy = settings.clone();
+        legacy
+            .detection_workers
+            .retain(|worker| worker.model_id == "locate-anything-local");
+        std::fs::write(
+            &settings_path,
+            toml::to_string_pretty(&legacy).expect("legacy Settings TOML"),
+        )
+        .expect("legacy Settings file");
+        let migrated =
+            load_settings(Some(&settings_path)).expect("additive Worker profile migration");
+        assert!(
+            migrated
+                .detection_workers
+                .iter()
+                .any(|worker| worker.model_id == "rfdetr-specialist-local")
+        );
+        let specialist_index = settings
+            .detection_workers
+            .iter()
+            .position(|worker| worker.model_id == "rfdetr-specialist-local")
+            .expect("specialist profile");
+        settings.detection_workers[specialist_index].enabled = true;
+        assert!(validate_settings(&settings).is_err());
+        let specialist = &mut settings.detection_workers[specialist_index];
+        specialist.version.architecture = Some("rfdetr-small".to_owned());
+        specialist.version.model_version = "robocup-ball-v1".to_owned();
+        specialist.version.checkpoint_sha256 = Some("a".repeat(64));
+        specialist.version.training_dataset_version = Some("robocup-ball-v3".to_owned());
+        specialist.label_space = vec!["football".to_owned(), "robot".to_owned()];
+        specialist.license.weight_license = Some("checkpoint-owner-supplied".to_owned());
+        validate_settings(&settings).expect("complete immutable specialist metadata");
+        let (nodes, models) = workflow_catalog(&settings).expect("catalog");
+        assert!(
+            nodes
+                .get(annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION)
+                .is_some()
+        );
+        assert!(models.resolve("mock-object-detector").is_ok());
+        let descriptor = models
+            .models()
+            .into_iter()
+            .find(|model| model.id == "rfdetr-specialist-local")
+            .expect("specialist descriptor");
+        assert_eq!(
+            descriptor.version.checkpoint_sha256.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(
+            descriptor.version.training_dataset_version.as_deref(),
+            Some("robocup-ball-v3")
+        );
+        assert_eq!(
+            descriptor.output_contract.label_space,
+            vec!["football", "robot"]
+        );
+        assert!(!descriptor.input_contract.supports_multiple_queries);
     }
 
     #[tokio::test]
@@ -6600,6 +6793,86 @@ export:
         let serialized = serde_json::to_string(&grounding.outputs).expect("Pipeline Artifacts");
         assert!(serialized.contains("grounding-0"));
         assert!(serialized.contains("not_provided"));
+    }
+
+    #[tokio::test]
+    async fn generic_object_detection_template_maps_classes_and_executes_offline() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("object-detection", OBJECT_DETECTION_PROJECT)
+            .expect("Generic Project");
+        generate_synthetic_robocup(&temporary.path().join("object-detection/images/sample.png"))
+            .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let mut draft = application
+            .create_workflow_draft_with_template(
+                "object-detection",
+                &settings,
+                false,
+                Some("object-detection.specialist-review"),
+            )
+            .expect("Object Detection template");
+        let detector = draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "detector")
+            .expect("detector node");
+        detector
+            .parameters
+            .insert("target_labels".to_owned(), json!(["ball"]));
+        detector
+            .parameters
+            .insert("class_mapping".to_owned(), json!({"football": "ball"}));
+        detector
+            .parameters
+            .insert("mock_model_label".to_owned(), json!("football"));
+        detector
+            .parameters
+            .insert("mock_confidence".to_owned(), json!(0.87));
+        application
+            .save_workflow_draft(draft.clone())
+            .expect("save mapped Draft");
+        let dry_run = application
+            .dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .expect("offline specialist Dry Run");
+        assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
+        assert!(
+            dry_run.samples[0].nodes.iter().any(|node| {
+                node.node_id == "detector" && node.status == "completed_in_sandbox"
+            })
+        );
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish specialist Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("object-detection/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("object-detection-offline"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start specialist Run");
+        let result = application
+            .wait_run(started.run_id)
+            .await
+            .expect("complete specialist Run");
+        assert_eq!(result.status, RunStatus::CompletedWithReview);
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("persisted specialist Artifact inspection");
+        let detector = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "detector")
+            .expect("detector inspection");
+        let serialized = serde_json::to_string(&detector.outputs).expect("DetectionSet JSON");
+        assert!(serialized.contains("football"));
+        assert!(serialized.contains("ball"));
+        assert!(serialized.contains("relative_confidence"));
     }
 
     #[test]

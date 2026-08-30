@@ -1,0 +1,20 @@
+version: 1
+project:
+  name: Generic Object Detection
+  language: en
+  enabled_skills:
+    - id: annotagent.object_detection
+      version: "1"
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [target]
+    required: false
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [native, coco, yolo]

@@ -809,7 +809,12 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         model_version: Some(worker.version.model_version.clone()),
         endpoint: Some(worker.base_url.clone()),
         enabled: Some(worker.enabled),
-        license_summary: worker.license.weight_license.clone(),
+        license_summary: worker
+            .license
+            .weight_license
+            .clone()
+            .or_else(|| worker.license.code_license.clone())
+            .or_else(|| Some("License metadata not configured".to_owned())),
     }
 }
 
@@ -3509,6 +3514,12 @@ mod tests {
         assert_eq!(
             models["models"][1]["score_semantics"],
             json!("not_provided")
+        );
+        assert_eq!(models["models"][2]["id"], json!("rfdetr-specialist-local"));
+        assert_eq!(models["models"][2]["enabled"], json!(false));
+        assert_eq!(
+            models["models"][2]["score_semantics"],
+            json!("relative_confidence")
         );
         assert_eq!(
             request(

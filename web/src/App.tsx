@@ -4077,7 +4077,7 @@ function ModelsPage({
                     {binding.capabilities?.length ? <small>Configured contract · {binding.capabilities.join(" · ")}</small> : null}
                     {binding.score_semantics && <small>Score · {binding.score_semantics.replaceAll("_", " ")}</small>}
                     {binding.model_version && <small>Version · {binding.model_version}</small>}
-                    {binding.license_summary && <small>Weights · {binding.license_summary}</small>}
+                    {binding.license_summary && <small>License · {binding.license_summary}</small>}
                     {binding.scope === "workspace_worker" && <div className="worker-actions">
                       <button
                         onClick={() => testWorker(binding.id)}
@@ -5587,6 +5587,24 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
         workerIndex === index ? { ...worker, [field]: value } : worker,
       ),
     });
+  const setDetectionWorkerVersion = (index: number, field: string, value: unknown) =>
+    setSettings({
+      ...settings,
+      detection_workers: detectionWorkers.map((worker: Record<string, any>, workerIndex: number) =>
+        workerIndex === index
+          ? { ...worker, version: { ...(worker.version ?? {}), [field]: value || null } }
+          : worker,
+      ),
+    });
+  const setDetectionWorkerLicense = (index: number, field: string, value: unknown) =>
+    setSettings({
+      ...settings,
+      detection_workers: detectionWorkers.map((worker: Record<string, any>, workerIndex: number) =>
+        workerIndex === index
+          ? { ...worker, license: { ...(worker.license ?? {}), [field]: value || null } }
+          : worker,
+      ),
+    });
   const chooseProvider = (id: string) => {
     setPresetId(id);
     setSettings(applyProviderPreset(settings, id));
@@ -5871,10 +5889,22 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               <small>Score · {String(worker.score_semantics ?? "unknown").replaceAll("_", " ")}</small>
               <small>Version · {String(worker.version?.model_version ?? "unversioned")}</small>
             </div>
+            {Boolean(worker.requires_checkpoint_metadata) && <details className="advanced-settings" open>
+              <summary>Required model identity</summary>
+              <div className="form-grid">
+                <label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setDetectionWorkerVersion(index, "architecture", event.target.value)} placeholder="rfdetr-small" /></label>
+                <label>Model version<input value={String(worker.version?.model_version ?? "")} onChange={(event) => setDetectionWorkerVersion(index, "model_version", event.target.value)} placeholder="dataset-model-v1" /></label>
+                <label>Checkpoint SHA-256<input value={String(worker.version?.checkpoint_sha256 ?? "")} onChange={(event) => setDetectionWorkerVersion(index, "checkpoint_sha256", event.target.value.trim())} placeholder="64 hexadecimal characters" /></label>
+                <label>Training dataset version<input value={String(worker.version?.training_dataset_version ?? "")} onChange={(event) => setDetectionWorkerVersion(index, "training_dataset_version", event.target.value)} placeholder="dataset-v1" /></label>
+                <label>Model label space<input value={Array.isArray(worker.label_space) ? worker.label_space.join(", ") : ""} onChange={(event) => setDetectionWorker(index, "label_space", event.target.value.split(",").map((label) => label.trim()).filter(Boolean))} placeholder="football, robot" /></label>
+                <label>Checkpoint weight license<input value={String(worker.license?.weight_license ?? "")} onChange={(event) => setDetectionWorkerLicense(index, "weight_license", event.target.value)} placeholder="Exact checkpoint terms" /></label>
+              </div>
+              <small>All fields are required before enabling this specialist Worker. A filename such as best.pt is not a version identity.</small>
+            </details>}
             <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setDetectionWorker(index, "allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label>
             <small>Loopback is the default trust boundary. Live capabilities are read from the Worker on the Models page; expected values here are validation constraints.</small>
           </article>)}
-        </div> : <Empty title="No Detection Workers" detail="This Alpha ships an optional local LocateAnything profile in new workspaces." />}
+        </div> : <Empty title="No Detection Workers" detail="Add a versioned HTTP Detection Worker to use a local model process." />}
       </Panel>
       <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">
         <div className="json-settings">

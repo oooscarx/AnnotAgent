@@ -14,6 +14,7 @@ annotagent-provider = { path = "../annotagent-provider" }
 annotagent-runtime = { path = "../annotagent-runtime" }
 annotagent-skill-classification = { path = "../annotagent-skill-classification" }
 annotagent-skill-open-vocabulary = { path = "../annotagent-skill-open-vocabulary" }
+annotagent-skill-object-detection = { path = "../annotagent-skill-object-detection" }
 annotagent-skill-robocup = { path = "../annotagent-skill-robocup" }
 annotagent-skill-vlm-detection = { path = "../annotagent-skill-vlm-detection" }
 annotagent-skill-yolo = { path = "../annotagent-skill-yolo" }

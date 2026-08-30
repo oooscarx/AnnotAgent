@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M4. The Open Vocabulary Capability Skill, LocateAnything Worker/adapter, Mock, Settings,
-Model discovery/test surface, validators, examples, and docs are complete. RF-DETR plus Candidate
-Match/Evidence Gate are scheduled local implementation work, not environment blockers.
+None at M5. Both Capability Skills, both optional Worker adapters, Mock paths, Settings,
+Model discovery/test surfaces, validators, examples, and docs are complete. Candidate Match and
+Evidence Gate are scheduled M6 implementation work, not environment blockers.
 
 ## Live-conditional external requirements
 
@@ -25,13 +25,18 @@ environment is available.
 
 ### RF-DETR
 
-- No RF-DETR checkpoint path, checkpoint SHA-256, or training dataset version is configured.
+- Current host is Darwin arm64 and has no `nvidia-smi`/NVIDIA CUDA runtime.
+- No RF-DETR checkpoint path, checkpoint SHA-256, architecture/model version, training dataset
+  version, exact label space, or weight-license metadata is configured. Automatic download is
+  prohibited. The tracked Worker was started without them and correctly reported `unavailable`
+  while continuing to serve capability discovery.
 - The intended RoboCup specialist model is a fine-tuned external artifact, not a tracked file.
 - Official licensing differs by model variant, so the concrete registered checkpoint must identify
   its package/weight terms before a real result is reported.
 
-Result: Worker contract and Mock behavior are Release Blocking; real five-image smoke is
-`LIVE-CONDITIONAL` until an explicitly configured checkpoint and metadata are available.
+Result: Worker contract, Mock/runtime behavior, startup isolation, Settings and capability
+discovery pass; real five-image GPU smoke is `LIVE-CONDITIONAL` until an explicitly configured
+checkpoint, metadata and compatible CUDA environment are available.
 
 ## Manual browser requirement
 

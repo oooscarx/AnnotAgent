@@ -154,7 +154,10 @@ bounded best-effort path.
 - Request bytes, decoded image bytes, query count/text, retry count, timeout, detection count,
   warning size, and response bytes are bounded.
 - Responses reject unknown fields, protocol/model/request/capability mismatch, duplicate IDs,
-  undeclared query/Project labels, invalid or non-finite scores, malformed JSON, and non-normalized
-  or reversed geometry.
+  undeclared query/Project/model labels, discovered/configured label-space mismatch, invalid or
+  non-finite scores, malformed JSON, and non-normalized or reversed geometry.
 - Raw JSON is represented in evidence only by a controlled ID, media type, SHA-256, and byte count;
   full payloads, images, base64, sensitive headers, and arbitrary Worker paths are not logged.
+
+Tracked concrete adapters are documented in [LocateAnything Backend](LOCATE_ANYTHING_BACKEND.md)
+and [RF-DETR Backend](RFDETR_BACKEND.md). Both use this contract and remain optional processes.

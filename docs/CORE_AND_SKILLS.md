@@ -32,6 +32,11 @@ Registry entry. `LocateAnything Local` is one optional HTTP Backend for those ca
 brand does not appear in Core node kinds. Text-query validation, model execution, Core transforms,
 and Project/domain policy remain separate layers.
 
+`annotagent.object_detection` is the trained-detector Capability Skill. It accepts only an Image
+plus target Labels, class mapping and bounded detection options, and produces a DetectionSet. YOLO,
+RF-DETR or another trained detector can implement the same Model capability; none is a Core node
+kind. The Skill does not own Crop, Review, Commit, or domain policy.
+
 Special algorithms implement object-safe Rust traits and are registered explicitly:
 
 ```rust

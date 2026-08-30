@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M4 — LocateAnything open-vocabulary grounding backend (complete)
+M5 — Generic Object Detection Skill and RF-DETR specialist backend (complete)
 
 ## Completed
 
@@ -77,21 +77,43 @@ M4 — LocateAnything open-vocabulary grounding backend (complete)
   → immutable publish → exact-version Run → persisted DetectionSet → Human Review without RoboCup.
 - Documented local deployment, security, model/license restrictions, missing-score behavior, and
   the distinction between Mock/contract evidence and live GPU evidence.
+- Added the backend-neutral `annotagent.object_detection` Capability Skill with the formal
+  ObjectDetection request/options contract, strict JSON Schema, Model→Project class mapping,
+  confidence/IoU/max post-processing, valid-empty Mock backend, and an editable specialist Review
+  template. The Skill owns neither Crop nor a detector brand.
+- Registered the generic Object Detection operation/model in Application Runtime, Draft/Dry Run,
+  exact published execution and persisted Pipeline Artifact inspection. A Generic Project proves
+  class mapping and finite score preservation without loading RoboCup.
+- Extended Worker validation with an optional exact expected label space. Capability discovery
+  rejects mismatched vocabularies and inference rejects model labels outside the configured space.
+- Added `examples/rfdetr_vision_worker.py`, a loopback-only adapter using RF-DETR's official
+  `from_checkpoint` and `predict` APIs. It verifies an explicit local checkpoint SHA-256, requires
+  immutable architecture/model/dataset/label-space metadata and safe checkpoint loading, performs
+  bounded class-aware NMS, and never downloads or fabricates inference.
+- Added a disabled-by-default versioned specialist Worker profile. Enabling it is blocked until
+  architecture, model version, checkpoint SHA-256, training dataset version, label space and exact
+  weight-license metadata are present. Existing local Settings gain the profile additively without
+  overwriting the saved LocateAnything profile.
+- Expanded Settings to edit all specialist identity fields and Models to expose the profile,
+  endpoint, score semantics and license summary through the same live Test Worker path.
+- Added protocol and integration evidence for discovered label space, finite relative score,
+  normalized coordinates, class mapping, no-object success, metadata persistence and unavailable
+  Worker startup.
 
 ## In progress
 
-- None. M4 is ready for its independent local commit.
+- None. M5 is ready for its independent local commit.
 
 ## Next step
 
-M5 — implement the generic Object Detection Skill and RF-DETR-compatible Worker/adapter, Mock
-backend, class mapping, checkpoint/training metadata, Settings support, tests, and docs.
+M6 — implement generic Candidate Match and Evidence Gate execution nodes, explanation contracts,
+tests, Runtime wiring, and evidence presentation DTO/UI.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 196 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 202 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 33 tests |
@@ -99,11 +121,12 @@ backend, class mapping, checkpoint/training metadata, Settings support, tests, a
 | Web build | `npm --prefix web run build` | PASS |
 | Worker | parse all tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Locate worker | start without weights; request `/health` and `/v1/capabilities` | PASS — unavailable health is truthful; capabilities remain discoverable |
-| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M4 Models/Settings code is built/tested, full mixed-evidence browser gate remains M9/M10 |
+| RF-DETR worker | start without checkpoint; request `/health` and `/v1/capabilities` | PASS — immutable metadata requirement is reported; no fixture inference |
+| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M5 Settings/Models code is built/tested, full mixed-evidence browser gate remains M9/M10 |
 
 ## Latest local commit
 
-This document's containing M4 commit: `feat(models): integrate locateanything grounding backend`
+This document's containing M5 commit: `feat(models): integrate rfdetr detection backend`
 
 ## Audited baseline
 
@@ -137,9 +160,9 @@ This document's containing M4 commit: `feat(models): integrate locateanything gr
 
 ## Release Blocking remaining
 
-The matrix contains 46 `PASS`, 42 `OPEN`, and one `LIVE-CONDITIONAL` row after M4. LocateAnything
-Mock/contract/startup requirements now pass; a real five-image GPU smoke remains explicitly
-live-conditional and is not represented by the Mock result.
+The matrix contains 59 `PASS`, 29 `OPEN`, and one `LIVE-CONDITIONAL` row after M5. Both model
+families' Mock/contract/startup requirements pass; real five-image GPU smokes remain explicitly
+live-conditional and are not represented by Mock or local protocol fixtures.
 
 ## Live-conditional items
 

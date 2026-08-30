@@ -99,6 +99,7 @@ dependencies = [
  "annotagent-provider",
  "annotagent-runtime",
  "annotagent-skill-classification",
+ "annotagent-skill-object-detection",
  "annotagent-skill-open-vocabulary",
  "annotagent-skill-robocup",
  "annotagent-skill-vlm-detection",
@@ -240,6 +241,21 @@ dependencies = [
  "annotagent-runtime",
  "async-trait",
  "rust_decimal",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "annotagent-skill-object-detection"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-runtime",
+ "async-trait",
+ "rust_decimal",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

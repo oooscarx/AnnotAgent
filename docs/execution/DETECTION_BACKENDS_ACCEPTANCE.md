@@ -75,17 +75,38 @@ below:
 - `cargo test --workspace --all-features` passes 196 tests; strict Clippy/build, all 33 Web tests,
   Web typecheck/build, and Python syntax validation pass.
 
+## M5 Object Detection and RF-DETR evidence
+
+- `annotagent.object_detection` is the only new formal trained-detector Skill. Its manifest,
+  schema and template contain no concrete model brand and do not claim Crop.
+- The Skill Mock tests prove Model→Project class mapping, finite relative-score preservation,
+  confidence filtering, class-aware IoU suppression, maximum-result bounds, valid empty output and
+  fail-closed mappings outside the selected Project Labels.
+- The shared HTTP adapter now validates exact discovered label space and rejects undeclared output
+  model classes. A live local contract fixture proves specialist capability discovery, normalized
+  geometry, finite score and model-label preservation through the typed DetectionSet boundary.
+- The RF-DETR Worker starts without a checkpoint and truthfully reports unavailable health plus
+  discoverable ObjectDetection/relative-score facts. Its tracked real path verifies explicit local
+  SHA-256 and metadata, then invokes official safe `from_checkpoint`/`predict` APIs without downloads.
+- Settings migration preserves existing Worker configuration while adding the disabled specialist
+  profile. Enabling is rejected until immutable checkpoint, training, class and license facts exist;
+  a Model Registry test verifies those facts survive in the descriptor.
+- A Generic Project performs editable Draft → Dry Run → publish → exact-version Run → persisted,
+  class-mapped DetectionSet entirely offline with no RoboCup Skill.
+- `cargo test --workspace --all-features` passes 202 tests; strict Clippy, all 33 Web tests, Web
+  typecheck/build, and Python syntax validation pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
 | A01 | LocateAnything is not a Core node type | PASS | no such type exists; M4 must preserve this |
 | A02 | RF-DETR is not a Core node type | PASS | no such type exists; M5 must preserve this |
-| A03 | YOLO and RF-DETR share Object Detection Capability | OPEN | YOLO uses it; RF-DETR absent |
+| A03 | YOLO and RF-DETR share Object Detection Capability | PASS | legacy YOLO and generic RF backend both bind ObjectDetection |
 | A04 | LocateAnything implements open-vocabulary Capability | PASS | Capability Skill + Worker adapter implement OpenVocabularyDetection and PhraseGrounding |
 | A05 | `robocup.ball` references no concrete model ID | PASS | current templates are model-agnostic; rescan at M8/M10 |
 | A06 | Generic Project can use LocateAnything | PASS | generic template integration test publishes and runs without RoboCup |
-| A07 | Generic Project can use RF-DETR | OPEN | backend/template absent |
+| A07 | Generic Project can use RF-DETR | PASS | generic Object Detection template/runtime path is backend-neutral |
 | A08 | Core contains no model-brand branch | PASS | M0 scan; enforce each Milestone |
 
 ## B. Detection Artifact
@@ -121,17 +142,17 @@ below:
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| D01 | Health can be checked | OPEN | worker absent |
-| D02 | Capabilities can be discovered | OPEN | worker absent |
-| D03 | Object detection works | OPEN | worker absent |
-| D04 | Label space is reported and validated | OPEN | descriptor field absent |
-| D05 | Class mapping works | OPEN | generic options exist but RF adapter absent |
-| D06 | Real finite score is preserved | OPEN | adapter absent |
-| D07 | Confidence threshold is supported | OPEN | adapter absent |
-| D08 | Checkpoint SHA-256 is saved | OPEN | descriptor supports it; RF-DETR adapter absent |
-| D09 | Training dataset version is saved | OPEN | descriptor supports it; RF-DETR adapter absent |
-| D10 | Timeout and cancellation work | OPEN | model-specific contract absent |
-| D11 | Model license metadata is visible | OPEN | Registry/UI metadata absent |
+| D01 | Health can be checked | PASS | no-checkpoint Python Worker live probe + Models Test Worker action |
+| D02 | Capabilities can be discovered | PASS | Python Worker and Rust contract report ObjectDetection |
+| D03 | Object detection works | PASS | Mock/published runtime and live local contract fixture emit typed DetectionSet |
+| D04 | Label space is reported and validated | PASS | discovery exact-set validation + undeclared-model-label rejection |
+| D05 | Class mapping works | PASS | Skill maps `football`→Project `ball` in unit and published Run tests |
+| D06 | Real finite score is preserved | PASS | Worker contract preserves finite 0.87 RelativeConfidence without rewriting |
+| D07 | Confidence threshold is supported | PASS | Worker request plus Skill bounded post-processing tests |
+| D08 | Checkpoint SHA-256 is saved | PASS | enable gate + Model Descriptor persistence assertion |
+| D09 | Training dataset version is saved | PASS | enable gate + Model Descriptor persistence assertion |
+| D10 | Timeout and cancellation work | PASS | same hardened adapter/client + Worker cooperative cancellation |
+| D11 | Model license metadata is visible | PASS | Settings field and Models license summary preserve concrete terms |
 
 ## E. Multi-model evidence
 

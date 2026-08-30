@@ -39,6 +39,8 @@ pub struct HttpVisionWorkerConfig {
     pub expected_model_id: String,
     pub capabilities: Vec<VisionCapability>,
     pub expected_score_semantics: Option<ScoreSemantics>,
+    /// Empty for open-vocabulary models; otherwise the exact model-native class vocabulary.
+    pub expected_label_space: Vec<String>,
     pub request_timeout: Duration,
     pub max_request_bytes: usize,
     pub max_response_bytes: usize,
@@ -68,6 +70,7 @@ impl HttpVisionWorkerClient {
             ));
         }
         validate_detection_capabilities(&config.capabilities)?;
+        validate_label_space(&config.expected_label_space)?;
         validate_transport_limits(config.max_response_bytes, config.max_retries)?;
         if config.max_request_bytes == 0
             || config.max_request_bytes > MAX_INLINE_IMAGE_BYTES_UPPER_BOUND
@@ -656,16 +659,21 @@ fn validate_capabilities(
             "score_semantics_mismatch",
         ));
     }
-    let labels = capabilities
-        .label_space
-        .iter()
-        .map(|label| label.trim())
-        .collect::<BTreeSet<_>>();
-    if labels.len() != capabilities.label_space.len() || labels.contains("") {
+    if validate_label_space(&capabilities.label_space).is_err() {
         return Err(worker_failure(
             &config.id,
             "capabilities",
             "invalid_label_space",
+        ));
+    }
+    if !config.expected_label_space.is_empty()
+        && config.expected_label_space.iter().collect::<BTreeSet<_>>()
+            != capabilities.label_space.iter().collect::<BTreeSet<_>>()
+    {
+        return Err(worker_failure(
+            &config.id,
+            "capabilities",
+            "label_space_mismatch",
         ));
     }
     if capabilities.label_space.len() > 10_000
@@ -861,6 +869,16 @@ fn validate_inference_response(
                 "undeclared_query_id",
             ));
         }
+        if let Some(model_label) = &detection.model_label
+            && !config.expected_label_space.is_empty()
+            && !config.expected_label_space.contains(model_label)
+        {
+            return Err(worker_failure(
+                &config.id,
+                &request.request_id,
+                "undeclared_model_label",
+            ));
+        }
         if detection
             .target_label
             .as_ref()
@@ -899,6 +917,25 @@ fn validate_inference_response(
                 "score_semantics_mismatch",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_label_space(label_space: &[String]) -> CoreResult<()> {
+    let labels = label_space
+        .iter()
+        .map(|label| label.trim())
+        .collect::<BTreeSet<_>>();
+    if labels.len() != label_space.len()
+        || labels.contains("")
+        || label_space.len() > 10_000
+        || label_space
+            .iter()
+            .any(|label| label.len() > MAX_QUERY_TEXT_BYTES)
+    {
+        return Err(CoreError::Validation(
+            "HTTP Vision Worker label space is invalid".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -1070,6 +1107,7 @@ mod tests {
             expected_model_id: "fixture-model".to_owned(),
             capabilities: vec![VisionCapability::ObjectDetection],
             expected_score_semantics: Some(ScoreSemantics::RelativeConfidence),
+            expected_label_space: Vec::new(),
             request_timeout: Duration::from_secs(2),
             max_request_bytes: 1_000_000,
             max_response_bytes: 100_000,
@@ -1328,6 +1366,7 @@ mod tests {
                 VisionCapability::PhraseGrounding,
             ],
             expected_score_semantics: Some(ScoreSemantics::NotProvided),
+            expected_label_space: Vec::new(),
             request_timeout: Duration::from_secs(2),
             max_request_bytes: 1_000_000,
             max_response_bytes: 100_000,
@@ -1390,6 +1429,121 @@ mod tests {
         assert_eq!(registry.capabilities().len(), 2);
     }
 
+    #[tokio::test]
+    async fn specialist_worker_discovers_label_space_and_preserves_real_scores() {
+        async fn capabilities() -> Json<DetectionWorkerCapabilities> {
+            Json(DetectionWorkerCapabilities {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                worker_id: "specialist-worker".to_owned(),
+                model_id: "specialist-model-v1".to_owned(),
+                capabilities: vec![VisionCapability::ObjectDetection],
+                score_semantics: ScoreSemantics::RelativeConfidence,
+                supports_visual_prompt: false,
+                supports_batch: false,
+                label_space: vec!["football".to_owned(), "robot".to_owned()],
+                limits: annotagent_core::VisionModelLimits {
+                    max_images: Some(1),
+                    max_input_artifacts: Some(0),
+                    max_request_bytes: Some(1_000_000),
+                    timeout_seconds: Some(2),
+                },
+            })
+        }
+        async fn infer(
+            Json(request): Json<DetectionWorkerInferenceRequest>,
+        ) -> Json<DetectionWorkerInferenceResponse> {
+            Json(DetectionWorkerInferenceResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                request_id: request.request_id,
+                model_id: request.model_id,
+                detections: vec![annotagent_core::DetectionWorkerDetection {
+                    detection_id: "specialist-1".to_owned(),
+                    query_id: None,
+                    model_label: Some("football".to_owned()),
+                    target_label: None,
+                    bbox_xyxy_normalized: [0.43, 0.35, 0.48, 0.41],
+                    score: Some(0.87),
+                    score_semantics: ScoreSemantics::RelativeConfidence,
+                }],
+                usage: DetectionWorkerUsage {
+                    duration_ms: Some(36),
+                    device: Some("cuda".to_owned()),
+                },
+                warnings: Vec::new(),
+                error: None,
+            })
+        }
+        let base_url = spawn(
+            Router::new()
+                .route("/v1/capabilities", get(capabilities))
+                .route("/v1/infer", post(infer)),
+        )
+        .await;
+        let worker_config = HttpVisionWorkerConfig {
+            id: "specialist-worker".to_owned(),
+            base_url,
+            expected_model_id: "specialist-model-v1".to_owned(),
+            capabilities: vec![VisionCapability::ObjectDetection],
+            expected_score_semantics: Some(ScoreSemantics::RelativeConfidence),
+            expected_label_space: vec!["football".to_owned(), "robot".to_owned()],
+            request_timeout: Duration::from_secs(2),
+            max_request_bytes: 1_000_000,
+            max_response_bytes: 100_000,
+            max_retries: 0,
+            allow_remote: false,
+            authorization: None,
+        };
+        let backend =
+            HttpVisionDetectionBackend::new(worker_config, VisionCapability::ObjectDetection)
+                .expect("specialist Backend");
+        let discovered = backend.discover_capabilities().await.expect("discovery");
+        assert_eq!(discovered.label_space, vec!["football", "robot"]);
+        assert_eq!(
+            discovered.score_semantics,
+            ScoreSemantics::RelativeConfidence
+        );
+
+        let image_id = ImageId::new();
+        let response = backend
+            .infer_pipeline(
+                PipelineInferenceRequest {
+                    protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+                    request_id: "specialist-request".to_owned(),
+                    run_id: RunId::new(),
+                    image_id,
+                    node_id: "detector".to_owned(),
+                    model_id: "specialist-model-v1".to_owned(),
+                    operation: VisionCapability::ObjectDetection,
+                    image: Some(ModelImage {
+                        id: "image".to_owned(),
+                        mime_type: "image/png".to_owned(),
+                        data_base64: STANDARD.encode(b"png"),
+                    }),
+                    input_artifacts: Vec::new(),
+                    parameters: std::collections::BTreeMap::from([
+                        ("target_labels".to_owned(), json!(["ball"])),
+                        ("confidence_threshold".to_owned(), json!(0.25)),
+                        ("iou_threshold".to_owned(), json!(0.7)),
+                        ("max_detections".to_owned(), json!(100)),
+                    ]),
+                    timeout_ms: Some(1_000),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("specialist inference");
+        let PipelineArtifact::DetectionSet(set) = &response.artifacts[0] else {
+            panic!("DetectionSet")
+        };
+        assert_eq!(set.detections.len(), 1);
+        let detection = &set.detections[0];
+        assert_eq!(detection.model_label.as_deref(), Some("football"));
+        assert_eq!(detection.project_label, None);
+        assert_eq!(detection.score.comparable_confidence(), Some(0.87));
+        assert!((detection.bbox.width() - 0.05).abs() < f32::EPSILON);
+        assert!((detection.bbox.height() - 0.06).abs() < f32::EPSILON);
+    }
+
     #[test]
     fn endpoint_policy_is_loopback_by_default_and_remote_is_explicit_https_only() {
         for endpoint in [
@@ -1446,7 +1600,8 @@ mod tests {
 
     #[test]
     fn capability_discovery_rejects_worker_identity_and_capability_spoofing() {
-        let config = config("http://127.0.0.1:8790".to_owned());
+        let mut config = config("http://127.0.0.1:8790".to_owned());
+        config.expected_label_space = vec!["target".to_owned()];
         let baseline = DetectionWorkerCapabilities {
             protocol_version: VISION_WORKER_PROTOCOL_VERSION,
             worker_id: config.id.clone(),
@@ -1468,6 +1623,10 @@ mod tests {
         let mut wrong_semantics = baseline;
         wrong_semantics.score_semantics = ScoreSemantics::NotProvided;
         assert!(validate_capabilities(&config, &wrong_semantics).is_err());
+        let mut wrong_labels = wrong_semantics;
+        wrong_labels.score_semantics = ScoreSemantics::RelativeConfidence;
+        wrong_labels.label_space = vec!["other".to_owned()];
+        assert!(validate_capabilities(&config, &wrong_labels).is_err());
     }
 
     #[tokio::test]

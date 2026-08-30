@@ -30,6 +30,9 @@ use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
     ClassificationVerifierRunner, MockClassificationBackend,
 };
+use annotagent_skill_object_detection::{
+    MockObjectDetectionBackend, OBJECT_DETECTION_OPERATION, ObjectDetectionSkillRunner,
+};
 use annotagent_skill_open_vocabulary::{
     GroundingSkillRunner, MockGroundingBackend, OPEN_VOCABULARY_DETECTION_OPERATION,
     PHRASE_GROUNDING_OPERATION,
@@ -171,6 +174,47 @@ impl PublishedWorkflowRuntime {
         )?))
     }
 
+    fn object_detection_runner(
+        &self,
+        node: &WorkflowDraftNode,
+        request: &ImageRunRequest,
+    ) -> Result<Arc<ObjectDetectionSkillRunner>> {
+        let model_id = node
+            .model_binding
+            .clone()
+            .unwrap_or_else(|| "mock-object-detector".to_owned());
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+            if matches!(model_id.as_str(), "mock-object-detector" | "mock-detector") {
+                Arc::new(MockObjectDetectionBackend::new(
+                    "workspace-mock-object-detector",
+                ))
+            } else {
+                let worker = self
+                    .detection_workers
+                    .iter()
+                    .find(|worker| worker.model_id == model_id)
+                    .ok_or_else(|| anyhow!("unknown Detection Worker model {model_id:?}"))?;
+                if !worker.enabled {
+                    bail!("Detection Worker model {model_id:?} is disabled in Settings");
+                }
+                if !worker
+                    .expected_capabilities
+                    .contains(&annotagent_core::VisionCapability::ObjectDetection)
+                {
+                    bail!("Detection Worker model {model_id:?} does not provide ObjectDetection");
+                }
+                Arc::new(HttpVisionDetectionBackend::new(
+                    worker.http_config(),
+                    annotagent_core::VisionCapability::ObjectDetection,
+                )?)
+            };
+        Ok(Arc::new(ObjectDetectionSkillRunner::new(
+            backend,
+            model_id,
+            request.model_image.clone(),
+        )?))
+    }
+
     async fn publish(&self, event: RunEvent) -> Result<()> {
         self.store
             .record_event(&event)
@@ -276,6 +320,13 @@ impl PublishedWorkflowRuntime {
                             request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
+                        false,
+                    )?;
+                }
+                OBJECT_DETECTION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.object_detection_runner(node, request)?,
                         false,
                     )?;
                 }
@@ -927,6 +978,13 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             &request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
+                        false,
+                    )?;
+                }
+                OBJECT_DETECTION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.object_detection_runner(node, &request)?,
                         false,
                     )?;
                 }
