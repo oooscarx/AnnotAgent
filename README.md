@@ -65,15 +65,20 @@ Model bindings connect Workflow nodes to configured providers and models. The Se
 
 A Skill contributes domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It does not own a Dataset or the application shell. Rust implementations are registered through `DomainSkill`; the generic canvas consumes stable `annotation-1` through `annotation-8` slots through a `SkillVisualProfile`.
 
-The bundled `annotagent.open_vocabulary_grounding` Capability Skill finds objects from category
-descriptions or referring phrases. Bind `mock-open-vocabulary` for an offline contract test or the
-optional versioned LocateAnything Worker for local GPU inference. See [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md)
-and [LocateAnything Backend](docs/LOCATE_ANYTHING_BACKEND.md).
+The public Capability layer is deliberately small: `annotagent.classification`,
+`annotagent.detection`, and `annotagent.segmentation`. Detection covers closed-set detection,
+open-vocabulary detection, phrase grounding, and VLM grounding while each concrete implementation
+is a Model Backend. Classification covers whole images, Crops, candidate verification, and
+attributes. Segmentation declares semantic, prompted, and instance-mask contracts and remains
+unavailable until a healthy compatible backend is configured.
 
-The bundled `annotagent.object_detection` Capability Skill binds any registered trained detector
-to the same Image → DetectionSet contract. `mock-object-detector` is the offline backend; the
-optional RF-DETR Worker uses an explicitly configured versioned local checkpoint. See
-[Object Detection](docs/OBJECT_DETECTION.md) and [RF-DETR Backend](docs/RFDETR_BACKEND.md).
+Mock, OpenAI-compatible VLM, YOLO, RF-DETR, LocateAnything, and SAM are Model Backends rather than
+top-level Skills. The optional local Workers live in Settings → Models under Experimental / Labs
+until explicitly configured and healthy. Pre-Lean Skill IDs remain hidden compatibility aliases so
+stored Projects and immutable versions can still be loaded. See
+[Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md),
+[Object Detection](docs/OBJECT_DETECTION.md), [LocateAnything Backend](docs/LOCATE_ANYTHING_BACKEND.md),
+and [RF-DETR Backend](docs/RFDETR_BACKEND.md).
 
 Detector outputs can be joined with the generic `core.match_detection_sets` node and routed by
 `core.evidence_gate`. The persisted decision report explains agreement, conflicts, missing scores,

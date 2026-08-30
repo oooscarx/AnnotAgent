@@ -3,7 +3,7 @@ project:
   name: Generic Object Detection
   language: en
   enabled_skills:
-    - id: annotagent.object_detection
+    - id: annotagent.detection
       version: "1"
 dataset:
   root: images

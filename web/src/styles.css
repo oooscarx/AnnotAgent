@@ -589,6 +589,12 @@ main { min-width: 0; padding-bottom: 48px; }
 .tags span { padding: 6px 8px; border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); border: 1px solid var(--aa-border); color: var(--aa-text); font: 500 10px var(--aa-font-sans); }
 .tags small { color: var(--aa-text-muted); font-size: 10px; }
 .catalog-list, .binding-list, .schema-list { display: grid; gap: 9px; }
+.model-availability-group { display: grid; gap: 8px; }
+.model-availability-group + .model-availability-group { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--aa-border); }
+.model-availability-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.model-availability-group > header strong, .model-availability-group > header small { display: block; }
+.model-availability-group > header small { margin-top: 2px; color: var(--aa-text-muted); font-size: 10px; }
+.model-availability-group > header b { display: grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 999px; background: var(--aa-surface-muted); color: var(--aa-text-muted); font-size: 10px; }
 .catalog-list article, .binding-list article { display: flex; align-items: center; gap: 11px; padding: 10px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .catalog-list strong, .catalog-list small, .binding-list strong, .binding-list small, .binding-list code { display: block; }
 .catalog-list small, .binding-list small { margin-top: 3px; color: var(--aa-text-muted); font-size: 9px; }

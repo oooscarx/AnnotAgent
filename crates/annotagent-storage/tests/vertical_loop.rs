@@ -107,6 +107,8 @@ impl BboxSkill {
                 skill_version: "1".to_owned(),
                 display_name: "BBox fixture".to_owned(),
                 description: "A test-only bounding-box skill".to_owned(),
+                product_visibility: annotagent_core::SkillProductVisibility::Primary,
+                deprecated_alias_for: None,
                 rust_implementation: None,
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),

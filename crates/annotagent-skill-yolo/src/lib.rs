@@ -7,8 +7,9 @@ use annotagent_core::{
     DetectionScore, DetectionSetArtifact, DetectionSource, LabelId, ModelImage, NodePort,
     NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
     PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind, SkillManifest,
-    SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
-    VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    SkillProductVisibility, SkillResource, SkillResourceRequest, TaskId, TaskTemplate,
+    VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -33,6 +34,8 @@ impl Default for YoloCapabilitySkill {
                 skill_version: YOLO_SKILL_VERSION.to_owned(),
                 display_name: "YOLO Detection".to_owned(),
                 description: "Detection-only YOLO capability through Mock or HTTP JSON".to_owned(),
+                product_visibility: SkillProductVisibility::Compatibility,
+                deprecated_alias_for: Some("annotagent.detection".to_owned()),
                 rust_implementation: Some("annotagent_skill_yolo::YoloCapabilitySkill".to_owned()),
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),

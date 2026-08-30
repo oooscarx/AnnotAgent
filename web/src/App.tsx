@@ -4064,6 +4064,12 @@ function ModelsPage({
       .catch((error: Error) => onError(error.message))
       .finally(() => setTestingModel(undefined));
   };
+  const modelGroups = [
+    { id: "ready", title: "Ready", detail: "Runnable now" },
+    { id: "configured_unavailable", title: "Configured but unavailable", detail: "Verify credentials or connection" },
+    { id: "labs", title: "Experimental / Labs", detail: "Requires an explicitly installed local Worker and weights" },
+    { id: "disabled", title: "Disabled", detail: "Excluded from recommendations" },
+  ] as const;
   return (
     <section className="page-stack">
       <div className="toolbar-panel">
@@ -4083,7 +4089,12 @@ function ModelsPage({
         <Panel title="Configured bindings" eyebrow="Workspace default">
           {catalogModels.length ? (
             <div className="binding-list">
-              {catalogModels.map((binding) => (
+              {modelGroups.map((group) => {
+                const bindings = catalogModels.filter((binding) => binding.availability_group === group.id);
+                if (!bindings.length) return null;
+                return <section className="model-availability-group" key={group.id} aria-labelledby={`model-group-${group.id}`}>
+                  <header><div><strong id={`model-group-${group.id}`}>{group.title}</strong><small>{group.detail}</small></div><b>{bindings.length}</b></header>
+                  {bindings.map((binding) => (
                 <article key={binding.id}>
                   <span className="catalog-monogram">AI</span>
                   <div>
@@ -4141,7 +4152,9 @@ function ModelsPage({
                     </details>}
                   </div>
                 </article>
-              ))}
+                  ))}
+                </section>;
+              })}
             </div>
           ) : (
             <Empty

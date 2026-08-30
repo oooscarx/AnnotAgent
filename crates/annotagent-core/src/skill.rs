@@ -15,6 +15,18 @@ pub enum SkillKind {
     Pack,
 }
 
+/// Controls whether a Skill is part of the default authoring surface.
+///
+/// Compatibility entries keep immutable historical Workflows resolvable without presenting an
+/// old model- or implementation-specific concept as a new-project Capability.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillProductVisibility {
+    #[default]
+    Primary,
+    Compatibility,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillDependency {
@@ -43,6 +55,10 @@ pub struct SkillManifest {
     pub skill_version: String,
     pub display_name: String,
     pub description: String,
+    #[serde(default)]
+    pub product_visibility: SkillProductVisibility,
+    #[serde(default)]
+    pub deprecated_alias_for: Option<String>,
     pub rust_implementation: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<SkillDependency>,
@@ -114,6 +130,26 @@ impl SkillManifest {
             issues.push(ConfigIssue {
                 path: "skill_version".to_owned(),
                 message: "skill version cannot be empty".to_owned(),
+            });
+        }
+        if self
+            .deprecated_alias_for
+            .as_ref()
+            .is_some_and(|target| target.trim().is_empty() || target == &self.id)
+        {
+            issues.push(ConfigIssue {
+                path: "deprecated_alias_for".to_owned(),
+                message:
+                    "deprecated alias target must be non-empty and different from the Skill id"
+                        .to_owned(),
+            });
+        }
+        if self.product_visibility == SkillProductVisibility::Compatibility
+            && self.deprecated_alias_for.is_none()
+        {
+            issues.push(ConfigIssue {
+                path: "deprecated_alias_for".to_owned(),
+                message: "compatibility Skills must declare their canonical replacement".to_owned(),
             });
         }
         let mut dependencies = BTreeSet::new();

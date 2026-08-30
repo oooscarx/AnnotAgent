@@ -574,6 +574,8 @@ struct SkillDetail {
     version: String,
     kind: annotagent_core::SkillKind,
     description: String,
+    product_visibility: annotagent_core::SkillProductVisibility,
+    deprecated_alias_for: Option<String>,
     nodes: Vec<String>,
     tools: Vec<String>,
     validators: Vec<String>,
@@ -600,6 +602,8 @@ fn skill_detail(
         version: manifest.skill_version.clone(),
         kind: manifest.kind,
         description: manifest.description.clone(),
+        product_visibility: manifest.product_visibility,
+        deprecated_alias_for: manifest.deprecated_alias_for.clone(),
         nodes: manifest.nodes.clone(),
         tools: skill
             .tool_factories()
@@ -659,6 +663,10 @@ async fn list_skills(State(state): State<ServerState>) -> ApiResult<Json<Vec<Ski
             .layered_skills()
             .list()
             .iter()
+            .filter(|skill| {
+                skill.manifest().product_visibility
+                    == annotagent_core::SkillProductVisibility::Primary
+            })
             .map(|skill| {
                 let used_by = projects
                     .iter()
@@ -766,6 +774,11 @@ fn workspace_model_binding(settings: &Settings) -> ModelBinding {
         } else {
             "external provider is checked on request".to_owned()
         }),
+        availability_group: if offline {
+            annotagent_application::ModelAvailabilityGroup::Ready
+        } else {
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable
+        },
         capabilities: vec!["vision_language".to_owned(), "classification".to_owned()],
         score_semantics: None,
         model_version: None,
@@ -796,7 +809,18 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         id: worker.model_id.clone(),
         provider: "http_vision".to_owned(),
         model: worker.display_name.clone(),
-        role: "detection".to_owned(),
+        role: if worker.expected_capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                annotagent_core::VisionCapability::SemanticSegmentation
+                    | annotagent_core::VisionCapability::PromptedSegmentation
+            )
+        }) {
+            "segmentation"
+        } else {
+            "detection"
+        }
+        .to_owned(),
         scope: "workspace_worker".to_owned(),
         health_status: if worker.enabled {
             "unknown"
@@ -809,6 +833,16 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         } else {
             "Disabled in workspace Settings".to_owned()
         }),
+        availability_group: if worker.enabled {
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable
+        } else if matches!(
+            worker.model_id.as_str(),
+            "locate-anything-local" | "rfdetr-specialist-local" | "sam2.1-hiera-tiny"
+        ) {
+            annotagent_application::ModelAvailabilityGroup::Labs
+        } else {
+            annotagent_application::ModelAvailabilityGroup::Disabled
+        },
         capabilities,
         score_semantics,
         model_version: Some(worker.version.model_version.clone()),
@@ -825,6 +859,61 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         label_space: worker.label_space.clone(),
         cost_per_request: Some(worker.cost_per_request),
     }
+}
+
+fn labs_model_bindings() -> Vec<ModelBinding> {
+    vec![
+        ModelBinding {
+            id: "sam2.1-hiera-tiny".to_owned(),
+            provider: "http_vision".to_owned(),
+            model: "SAM 2.1 Prompted Segmentation".to_owned(),
+            role: "segmentation".to_owned(),
+            scope: "optional_local_worker".to_owned(),
+            health_status: "unavailable".to_owned(),
+            health_detail: Some(
+                "Labs adapter is installed; configure and start the workspace-private SAM Worker"
+                    .to_owned(),
+            ),
+            availability_group: annotagent_application::ModelAvailabilityGroup::Labs,
+            capabilities: vec!["prompted_segmentation".to_owned()],
+            score_semantics: Some("not_provided".to_owned()),
+            model_version: Some("local-unpinned".to_owned()),
+            endpoint: Some("http://127.0.0.1:8790".to_owned()),
+            enabled: Some(false),
+            license_summary: Some(
+                "Configure and verify the concrete SAM checkpoint license".to_owned(),
+            ),
+            architecture: Some("sam2.1-hiera-tiny".to_owned()),
+            checkpoint_sha256: None,
+            label_space: Vec::new(),
+            cost_per_request: None,
+        },
+        ModelBinding {
+            id: "yolo-http-worker".to_owned(),
+            provider: "http_vision".to_owned(),
+            model: "YOLO HTTP Worker".to_owned(),
+            role: "detection".to_owned(),
+            scope: "optional_local_worker".to_owned(),
+            health_status: "unavailable".to_owned(),
+            health_detail: Some(
+                "Labs reference adapter only; register an explicit versioned Worker and weights"
+                    .to_owned(),
+            ),
+            availability_group: annotagent_application::ModelAvailabilityGroup::Labs,
+            capabilities: vec!["object_detection".to_owned()],
+            score_semantics: Some("relative_confidence".to_owned()),
+            model_version: Some("unconfigured".to_owned()),
+            endpoint: None,
+            enabled: Some(false),
+            license_summary: Some(
+                "Depends on the configured implementation and weights".to_owned(),
+            ),
+            architecture: Some("yolo".to_owned()),
+            checkpoint_sha256: None,
+            label_space: Vec::new(),
+            cost_per_request: None,
+        },
+    ]
 }
 
 async fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
@@ -1058,6 +1147,8 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
                 "unknown".to_owned()
             },
             health_detail: terminal_reason.clone(),
+            availability_group:
+                annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
             capabilities: Vec::new(),
             score_semantics: None,
             model_version: None,
@@ -1409,6 +1500,7 @@ async fn list_models(State(state): State<ServerState>) -> Json<Value> {
         let settings = state.settings.read().await;
         let mut models = vec![workspace_model_binding(&settings)];
         models.extend(settings.detection_workers.iter().map(worker_model_binding));
+        models.extend(labs_model_bindings());
         models
     };
     Json(json!({"models": models}))
@@ -3774,18 +3866,26 @@ mod tests {
                 .await;
         assert_eq!(models["models"][0]["provider"], json!("mock"));
         assert_eq!(models["models"][0]["health_status"], json!("healthy"));
+        assert_eq!(models["models"][0]["availability_group"], json!("ready"));
         assert_eq!(models["models"][1]["id"], json!("locate-anything-local"));
         assert_eq!(models["models"][1]["enabled"], json!(false));
+        assert_eq!(models["models"][1]["availability_group"], json!("labs"));
         assert_eq!(
             models["models"][1]["score_semantics"],
             json!("not_provided")
         );
         assert_eq!(models["models"][2]["id"], json!("rfdetr-specialist-local"));
         assert_eq!(models["models"][2]["enabled"], json!(false));
+        assert_eq!(models["models"][2]["availability_group"], json!("labs"));
         assert_eq!(
             models["models"][2]["score_semantics"],
             json!("relative_confidence")
         );
+        assert_eq!(models["models"][3]["id"], json!("sam2.1-hiera-tiny"));
+        assert_eq!(models["models"][3]["role"], json!("segmentation"));
+        assert_eq!(models["models"][3]["availability_group"], json!("labs"));
+        assert_eq!(models["models"][4]["id"], json!("yolo-http-worker"));
+        assert_eq!(models["models"][4]["availability_group"], json!("labs"));
         assert_eq!(
             request(
                 &service,
@@ -4744,6 +4844,23 @@ export:
         for kind in ["capability", "domain", "pack"] {
             assert!(entries.iter().any(|entry| entry["kind"] == json!(kind)));
         }
+        let capability_ids = entries
+            .iter()
+            .filter(|entry| entry["kind"] == json!("capability"))
+            .filter_map(|entry| entry["id"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            capability_ids,
+            std::collections::BTreeSet::from([
+                "annotagent.classification",
+                "annotagent.detection",
+                "annotagent.segmentation",
+            ])
+        );
+        assert!(entries.iter().all(|entry| {
+            entry["product_visibility"] == json!("primary")
+                && entry["deprecated_alias_for"].is_null()
+        }));
         assert!(entries.iter().all(|entry| {
             entry["nodes"].is_array()
                 && entry["policies"].is_array()

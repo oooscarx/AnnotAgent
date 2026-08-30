@@ -298,7 +298,7 @@ fn specialist_fallback_template() -> WorkflowTemplate {
         vec![port("image", ArtifactKind::Image)],
         vec![port("detections", ArtifactKind::DetectionSet)],
     );
-    required(&mut specialist, &["annotagent.object_detection"]);
+    required(&mut specialist, &["annotagent.detection"]);
     specialist.parameters.extend([
         ("target_labels".to_owned(), serde_json::json!(["football"])),
         (
@@ -345,10 +345,7 @@ fn specialist_fallback_template() -> WorkflowTemplate {
     );
     required(
         &mut recovery,
-        &[
-            ROBOCUP_BALL_SKILL_ID,
-            "annotagent.open_vocabulary_grounding",
-        ],
+        &[ROBOCUP_BALL_SKILL_ID, "annotagent.detection"],
     );
     recovery.review_gate = true;
     recovery.parameters.extend([
@@ -416,7 +413,7 @@ fn specialist_fallback_template() -> WorkflowTemplate {
         vec![port("crops", ArtifactKind::CropSet)],
         vec![port("classifications", ArtifactKind::ClassificationSet)],
     );
-    required(&mut classifier, &["classification"]);
+    required(&mut classifier, &["annotagent.classification"]);
     classifier.parameters.insert(
         "labels".to_owned(),
         serde_json::json!(["football", "not_football"]),
@@ -431,7 +428,10 @@ fn specialist_fallback_template() -> WorkflowTemplate {
         ],
         vec![port("classifications", ArtifactKind::ClassificationSet)],
     );
-    required(&mut verify, &["classification", ROBOCUP_BALL_SKILL_ID]);
+    required(
+        &mut verify,
+        &["annotagent.classification", ROBOCUP_BALL_SKILL_ID],
+    );
     verify.parameters.extend([
         (
             "labels".to_owned(),

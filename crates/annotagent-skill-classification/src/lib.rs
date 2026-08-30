@@ -6,16 +6,17 @@ use annotagent_core::{
     ArtifactKind, ArtifactRef, ArtifactValidationState, Classification, ClassificationSetArtifact,
     CoreError, CoreResult, LabelId, ModelImage, NodePort, PIPELINE_VISION_PROTOCOL_VERSION,
     PipelineArtifact, PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend,
-    Skill, SkillKind, SkillManifest, SkillResource, SkillResourceRequest, TaskId, TaskTemplate,
-    VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
-    WorkflowTemplate,
+    Skill, SkillKind, SkillManifest, SkillProductVisibility, SkillResource, SkillResourceRequest,
+    TaskId, TaskTemplate, VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge,
+    WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use tokio_util::sync::CancellationToken;
 
-pub const CLASSIFICATION_SKILL_ID: &str = "classification";
+pub const CLASSIFICATION_SKILL_ID: &str = "annotagent.classification";
+pub const LEGACY_CLASSIFICATION_SKILL_ID: &str = "classification";
 pub const CLASSIFICATION_SKILL_VERSION: &str = "1";
 pub const CLASSIFICATION_OPERATION: &str = "classification.classify";
 pub const CLASSIFICATION_VERIFY_OPERATION: &str = "classification.verify";
@@ -34,6 +35,8 @@ impl Default for ClassificationCapabilitySkill {
                 skill_version: CLASSIFICATION_SKILL_VERSION.to_owned(),
                 display_name: "Classification".to_owned(),
                 description: "Classify whole images, crops, candidates or attributes".to_owned(),
+                product_visibility: SkillProductVisibility::Primary,
+                deprecated_alias_for: None,
                 rust_implementation: Some(
                     "annotagent_skill_classification::ClassificationCapabilitySkill".to_owned(),
                 ),
@@ -56,6 +59,58 @@ impl Default for ClassificationCapabilitySkill {
                 visual_profile: BTreeMap::new(),
             },
         }
+    }
+}
+
+/// Read-only compatibility registration for Projects and immutable versions authored before the
+/// generic Capability IDs were introduced.
+pub struct LegacyClassificationCapabilitySkill {
+    inner: ClassificationCapabilitySkill,
+    manifest: SkillManifest,
+}
+
+impl Default for LegacyClassificationCapabilitySkill {
+    fn default() -> Self {
+        let inner = ClassificationCapabilitySkill::default();
+        let mut manifest = inner.manifest.clone();
+        manifest.id = LEGACY_CLASSIFICATION_SKILL_ID.to_owned();
+        manifest.display_name = "Classification (compatibility)".to_owned();
+        manifest.product_visibility = SkillProductVisibility::Compatibility;
+        manifest.deprecated_alias_for = Some(CLASSIFICATION_SKILL_ID.to_owned());
+        Self { inner, manifest }
+    }
+}
+
+impl Skill for LegacyClassificationCapabilitySkill {
+    fn id(&self) -> &str {
+        LEGACY_CLASSIFICATION_SKILL_ID
+    }
+
+    fn manifest(&self) -> &SkillManifest {
+        &self.manifest
+    }
+
+    fn node_templates(&self) -> Vec<TaskTemplate> {
+        self.inner.node_templates()
+    }
+
+    fn workflow_templates(&self) -> Vec<WorkflowTemplate> {
+        let mut templates = self.inner.workflow_templates();
+        for node in templates
+            .iter_mut()
+            .flat_map(|template| &mut template.nodes)
+        {
+            for required in &mut node.required_skills {
+                if required == CLASSIFICATION_SKILL_ID {
+                    *required = LEGACY_CLASSIFICATION_SKILL_ID.to_owned();
+                }
+            }
+        }
+        templates
+    }
+
+    fn resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
+        self.inner.resources(request)
     }
 }
 

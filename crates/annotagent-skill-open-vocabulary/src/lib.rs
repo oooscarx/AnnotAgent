@@ -10,8 +10,9 @@ use annotagent_core::{
     DetectionScore, DetectionSetArtifact, DetectionSource, ImageId, LabelId, ModelImage, NodePort,
     NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
     PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind, SkillManifest,
-    SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
-    VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    SkillProductVisibility, SkillResource, SkillResourceRequest, TaskId, TaskTemplate,
+    VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -136,6 +137,8 @@ impl Default for OpenVocabularyGroundingSkill {
                 display_name: "Open-vocabulary grounding".to_owned(),
                 description: "Find objects from category descriptions or referring phrases"
                     .to_owned(),
+                product_visibility: SkillProductVisibility::Compatibility,
+                deprecated_alias_for: Some("annotagent.detection".to_owned()),
                 rust_implementation: Some(
                     "annotagent_skill_open_vocabulary::OpenVocabularyGroundingSkill".to_owned(),
                 ),

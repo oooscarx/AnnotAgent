@@ -434,6 +434,7 @@ pub struct ModelBinding {
     pub scope: String,
     pub health_status: String,
     pub health_detail: Option<String>,
+    pub availability_group: ModelAvailabilityGroup,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -454,6 +455,15 @@ pub struct ModelBinding {
     pub label_space: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_per_request: Option<rust_decimal::Decimal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelAvailabilityGroup {
+    Ready,
+    ConfiguredUnavailable,
+    Labs,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -2126,6 +2136,11 @@ impl LocalApplication {
             Arc::new(annotagent_skill_classification::ClassificationCapabilitySkill::default());
         registry.register_layered(classification.clone())?;
         layered_skills.register(classification)?;
+        let legacy_classification = Arc::new(
+            annotagent_skill_classification::LegacyClassificationCapabilitySkill::default(),
+        );
+        registry.register_layered(legacy_classification.clone())?;
+        layered_skills.register(legacy_classification)?;
         let open_vocabulary =
             Arc::new(annotagent_skill_open_vocabulary::OpenVocabularyGroundingSkill::default());
         registry.register_layered(open_vocabulary.clone())?;
@@ -2134,10 +2149,19 @@ impl LocalApplication {
             Arc::new(annotagent_skill_object_detection::ObjectDetectionCapabilitySkill::default());
         registry.register_layered(object_detection.clone())?;
         layered_skills.register(object_detection)?;
+        let legacy_object_detection = Arc::new(
+            annotagent_skill_object_detection::LegacyObjectDetectionCapabilitySkill::default(),
+        );
+        registry.register_layered(legacy_object_detection.clone())?;
+        layered_skills.register(legacy_object_detection)?;
         let vlm_detection =
             Arc::new(annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill::default());
         registry.register_layered(vlm_detection.clone())?;
         layered_skills.register(vlm_detection)?;
+        let segmentation =
+            Arc::new(annotagent_skill_segmentation::SegmentationCapabilitySkill::default());
+        registry.register_layered(segmentation.clone())?;
+        layered_skills.register(segmentation)?;
         let ball = Arc::new(RoboCupBallSkill::new().map_err(|error| anyhow!(error))?);
         registry.register_layered(ball.clone())?;
         layered_skills.register(ball)?;
@@ -2694,6 +2718,7 @@ impl LocalApplication {
                         "unknown".to_owned()
                     },
                     health_detail: Some("health at execution time was not recorded".to_owned()),
+                    availability_group: ModelAvailabilityGroup::ConfiguredUnavailable,
                     capabilities: Vec::new(),
                     score_semantics: None,
                     model_version: None,

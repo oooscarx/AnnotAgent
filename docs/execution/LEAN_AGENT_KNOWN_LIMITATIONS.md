@@ -9,8 +9,8 @@ Baseline limitations before implementation:
   revision.
 - Agent sessions use generic statuses and free-form stop strings rather than the Lean Builder
   constraints/status/stop-reason model.
-- Existing Capability Skills are fragmented by detection style/model adapter. Segmentation is not a
-  single public Capability Skill.
+- Pre-Lean Capability implementations still exist as Registry compatibility adapters and internal
+  node IDs. New authoring exposes the generic Skills, but removal awaits persisted-version migration.
 - Existing UI still exposes internal Workflow vocabulary and has compatibility routes/components
   that need consolidation.
 - Draft proposals support whole-apply/dismiss, not structured selective Diff application plus Undo.
@@ -18,4 +18,3 @@ Baseline limitations before implementation:
   repository weight. Real inference is not claimed.
 - Runtime Recovery remains named as an Agent in code and some UI copy even though its behavior is
   deterministic and bounded.
-

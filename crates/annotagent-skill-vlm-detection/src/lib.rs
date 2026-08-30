@@ -7,9 +7,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
     ArtifactKind, CoreError, CoreResult, ModelImage, NodePort, PipelineArtifact,
-    PipelineInferenceRequest, PipelineModelBackend, Skill, SkillKind, SkillManifest, SkillResource,
-    SkillResourceRequest, TaskId, TaskTemplate, VisionCapability, VisionNodeDescriptor,
-    WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    PipelineInferenceRequest, PipelineModelBackend, Skill, SkillKind, SkillManifest,
+    SkillProductVisibility, SkillResource, SkillResourceRequest, TaskId, TaskTemplate,
+    VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -35,6 +36,8 @@ impl Default for VlmDetectionCapabilitySkill {
                 description:
                     "Registry-bounded structured object grounding with a vision-language model"
                         .to_owned(),
+                product_visibility: SkillProductVisibility::Compatibility,
+                deprecated_alias_for: Some("annotagent.detection".to_owned()),
                 rust_implementation: Some(
                     "annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill".to_owned(),
                 ),

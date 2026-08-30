@@ -102,6 +102,7 @@ dependencies = [
  "annotagent-skill-object-detection",
  "annotagent-skill-open-vocabulary",
  "annotagent-skill-robocup",
+ "annotagent-skill-segmentation",
  "annotagent-skill-vlm-detection",
  "annotagent-skill-yolo",
  "annotagent-storage",
@@ -293,6 +294,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "annotagent-skill-segmentation"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
 ]
 
 [[package]]

@@ -2,15 +2,19 @@
 
 Updated: 2026-08-31
 
-- Current Milestone: M1 — Capability Skill and Model Backend convergence.
-- Completed: master prompt saved; Git/remote baseline recorded; repository surface inspected; full
-  Rust baseline executed.
-- In progress: generic Capability IDs, compatibility aliases and backend availability grouping.
-- Next: migrate Registry/UI authoring without rewriting stored Published Versions.
+- Current Milestone: M2 — public Pipeline vocabulary and route convergence.
+- Completed: M0 baseline; public Capability catalog now contains only
+  `annotagent.classification`, `annotagent.detection`, and `annotagent.segmentation`; legacy Skill
+  IDs remain hidden compatibility aliases; model bindings are grouped as Ready, Configured but
+  unavailable, Labs, or Disabled; SAM/YOLO/RF-DETR/LocateAnything are Model Backends rather than
+  public Skills.
+- In progress: Select detections, Decision and Combine model evidence guided abstractions; Grid
+  assist as node configuration; removal of duplicate product entry points.
+- Next: preserve Expert node types while simplifying the default Automation editor.
 - Recent Rust tests: `cargo test --workspace --all-features` — 221 passed, 0 failed.
-- Recent Web tests: inherited baseline only; not rerun in M0 yet.
+- Recent Web tests: `npm run typecheck` passed; `npm test -- --run` — 35 passed, 0 failed.
 - Recent E2E: inherited baseline only; not rerun in M0 yet.
-- Recent commit: `ca54f07 test(release): validate open-vocabulary and specialist detection alpha`.
+- Recent commit: `f38ee6f docs: establish lean agent architecture baseline`.
 - Release Blocking remaining: all Lean Agent Alpha A–G items until evidenced in
   `LEAN_AGENT_ACCEPTANCE.md`.
 - Live-conditional: real Qwen request; SAM, LocateAnything, RF-DETR and YOLO inference with explicit

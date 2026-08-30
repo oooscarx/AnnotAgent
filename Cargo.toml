@@ -12,6 +12,7 @@ members = [
     "crates/annotagent-skill-open-vocabulary",
     "crates/annotagent-skill-object-detection",
     "crates/annotagent-skill-robocup",
+    "crates/annotagent-skill-segmentation",
     "crates/annotagent-skill-vlm-detection",
     "crates/annotagent-skill-yolo",
     "crates/annotagent-storage",

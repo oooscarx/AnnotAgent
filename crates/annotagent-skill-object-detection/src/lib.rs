@@ -11,9 +11,9 @@ use annotagent_core::{
     DetectionSource, ImageId, IssueSeverity, LabelId, ModelImage, NodePort, NormalizedRect,
     PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
     PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind, SkillManifest,
-    SkillResource, SkillResourceRequest, SuggestedAction, TaskId, TaskTemplate, ValidationEvidence,
-    ValidationIssue, VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge,
-    WorkflowNodeKind, WorkflowTemplate,
+    SkillProductVisibility, SkillResource, SkillResourceRequest, SuggestedAction, TaskId,
+    TaskTemplate, ValidationEvidence, ValidationIssue, VisionCapability, VisionNodeDescriptor,
+    WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -21,7 +21,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-pub const OBJECT_DETECTION_SKILL_ID: &str = "annotagent.object_detection";
+pub const OBJECT_DETECTION_SKILL_ID: &str = "annotagent.detection";
+pub const LEGACY_OBJECT_DETECTION_SKILL_ID: &str = "annotagent.object_detection";
 pub const OBJECT_DETECTION_SKILL_VERSION: &str = "1";
 pub const OBJECT_DETECTION_OPERATION: &str = "object_detection.detect";
 pub type ModelBindingId = String;
@@ -150,19 +151,30 @@ impl Default for ObjectDetectionCapabilitySkill {
                 id: OBJECT_DETECTION_SKILL_ID.to_owned(),
                 kind: SkillKind::Capability,
                 skill_version: OBJECT_DETECTION_SKILL_VERSION.to_owned(),
-                display_name: "Object detection".to_owned(),
-                description:
-                    "Run a registered trained detector and map model classes to Project Labels"
-                        .to_owned(),
+                display_name: "Detection".to_owned(),
+                description: "Find objects with closed-set, open-vocabulary, phrase-grounding or VLM backends"
+                    .to_owned(),
+                product_visibility: SkillProductVisibility::Primary,
+                deprecated_alias_for: None,
                 rust_implementation: Some(
                     "annotagent_skill_object_detection::ObjectDetectionCapabilitySkill".to_owned(),
                 ),
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
-                capabilities: vec!["object_detection".to_owned()],
+                capabilities: vec![
+                    "object_detection".to_owned(),
+                    "open_vocabulary_detection".to_owned(),
+                    "phrase_grounding".to_owned(),
+                    "vision_language_detection".to_owned(),
+                ],
                 requires: annotagent_core::SkillCapabilityRequirements::default(),
                 optional_capabilities: Vec::new(),
-                nodes: vec![OBJECT_DETECTION_OPERATION.to_owned()],
+                nodes: vec![
+                    OBJECT_DETECTION_OPERATION.to_owned(),
+                    "open_vocabulary_grounding.detect".to_owned(),
+                    "open_vocabulary_grounding.ground_phrase".to_owned(),
+                    "vlm_detection.detect".to_owned(),
+                ],
                 tools: Vec::new(),
                 validators: Vec::new(),
                 policies: Vec::new(),
@@ -176,6 +188,59 @@ impl Default for ObjectDetectionCapabilitySkill {
                 visual_profile: BTreeMap::new(),
             },
         }
+    }
+}
+
+/// Compatibility registration for stored Projects that enabled the pre-Lean specialist Skill ID.
+pub struct LegacyObjectDetectionCapabilitySkill {
+    inner: ObjectDetectionCapabilitySkill,
+    manifest: SkillManifest,
+}
+
+impl Default for LegacyObjectDetectionCapabilitySkill {
+    fn default() -> Self {
+        let inner = ObjectDetectionCapabilitySkill::default();
+        let mut manifest = inner.manifest.clone();
+        manifest.id = LEGACY_OBJECT_DETECTION_SKILL_ID.to_owned();
+        manifest.display_name = "Object detection (compatibility)".to_owned();
+        manifest.capabilities = vec!["object_detection".to_owned()];
+        manifest.nodes = vec![OBJECT_DETECTION_OPERATION.to_owned()];
+        manifest.product_visibility = SkillProductVisibility::Compatibility;
+        manifest.deprecated_alias_for = Some(OBJECT_DETECTION_SKILL_ID.to_owned());
+        Self { inner, manifest }
+    }
+}
+
+impl Skill for LegacyObjectDetectionCapabilitySkill {
+    fn id(&self) -> &str {
+        LEGACY_OBJECT_DETECTION_SKILL_ID
+    }
+
+    fn manifest(&self) -> &SkillManifest {
+        &self.manifest
+    }
+
+    fn node_templates(&self) -> Vec<TaskTemplate> {
+        self.inner.node_templates()
+    }
+
+    fn workflow_templates(&self) -> Vec<WorkflowTemplate> {
+        let mut templates = self.inner.workflow_templates();
+        for node in templates
+            .iter_mut()
+            .flat_map(|template| &mut template.nodes)
+        {
+            for required in &mut node.required_skills {
+                if required == OBJECT_DETECTION_SKILL_ID {
+                    *required = LEGACY_OBJECT_DETECTION_SKILL_ID.to_owned();
+                }
+            }
+        }
+        templates
+    }
+
+    fn resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
+        self.inner.resources(request)
     }
 }
 

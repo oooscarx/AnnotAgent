@@ -132,6 +132,7 @@ export interface ModelBinding {
   scope: string;
   health_status: "healthy" | "degraded" | "unavailable" | "unknown";
   health_detail?: string;
+  availability_group: "ready" | "configured_unavailable" | "labs" | "disabled";
   capabilities?: string[];
   score_semantics?: string;
   model_version?: string;

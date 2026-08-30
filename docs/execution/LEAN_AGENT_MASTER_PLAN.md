@@ -6,8 +6,8 @@ through M0–M8 with one local commit per milestone and no push.
 | Milestone | Outcome | Status |
 |---|---|---|
 | M0 | Baseline, migration inventory, state ledger | Complete |
-| M1 | Generic Classification/Detection/Segmentation capabilities and backend grouping | In progress |
-| M2 | Lean guided vocabulary, grid configuration and route consolidation | Pending |
+| M1 | Generic Classification/Detection/Segmentation capabilities and backend grouping | Complete |
+| M2 | Lean guided vocabulary, grid configuration and route consolidation | In progress |
 | M3 | Constrained Pipeline Builder session, tools, grammar and ScriptedMock | Pending |
 | M4 | OpenAI-compatible multi-turn tool-loop backend | Pending |
 | M5 | Static-validation and Dry-Run revision loop with human boundary | Pending |

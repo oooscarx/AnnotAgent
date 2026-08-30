@@ -5,11 +5,9 @@ project:
   skill_version: "1"
   language: en
   enabled_skills:
-    - id: annotagent.object_detection
+    - id: annotagent.detection
       version: "1"
-    - id: annotagent.open_vocabulary_grounding
-      version: "1"
-    - id: classification
+    - id: annotagent.classification
       version: "1"
     - id: robocup.ball
       version: "1"

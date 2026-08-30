@@ -34,3 +34,14 @@ formal Run. Published Versions remain immutable.
 Model configuration and health determine recommendation eligibility. A registered but unhealthy or
 unconfigured Worker is visible only in Labs/alternatives and blocks publish if left unresolved.
 
+## D007 — Compatibility aliases are Registry-only
+
+Pre-Lean IDs remain registered so stored Projects and immutable versions resolve, but their
+manifests are marked `compatibility` with a canonical replacement. The public `/api/skills` catalog
+filters them. New examples and authoring use generic Capability IDs.
+
+## D008 — Segmentation can be unavailable without being fake
+
+The generic Segmentation Capability is a real semantic contract but publishes no runnable node or
+template until a compatible Model Backend is healthy. SAM remains a Labs Model Binding and the
+existing RoboCup adapter is not presented as a general ready backend.

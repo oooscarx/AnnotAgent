@@ -81,6 +81,8 @@ impl DummySkill {
                 skill_version: "1".to_owned(),
                 display_name: "Dummy external skill".to_owned(),
                 description: "Proves the runtime has no domain-specific branch".to_owned(),
+                product_visibility: annotagent_core::SkillProductVisibility::Primary,
+                deprecated_alias_for: None,
                 rust_implementation: None,
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),

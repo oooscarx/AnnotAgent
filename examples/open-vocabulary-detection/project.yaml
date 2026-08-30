@@ -3,7 +3,7 @@ project:
   name: Open-vocabulary Detection Demo
   language: en
   enabled_skills:
-    - id: annotagent.open_vocabulary_grounding
+    - id: annotagent.detection
       version: "1"
 dataset:
   root: images
