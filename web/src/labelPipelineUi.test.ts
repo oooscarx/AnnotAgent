@@ -9,8 +9,11 @@ import {
   pipelineNodeKind,
   pipelineNodeOutput,
   pipelineNodeParameters,
+  guidedPipelineStepGroups,
+  guidedWorkflowNodes,
+  workflowNodeTitle,
 } from "./App";
-import type { Annotation, PipelineArtifact } from "./types";
+import type { Annotation, PipelineArtifact, PipelineStep } from "./types";
 
 describe("Label Pipeline product helpers", () => {
   it("keeps Crop in Core and classification/detection outputs typed", () => {
@@ -46,6 +49,55 @@ describe("Label Pipeline product helpers", () => {
     expect(pipelineNodeParameters("core.crop", "person")).toEqual({
       padding: 0.05,
     });
+    expect(pipelineNodeParameters("vlm_detection.detect", "ball")).toMatchObject({
+      grounding_assist: {
+        mode: "grid",
+        enabled: false,
+        rows: 10,
+        columns: 10,
+      },
+    });
+  });
+
+  it("projects technical nodes into a smaller guided vocabulary", () => {
+    expect(workflowNodeTitle("core.filter")).toBe("Select detections");
+    expect(workflowNodeTitle("core.map_label")).toBe("Select detections");
+    expect(workflowNodeTitle("core.match_detection_sets")).toBe(
+      "Combine model evidence",
+    );
+    expect(workflowNodeTitle("core.evidence_gate")).toBe("Decision");
+    expect(
+      guidedWorkflowNodes([
+        { node_type: "core.filter" },
+        { node_type: "core.map_label" },
+        { node_type: "core.confidence_gate" },
+        { node_type: "core.evidence_gate" },
+      ]),
+    ).toEqual([
+      { node_type: "core.filter" },
+      { node_type: "core.confidence_gate" },
+    ]);
+
+    const step = (id: string, node_type: string): PipelineStep => ({
+      id,
+      node_type,
+      kind: "transform",
+      inputs: {},
+      outputs: {},
+      parameters: {},
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: false, allow_manual_override: false },
+      resources: {},
+    });
+    expect(
+      guidedPipelineStepGroups([
+        step("filter", "core.filter"),
+        step("map", "core.map_label"),
+        step("gate", "core.confidence_gate"),
+      ]).map((group) => group.steps.length),
+    ).toEqual([2, 1]);
   });
 
   it("extracts real Detection and Crop geometry for previews", () => {

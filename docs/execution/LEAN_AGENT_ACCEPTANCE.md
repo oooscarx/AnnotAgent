@@ -15,10 +15,10 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 
 ## Release matrix
 
-- A. Architecture subtraction: PARTIAL. Public Skill API exposes exactly Classification,
-  Detection and Segmentation Capability Skills. Model-branded adapters are hidden compatibility
-  entries. Model API groups optional SAM, YOLO, RF-DETR and LocateAnything under Labs while ONNX is
-  absent. Guided node vocabulary and route consolidation remain M2.
+- A. Architecture subtraction: PASS. Public Skills are the three generic capabilities; model brands
+  are Backends; Guided Automation presents Select detections, Decision and Combine model evidence;
+  Grid is Detection configuration; legacy Workflow, Provider and Artifact entry points converge on
+  Project Automation, Settings / Models and Run Debug.
 - B. Agent authenticity: OPEN.
 - C. Pipeline safety: OPEN.
 - D. Offline capability: OPEN.
@@ -40,3 +40,17 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | Example Project migration | PASS | Detection and hybrid examples use generic Capability IDs; old inline fixtures continue to test aliases. |
 | Rust M1 regression | PASS | 28 Application tests and 9 Server tests pass; Capability crate tests pass. |
 | Web M1 regression | PASS | TypeScript passes and 35 Vitest tests pass. |
+
+## M2 public Pipeline vocabulary
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Filter and Map Label merge in Guided UI | PASS | `guidedWorkflowNodes` and `guidedPipelineStepGroups` collapse adjacent technical operations under `Select detections`; Vitest verifies the projection. |
+| Confidence and Evidence gates share Decision | PASS | Core `GuidedPipelineConcept` and Web title/group helpers map both gates to `Decision`; Rust and Web unit tests pass. |
+| Candidate matching/merging is one concept | PASS | Attach, match and candidate-merge nodes project to `Combine model evidence`; their typed Runtime identities remain unchanged. |
+| Expert node types remain available | PASS | Pipeline drawer moves IDs, ports, fallback and raw parameters under `Expert details`; technical graph editing remains available. |
+| Grid is bounded Detection configuration | PASS | `GroundingAssistConfig` validates rows/columns in `[2,16]`; VLM adapter accepts nested `grounding_assist`, preserves the original image and adds only a calibration view. |
+| Duplicate entry points converge | PASS | Navigation tests cover `/workflows`, `/providers`, `/settings/providers`, `/artifacts` and `/artifact-inspector` redirects to canonical Project Automation, Settings / Models and Run Debug routes. |
+| ONNX is not shown as available | PASS | M1 Model registry evidence remains valid; M2 introduces no ONNX binding. |
+| Rust M2 regression | PASS | Core 43, Provider 34, Application 28 and Server 9 tests passed with 0 failures. |
+| Web M2 regression | PASS | TypeScript passed and 36 Vitest tests passed. |

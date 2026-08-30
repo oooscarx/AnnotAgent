@@ -45,3 +45,16 @@ filters them. New examples and authoring use generic Capability IDs.
 The generic Segmentation Capability is a real semantic contract but publishes no runnable node or
 template until a compatible Model Backend is healthy. SAM remains a Labs Model Binding and the
 existing RoboCup adapter is not presented as a general ready backend.
+
+## D009 — Guided vocabulary is a projection, not a second graph
+
+Select detections, Decision and Combine model evidence group adjacent technical nodes for ordinary
+authoring. The persisted Workflow and Runtime keep their typed Filter, Map Label, match, attach and
+gate nodes. Expert details expose those identities when debugging; Guided actions never rewrite or
+silently discard them.
+
+## D010 — Grounding assistance belongs to Detection configuration
+
+Grid assistance is the bounded `grounding_assist` configuration of a Detection step. The provider
+receives the unmodified source image first and an optional generated calibration view second. The
+legacy `localization_grid` parameter is read only for published-version compatibility.

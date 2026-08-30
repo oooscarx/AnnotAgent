@@ -171,6 +171,11 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .node-drawer > header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
 .node-drawer label { display: grid; gap: 6px; margin: 14px 0; }
 .node-drawer textarea { min-height: 220px; }
+.grounding-assist-fieldset { display: grid; gap: 10px; margin: 18px 0; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); }
+.grounding-assist-fieldset legend { padding: 0 6px; font-weight: 700; }
+.grounding-assist-fieldset .checkbox-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; margin: 0; }
+.grounding-assist-fieldset .checkbox-row input { width: auto; }
+.grounding-assist-fieldset small { color: var(--aa-text-muted); }
 .clickable-run { cursor: pointer; }
 .run-detail-page { min-width: 0; }
 .run-back { justify-self: start; }

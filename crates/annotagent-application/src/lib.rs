@@ -940,7 +940,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_FILTER.to_owned(),
-            display_name: "Filter".to_owned(),
+            display_name: "Select detections".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::DetectionSet],
             produces: vec![ArtifactKind::DetectionSet],
@@ -948,7 +948,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_MAP_LABEL.to_owned(),
-            display_name: "Map Label".to_owned(),
+            display_name: "Select detections · label mapping".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::DetectionSet],
             produces: vec![ArtifactKind::DetectionSet],
@@ -956,7 +956,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_ATTACH_RESULT.to_owned(),
-            display_name: "Attach Result".to_owned(),
+            display_name: "Combine model evidence".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::DetectionSet, ArtifactKind::ClassificationSet],
             produces: vec![ArtifactKind::AnnotationCandidateSet],
@@ -972,7 +972,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_CONFIDENCE_GATE.to_owned(),
-            display_name: "Confidence Gate".to_owned(),
+            display_name: "Decision".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![
                 ArtifactKind::DetectionSet,
@@ -988,7 +988,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_CANDIDATE_MATCH.to_owned(),
-            display_name: "Match Detection Sets".to_owned(),
+            display_name: "Combine model evidence".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::DetectionSet],
             produces: vec![ArtifactKind::CandidateClusterSet],
@@ -996,7 +996,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_EVIDENCE_GATE.to_owned(),
-            display_name: "Evidence Gate".to_owned(),
+            display_name: "Decision · evidence".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::CandidateClusterSet],
             produces: vec![ArtifactKind::CandidateClusterSet],
@@ -1004,7 +1004,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_PROJECT_CANDIDATES.to_owned(),
-            display_name: "Project Detection Candidates".to_owned(),
+            display_name: "Select detections".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::CandidateClusterSet],
             produces: vec![ArtifactKind::DetectionSet],

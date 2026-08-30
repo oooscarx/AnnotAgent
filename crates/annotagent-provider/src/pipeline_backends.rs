@@ -508,6 +508,23 @@ const MAX_LOCALIZATION_GRID_PIXELS: u64 = 40_000_000;
 fn localization_grid(
     parameters: &BTreeMap<String, serde_json::Value>,
 ) -> CoreResult<Option<LocalizationGrid>> {
+    if let Some(value) = parameters.get("grounding_assist") {
+        let config =
+            serde_json::from_value::<annotagent_core::GroundingAssistConfig>(value.clone())
+                .map_err(|error| {
+                    CoreError::Validation(format!(
+                        "grounding_assist must be a bounded grid configuration: {error}"
+                    ))
+                })?;
+        config.validate()?;
+        if !config.enabled {
+            return Ok(None);
+        }
+        return Ok(Some(LocalizationGrid {
+            rows: config.rows,
+            columns: config.columns,
+        }));
+    }
     let Some(value) = parameters.get("localization_grid") else {
         return Ok(None);
     };
@@ -945,8 +962,8 @@ impl PipelineModelBackend for OpenAiCompatiblePipelineDetector {
         ]);
         if let Some(grid) = grid {
             metadata.insert(
-                "localization_grid".to_owned(),
-                serde_json::json!({"rows": grid.rows, "columns": grid.columns, "source_image_preserved": true}),
+                "grounding_assist".to_owned(),
+                serde_json::json!({"mode": "grid", "enabled": true, "rows": grid.rows, "columns": grid.columns, "source_image_preserved": true}),
             );
         }
         let artifact = DetectionSetArtifact {
@@ -1407,7 +1424,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn localization_grid_preserves_original_and_adds_a_calibration_image() {
+    async fn grounding_assist_grid_preserves_original_and_adds_a_calibration_image() {
         let backend = OpenAiCompatiblePipelineDetector::new(
             "vlm-detector",
             Arc::new(GridAwareDetectionProvider),
@@ -1431,8 +1448,8 @@ mod tests {
             serde_json::json!("the compact football itself"),
         );
         request.parameters.insert(
-            "localization_grid".to_owned(),
-            serde_json::json!({"rows": 8, "columns": 8}),
+            "grounding_assist".to_owned(),
+            serde_json::json!({"mode": "grid", "enabled": true, "rows": 8, "columns": 8}),
         );
 
         let response = backend
@@ -1443,6 +1460,11 @@ mod tests {
             panic!("DetectionSet")
         };
         assert!((set.detections[0].bbox.y() - 0.35).abs() < f32::EPSILON);
+        assert_eq!(set.metadata["grounding_assist"]["mode"], "grid");
+        assert_eq!(
+            set.metadata["grounding_assist"]["source_image_preserved"],
+            true
+        );
     }
 
     struct QwenCoordinateDetectionProvider;

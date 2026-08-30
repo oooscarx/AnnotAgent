@@ -75,7 +75,7 @@ export function parseWorkspaceRoute(
         }
       : { kind: "projects", canonicalPath: "/projects" };
   }
-  if (clean === "/models")
+  if (clean === "/models" || clean === "/providers" || clean === "/settings/providers")
     return {
       kind: "settings",
       section: "models",
@@ -87,6 +87,23 @@ export function parseWorkspaceRoute(
       section: "capabilities",
       canonicalPath: "/settings/capabilities",
     };
+  const legacyArtifact = clean.match(/^\/(?:artifacts|artifact-inspector)(?:\/([^/]+))?$/);
+  if (legacyArtifact) {
+    const context = new URLSearchParams();
+    const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
+    if (projectId) context.set("project_id", projectId);
+    context.set("view", "debug");
+    if (legacyArtifact[1]) context.set("artifact", decodeURIComponent(legacyArtifact[1]));
+    return {
+      kind: "runs",
+      projectId,
+      artifactId: legacyArtifact[1]
+        ? decodeURIComponent(legacyArtifact[1])
+        : undefined,
+      view: "debug",
+      canonicalPath: `/runs?${context.toString()}`,
+    };
+  }
   if (clean === "/projects")
     return {
       kind: "projects",

@@ -2349,7 +2349,7 @@ function WorkflowsPage({
             <div>
               <h3>Automation Recipe</h3>
               <ol className="advisor-recipe-list">
-                {advisorProposal.draft.nodes.map((node) => <li key={node.id}>{workflowNodeTitle(node.node_type)} <small>{node.model_binding ?? "Core"}</small></li>)}
+                {guidedWorkflowNodes(advisorProposal.draft.nodes).map((node) => <li key={node.id}>{workflowNodeTitle(node.node_type)} <small>{node.model_binding ?? "Core"}</small></li>)}
               </ol>
             </div>
             <div className="fact-grid">
@@ -2525,7 +2525,7 @@ function WorkflowsPage({
                 <>
               <div className="natural-workflow-recipe">
                 <span className="eyebrow">Automation Recipe</span>
-                <ol>{draft.nodes.map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : "Deterministic Core step"}</small></li>)}</ol>
+                <ol>{guidedWorkflowNodes(draft.nodes).map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : "Reliable built-in step"}</small></li>)}</ol>
                 {!draft.nodes.length && <Empty title="No Automation steps" detail="Start from a template or preview an AnnotAgent recommendation." />}
               </div>
               <details className="advanced-graph">
@@ -2850,18 +2850,22 @@ function WorkflowsPage({
   );
 }
 
-function workflowNodeTitle(nodeType: string): string {
+export function workflowNodeTitle(nodeType: string): string {
   const known: Record<string, string> = {
     "core.image_input": "Read each image",
-    "vlm_detection.detect": "Find object candidates",
-    "yolo_detection.detect": "Detect objects with YOLO",
-    "classification.classify": "Classify subjects",
-    "core.filter": "Keep matching detections",
-    "core.crop": "Crop each candidate",
-    "core.map_label": "Map model classes to Labels",
-    "core.attach_result": "Attach verification results",
+    "vlm_detection.detect": "Find objects",
+    "yolo_detection.detect": "Find objects",
+    "classification.classify": "Classify crops or images",
+    "core.filter": "Select detections",
+    "core.project_detection_candidates": "Select detections",
+    "core.crop": "Crop candidates",
+    "core.map_label": "Select detections",
+    "core.attach_result": "Combine model evidence",
+    "core.candidate_merge": "Combine model evidence",
+    "core.match_detection_sets": "Combine model evidence",
     "core.attach_attribute": "Attach attributes",
-    "core.confidence_gate": "Apply the auto-accept rule",
+    "core.confidence_gate": "Decision",
+    "core.evidence_gate": "Decision",
     "core.human_review": "Send uncertain results to Review",
     "core.commit": "Save annotations",
     "core.artifact_cache": "Keep replayable artifacts",
@@ -2869,15 +2873,32 @@ function workflowNodeTitle(nodeType: string): string {
   return known[nodeType] ?? nodeType.split(".").at(-1)?.replaceAll("_", " ") ?? nodeType;
 }
 
+function guidedWorkflowConcept(nodeType: string): string {
+  if (["core.filter", "core.map_label", "core.project_detection_candidates"].includes(nodeType))
+    return "select_detections";
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(nodeType))
+    return "combine_model_evidence";
+  if (["core.confidence_gate", "core.evidence_gate"].includes(nodeType))
+    return "decision";
+  if (nodeType.includes("detect") || nodeType.includes("ground")) return "find_objects";
+  return nodeType;
+}
+
+export function guidedWorkflowNodes<T extends { node_type: string }>(nodes: T[]): T[] {
+  return nodes.filter((node, index) =>
+    index === 0 ||
+    guidedWorkflowConcept(node.node_type) !== guidedWorkflowConcept(nodes[index - 1].node_type),
+  );
+}
+
 function pipelineStepTitle(step: PipelineStep, targetLabel?: string): string {
   const label = targetLabel || (Array.isArray(step.parameters.labels) ? step.parameters.labels.join(", ") : "targets");
-  if (step.node_type.includes("detect") && step.model_binding?.capability === "open_vocabulary_detection") return `Find ${label} by description`;
-  if (step.node_type.includes("detect") && step.model_binding?.capability === "object_detection") return `Use trained detector for ${label}`;
-  if (step.node_type.includes("detect")) return `Find ${label} candidates`;
-  if (step.node_type === "core.filter") return `Keep detections labeled ${label}`;
-  if (step.node_type === "core.crop") return "Crop each candidate";
-  if (step.node_type.includes("classify")) return `Verify each crop as ${label}`;
-  if (step.node_type === "core.confidence_gate") return "Automatically accept confident results";
+  if (step.node_type.includes("detect")) return `Find ${label}`;
+  if (["core.filter", "core.map_label", "core.project_detection_candidates"].includes(step.node_type)) return "Select detections";
+  if (step.node_type === "core.crop") return "Crop candidates";
+  if (step.node_type.includes("classify")) return `Classify ${label}`;
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(step.node_type)) return "Combine model evidence";
+  if (["core.confidence_gate", "core.evidence_gate"].includes(step.node_type)) return "Decision";
   if (step.kind === "human_review") return "Send uncertain results to Review";
   if (step.kind === "commit") return "Save the annotation";
   return workflowNodeTitle(step.node_type);
@@ -2888,6 +2909,10 @@ function pipelineStepDescription(step: PipelineStep, targetLabel?: string): stri
     return `${Math.round(Number(step.parameters.padding ?? 0) * 100)}% padding around the source detection`;
   if (step.node_type === "core.confidence_gate")
     return `Accept confidence ≥ ${Number(step.parameters.threshold ?? 0).toFixed(2)}; route the rest to Review`;
+  if (step.node_type === "core.evidence_gate")
+    return "Compare independent results and route conflicts to Review";
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(step.node_type))
+    return "Keep each result attached to the same source object";
   if (step.node_type === "core.filter")
     return `Class filter · minimum confidence ${Number(step.parameters.minimum_confidence ?? 0).toFixed(2)}`;
   if (step.model_binding)
@@ -2896,11 +2921,25 @@ function pipelineStepDescription(step: PipelineStep, targetLabel?: string): stri
   return "Deterministic Core processing";
 }
 
-function pipelineInputSummary(step: PipelineStep): string {
-  const values = Object.values(step.inputs).map((source) =>
-    source.source === "image" ? "Image" : source.artifact_type.replaceAll("_", " "),
+export function guidedPipelineStepGroups(steps: PipelineStep[]): Array<{
+  firstIndex: number;
+  steps: PipelineStep[];
+}> {
+  return steps.reduce<Array<{ firstIndex: number; steps: PipelineStep[] }>>(
+    (groups, step, index) => {
+      const previous = groups.at(-1);
+      if (
+        previous &&
+        guidedWorkflowConcept(previous.steps[0].node_type) === guidedWorkflowConcept(step.node_type)
+      ) {
+        previous.steps.push(step);
+      } else {
+        groups.push({ firstIndex: index, steps: [step] });
+      }
+      return groups;
+    },
+    [],
   );
-  return values.join(" + ") || "None";
 }
 
 function pipelineStepOverview(steps: PipelineStep[], targetLabel: string): string {
@@ -3278,6 +3317,12 @@ function LabelPipelineEditor({
         instruction: `Scan the complete image and box every visible ${selected.target_label}, including small or partially occluded instances.`,
         coordinate_format: "qwen_0_1000_xyxy",
         max_detections: 10,
+        grounding_assist: {
+          mode: "grid",
+          enabled: false,
+          rows: 10,
+          columns: 10,
+        },
       },
     };
     const crop: PipelineStep = {
@@ -3369,16 +3414,15 @@ function LabelPipelineEditor({
             <span>Runs once per image · used by {(stageConsumers(stage).length ? stageConsumers(stage) : composition.label_pipelines).map((pipeline) => pipeline.target_label).join(", ")}</span>
           </header>
           <div className="pipeline-step-row">
-            {stage.steps.map((step, stepIndex) => (
+            {guidedPipelineStepGroups(stage.steps).map((group) => (
               <PipelineStepCard
-                key={step.id}
-                step={step}
-                catalog={catalog}
+                key={group.steps[0].id}
+                step={group.steps[0]}
                 immutable={immutable}
                 shared
+                mergedCount={group.steps.length}
                 targetLabel={(stageConsumers(stage).length ? stageConsumers(stage) : composition.label_pipelines).map((pipeline) => pipeline.target_label).join(", ")}
-                onConfigure={() => setDrawer({ scope: "shared", stageIndex, stepIndex })}
-                onChange={(next) => updateSharedStep(stageIndex, stepIndex, next)}
+                onConfigure={() => setDrawer({ scope: "shared", stageIndex, stepIndex: group.firstIndex })}
               />
             ))}
           </div>
@@ -3412,23 +3456,20 @@ function LabelPipelineEditor({
                 [
                   "core.crop",
                   "core.filter",
-                  "core.map_label",
                   "core.attach_result",
-                  "core.attach_attribute",
                   "core.confidence_gate",
                   "classification.classify",
                   "vlm_detection.detect",
-                  "yolo_detection.detect",
                 ].includes(node.id),
               )
               .map((node) => (
                 <option key={node.id} value={node.id}>
-                  {node.display_name}
+                  {workflowNodeTitle(node.id)}
                 </option>
               ))}
           </select>
           <button onClick={addCatalogNode} disabled={immutable || !selected}>
-            Add Catalog Node
+            Add step
           </button>
           <button
             onClick={applyDetectCropTemplate}
@@ -3442,7 +3483,7 @@ function LabelPipelineEditor({
             }
             title="Internal graph: detector → filter → Core Crop; Detection remains the bbox result"
           >
-            Apply Detect &amp; Crop template
+            Add detection + crop
           </button>
           <button
             onClick={applyVlmDetectCropTemplate}
@@ -3457,7 +3498,7 @@ function LabelPipelineEditor({
             }
             title="VLM DetectionSet → Filter → Core Crop; bbox Commit remains on the filtered DetectionSet"
           >
-            Apply VLM Detect &amp; Crop
+            Use VLM detection + crop
           </button>
           </div></details>
         </div>
@@ -3469,18 +3510,15 @@ function LabelPipelineEditor({
             <span>{pipelineStepOverview(pipeline.steps, pipeline.target_label)}</span>
           </header>
           <div className="pipeline-step-row">
-            {pipeline.steps.map((step, stepIndex) => (
+            {guidedPipelineStepGroups(pipeline.steps).map((group) => (
               <PipelineStepCard
-                key={step.id}
-                step={step}
-                catalog={catalog}
+                key={group.steps[0].id}
+                step={group.steps[0]}
                 immutable={immutable}
+                mergedCount={group.steps.length}
                 targetLabel={pipeline.target_label}
-                onConfigure={() => setDrawer({ scope: "label", pipelineId: pipeline.id, stepIndex })}
-                onChange={(next) =>
-                  updatePipelineStep(pipeline.id, stepIndex, next)
-                }
-                onRemove={() => removePipelineStep(pipeline.id, stepIndex)}
+                onConfigure={() => setDrawer({ scope: "label", pipelineId: pipeline.id, stepIndex: group.firstIndex })}
+                onRemove={group.steps.length === 1 ? () => removePipelineStep(pipeline.id, group.firstIndex) : undefined}
               />
             ))}
           </div>
@@ -3510,201 +3548,35 @@ function LabelPipelineEditor({
 
 function PipelineStepCard({
   step,
-  catalog,
   immutable,
   shared = false,
+  mergedCount = 1,
   targetLabel,
-  onChange,
   onRemove,
   onConfigure,
 }: {
   step: PipelineStep;
-  catalog?: WorkflowCatalog;
   immutable: boolean;
   shared?: boolean;
+  mergedCount?: number;
   targetLabel?: string;
-  onChange: (step: PipelineStep) => void;
   onRemove?: () => void;
   onConfigure: () => void;
 }) {
-  const parameterNumber = (name: string) =>
-    typeof step.parameters[name] === "number"
-      ? String(step.parameters[name])
-      : "";
   return (
     <article className="pipeline-step-card">
-      <span className="pipeline-step-kind">{shared ? "shared" : step.kind}</span>
+      <span className="pipeline-step-kind">{shared ? "shared" : "Label pipeline"}</span>
       <strong>{pipelineStepTitle(step, targetLabel)}</strong>
       <small>{pipelineStepDescription(step, targetLabel)}</small>
       <div className="pipeline-card-summary">
-        <span>Model <strong>{step.model_binding?.model_id ?? "Core"}</strong></span>
-        <span>Input <strong>{pipelineInputSummary(step)}</strong></span>
-        <span>Output <strong>{Object.values(step.outputs).join(", ").replaceAll("_", " ") || "Annotation"}</strong></span>
-        <span>Threshold <strong>{String(step.parameters.threshold ?? step.parameters.minimum_confidence ?? "—")}</strong></span>
-        {step.fallback && <span>When uncertain <strong>continue at {step.fallback}</strong></span>}
+        <span>Runs with <strong>{step.model_binding?.model_id ?? "AnnotAgent Core"}</strong></span>
+        {mergedCount > 1 && <span>Guided action <strong>{mergedCount} coordinated operations</strong></span>}
         <Status status={immutable ? "published" : "valid"} />
       </div>
-      <button onClick={onConfigure}>{immutable ? "Inspect node" : "Configure node"}</button>
-      {Object.entries(step.inputs).map(([inputName, source]) => (
-        <div className="form-grid" key={inputName}>
-          <label>
-            {inputName} source node
-            <input
-              value={source.source === "image" ? "core.image_input" : source.step_id}
-              disabled={immutable || source.source === "image"}
-              onChange={(event) =>
-                source.source !== "image" &&
-                onChange({
-                  ...step,
-                  inputs: {
-                    ...step.inputs,
-                    [inputName]: { ...source, step_id: event.target.value },
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            Source port
-            <input
-              value={source.source === "image" ? "image" : source.port}
-              disabled={immutable || source.source === "image"}
-              onChange={(event) =>
-                source.source !== "image" &&
-                onChange({
-                  ...step,
-                  inputs: {
-                    ...step.inputs,
-                    [inputName]: { ...source, port: event.target.value },
-                  },
-                })
-              }
-            />
-          </label>
-        </div>
-      ))}
-      {step.model_binding && (
-        <label>
-          Model binding
-          <select
-            value={step.model_binding.model_id}
-            disabled={immutable}
-            onChange={(event) =>
-              onChange({
-                ...step,
-                model_binding: {
-                  ...step.model_binding!,
-                  model_id: event.target.value,
-                },
-              })
-            }
-          >
-            {(catalog?.model_registry ?? [])
-              .filter((model) =>
-                model.capabilities.includes(step.model_binding!.capability),
-              )
-              .map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.display_name}
-                </option>
-              ))}
-          </select>
-        </label>
-      )}
-      {step.node_type === "core.confidence_gate" && (
-        <label>
-          Confidence threshold
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            value={parameterNumber("threshold")}
-            disabled={immutable}
-            onChange={(event) =>
-              onChange({
-                ...step,
-                parameters: {
-                  ...step.parameters,
-                  threshold: Number(event.target.value),
-                },
-              })
-            }
-          />
-        </label>
-      )}
-      {step.node_type === "core.crop" && (
-        <label>
-          Crop padding
-          <input
-            type="number"
-            min="0"
-            max="0.5"
-            step="0.01"
-            value={parameterNumber("padding")}
-            disabled={immutable}
-            onChange={(event) =>
-              onChange({
-                ...step,
-                parameters: { ...step.parameters, padding: Number(event.target.value) },
-              })
-            }
-          />
-        </label>
-      )}
-      {step.node_type === "core.filter" && (
-        <label>
-          Minimum confidence
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            value={parameterNumber("minimum_confidence")}
-            disabled={immutable}
-            onChange={(event) =>
-              onChange({
-                ...step,
-                parameters: {
-                  ...step.parameters,
-                  minimum_confidence: Number(event.target.value),
-                },
-              })
-            }
-          />
-        </label>
-      )}
-      <label>
-        Fallback node
-        <input
-          value={step.fallback ?? ""}
-          placeholder="none"
-          disabled={immutable}
-          onChange={(event) =>
-            onChange({ ...step, fallback: event.target.value || undefined })
-          }
-        />
-      </label>
-      <label>
-        Parameters / class mapping (JSON)
-        <textarea
-          value={JSON.stringify(step.parameters, null, 2)}
-          disabled={immutable}
-          onChange={(event) => {
-            try {
-              onChange({
-                ...step,
-                parameters: JSON.parse(event.target.value) as Record<string, unknown>,
-              });
-            } catch {
-              // Keep the last valid structured configuration while JSON is incomplete.
-            }
-          }}
-        />
-      </label>
+      <button onClick={onConfigure}>{immutable ? "Inspect" : "Configure"}</button>
       {onRemove && step.kind !== "commit" && (
         <button className="danger" onClick={onRemove} disabled={immutable}>
-          Remove node
+          Remove step
         </button>
       )}
     </article>
@@ -3739,30 +3611,68 @@ function PipelineNodeDrawer({
   }, []);
   const updateNumber = (name: string, value: number) =>
     onChange({ ...step, parameters: { ...step.parameters, [name]: value } });
+  const isDetection = step.node_type.includes("detect") || step.node_type.includes("ground");
+  const rawGroundingAssist = step.parameters.grounding_assist;
+  const groundingAssist =
+    rawGroundingAssist && typeof rawGroundingAssist === "object"
+      ? (rawGroundingAssist as Record<string, unknown>)
+      : {};
+  const updateGroundingAssist = (patch: Record<string, unknown>) =>
+    onChange({
+      ...step,
+      parameters: {
+        ...step.parameters,
+        grounding_assist: {
+          mode: "grid",
+          enabled: Boolean(groundingAssist.enabled),
+          rows: Number(groundingAssist.rows ?? 10),
+          columns: Number(groundingAssist.columns ?? 10),
+          ...patch,
+        },
+      },
+    });
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <aside className="node-drawer" role="dialog" aria-modal="true" aria-labelledby="node-drawer-title">
         <header>
-          <div><span className="eyebrow">Pipeline node</span><h2 id="node-drawer-title">{step.node_type}</h2><code>{step.id}</code></div>
+          <div><span className="eyebrow">Pipeline step</span><h2 id="node-drawer-title">{pipelineStepTitle(step)}</h2></div>
           <button ref={closeRef} onClick={onClose} aria-label="Close node configuration">Close</button>
         </header>
         <Fact label="Status" value={immutable ? "Published · read only" : "Draft · editable"} />
-        <label>Input<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
-        <label>Output<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
         {step.model_binding && (
-          <label>Model binding<select value={step.model_binding.model_id} disabled={immutable} onChange={(event) => onChange({ ...step, model_binding: { ...step.model_binding!, model_id: event.target.value } })}>
+          <label>Model<select value={step.model_binding.model_id} disabled={immutable} onChange={(event) => onChange({ ...step, model_binding: { ...step.model_binding!, model_id: event.target.value } })}>
             {(catalog?.model_registry ?? []).filter((model) => model.capabilities.includes(step.model_binding!.capability)).map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
           </select></label>
+        )}
+        {Array.isArray(step.parameters.labels) && (
+          <label>Labels<input value={step.parameters.labels.join(", ")} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, labels: event.target.value.split(",").map((label) => label.trim()).filter(Boolean) } })} /></label>
+        )}
+        {isDetection && typeof step.parameters.object_description === "string" && (
+          <label>What should the model find?<textarea value={step.parameters.object_description} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, object_description: event.target.value } })} /></label>
         )}
         {step.node_type === "core.confidence_gate" && <label>Confidence threshold<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.threshold ?? 0)} disabled={immutable} onChange={(event) => updateNumber("threshold", Number(event.target.value))} /></label>}
         {step.node_type === "core.filter" && <label>Minimum confidence<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.minimum_confidence ?? 0)} disabled={immutable} onChange={(event) => updateNumber("minimum_confidence", Number(event.target.value))} /></label>}
         {step.node_type === "core.crop" && <label>Crop padding<input type="number" min="0" max="0.5" step="0.01" value={Number(step.parameters.padding ?? 0)} disabled={immutable} onChange={(event) => updateNumber("padding", Number(event.target.value))} /></label>}
-        <label>Fallback<input value={step.fallback ?? ""} disabled={immutable} placeholder="No fallback" onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
-        <label>Parameters and class mapping<textarea value={parameters} disabled={immutable} onChange={(event) => {
-          setParameters(event.target.value);
-          try { onChange({ ...step, parameters: JSON.parse(event.target.value) as Record<string, unknown> }); } catch { /* Keep editing until JSON is valid. */ }
-        }} /></label>
-        <details><summary>Advanced execution</summary>
+        {isDetection && (
+          <fieldset className="grounding-assist-fieldset">
+            <legend>Positioning assistance</legend>
+            <label className="checkbox-row"><input type="checkbox" checked={Boolean(groundingAssist.enabled)} disabled={immutable} onChange={(event) => updateGroundingAssist({ enabled: event.target.checked })} />Use a positioning grid to improve coordinate accuracy</label>
+            {Boolean(groundingAssist.enabled) && <div className="form-grid">
+              <label>Grid rows<input type="number" min="2" max="16" value={Number(groundingAssist.rows ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ rows: Number(event.target.value) })} /></label>
+              <label>Grid columns<input type="number" min="2" max="16" value={Number(groundingAssist.columns ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ columns: Number(event.target.value) })} /></label>
+            </div>}
+            <small>The original image remains the source of truth; the grid is sent only as a second calibration view.</small>
+          </fieldset>
+        )}
+        <details><summary>Expert details</summary>
+          <code>{step.node_type} · {step.id}</code>
+          <label>Input<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
+          <label>Output<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
+          <label>Fallback node<input value={step.fallback ?? ""} disabled={immutable} placeholder="No fallback" onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
+          <label>Raw parameters and class mapping<textarea value={parameters} disabled={immutable} onChange={(event) => {
+            setParameters(event.target.value);
+            try { onChange({ ...step, parameters: JSON.parse(event.target.value) as Record<string, unknown> }); } catch { /* Keep editing until JSON is valid. */ }
+          }} /></label>
           <Fact label="Kind" value={step.kind} />
           <Fact label="Retries" value={step.retry_policy.max_attempts} />
           <Fact label="Validators" value={step.validators.join(", ") || "None"} />
@@ -3821,6 +3731,12 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
       labels: [label],
       object_description: `Locate every visible ${label} and return a tight normalized bounding box.`,
       max_detections: 20,
+      grounding_assist: {
+        mode: "grid",
+        enabled: false,
+        rows: 10,
+        columns: 10,
+      },
     };
   return {};
 }

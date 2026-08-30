@@ -13,12 +13,22 @@ describe("guided workspace routing", () => {
   it("migrates legacy registry routes", () => {
     expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/");
     expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
+    expect(parseWorkspaceRoute("/providers").canonicalPath).toBe("/settings/models");
+    expect(parseWorkspaceRoute("/settings/providers").canonicalPath).toBe(
+      "/settings/models",
+    );
     expect(parseWorkspaceRoute("/skills").canonicalPath).toBe(
       "/settings/capabilities",
     );
     expect(
       parseWorkspaceRoute("/workflows", "?project_id=alpha").canonicalPath,
     ).toBe("/projects/alpha/build/pipeline");
+    expect(parseWorkspaceRoute("/artifacts/artifact-1").canonicalPath).toBe(
+      "/runs?view=debug&artifact=artifact-1",
+    );
+    expect(
+      parseWorkspaceRoute("/artifact-inspector", "?project=alpha").canonicalPath,
+    ).toBe("/runs?project_id=alpha&view=debug");
   });
 
   it("keeps project build context in the path", () => {

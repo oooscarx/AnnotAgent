@@ -2,7 +2,8 @@
 
 ## Offline release blockers
 
-None at M0. The repository builds and all 221 Rust tests pass.
+None through M2. The scoped M2 Rust suites and all Web checks pass; external models are not needed
+for the next constrained ScriptedMock and RuleBased work.
 
 ## Live-conditional
 
@@ -11,4 +12,3 @@ None at M0. The repository builds and all 221 Rust tests pass.
   Workers. Ports 8790, 8791 and 8792 were unavailable during the M0 audit.
 - No conversation credential or model weight will be read, restored, copied or committed.
 - Native browser zoom and hardware-specific model behavior remain manual checks.
-
