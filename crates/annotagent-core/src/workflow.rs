@@ -6,8 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactKind, LabelId, ModelRegistry, NodeRegistry, ProjectSchema, TaskId, TaskKind,
-    ValidationCatalog, VisionCapability, VisionModelDescriptor,
+    AgentBudget, ArtifactKind, DetectionFallbackQuery, DetectionRecoveryPolicy, EvidenceAcceptRule,
+    EvidenceFallbackRule, LabelId, ModelAvailabilityStatus, ModelRegistry, NodeRegistry,
+    ProjectSchema, TaskId, TaskKind, ValidationCatalog, VisionCapability, VisionModelDescriptor,
 };
 
 pub const WORKFLOW_SCHEMA_VERSION: u32 = 2;
@@ -539,6 +540,16 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
         model_registry: &ModelRegistry,
         constraints: &WorkflowConstraints,
     ) -> WorkflowSuggestion {
+        if let Some(suggestion) = suggest_detection_workflow(
+            project_id,
+            project_schema,
+            enabled_skills,
+            node_catalog,
+            model_registry,
+            constraints,
+        ) {
+            return suggestion;
+        }
         let preferred = constraints.preferred_model_id.clone().or_else(|| {
             model_registry
                 .models()
@@ -755,6 +766,628 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 "Add a human review gate after validation for conservative publishing.".to_owned(),
             ],
         }
+    }
+}
+
+fn suggest_detection_workflow(
+    project_id: &str,
+    project_schema: &ProjectSchema,
+    enabled_skills: &[String],
+    node_catalog: &NodeRegistry,
+    model_registry: &ModelRegistry,
+    constraints: &WorkflowConstraints,
+) -> Option<WorkflowSuggestion> {
+    let detection_tasks = project_schema
+        .tasks
+        .iter()
+        .filter(|task| task.kind == TaskKind::BoundingBox)
+        .collect::<Vec<_>>();
+    if detection_tasks.len() != project_schema.tasks.len() {
+        return None;
+    }
+    if detection_tasks
+        .iter()
+        .any(|task| !task.validators.is_empty() || !task.refiners.is_empty())
+    {
+        return None;
+    }
+    let first_task = detection_tasks.first()?;
+    let target_labels = detection_tasks
+        .iter()
+        .flat_map(|task| task.labels.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if target_labels.is_empty() {
+        return None;
+    }
+    let image_operation = find_node(node_catalog, None, None, ArtifactKind::Image, Some(false))?;
+    let open_operation = find_node(
+        node_catalog,
+        Some(VisionCapability::OpenVocabularyDetection),
+        Some(ArtifactKind::Image),
+        ArtifactKind::DetectionSet,
+        None,
+    )?;
+    let specialist_operation = find_node(
+        node_catalog,
+        Some(VisionCapability::ObjectDetection),
+        Some(ArtifactKind::Image),
+        ArtifactKind::DetectionSet,
+        None,
+    );
+    let recovery_operation = find_node(
+        node_catalog,
+        Some(VisionCapability::OpenVocabularyDetection),
+        Some(ArtifactKind::DetectionSet),
+        ArtifactKind::CandidateClusterSet,
+        None,
+    );
+    let models = model_registry.models();
+    let specialist_model = select_detection_model(
+        &models,
+        VisionCapability::ObjectDetection,
+        &target_labels,
+        constraints.preferred_model_id.as_deref(),
+    );
+    let open_model = select_detection_model(
+        &models,
+        VisionCapability::OpenVocabularyDetection,
+        &target_labels,
+        constraints.preferred_model_id.as_deref(),
+    );
+    let queries = target_labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| DetectionFallbackQuery {
+            id: format!("label-{index}"),
+            text: label.replace(['_', '-'], " "),
+            target_label: LabelId::from(label.as_str()),
+        })
+        .collect::<Vec<_>>();
+    let now = Utc::now();
+    let mut nodes = vec![WorkflowDraftNode {
+        id: "image".to_owned(),
+        node_type: image_operation.id.clone(),
+        kind: WorkflowNodeKind::ImageInput,
+        outputs: vec![port("image", ArtifactKind::Image, false)],
+        ..WorkflowDraftNode::default()
+    }];
+    let mut edges = Vec::new();
+    let mut rationale = vec![
+        "Selected a controlled detection Pipeline from registered capabilities and Project Labels."
+            .to_owned(),
+    ];
+    let mut warnings = vec![
+        "This recommendation is an editable Draft; it is never published automatically.".to_owned(),
+    ];
+    let mut unresolved_model_bindings = Vec::new();
+    let estimated_model_calls_per_image;
+    let final_artifact;
+    let final_node;
+
+    if let (Some(specialist_operation), Some(recovery_operation), Some(specialist)) = (
+        specialist_operation,
+        recovery_operation,
+        specialist_model.as_ref(),
+    ) {
+        let mut detector = detection_model_node(
+            "specialist",
+            &specialist_operation.id,
+            Some(specialist.id.clone()),
+            ArtifactKind::DetectionSet,
+            enabled_skills,
+        );
+        detector
+            .parameters
+            .insert("target_labels".to_owned(), serde_json::json!(target_labels));
+        let mut policy = DetectionRecoveryPolicy::default();
+        policy.initial_gate.accept_when = vec![EvidenceAcceptRule {
+            source: Some(specialist.id.clone()),
+            minimum_score: Some(project_schema.review.auto_accept_confidence.clamp(0.0, 1.0)),
+            no_domain_issue: true,
+            ..EvidenceAcceptRule::default()
+        }];
+        policy.initial_gate.fallback_when = vec![
+            EvidenceFallbackRule {
+                source: Some(specialist.id.clone()),
+                empty_specialist_result: true,
+                ..EvidenceFallbackRule::default()
+            },
+            EvidenceFallbackRule {
+                source: Some(specialist.id.clone()),
+                specialist_score_below: Some(
+                    project_schema.review.force_review_below.clamp(0.0, 1.0),
+                ),
+                ..EvidenceFallbackRule::default()
+            },
+            EvidenceFallbackRule {
+                source: Some(specialist.id.clone()),
+                domain_issue: true,
+                ..EvidenceFallbackRule::default()
+            },
+            EvidenceFallbackRule {
+                source: Some(specialist.id.clone()),
+                correction_risk_above: Some(0.7),
+                ..EvidenceFallbackRule::default()
+            },
+        ];
+        policy.fallback_estimated_cost = open_model
+            .as_ref()
+            .and_then(|model| model.pricing.per_request)
+            .unwrap_or_default();
+        let agent_budget = AgentBudget {
+            max_steps: 4,
+            max_tool_calls: 4,
+            max_tokens: None,
+            max_cost: constraints
+                .max_cost_per_image
+                .as_deref()
+                .and_then(|value| value.parse().ok()),
+        };
+        let mut recovery = WorkflowDraftNode {
+            id: "recovery".to_owned(),
+            node_type: recovery_operation.id.clone(),
+            kind: WorkflowNodeKind::Gate,
+            inputs: vec![
+                port("image", ArtifactKind::Image, false),
+                port("primary", ArtifactKind::DetectionSet, false),
+            ],
+            outputs: vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            model_binding: open_model.as_ref().map(|model| model.id.clone()),
+            required_skills: enabled_skills.to_vec(),
+            review_gate: true,
+            gate: ReviewGate {
+                required: true,
+                allow_manual_override: true,
+            },
+            resources: ResourceRequirements {
+                timeout_seconds: Some(project_schema.runtime.provider_request_timeout_seconds),
+                ..ResourceRequirements::default()
+            },
+            ..WorkflowDraftNode::default()
+        };
+        recovery.parameters.insert(
+            "queries".to_owned(),
+            serde_json::to_value(&queries).unwrap_or_else(|_| serde_json::json!([])),
+        );
+        recovery.parameters.insert(
+            "recovery_policy".to_owned(),
+            serde_json::to_value(policy).unwrap_or_else(|_| serde_json::json!({})),
+        );
+        recovery.parameters.insert(
+            "agent_budget".to_owned(),
+            serde_json::to_value(agent_budget).unwrap_or_else(|_| serde_json::json!({})),
+        );
+        if recovery.model_binding.is_none() {
+            unresolved_model_bindings.push(recovery.id.clone());
+            warnings.push(
+                "No available open-vocabulary fallback Model matches the Project Labels; bind one before publish."
+                    .to_owned(),
+            );
+        }
+        nodes.extend([detector, recovery]);
+        edges.extend([
+            edge("image", "image", "specialist", "image", None),
+            edge("image", "image", "recovery", "image", None),
+            edge("specialist", "detections", "recovery", "primary", None),
+        ]);
+        rationale.push(format!(
+            "Uses specialist Model {:?} first and reserves open-vocabulary Model {} only for empty, low-score, domain-risk, or correction-risk evidence.",
+            specialist.id,
+            open_model
+                .as_ref()
+                .map_or("<unresolved>", |model| model.id.as_str())
+        ));
+        rationale.push(
+            "High-confidence specialist evidence can finish without paying for the fallback call."
+                .to_owned(),
+        );
+        estimated_model_calls_per_image = 1;
+        final_artifact = ArtifactKind::CandidateClusterSet;
+        final_node = "recovery";
+    } else {
+        let mut grounding = detection_model_node(
+            "open_vocabulary",
+            &open_operation.id,
+            open_model.as_ref().map(|model| model.id.clone()),
+            ArtifactKind::DetectionSet,
+            enabled_skills,
+        );
+        grounding.parameters.insert(
+            "queries".to_owned(),
+            serde_json::to_value(&queries).unwrap_or_else(|_| serde_json::json!([])),
+        );
+        if grounding.model_binding.is_none() {
+            unresolved_model_bindings.push(grounding.id.clone());
+            warnings.push(
+                "No available open-vocabulary Model is bound; resolve the binding before publish."
+                    .to_owned(),
+            );
+        }
+        nodes.push(grounding);
+        edges.push(edge("image", "image", "open_vocabulary", "image", None));
+        rationale.push(
+            "No label-compatible specialist Model is available, so the Draft starts with open-vocabulary detection and requires review."
+                .to_owned(),
+        );
+        let verification = add_crop_verification(
+            &mut nodes,
+            &mut edges,
+            node_catalog,
+            &models,
+            enabled_skills,
+            first_task.id.as_str(),
+            &target_labels,
+            project_schema.review.force_review_below,
+        );
+        if verification {
+            rationale.push(
+                "Adds crop classification as bounded verification before human review.".to_owned(),
+            );
+            estimated_model_calls_per_image = 2;
+            final_artifact = ArtifactKind::AnnotationCandidateSet;
+            final_node = "attach_verification";
+        } else {
+            warnings.push(
+                "Crop verification was not added because a compatible Crop, Classification, Model, or Attach Result binding is unavailable."
+                    .to_owned(),
+            );
+            estimated_model_calls_per_image = 1;
+            final_artifact = ArtifactKind::DetectionSet;
+            final_node = "open_vocabulary";
+        }
+    }
+
+    let review = WorkflowDraftNode {
+        id: "review".to_owned(),
+        node_type: "review_gate".to_owned(),
+        kind: WorkflowNodeKind::HumanReview,
+        inputs: vec![port("candidates", final_artifact, true)],
+        outputs: vec![port("candidates", final_artifact, true)],
+        review_gate: true,
+        gate: ReviewGate {
+            required: true,
+            allow_manual_override: true,
+        },
+        ..WorkflowDraftNode::default()
+    };
+    let commit = WorkflowDraftNode {
+        id: "commit".to_owned(),
+        node_type: "commit".to_owned(),
+        kind: WorkflowNodeKind::Commit,
+        inputs: vec![port("candidates", final_artifact, true)],
+        ..WorkflowDraftNode::default()
+    };
+    nodes.extend([review, commit]);
+    if final_node == "recovery" {
+        edges.extend([
+            edge(
+                "recovery",
+                "candidates",
+                "commit",
+                "candidates",
+                Some("accept"),
+            ),
+            edge(
+                "recovery",
+                "candidates",
+                "review",
+                "candidates",
+                Some("review"),
+            ),
+            edge(
+                "recovery",
+                "candidates",
+                "review",
+                "candidates",
+                Some("reject"),
+            ),
+        ]);
+    } else {
+        edges.push(edge(
+            final_node,
+            artifact_port(final_artifact),
+            "review",
+            "candidates",
+            None,
+        ));
+    }
+    edges.push(edge("review", "candidates", "commit", "candidates", None));
+    if detection_tasks.len() > 1 {
+        warnings.push(
+            "The deterministic baseline uses the first bounding-box task for crop verification; split or edit the Draft for task-specific mappings."
+                .to_owned(),
+        );
+    }
+    if let Some(max_nodes) = constraints.max_nodes
+        && nodes.len() > max_nodes
+    {
+        warnings.push(format!(
+            "suggestion has {} nodes, above configured maximum {max_nodes}",
+            nodes.len()
+        ));
+    }
+    Some(WorkflowSuggestion {
+        draft: WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project_id.to_owned(),
+            name: format!("{} detection workflow", project_schema.project.name),
+            status: WorkflowDraftStatus::Suggested,
+            nodes,
+            edges,
+            enabled_skills: project_schema.project.enabled_skill_versions(),
+            resource_versions: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        },
+        rationale,
+        estimated_model_calls_per_image,
+        estimated_latency_ms: Some(estimated_model_calls_per_image as u64 * 1_200),
+        estimated_cost_tier: if estimated_model_calls_per_image == 1 {
+            "low"
+        } else {
+            "medium"
+        }
+        .to_owned(),
+        unresolved_model_bindings,
+        warnings,
+        alternatives: vec![
+            "Accuracy-first: audit selected samples with both detector capabilities and compare evidence."
+                .to_owned(),
+            "Cost-first: keep specialist-first routing and lower fallback frequency only after Dry Run evidence."
+                .to_owned(),
+        ],
+    })
+}
+
+fn find_node(
+    catalog: &NodeRegistry,
+    capability: Option<VisionCapability>,
+    accepts: Option<ArtifactKind>,
+    produces: ArtifactKind,
+    accepts_empty: Option<bool>,
+) -> Option<VisionModelDescriptorNode> {
+    catalog.nodes().into_iter().find_map(|node| {
+        let capability_matches =
+            capability.is_none_or(|capability| node.required_capabilities.contains(&capability));
+        let input_matches = accepts.is_none_or(|kind| node.accepts.contains(&kind));
+        let empty_matches =
+            accepts_empty.is_none_or(|expected| node.accepts.is_empty() == expected);
+        (capability_matches && input_matches && empty_matches && node.produces.contains(&produces))
+            .then_some(VisionModelDescriptorNode { id: node.id })
+    })
+}
+
+struct VisionModelDescriptorNode {
+    id: String,
+}
+
+fn select_detection_model<'a>(
+    models: &'a [VisionModelDescriptor],
+    capability: VisionCapability,
+    target_labels: &[String],
+    preferred: Option<&str>,
+) -> Option<&'a VisionModelDescriptor> {
+    let compatible = |model: &&VisionModelDescriptor| {
+        model.status == ModelAvailabilityStatus::Available
+            && model.capabilities.contains(&capability)
+            && (capability != VisionCapability::ObjectDetection
+                || model.output_contract.label_space.is_empty()
+                || target_labels
+                    .iter()
+                    .all(|label| model.output_contract.label_space.contains(label)))
+    };
+    models
+        .iter()
+        .filter(compatible)
+        .find(|model| preferred == Some(model.id.as_str()))
+        .or_else(|| models.iter().find(compatible))
+}
+
+fn detection_model_node(
+    id: &str,
+    operation: &str,
+    model_binding: Option<String>,
+    output: ArtifactKind,
+    enabled_skills: &[String],
+) -> WorkflowDraftNode {
+    WorkflowDraftNode {
+        id: id.to_owned(),
+        node_type: operation.to_owned(),
+        kind: WorkflowNodeKind::VisionModel,
+        inputs: vec![port("image", ArtifactKind::Image, false)],
+        outputs: vec![port(artifact_port(output), output, false)],
+        model_binding,
+        required_skills: enabled_skills.to_vec(),
+        retry_policy: RetryPolicy { max_attempts: 1 },
+        ..WorkflowDraftNode::default()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_crop_verification(
+    nodes: &mut Vec<WorkflowDraftNode>,
+    edges: &mut Vec<WorkflowEdge>,
+    node_catalog: &NodeRegistry,
+    models: &[VisionModelDescriptor],
+    enabled_skills: &[String],
+    task_id: &str,
+    labels: &[String],
+    minimum_confidence: f32,
+) -> bool {
+    let crop = find_node(
+        node_catalog,
+        None,
+        Some(ArtifactKind::DetectionSet),
+        ArtifactKind::CropSet,
+        None,
+    );
+    let classifier = find_node(
+        node_catalog,
+        Some(VisionCapability::Classification),
+        Some(ArtifactKind::CropSet),
+        ArtifactKind::ClassificationSet,
+        None,
+    );
+    let attach = find_node(
+        node_catalog,
+        None,
+        Some(ArtifactKind::ClassificationSet),
+        ArtifactKind::AnnotationCandidateSet,
+        None,
+    );
+    let classifier_model = models.iter().find(|model| {
+        model.status == ModelAvailabilityStatus::Available
+            && model
+                .capabilities
+                .contains(&VisionCapability::Classification)
+    });
+    let (Some(crop), Some(classifier), Some(attach), Some(classifier_model)) =
+        (crop, classifier, attach, classifier_model)
+    else {
+        return false;
+    };
+    nodes.push(WorkflowDraftNode {
+        id: "crop_verification".to_owned(),
+        node_type: crop.id,
+        kind: WorkflowNodeKind::Transform,
+        inputs: vec![
+            port("image", ArtifactKind::Image, false),
+            port("detections", ArtifactKind::DetectionSet, false),
+        ],
+        outputs: vec![port("crops", ArtifactKind::CropSet, false)],
+        parameters: BTreeMap::from([("padding".to_owned(), serde_json::json!(0.1))]),
+        ..WorkflowDraftNode::default()
+    });
+    nodes.push(WorkflowDraftNode {
+        id: "classify_crops".to_owned(),
+        node_type: classifier.id,
+        kind: WorkflowNodeKind::VisionModel,
+        inputs: vec![port("crops", ArtifactKind::CropSet, false)],
+        outputs: vec![port(
+            "classifications",
+            ArtifactKind::ClassificationSet,
+            false,
+        )],
+        model_binding: Some(classifier_model.id.clone()),
+        required_skills: enabled_skills.to_vec(),
+        parameters: BTreeMap::from([
+            ("labels".to_owned(), serde_json::json!(labels)),
+            (
+                "minimum_confidence".to_owned(),
+                serde_json::json!(minimum_confidence.clamp(0.0, 1.0)),
+            ),
+        ]),
+        retry_policy: RetryPolicy { max_attempts: 1 },
+        ..WorkflowDraftNode::default()
+    });
+    nodes.push(WorkflowDraftNode {
+        id: "attach_verification".to_owned(),
+        node_type: attach.id,
+        kind: WorkflowNodeKind::CandidateMerge,
+        inputs: vec![
+            port("detections", ArtifactKind::DetectionSet, false),
+            port("classifications", ArtifactKind::ClassificationSet, false),
+        ],
+        outputs: vec![port(
+            "candidates",
+            ArtifactKind::AnnotationCandidateSet,
+            false,
+        )],
+        parameters: BTreeMap::from([
+            ("task_id".to_owned(), serde_json::json!(task_id)),
+            (
+                "class_mapping".to_owned(),
+                serde_json::Value::Object(
+                    labels
+                        .iter()
+                        .map(|label| (label.clone(), serde_json::json!(label)))
+                        .collect(),
+                ),
+            ),
+        ]),
+        ..WorkflowDraftNode::default()
+    });
+    edges.extend([
+        edge("image", "image", "crop_verification", "image", None),
+        edge(
+            "open_vocabulary",
+            "detections",
+            "crop_verification",
+            "detections",
+            None,
+        ),
+        edge(
+            "crop_verification",
+            "crops",
+            "classify_crops",
+            "crops",
+            None,
+        ),
+        edge(
+            "open_vocabulary",
+            "detections",
+            "attach_verification",
+            "detections",
+            None,
+        ),
+        edge(
+            "classify_crops",
+            "classifications",
+            "attach_verification",
+            "classifications",
+            None,
+        ),
+    ]);
+    true
+}
+
+fn port(id: impl Into<String>, artifact_type: ArtifactKind, multiple: bool) -> NodePort {
+    NodePort {
+        id: id.into(),
+        artifact_type,
+        required: true,
+        multiple,
+    }
+}
+
+fn edge(
+    from_node: &str,
+    from_port: &str,
+    to_node: &str,
+    to_port: &str,
+    route: Option<&str>,
+) -> WorkflowEdge {
+    WorkflowEdge {
+        from_node: from_node.to_owned(),
+        from_port: from_port.to_owned(),
+        to_node: to_node.to_owned(),
+        to_port: to_port.to_owned(),
+        route: route.map(ToOwned::to_owned),
+    }
+}
+
+const fn artifact_port(kind: ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::Image => "image",
+        ArtifactKind::DetectionSet => "detections",
+        ArtifactKind::CandidateClusterSet | ArtifactKind::AnnotationCandidateSet => "candidates",
+        ArtifactKind::CropSet => "crops",
+        ArtifactKind::ClassificationSet => "classifications",
+        ArtifactKind::Classification
+        | ArtifactKind::BoundingBox
+        | ArtifactKind::Keypoints
+        | ArtifactKind::Polyline
+        | ArtifactKind::Polygon
+        | ArtifactKind::SemanticMask
+        | ArtifactKind::InstanceMask
+        | ArtifactKind::Attributes
+        | ArtifactKind::Relations => "artifacts",
     }
 }
 
@@ -1442,6 +2075,35 @@ mod tests {
         }
     }
 
+    struct AdvisorBackend;
+
+    #[async_trait]
+    impl VisionModelBackend for AdvisorBackend {
+        fn id(&self) -> &str {
+            "advisor-backend"
+        }
+
+        fn kind(&self) -> VisionBackendKind {
+            VisionBackendKind::Mock
+        }
+
+        fn capabilities(&self) -> Vec<VisionCapability> {
+            vec![
+                VisionCapability::OpenVocabularyDetection,
+                VisionCapability::ObjectDetection,
+                VisionCapability::Classification,
+            ]
+        }
+
+        async fn infer(
+            &self,
+            _request: VisionInferenceRequest,
+            _cancellation: CancellationToken,
+        ) -> CoreResult<VisionInferenceResponse> {
+            Ok(VisionInferenceResponse::default())
+        }
+    }
+
     fn node(id: &str, kind: WorkflowNodeKind) -> WorkflowDraftNode {
         WorkflowDraftNode {
             id: id.to_owned(),
@@ -1485,6 +2147,227 @@ mod tests {
                 .expect("node registration");
         }
         registry
+    }
+
+    fn detection_project() -> ProjectSchema {
+        ProjectSchema::from_yaml(
+            r"
+version: 1
+project:
+  name: Detection advisor fixture
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [target]
+review:
+  auto_accept_confidence: 0.85
+  force_review_below: 0.55
+export:
+  formats: [native]
+",
+        )
+        .expect("Project Schema")
+    }
+
+    fn detection_catalog() -> NodeRegistry {
+        let mut nodes = NodeRegistry::new();
+        for descriptor in [
+            VisionNodeDescriptor {
+                id: "image_input".to_owned(),
+                display_name: "Image Input".to_owned(),
+                required_capabilities: Vec::new(),
+                accepts: Vec::new(),
+                produces: vec![ArtifactKind::Image],
+                deterministic: true,
+            },
+            VisionNodeDescriptor {
+                id: "open_detect".to_owned(),
+                display_name: "Open Detection".to_owned(),
+                required_capabilities: vec![VisionCapability::OpenVocabularyDetection],
+                accepts: vec![ArtifactKind::Image],
+                produces: vec![ArtifactKind::DetectionSet],
+                deterministic: false,
+            },
+            VisionNodeDescriptor {
+                id: "specialist_detect".to_owned(),
+                display_name: "Specialist Detection".to_owned(),
+                required_capabilities: vec![VisionCapability::ObjectDetection],
+                accepts: vec![ArtifactKind::Image],
+                produces: vec![ArtifactKind::DetectionSet],
+                deterministic: false,
+            },
+            VisionNodeDescriptor {
+                id: "detection_recovery".to_owned(),
+                display_name: "Detection Recovery".to_owned(),
+                required_capabilities: vec![VisionCapability::OpenVocabularyDetection],
+                accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
+                produces: vec![ArtifactKind::CandidateClusterSet],
+                deterministic: false,
+            },
+            VisionNodeDescriptor {
+                id: "crop".to_owned(),
+                display_name: "Crop".to_owned(),
+                required_capabilities: Vec::new(),
+                accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
+                produces: vec![ArtifactKind::CropSet],
+                deterministic: true,
+            },
+            VisionNodeDescriptor {
+                id: "classify".to_owned(),
+                display_name: "Classify".to_owned(),
+                required_capabilities: vec![VisionCapability::Classification],
+                accepts: vec![ArtifactKind::CropSet],
+                produces: vec![ArtifactKind::ClassificationSet],
+                deterministic: false,
+            },
+            VisionNodeDescriptor {
+                id: "attach".to_owned(),
+                display_name: "Attach".to_owned(),
+                required_capabilities: Vec::new(),
+                accepts: vec![ArtifactKind::DetectionSet, ArtifactKind::ClassificationSet],
+                produces: vec![ArtifactKind::AnnotationCandidateSet],
+                deterministic: true,
+            },
+            VisionNodeDescriptor {
+                id: "review_gate".to_owned(),
+                display_name: "Review".to_owned(),
+                required_capabilities: Vec::new(),
+                accepts: all_artifact_kinds().to_vec(),
+                produces: all_artifact_kinds().to_vec(),
+                deterministic: true,
+            },
+            VisionNodeDescriptor {
+                id: "commit".to_owned(),
+                display_name: "Commit".to_owned(),
+                required_capabilities: Vec::new(),
+                accepts: all_artifact_kinds().to_vec(),
+                produces: all_artifact_kinds().to_vec(),
+                deterministic: true,
+            },
+        ] {
+            nodes.register(descriptor).expect("node");
+        }
+        nodes
+    }
+
+    fn detection_models(include_specialist: bool) -> ModelRegistry {
+        let mut models = ModelRegistry::new();
+        models
+            .register_backend(Arc::new(AdvisorBackend))
+            .expect("backend");
+        for (id, capability) in [
+            ("open-model", VisionCapability::OpenVocabularyDetection),
+            ("classifier-model", VisionCapability::Classification),
+        ] {
+            models
+                .register_model(VisionModelDescriptor {
+                    id: id.to_owned(),
+                    backend_id: "advisor-backend".to_owned(),
+                    capabilities: vec![capability],
+                    ..VisionModelDescriptor::default()
+                })
+                .expect("model");
+        }
+        if include_specialist {
+            models
+                .register_model(VisionModelDescriptor {
+                    id: "specialist-model".to_owned(),
+                    backend_id: "advisor-backend".to_owned(),
+                    capabilities: vec![VisionCapability::ObjectDetection],
+                    output_contract: crate::ModelOutputContract {
+                        label_space: vec!["target".to_owned()],
+                        ..crate::ModelOutputContract::default()
+                    },
+                    ..VisionModelDescriptor::default()
+                })
+                .expect("specialist model");
+        }
+        models
+    }
+
+    #[test]
+    fn advisor_suggests_open_vocabulary_crop_verification_for_cold_start() {
+        let project = detection_project();
+        let nodes = detection_catalog();
+        let models = detection_models(false);
+        let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
+            "project",
+            &project,
+            &[],
+            &nodes,
+            &models,
+            &WorkflowConstraints::default(),
+        );
+        assert_eq!(suggestion.draft.status, WorkflowDraftStatus::Suggested);
+        assert!(
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.id == "open_vocabulary")
+        );
+        assert!(
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.id == "crop_verification")
+        );
+        assert!(
+            suggestion
+                .rationale
+                .iter()
+                .any(|item| item.contains("No label-compatible specialist"))
+        );
+        let report = WorkflowStaticValidator.validate(&suggestion.draft, &nodes, &models);
+        assert!(report.valid, "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn advisor_suggests_specialist_first_with_bounded_recovery() {
+        let project = detection_project();
+        let nodes = detection_catalog();
+        let models = detection_models(true);
+        let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
+            "project",
+            &project,
+            &[],
+            &nodes,
+            &models,
+            &WorkflowConstraints {
+                max_cost_per_image: Some("0.10".to_owned()),
+                ..WorkflowConstraints::default()
+            },
+        );
+        let specialist = suggestion
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.id == "specialist")
+            .expect("specialist-first node");
+        assert_eq!(
+            specialist.model_binding.as_deref(),
+            Some("specialist-model")
+        );
+        let recovery = suggestion
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.id == "recovery")
+            .expect("Recovery Agent node");
+        assert_eq!(recovery.model_binding.as_deref(), Some("open-model"));
+        assert_eq!(suggestion.estimated_model_calls_per_image, 1);
+        assert_eq!(suggestion.draft.status, WorkflowDraftStatus::Suggested);
+        let policy: DetectionRecoveryPolicy =
+            serde_json::from_value(recovery.parameters["recovery_policy"].clone())
+                .expect("Recovery policy");
+        assert_eq!(policy.max_fallback_calls, 1);
+        let report = WorkflowStaticValidator.validate(&suggestion.draft, &nodes, &models);
+        assert!(report.valid, "{:#?}", report.issues);
     }
 
     #[test]

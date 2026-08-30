@@ -298,8 +298,63 @@ fn run_candidate_match(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         ));
     }
     let preserve_unmatched = boolean_parameter(context, "preserve_unmatched", true)?;
-    let left_labels = project_labels(sets[0])?;
-    let right_labels = project_labels(sets[1])?;
+    let artifact = match_detection_sets(
+        output_reference(context, "candidates", ArtifactKind::CandidateClusterSet)?,
+        sets[0],
+        sets[1],
+        minimum_iou,
+        preserve_unmatched,
+    )
+    .map_err(|error| DagNodeFailure::terminal("candidate_match_output_invalid", error))?;
+    let mut metadata = propagated_evidence_metadata(context)?;
+    metadata.insert(
+        "source_summaries".to_owned(),
+        serde_json::json!(
+            sets.iter()
+                .map(|set| serde_json::json!({
+                    "artifact_id": set.reference.artifact_id,
+                    "model_id": set.model_binding,
+                    "detection_count": set.detections.len(),
+                }))
+                .collect::<Vec<_>>()
+        ),
+    );
+    metadata.insert(
+        "candidate_match".to_owned(),
+        serde_json::json!({
+            "method": method,
+            "minimum_iou": minimum_iou,
+            "preserve_unmatched": preserve_unmatched,
+            "candidate_count": artifact.candidates.len(),
+        }),
+    );
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::CandidateClusterSet(artifact)],
+        metadata,
+        ..DagNodeOutput::default()
+    })
+}
+
+/// Combines two independent detector outputs while preserving every source score and provenance.
+/// The representative geometry is stable (left source first); this function never averages scores.
+pub fn match_detection_sets(
+    reference: ArtifactRef,
+    left: &DetectionSetArtifact,
+    right: &DetectionSetArtifact,
+    minimum_iou: f32,
+    preserve_unmatched: bool,
+) -> Result<CandidateClusterSetArtifact, String> {
+    left.validate()?;
+    right.validate()?;
+    if left.image_id != right.image_id {
+        return Err("DetectionSets must belong to the same image".to_owned());
+    }
+    if !(0.0..=1.0).contains(&minimum_iou) {
+        return Err("minimum_iou must be within [0,1]".to_owned());
+    }
+    let sets = [left, right];
+    let left_labels = project_labels(left)?;
+    let right_labels = project_labels(right)?;
     let mut left_matched = vec![false; sets[0].detections.len()];
     let mut right_matched = vec![false; sets[1].detections.len()];
     let mut selected = Vec::new();
@@ -424,53 +479,52 @@ fn run_candidate_match(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         )
         .collect::<Vec<_>>();
     let artifact = CandidateClusterSetArtifact {
-        reference: output_reference(context, "candidates", ArtifactKind::CandidateClusterSet)?,
+        reference,
         image_id: sets[0].image_id,
         source_detection_sets: sets.iter().map(|set| set.reference.clone()).collect(),
         validation_state: ArtifactValidationState::Unvalidated,
         candidates,
     };
-    artifact
-        .validate()
-        .map_err(|error| DagNodeFailure::terminal("candidate_match_output_invalid", error))?;
-    let mut metadata = propagated_evidence_metadata(context)?;
-    metadata.insert(
-        "source_summaries".to_owned(),
-        serde_json::json!(
-            sets.iter()
-                .map(|set| serde_json::json!({
-                    "artifact_id": set.reference.artifact_id,
-                    "model_id": set.model_binding,
-                    "detection_count": set.detections.len(),
-                }))
-                .collect::<Vec<_>>()
-        ),
-    );
-    metadata.insert(
-        "candidate_match".to_owned(),
-        serde_json::json!({
-            "method": method,
-            "minimum_iou": minimum_iou,
-            "preserve_unmatched": preserve_unmatched,
-            "candidate_count": artifact.candidates.len(),
-        }),
-    );
-    Ok(DagNodeOutput {
-        pipeline_artifacts: vec![PipelineArtifact::CandidateClusterSet(artifact)],
-        metadata,
-        ..DagNodeOutput::default()
-    })
+    artifact.validate()?;
+    Ok(artifact)
 }
 
-fn project_labels(set: &DetectionSetArtifact) -> Result<Vec<LabelId>, DagNodeFailure> {
+/// Projects a single detector output into evidence clusters without inventing a second source.
+pub fn cluster_single_detection_set(
+    reference: ArtifactRef,
+    set: &DetectionSetArtifact,
+) -> Result<CandidateClusterSetArtifact, String> {
+    set.validate()?;
+    let labels = project_labels(set)?;
+    let artifact = CandidateClusterSetArtifact {
+        reference,
+        image_id: set.image_id,
+        source_detection_sets: vec![set.reference.clone()],
+        validation_state: ArtifactValidationState::Unvalidated,
+        candidates: set
+            .detections
+            .iter()
+            .zip(labels)
+            .enumerate()
+            .map(|(index, (detection, target_label))| CandidateCluster {
+                id: format!("cluster-{index:04}"),
+                target_label,
+                representative_bbox: detection.bbox,
+                members: detection_evidence(set, detection),
+                agreement: CandidateAgreement::SingleSource,
+            })
+            .collect(),
+    };
+    artifact.validate()?;
+    Ok(artifact)
+}
+
+fn project_labels(set: &DetectionSetArtifact) -> Result<Vec<LabelId>, String> {
     set.detections
         .iter()
         .map(|detection| {
             detection.project_label.clone().ok_or_else(|| {
-                DagNodeFailure::terminal(
-                    "unmapped_detection_label",
-                    "Match Detection Sets requires every Detection to carry a Project Label",
-                )
+                "Match Detection Sets requires every Detection to carry a Project Label".to_owned()
             })
         })
         .collect()
@@ -535,7 +589,7 @@ fn rect_iou(left: annotagent_core::NormalizedRect, right: annotagent_core::Norma
     if union <= 0.0 {
         0.0
     } else {
-        intersection / union
+        (intersection / union).clamp(0.0, 1.0)
     }
 }
 
@@ -785,6 +839,25 @@ fn decide_evidence(
         )
     };
     evidence_report(EvidenceGateDecision::Review, vec![reason], input)
+}
+
+/// Evaluates an Evidence Gate outside the fixed Core node, for example inside a bounded Recovery
+/// Agent. Source counts are explicit so an empty specialist result remains distinguishable from a
+/// detector that was never run.
+#[must_use]
+pub fn evaluate_detection_evidence(
+    input: &EvidenceGateInput,
+    config: &EvidenceGateConfig,
+    source_counts: &[(String, usize)],
+) -> EvidenceGateReport {
+    let source_summaries = source_counts
+        .iter()
+        .map(|(model_id, detection_count)| EvidenceSourceSummary {
+            model_id: model_id.clone(),
+            detection_count: *detection_count,
+        })
+        .collect::<Vec<_>>();
+    decide_evidence(input, config, &source_summaries)
 }
 
 fn reject_reason(

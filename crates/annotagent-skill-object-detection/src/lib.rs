@@ -628,11 +628,19 @@ impl PipelineModelBackend for MockObjectDetectionBackend {
                 .unwrap_or(1)
                 .min(100) as usize
         };
-        let model_label = request
+        let configured_model_label = request
             .parameters
             .get("mock_model_label")
             .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned);
+        let requested_label = request
+            .parameters
+            .get("target_labels")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|labels| labels.first())
+            .and_then(serde_json::Value::as_str)
             .unwrap_or("target");
+        let model_label = configured_model_label.as_deref().unwrap_or(requested_label);
         let confidence = request
             .parameters
             .get("mock_confidence")

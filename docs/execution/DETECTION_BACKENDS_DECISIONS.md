@@ -239,3 +239,37 @@ An accepted/reviewed Candidate Cluster may project its deterministic representat
 an Annotation. A single-source candidate may carry that source's comparable confidence. A
 multi-source candidate records all source model IDs but leaves Annotation confidence absent; the
 complete Candidate Cluster remains the authoritative evidence Artifact.
+
+## DB-027 — Recovery is one bounded capability call, not a fixed fallback chain
+
+`agent.detection_recovery` receives one primary DetectionSet and evaluates the same typed Evidence
+Gate facts used by the deterministic Core node. Only an explicit Fallback decision may reserve and
+invoke the bound `OpenVocabularyDetection` backend. The Alpha policy permits one fallback request;
+the result is matched once and evaluated once. A second Fallback decision becomes Human Review.
+
+Disabled policy, missing registry-bounded queries, insufficient step/tool/cost budget and backend
+failure preserve primary evidence and stop at Review. Rejected: an unconditional specialist → open
+vocabulary chain, recursive model calls, increasing an Agent step limit to hide non-convergence, or
+discarding a usable primary result when the optional Worker is unavailable.
+
+## DB-028 — Advisor selects capabilities and availability, never model brands
+
+For detection-only Projects without Domain Validator/Refiner policy, the deterministic Advisor
+compares Project Labels with available Object Detection model label spaces. A compatible
+specialist produces specialist-first execution plus conditional Recovery. Without one, the Advisor
+uses available Open Vocabulary Detection and adds Crop Classification verification when every
+typed node/model binding exists. Registry identities remain opaque data.
+
+The recommendation is always an editable `Suggested` Draft. Missing bindings are reported rather
+than substituted, and the normal specialist estimate counts only its first call because fallback
+is conditional. Mixed-task and Domain-specific planning stays on the existing path until its own
+capability policy is implemented. Rejected: hard-coding concrete detector names in Core or silently
+publishing/running an Advisor result.
+
+## DB-029 — Agent Trace contains decision evidence, not private reasoning
+
+Recovery persists an `AgentSession` containing structured tool names, source counts, validation
+issue counts, correction-risk presence, reason codes, model capability/identity, query IDs, elapsed
+time, output counts, budget usage and the explicit stop condition. Query text, image bytes, raw
+Worker responses, prompts and hidden reasoning are excluded. Application persistence rebinds the
+session to the stable Project identity so Run inspection and Project history share the same trace.

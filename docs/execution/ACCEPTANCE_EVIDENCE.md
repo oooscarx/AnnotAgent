@@ -816,3 +816,31 @@ this bounded sample).
    and the full E2E suite pass (9 passed, 1 fixture-dependent test skipped).
 
 Review priority-rendering status: `PASS`.
+
+## Open-Vocabulary + Specialist Detection M7 — 2026-08-30
+
+1. Core Advisor tests build two registry-valid `Suggested` Drafts without model-brand branching:
+   open-vocabulary → Crop verification → Review for cold start, and specialist → bounded Recovery
+   for an available model whose declared label space covers the Project Label.
+2. Recovery Runtime tests prove accepted 0.93 specialist evidence makes zero fallback calls; an
+   empty specialist DetectionSet makes exactly one call; a structured Domain Validation Issue also
+   requests fallback; and a cost reservation above remaining budget makes zero calls and routes
+   Review.
+3. A low specialist score plus geometrically agreeing score-less open-vocabulary evidence changes
+   the initial Evidence decision from `fallback` to `accept`. Independent score semantics and boxes
+   remain in Candidate Cluster evidence and are never averaged.
+4. The Recovery policy has explicit step/tool/cost budgets, maximum fallback calls, action and stop
+   condition. Backend error, disabled policy, missing queries or another requested fallback preserve
+   the primary result and stop at Human Review rather than entering another model loop.
+5. The exact published DAG integration covers both branches. The primary fast path commits one
+   annotation with `fallback_invoked=false`; an edited Mock-empty specialist Run invokes the
+   registered Mock Open Vocabulary backend once and persists the review result.
+6. Application history persists the Recovery `AgentSession`. Its structured steps expose reason
+   codes, query IDs, model/capability, counts, timing, final decision and stop condition; serialized
+   trace tests confirm no hidden chain-of-thought field, query text, image bytes or raw Worker body.
+7. `cargo test --workspace --all-features` passes 216 Rust tests and doc tests. Strict workspace
+   Clippy/build, Web typecheck, all 34 Web tests, production Web build, Python syntax checks,
+   domain-brand boundary scan and diff secret scan pass.
+
+Detection Advisor and bounded Recovery status: `PASS`. Real LocateAnything/RF-DETR inference
+remains `LIVE-CONDITIONAL`; no API key, model weight, download or remote mutation was used.

@@ -6,11 +6,11 @@ use std::{
 use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
     AnnotationSource, AnnotationValidator, ArtifactId, ArtifactKind, ArtifactProvenance,
-    ArtifactRole, ArtifactValidationState, AttributeValue, ImageArtifact, ImageId, IssueSeverity,
-    Keypoint, LabelId, MaskEncoding, NormalizedPoint, NormalizedRect, PipelineArtifact,
-    PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue, ReviewStatus,
-    RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind,
-    TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
+    ArtifactRole, ArtifactValidationState, AttributeValue, DetectionRecoveryReport, ImageArtifact,
+    ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, NormalizedPoint, NormalizedRect,
+    PipelineArtifact, PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue,
+    ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
     ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
     VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
     WorkflowNodeKind,
@@ -22,10 +22,10 @@ use annotagent_provider::{
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
     CORE_CANDIDATE_MATCH, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_EVIDENCE_GATE, CORE_FILTER,
-    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CorePipelineRunner, DagCheckpoint, DagExecutionRequest,
-    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
-    DagRunResult, DagRunStatus, ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl,
-    RunRecord, RuntimeStore,
+    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
+    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
+    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -148,30 +148,39 @@ impl PublishedWorkflowRuntime {
             .model_binding
             .clone()
             .unwrap_or_else(|| "mock-open-vocabulary".to_owned());
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-            if model_id == "mock-open-vocabulary" {
-                Arc::new(MockGroundingBackend::new(
-                    "workspace-mock-open-vocabulary",
-                    capability,
-                )?)
-            } else {
-                let worker = self
-                    .detection_workers
-                    .iter()
-                    .find(|worker| worker.model_id == model_id)
-                    .ok_or_else(|| anyhow!("unknown Detection Worker model {model_id:?}"))?;
-                if !worker.enabled {
-                    bail!("Detection Worker model {model_id:?} is disabled in Settings");
-                }
-                Arc::new(HttpVisionDetectionBackend::new(
-                    worker.http_config(),
-                    capability,
-                )?)
-            };
+        let backend = self.grounding_backend(&model_id, capability)?;
         Ok(Arc::new(GroundingSkillRunner::new(
             backend,
             model_id,
             request.model_image.clone(),
+        )?))
+    }
+
+    fn grounding_backend(
+        &self,
+        model_id: &str,
+        capability: annotagent_core::VisionCapability,
+    ) -> Result<Arc<dyn annotagent_core::PipelineModelBackend>> {
+        if model_id == "mock-open-vocabulary" {
+            return Ok(Arc::new(MockGroundingBackend::new(
+                "workspace-mock-open-vocabulary",
+                capability,
+            )?));
+        }
+        let worker = self
+            .detection_workers
+            .iter()
+            .find(|worker| worker.model_id == model_id)
+            .ok_or_else(|| anyhow!("unknown Detection Worker model {model_id:?}"))?;
+        if !worker.enabled {
+            bail!("Detection Worker model {model_id:?} is disabled in Settings");
+        }
+        if !worker.expected_capabilities.contains(&capability) {
+            bail!("Detection Worker model {model_id:?} does not provide {capability:?}");
+        }
+        Ok(Arc::new(HttpVisionDetectionBackend::new(
+            worker.http_config(),
+            capability,
         )?))
     }
 
@@ -323,6 +332,26 @@ impl PublishedWorkflowRuntime {
                             request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
+                        false,
+                    )?;
+                }
+                DETECTION_RECOVERY_OPERATION => {
+                    let model_id = node.model_binding.as_deref().ok_or_else(|| {
+                        anyhow!("Detection Recovery requires an open-vocabulary Model binding")
+                    })?;
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(
+                            DetectionRecoveryAgent::new(
+                                self.grounding_backend(
+                                    model_id,
+                                    annotagent_core::VisionCapability::OpenVocabularyDetection,
+                                )?,
+                                model_id,
+                                request.model_image.clone(),
+                            )
+                            .map_err(|error| anyhow!(error))?,
+                        ),
                         false,
                     )?;
                 }
@@ -585,6 +614,17 @@ impl PublishedWorkflowRuntime {
             {
                 issues.extend(metadata_issues);
             }
+            if let Some(mut report) = result
+                .checkpoint
+                .node_outputs
+                .get(&trace.node_id)
+                .and_then(|output| output.metadata.get("recovery_agent"))
+                .cloned()
+                .and_then(|value| serde_json::from_value::<DetectionRecoveryReport>(value).ok())
+            {
+                report.session.project_id = Some(self.workflow.project_id.clone());
+                self.store.save_agent_session(&report.session)?;
+            }
             let event_kind = match trace.status {
                 DagNodeStatus::Failed => RunEventKind::TaskFailed,
                 DagNodeStatus::AwaitingReview => RunEventKind::ReviewRequested,
@@ -751,7 +791,7 @@ impl PublishedWorkflowRuntime {
                 matches!(
                     node.kind,
                     WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-                )
+                ) || node.node_type == DETECTION_RECOVERY_OPERATION
             })
             .map(|node| node.id.as_str())
             .collect::<std::collections::BTreeSet<_>>();
@@ -983,6 +1023,26 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             &request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
+                        false,
+                    )?;
+                }
+                DETECTION_RECOVERY_OPERATION => {
+                    let model_id = node.model_binding.as_deref().ok_or_else(|| {
+                        anyhow!("Detection Recovery requires an open-vocabulary Model binding")
+                    })?;
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(
+                            DetectionRecoveryAgent::new(
+                                self.grounding_backend(
+                                    model_id,
+                                    annotagent_core::VisionCapability::OpenVocabularyDetection,
+                                )?,
+                                model_id,
+                                request.model_image.clone(),
+                            )
+                            .map_err(|error| anyhow!(error))?,
+                        ),
                         false,
                     )?;
                 }

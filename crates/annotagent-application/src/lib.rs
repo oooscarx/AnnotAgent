@@ -974,6 +974,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             produces: vec![ArtifactKind::CandidateClusterSet],
             deterministic: true,
         },
+        annotagent_runtime::detection_recovery_node_descriptor(),
     ] {
         nodes.register(descriptor)?;
     }
@@ -7239,7 +7240,7 @@ export:
             .store
             .history(started.run_id)
             .expect("persisted history");
-        assert_eq!(history.artifacts.len(), 1);
+        assert!(history.artifacts.is_empty());
         assert_eq!(history.annotations.len(), 1);
         let snapshot: serde_json::Value = serde_json::from_str(
             history
@@ -7252,6 +7253,27 @@ export:
         assert_eq!(snapshot["engine"], json!("published_dag_runtime"));
         assert!(!snapshot["checkpoint"].is_null());
         assert!(!snapshot.to_string().contains("legacy_agent_runtime"));
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("Detection Recovery inspection");
+        let recovery = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "recovery")
+            .expect("Recovery Agent node");
+        assert_eq!(
+            recovery.metadata["recovery_agent"]["fallback_invoked"],
+            false
+        );
+        assert_eq!(
+            recovery.metadata["recovery_agent"]["stop_condition"],
+            "primary_accepted"
+        );
+        let sessions = application
+            .list_agent_sessions("generic-dag")
+            .expect("persisted Detection Recovery trace");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].kind, AgentKind::AnnotationRecovery);
         assert!(
             history
                 .events
@@ -7259,6 +7281,81 @@ export:
                 .any(|event| event.kind == RunEventKind::ArtifactCommitted
                     || event.kind == RunEventKind::ArtifactCreated)
         );
+    }
+
+    #[tokio::test]
+    async fn published_recovery_invokes_open_vocabulary_only_for_empty_specialist_evidence() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("generic-fallback", GENERIC_BBOX_PROJECT)
+            .expect("generic Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary
+                .path()
+                .join("generic-fallback/images/component.png"),
+        )
+        .expect("generic image");
+        let settings = load_settings(None).expect("settings");
+        let mut suggestion = application
+            .suggest_workflow(
+                "generic-fallback",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("specialist-first Draft");
+        suggestion
+            .draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist node")
+            .parameters
+            .insert("mock_empty".to_owned(), json!(true));
+        let draft = application
+            .save_workflow_draft(suggestion.draft)
+            .expect("save fallback fixture");
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish fallback Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("generic-fallback/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("generic-fallback-run"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start fallback Run");
+        let result = application.wait_run(started.run_id).await.expect("DAG Run");
+        assert_eq!(result.status, RunStatus::CompletedWithReview);
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("Recovery inspection");
+        let recovery = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "recovery")
+            .expect("Recovery Agent node");
+        assert_eq!(
+            recovery.metadata["recovery_agent"]["fallback_invoked"],
+            true
+        );
+        assert_eq!(
+            recovery.metadata["recovery_agent"]["fallback_call_count"],
+            1
+        );
+        assert_eq!(
+            recovery.metadata["recovery_agent"]["initial_evidence"]["decision"],
+            "fallback"
+        );
+        let sessions = application
+            .list_agent_sessions("generic-fallback")
+            .expect("persisted Recovery trace");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].steps.len(), 2);
+        assert_eq!(sessions[0].steps[1].tool_name, "invoke_fallback_detection");
     }
 
     #[tokio::test]

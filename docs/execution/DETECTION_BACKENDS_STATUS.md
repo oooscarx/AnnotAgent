@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M6 — Candidate Match, Evidence Gate and explainable evidence UI (complete)
+M7 — Registry-bounded Advisor and evidence-driven Recovery Agent (complete)
 
 ## Completed
 
@@ -115,21 +115,45 @@ M6 — Candidate Match, Evidence Gate and explainable evidence UI (complete)
 - Added inspection API route/metadata fields, Candidate Cluster bbox preview, and a responsive Run
   Debug Evidence Decision card showing decision, reasons, source models, candidates and domain
   issue count. Multi-source Annotation projection leaves aggregate confidence unset.
+- Added a capability-driven deterministic Advisor path for detection-only Projects. It inspects
+  Project Labels, exact specialist label space, Model availability and configured cost limits.
+  Cold start produces Open Vocabulary → Crop Classification → Attach Result → Review when every
+  binding exists; a compatible specialist produces specialist-first execution with a conditional
+  Recovery node. Both results remain editable `Suggested` Drafts.
+- Added versioned, domain-neutral Detection Recovery request/policy/report contracts with explicit
+  query bindings, Agent budget, maximum fallback calls, estimated fallback cost, IoU policy,
+  initial/final Evidence Gates, action and stop condition.
+- Added the executable `agent.detection_recovery` Runtime node. It accepts Image + one primary
+  DetectionSet, projects single-source evidence, and calls a Registry-bound Open Vocabulary
+  backend only after an explicit `fallback` decision. A high specialist score completes with zero
+  fallback calls.
+- Empty specialist results, low comparable score, Validation Issues and Correction Risk can
+  request fallback. User-disabled fallback, missing queries, insufficient step/tool/cost budget,
+  Worker error or exhausted call limit preserve primary evidence and route to Human Review.
+- Recovery makes at most one fallback request in the Alpha policy, matches its result without
+  averaging scores, re-evaluates final evidence, and can change an initial `fallback` decision to
+  `accept`. It never performs an unbounded model loop.
+- Persisted Agent Trace contains only structured inputs, result counts, reason codes, timing,
+  selected capability/model and stop facts. It excludes image bytes, query text and hidden
+  reasoning. Application history persists the session beside the Run and accounts Recovery cost.
+- Mock unit/integration tests cover the high-score fast path, empty-result fallback, domain-risk
+  fallback, insufficient-cost Review, changed decision after agreement, one-call stop, persisted
+  trace and exact published Runtime execution.
 
 ## In progress
 
-- None. M6 is ready for its independent local commit.
+- None. M7 is ready for its independent local commit.
 
 ## Next step
 
-M7 — implement Registry-bounded cold-start/specialist Workflow Advisor strategy and the bounded,
-evidence-driven Recovery Agent with budget and stop conditions.
+M8 — add the capability-bound RoboCup Ball hybrid template, Domain validation/correction policy,
+and the required offline scenario matrix without introducing a concrete model branch in Core.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 207 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 216 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 34 tests |
@@ -142,7 +166,7 @@ evidence-driven Recovery Agent with budget and stop conditions.
 
 ## Latest local commit
 
-This document's containing M6 commit: `feat(runtime): combine detector evidence without fabricating scores`
+This document's containing M7 commit: `feat(agent): select open-vocabulary fallbacks from detection evidence`
 
 ## Audited baseline
 
@@ -176,10 +200,10 @@ This document's containing M6 commit: `feat(runtime): combine detector evidence 
 
 ## Release Blocking remaining
 
-The matrix contains 67 `PASS`, 21 `OPEN`, and one `LIVE-CONDITIONAL` row after M6. Matching,
-evidence-aware decisions and the minimum Expert inspection surface now pass; Advisor/Recovery,
-cache-specific proof, Guided Results/Review and RoboCup hybrid policy remain scheduled work. Real
-five-image GPU smokes remain explicitly live-conditional and are not represented by Mock fixtures.
+The matrix contains 75 `PASS`, 13 `OPEN`, and one `LIVE-CONDITIONAL` row after M7. Advisor and
+bounded per-image Recovery now pass; cache-specific proof, Guided Results/Review and the RoboCup
+hybrid policy remain scheduled work. Real five-image GPU smokes remain explicitly
+live-conditional and are not represented by Mock fixtures.
 
 ## Live-conditional items
 

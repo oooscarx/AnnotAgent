@@ -2,7 +2,7 @@
 
 Updated: 2026-08-30
 
-These are honest boundaries after M6. Open Release work remains in
+These are honest boundaries after M7. Open Release work remains in
 `DETECTION_BACKENDS_ACCEPTANCE.md`.
 
 - Detection Worker profiles are persisted in local Settings and can be enabled, pointed at an
@@ -10,13 +10,20 @@ These are honest boundaries after M6. Open Release work remains in
   the product currently supplies curated disabled-by-default LocateAnything and RF-DETR profiles.
 - Match Detection Sets currently accepts exactly two DetectionSets, as required by the Alpha
   contract. It does not perform a global assignment across three or more detector outputs.
-- Evidence Gate selects one route for the image-level Candidate Cluster set. Per-candidate mixed
-  routing and automatic fallback execution belong to the M7 Recovery policy.
+- Evidence Gate and Recovery select one route for the image-level Candidate Cluster set.
+  Per-candidate mixed routing is not implemented.
 - Run Debug explains the persisted decision and previews representative boxes, but Results/Review
   do not yet show the full evidence comparison or let a reviewer choose either source box; those
   Guided product surfaces remain M9 work.
-- Existing static fallback support is not yet the bounded evidence-aware Recovery Agent required
-  by M7.
+- The Alpha Recovery policy permits at most one open-vocabulary fallback call. It does not
+  recursively call more detectors or dynamically invoke Crop Classification; unresolved evidence
+  is intentionally sent to Human Review.
+- The deterministic Advisor applies its detection strategy only to detection-only Projects without
+  Domain Validators/Refiners. Mixed-task and Domain Projects retain their existing Advisor path
+  until the capability-bound RoboCup work in M8.
+- Model availability and descriptor label space are considered. Historical Dry Run metrics are
+  available to the richer Advisor input contract but are not yet used by this deterministic
+  baseline; M9 will present measured recommendation evidence in Guided UX.
 - Evidence rule lists are editable as structured node JSON. Purpose-built Guided controls and
   rule summaries remain M9 work.
 - Detection Worker v1, its hardened HTTP adapter, Settings registration, Open Vocabulary and

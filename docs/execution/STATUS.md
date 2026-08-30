@@ -1,6 +1,23 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-28 CST
+Last updated: 2026-08-30 CST
+
+## Open-Vocabulary + Specialist Detection M7 — 2026-08-30
+
+- Capability-driven Advisor recommendations now distinguish detection cold start from a
+  label-compatible available specialist. Cold start adds open-vocabulary detection, bounded Crop
+  verification and Review when every typed binding exists; specialist-first adds conditional
+  Recovery. Suggestions remain editable Drafts and are never auto-published.
+- The published Runtime now executes a domain-neutral Detection Recovery Agent. High-confidence
+  specialist evidence skips fallback; empty, low-score, Domain Validation or correction-risk facts
+  may invoke one registered Open Vocabulary backend call.
+- Step/tool/cost budgets are checked before the call. Disabled policy, missing queries,
+  insufficient budget or Worker failure preserve primary evidence and stop at Human Review.
+- Candidate matching and final Evidence Gate can change the initial fallback decision without
+  averaging independent scores. Persisted Agent Trace records reason codes, counts, timing,
+  capability/model identity, budget and stop condition, never hidden reasoning or image bytes.
+- Mock unit and exact published-Run integration tests cover the clean fast path, fallback path,
+  changed decision, Domain risk, budget stop and durable trace. M8 is the next active milestone.
 
 ## Current scope reset — RoboCup Ball only
 
@@ -18,7 +35,7 @@ The previous `qwen-live` and `robocup-demo` Projects, previous B-Human exports, 
 and `e2e-guided` test residue were removed from the active workspace and placed in the recoverable
 `workspace/.annotagent/deleted-projects/2026-08-28/` archive.
 
-## Current milestone
+## Previous Label Pipeline milestone
 
 Milestone LP5 — complete: Project Label authoring, Shared Stage/per-Label Pipeline GUI, controlled
 Node Catalog editing, Detect & Crop composition, bbox/crop preview, Inspector, Replay, and the full

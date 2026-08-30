@@ -116,6 +116,29 @@ below:
 - `cargo test --workspace --all-features` passes 207 tests; strict workspace Clippy/build, all 34 Web
   tests, Web typecheck/build and diff checks pass.
 
+## M7 Advisor and Recovery Agent evidence
+
+- The deterministic Advisor selects nodes and models from registered capabilities, availability
+  and exact specialist label space. Core tests prove an open-vocabulary cold-start Draft with Crop
+  verification and a specialist-first Draft with a conditional Recovery node.
+- Suggestions remain `Suggested` Drafts and carry unresolved bindings/warnings when an executable
+  model is unavailable. The specialist-first estimate counts one normal model call rather than
+  pretending the fallback always runs.
+- `agent.detection_recovery` consumes Image + primary DetectionSet, initial/final Evidence Gate
+  policies, registered queries and explicit Agent budget. It can invoke only an
+  `OpenVocabularyDetection` backend and is bounded to one fallback request by the Alpha policy.
+- Runtime tests prove: 0 fallback calls for accepted high specialist score; 1 call for empty
+  specialist evidence; 1 call for a Domain Validation Issue; 0 calls plus Review when estimated
+  cost exceeds budget; and an initial Fallback changing to Accept after geometric agreement.
+- Trace stores structured reason codes, model/capability identity, query IDs, counts, timing,
+  decision and stop condition without image bytes, query text or hidden reasoning. Published Run
+  integration persists this Agent session and demonstrates both the primary fast path and real Mock
+  fallback execution through the frozen DAG.
+- Fallback errors, disabled policy, missing queries and exhausted budgets preserve the primary
+  result and stop at Human Review. No retry loop is hidden inside Recovery.
+- `cargo test --workspace --all-features` passes 216 tests; strict workspace Clippy/build, all 34 Web
+  tests, Web typecheck/build and diff checks pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
@@ -184,22 +207,22 @@ below:
 | E04 | Label conflict | PASS | overlapping boxes with different Project Labels retain both labeled evidence members |
 | E05 | Incomparable scores are not averaged | PASS | Cluster and fan-in tests retain/omit incomparable values without blending |
 | E06 | Evidence Gate emits explainable reason | PASS | persisted decision report includes stable code, message, sources, candidate and metrics |
-| E07 | High specialist score can skip fallback | OPEN | recovery absent |
-| E08 | Empty specialist result can trigger fallback | OPEN | recovery absent |
-| E09 | Domain risk can trigger fallback | OPEN | recovery absent |
-| E10 | Insufficient budget routes to Review | OPEN | mixed-detection budget absent |
+| E07 | High specialist score can skip fallback | PASS | Recovery fast-path test and published Run call no fallback backend |
+| E08 | Empty specialist result can trigger fallback | PASS | unit plus exact-version Application integration invoke one Mock fallback |
+| E09 | Domain risk can trigger fallback | PASS | structured Validation Issue test invokes fallback and records `domain_issue` |
+| E10 | Insufficient budget routes to Review | PASS | preflight cost reservation test makes zero calls and emits budget reason |
 
 ## F. Agent
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| F01 | Advisor recommends cold-start Pipeline | OPEN | no open-vocabulary strategy |
-| F02 | Advisor recommends specialist-first Pipeline | OPEN | no specialist registry strategy |
+| F01 | Advisor recommends cold-start Pipeline | PASS | capability/availability test emits Open Vocabulary → Crop verification → Review Draft |
+| F02 | Advisor recommends specialist-first Pipeline | PASS | label-space-compatible specialist plus conditional Recovery Draft test |
 | F03 | Advisor output is Draft-only | PASS | existing constrained Advisor never publishes |
-| F04 | Recovery chooses fallback from evidence | OPEN | absent |
-| F05 | Recovery changes decision after fallback | OPEN | absent |
+| F04 | Recovery chooses fallback from evidence | PASS | empty/low/domain/correction rules are evaluated before the only permitted call |
+| F05 | Recovery changes decision after fallback | PASS | agreeing Mock evidence changes initial Fallback to final Accept |
 | F06 | Agent has tools, budget, and stop conditions | PASS | bounded Agent Runtime baseline; mixed policy open |
-| F07 | Trace explains fallback invocation | OPEN | absent |
+| F07 | Trace explains fallback invocation | PASS | persisted Agent session contains reason codes, call facts and stop condition |
 | F08 | Trace exposes no hidden chain-of-thought | PASS | structured visible action/event baseline |
 
 ## G. Cache and Replay
