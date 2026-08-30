@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -400,6 +401,39 @@ pub struct SampleTestSummary {
 
 /// Compatibility name retained for persisted sample-test records and downstream clients.
 pub type WorkflowDryRunSummary = SampleTestSummary;
+
+/// Bounded quality/cost observation returned to Pipeline Builder policies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AgentDryRunSummary {
+    pub image_count: u32,
+    pub successful_images: u32,
+    pub empty_images: u32,
+    pub failed_images: u32,
+    pub detection_count: u32,
+    pub auto_accepted_count: u32,
+    pub review_count: u32,
+    pub rejected_count: u32,
+    #[serde(default)]
+    pub warning_counts: BTreeMap<String, u32>,
+    pub model_calls: u32,
+    pub duration_ms: u64,
+    pub cost: Decimal,
+}
+
+impl AgentDryRunSummary {
+    #[must_use]
+    pub fn review_rate(&self) -> f32 {
+        let decided = self
+            .auto_accepted_count
+            .saturating_add(self.review_count)
+            .saturating_add(self.rejected_count);
+        if decided == 0 {
+            0.0
+        } else {
+            self.review_count as f32 / decided as f32
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct UsageSummary {
@@ -2615,5 +2649,17 @@ export:
             snapshot.draft.as_ref().expect("frozen draft").name,
             edited.name
         );
+    }
+
+    #[test]
+    fn agent_dry_run_summary_reports_a_bounded_review_rate() {
+        let summary = AgentDryRunSummary {
+            auto_accepted_count: 1,
+            review_count: 2,
+            rejected_count: 1,
+            ..AgentDryRunSummary::default()
+        };
+        assert!((summary.review_rate() - 0.5).abs() < f32::EPSILON);
+        assert!(AgentDryRunSummary::default().review_rate().abs() < f32::EPSILON);
     }
 }

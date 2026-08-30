@@ -3573,7 +3573,12 @@ function PipelineStepCard({
         {mergedCount > 1 && <span>Guided action <strong>{mergedCount} coordinated operations</strong></span>}
         <Status status={immutable ? "published" : "valid"} />
       </div>
-      <button onClick={onConfigure}>{immutable ? "Inspect" : "Configure"}</button>
+      <button
+        aria-label={immutable ? "Inspect node" : "Configure node"}
+        onClick={onConfigure}
+      >
+        {immutable ? "Inspect" : "Configure"}
+      </button>
       {onRemove && step.kind !== "commit" && (
         <button className="danger" onClick={onRemove} disabled={immutable}>
           Remove step

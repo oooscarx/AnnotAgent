@@ -94,7 +94,7 @@ export:
   const autosaved = page.waitForResponse((response) =>
     response.request().method() === "PATCH" && response.url().includes(`/api/workflow-drafts/${suggestion.draft.id}`),
   );
-  await page.getByRole("button", { name: "Apply Detect & Crop template" }).click();
+  await page.getByRole("button", { name: "Add detection + crop" }).click();
   const saved = await autosaved;
   expect(saved.ok()).toBeTruthy();
   const draft = await saved.json();
@@ -268,6 +268,7 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await expect(configure).toBeVisible();
   await configure.click();
   const drawer = page.getByRole("dialog");
+  await drawer.getByText("Expert details", { exact: true }).click();
   const parameters = drawer.getByLabel("Parameters and class mapping");
   const current = JSON.parse(await parameters.inputValue());
   const autosaved = page.waitForResponse((response) =>
@@ -803,6 +804,7 @@ test("Models exposes truthful unavailable and timeout Worker states", async ({ p
       capabilities: ["open_vocabulary_detection"], score_semantics: "not_provided", model_version: "1",
       endpoint: "http://127.0.0.1:8791", enabled: true, license_summary: "non-commercial research/evaluation",
       architecture: "locateanything-3b", label_space: [], cost_per_request: "0",
+      availability_group: "configured_unavailable",
     },
     {
       id: "rfdetr-worker", provider: "http_vision", model: "rfdetr-v1", role: "object_detection",
@@ -810,6 +812,7 @@ test("Models exposes truthful unavailable and timeout Worker states", async ({ p
       score_semantics: "relative_confidence", model_version: "1", endpoint: "http://127.0.0.1:8792",
       enabled: true, license_summary: "checkpoint terms configured", architecture: "rfdetr-small",
       checkpoint_sha256: "a".repeat(64), label_space: ["football"], cost_per_request: "0.001",
+      availability_group: "labs",
     },
   ];
   await page.route("**/api/models", (route) => route.fulfill({ json: { models } }));

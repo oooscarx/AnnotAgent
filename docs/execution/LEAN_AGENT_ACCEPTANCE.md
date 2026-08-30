@@ -19,10 +19,10 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
   are Backends; Guided Automation presents Select detections, Decision and Combine model evidence;
   Grid is Detection configuration; legacy Workflow, Provider and Artifact entry points converge on
   Project Automation, Settings / Models and Run Debug.
-- B. Agent authenticity: PARTIAL. The ScriptedMock and Application tool paths are real and audited;
-  the live OpenAI-compatible policy remains M4.
-- C. Pipeline safety: PARTIAL. Tool allow-list, Registry-bound mutations and Builder Grammar pass;
-  wiring that grammar into every publish boundary remains M5.
+- B. Agent authenticity: PASS. ScriptedMock and live Provider paths both execute a multi-turn,
+  audited invalid→repair→Dry Run→evidence revision→human approval loop through real Rust tools.
+- C. Pipeline safety: PASS. Tool allow-list, Registry-bound mutations and Builder Grammar pass;
+  Label Pipeline validation and publish both enforce the same grammar at the Application boundary.
 - D. Offline capability: PARTIAL. ScriptedMock and Registry RuleBased paths are available; the full
   offline demo matrix is finalized in M8.
 - E. UX: OPEN.
@@ -90,3 +90,18 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | Provider retry/cancellation boundary | PASS | OpenAI-compatible Provider owns bounded transport retries; loop checks cancellation before every provider and Tool step and reports Provider failures as terminal session reasons. |
 | Real external request | LIVE-CONDITIONAL | Requires an operator-provided configured credential; no conversation key was read or used. |
 | M4 regression/lint | PASS | Application 29 and Server 9 tests passed; focused 11-turn integration and Clippy with warnings denied passed. |
+
+## M5 validation and Dry Run revision loop
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Invalid Draft is repaired from validator output | PASS | Offline and live Application tests disconnect the typed Commit edge, observe validation `false`, reconnect the exact typed ports, then observe `true`. |
+| Dry Run feedback is structured and bounded | PASS | `AgentDryRunSummary` contains image/result/review/failure/warning/model-call/latency/cost fields; sample inspection permits 1–5 records and excludes image bytes and full Artifact values. |
+| Poor quality triggers a real Draft revision | PASS | A project with a 0.99 acceptance threshold produces one real mock detection in Review; the Agent records 1/1 (100%), adds Crop → Classification → Attach Result, and cites that observation in rationale. |
+| Revision uses Registry models | PASS | Crop verification selects a healthy or explicitly available Classification Model Descriptor; no arbitrary model ID or unavailable Labs backend can be inserted. |
+| Revision validates and runs again | PASS | Both M5 tests assert validation outcomes `[false, true, true]` and two sandbox Dry Runs; the second result moves the candidate from Review to auto-accepted. |
+| Bounded sample and node inspection | PASS | Live tool schemas and executor limit failed/Review/node results to five; the 17-turn test asserts Review output has no full `value` Artifact body. |
+| Human approval boundary | PASS | Final state is `waiting_for_human`; zero Published Versions and zero formal Runs are asserted for both M5 projects. |
+| Publish boundary enforces Builder Grammar | PASS | `validate_workflow_draft` adds Builder Grammar issues for Label Pipelines and `publish_workflow` invokes the publish-ready form of that same boundary. |
+| Complete live Mock Provider loop | PASS | 17 provider calls, 17 registered Tool Calls, 170 input/85 output tokens, full persisted history and explicit approval stop pass offline. |
+| M5 regression/lint | PASS | Core 49, Application 31 and Server 9 passed; Web typecheck and 36 Vitest tests passed; 24 Playwright E2E tests passed; workspace Clippy all targets passed with warnings denied. |

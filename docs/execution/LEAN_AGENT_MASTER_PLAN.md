@@ -10,8 +10,8 @@ through M0–M8 with one local commit per milestone and no push.
 | M2 | Lean guided vocabulary, grid configuration and route consolidation | Complete |
 | M3 | Constrained Pipeline Builder session, tools, grammar and ScriptedMock | Complete |
 | M4 | OpenAI-compatible multi-turn tool-loop backend | Complete |
-| M5 | Static-validation and Dry-Run revision loop with human boundary | In progress |
-| M6 | Project Automation GUI/TUI, progress, Diff, selective apply and undo | Pending |
+| M5 | Static-validation and Dry-Run revision loop with human boundary | Complete |
+| M6 | Project Automation GUI/TUI, progress, Diff, selective apply and undo | In progress |
 | M7 | Capability-aware minimal RoboCup Ball Domain experience | Pending |
 | M8 | Full regression, course demo, evidence and release matrix | Pending |
 

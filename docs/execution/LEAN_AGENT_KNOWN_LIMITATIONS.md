@@ -7,13 +7,13 @@ Baseline limitations before implementation:
 - The Application persists the backward-compatible generic `AgentSession` audit envelope. Dedicated
   Builder status/constraints/stop-reason types exist in Core; API/GUI/TUI projection is completed in
   M6 without invalidating stored sessions.
-- ScriptedMock has the complete deterministic policy and Application performs real invalid/repair,
-  validation and sandbox steps. Binding the post-Dry-Run revision to real metrics and Artifact
-  inspection is M5.
 - Live Alpha exposes a conservative subset of the 31-tool Registry: inspection, safe-template
-  creation, model/parameter/decision/mapping edits, validation, Dry Run, summary and human
-  submission. Arbitrary graph add/remove/connect remains ScriptedMock/Expert until M5 safety tests
-  cover live revision shapes.
+  creation, typed disconnect/connect repair, one evidence-gated Crop verification template,
+  model/parameter/decision/mapping edits, validation, Dry Run, bounded result inspection and human
+  submission. Arbitrary empty-graph construction and unrestricted node removal remain unavailable.
+- Node inspection returns execution metadata and structured issues, not complete Artifact bodies.
+  Humans use the existing Run/Review inspectors for visual Artifact inspection; the Agent can request
+  only bounded failed/Review summaries in Alpha.
 - Pre-Lean Capability implementations still exist as Registry compatibility adapters and internal
   node IDs. New authoring exposes the generic Skills, but removal awaits persisted-version migration.
 - Expert mode intentionally exposes internal Workflow node IDs, ports and raw parameters. Guided

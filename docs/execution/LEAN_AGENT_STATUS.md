@@ -2,7 +2,7 @@
 
 Updated: 2026-08-31
 
-- Current Milestone: M5 — validation/Dry Run-driven revision and human boundary.
+- Current Milestone: M6 — Guided Project Automation UX, Draft Diff and undo.
 - Completed: M0 baseline; public Capability catalog now contains only
   `annotagent.classification`, `annotagent.detection`, and `annotagent.segmentation`; legacy Skill
   IDs remain hidden compatibility aliases; model bindings are grouped as Ready, Configured but
@@ -25,18 +25,25 @@ Updated: 2026-08-31
   provider, accumulates token usage, persists the audit, and can stop only at human approval.
   Provider prose/hidden reasoning is not persisted. The HTTP `llm` path now returns the same Agent
   Session/validation/Dry Run envelope as ScriptedMock.
-- In progress: make failed validation and poor real Dry Run metrics trigger bounded Draft revisions
-  and a second validation/Dry Run before approval.
-- Next: add a real Crop verification revision for high-review Detection pipelines and preserve
-  upstream Artifacts across retries.
-- Recent Rust tests: `cargo test --workspace --all-features` — 221 passed, 0 failed.
-- Recent Rust tests: Core 48, Application 29 and Server 9 passed; focused M4 multi-turn test and
-  Application/Server Clippy with warnings denied passed.
+- M5 completed: both the deterministic policy and live provider loop can create an invalid Draft,
+  receive Rust validation errors, repair it, run the sandbox, inspect a bounded
+  `AgentDryRunSummary`, and revise a high-Review Detection flow with Crop Classification. The
+  revision is selected from healthy/available Registry Models, validates again, performs a second
+  real Dry Run, records evidence-based rationale, and stops at explicit human approval. Failed and
+  Review sample inspection is limited to five summaries and omits image bytes and Artifact bodies;
+  node inspection exposes only status, output types, latency, cost and structured issues. Label
+  Pipeline publish now runs Pipeline Grammar at the Application boundary.
+- Next: project-local Agent entry/progress, structured objective controls, Draft Diff, selective
+  apply/undo and the matching TUI session projection.
+- Full-workspace baseline: `cargo test --workspace --all-features` — 221 passed, 0 failed at M0.
+- Recent Rust tests: Core 49, Application 31 and Server 9 passed; focused M5 offline and 17-turn live
+  revision loops passed. `cargo clippy --workspace --all-targets -- -D warnings` passed.
 - Recent Web tests: `npm run typecheck` passed; `npm test -- --run` — 36 passed, 0 failed.
-- Recent E2E: inherited baseline only; not rerun in M0 yet.
-- Recent commit: `904101f feat(agent): add constrained pipeline builder tool loop`.
-- Release Blocking remaining: all Lean Agent Alpha A–G items until evidenced in
-  `LEAN_AGENT_ACCEPTANCE.md`.
+- Recent E2E: `npm run test:e2e` — 24 passed, 0 failed. The run also repaired stale
+  accessibility/selectors for the collapsed Expert details drawer and current Guided action names.
+- Recent milestone commit subject: `feat(agent): revise workflow drafts from validation and dry runs`.
+- Release Blocking remaining: offline capability matrix and UX/Domain/course evidence in D–G;
+  architecture, Agent authenticity and Pipeline safety are evidenced PASS.
 - Live-conditional: real Qwen request; SAM, LocateAnything, RF-DETR and YOLO inference with explicit
   external weights; manual native browser checks.
 - Real blocker: none for offline implementation. External credentials/weights are not required for

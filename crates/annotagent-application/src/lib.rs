@@ -17,12 +17,12 @@ use std::{
 };
 
 use annotagent_core::{
-    AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
-    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor,
-    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
-    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter,
-    DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate,
-    ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentSession, AgentSessionStatus,
+    Annotation, AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue,
+    BackendDescriptor, BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint,
+    BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
+    DatasetExporter, DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest,
+    FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
     ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
@@ -39,8 +39,8 @@ use annotagent_core::{
     VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
     WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
     WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -350,6 +350,47 @@ fn pipeline_builder_live_tools(
             no_arguments(),
         ),
         mutate(
+            PipelineBuilderTool::DisconnectPipelineNodes,
+            "Remove one existing Draft connection so validation can guide a bounded repair.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["from_node", "to_node"],
+                "properties": {
+                    "from_node": {"type": "string", "enum": node_ids.clone()},
+                    "to_node": {"type": "string", "enum": node_ids.clone()}
+                }
+            }),
+        ),
+        mutate(
+            PipelineBuilderTool::ConnectPipelineNodes,
+            "Connect two existing typed ports. Rust rejects unknown ports, type mismatches, and cycles.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["from_node", "from_port", "to_node", "to_port"],
+                "properties": {
+                    "from_node": {"type": "string", "enum": node_ids.clone()},
+                    "from_port": {"type": "string"},
+                    "to_node": {"type": "string", "enum": node_ids.clone()},
+                    "to_port": {"type": "string"},
+                    "route": {"type": ["string", "null"]}
+                }
+            }),
+        ),
+        mutate(
+            PipelineBuilderTool::AddPipelineNode,
+            "Add one controlled Guided action after Dry Run evidence. Alpha supports Crop verification only.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["guided_template"],
+                "properties": {
+                    "guided_template": {"type": "string", "enum": ["crop_verification"]}
+                }
+            }),
+        ),
+        mutate(
             PipelineBuilderTool::SetNodeParameter,
             "Set one allowed parameter on a node in the current Draft.",
             json!({
@@ -423,6 +464,29 @@ fn pipeline_builder_live_tools(
             "Read bounded review rate, failures, empty results, cost, and latency from the latest Dry Run.",
             no_arguments(),
         ),
+        read(
+            PipelineBuilderTool::InspectFailedSamples,
+            "Read at most five failed sample summaries. Image bytes and complete Artifacts are never returned.",
+            bounded_inspection_schema(),
+        ),
+        read(
+            PipelineBuilderTool::InspectReviewSamples,
+            "Read at most five Review sample summaries with Label, status, and confidence only.",
+            bounded_inspection_schema(),
+        ),
+        read(
+            PipelineBuilderTool::InspectNodeArtifacts,
+            "Read bounded node-level Dry Run statistics and structured warnings, not Artifact bodies.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_id"],
+                "properties": {
+                    "node_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
+                }
+            }),
+        ),
         mutate(
             PipelineBuilderTool::SubmitDraftForHumanApproval,
             "Stop with a validated and Dry-Run-tested editable Draft. Never publishes or starts a formal Run.",
@@ -456,6 +520,33 @@ fn pipeline_builder_constraints(
         maximum_agent_cost: budget.max_cost.unwrap_or(rust_decimal::Decimal::ONE),
         ..PipelineBuilderConstraints::default()
     }
+}
+
+fn bounded_inspection_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
+        }
+    })
+}
+
+fn bounded_inspection_limit(arguments: &serde_json::Value) -> Result<usize> {
+    let limit = arguments
+        .get("limit")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| anyhow!("inspection limit must be an integer from 1 to 5"))
+        })
+        .transpose()?
+        .unwrap_or(3);
+    if !(1..=5).contains(&limit) {
+        bail!("inspection limit must be from 1 to 5");
+    }
+    Ok(limit)
 }
 
 fn required_string_argument(arguments: &serde_json::Value, name: &str) -> Result<String> {
@@ -4492,7 +4583,7 @@ impl LocalApplication {
         ) {
             return Ok(abort(session));
         }
-        let validation = validate(&revised.draft);
+        let mut validation = validate(&revised.draft);
         if !record(
             &mut session,
             "validate_pipeline",
@@ -4512,22 +4603,22 @@ impl LocalApplication {
             });
         }
         self.store.save_workflow_draft(&revised.draft)?;
-        let dry_run = self
+        let mut dry_run = self
             .dry_run_workflow_samples(&revised.draft.id, settings, &[0])
             .await?;
+        let first_observation = agent_dry_run_summary(&dry_run, &revised.draft);
         if !record(
             &mut session,
             "dry_run_pipeline",
             json!({"draft_id": revised.draft.id, "image_limit": 1}),
-            json!({"sandbox": dry_run.sandbox, "summary": dry_run.summary}),
+            json!({"sandbox": dry_run.sandbox, "summary": first_observation}),
         ) || !record(
             &mut session,
             "inspect_dry_run_summary",
             json!({"draft_id": revised.draft.id}),
             json!({
-                "latency_ms": dry_run.total_latency_ms,
-                "estimated_cost": dry_run.estimated_cost,
-                "failed_count": dry_run.summary.failed_count,
+                "summary": first_observation,
+                "review_rate": first_observation.review_rate(),
             }),
         ) {
             return Ok(WorkflowAdvisorAgentReport {
@@ -4537,6 +4628,87 @@ impl LocalApplication {
                 dry_run: Some(dry_run),
                 approval_required: false,
             });
+        }
+        let target_is_detection = target.is_some_and(|(task_id, _)| {
+            input
+                .project_schema
+                .tasks
+                .iter()
+                .any(|task| task.id.as_str() == task_id && task.kind == TaskKind::BoundingBox)
+        });
+        if target_is_detection
+            && first_observation.review_rate()
+                > builder_constraints.target_review_rate.unwrap_or(0.25)
+            && let Some((task_id, label)) = target
+            && let Ok(classifier_model_id) = available_model_for_capability(
+                &input.model_registry,
+                VisionCapability::Classification,
+            )
+            && add_crop_verification_revision(
+                &mut revised,
+                &input.project_schema,
+                task_id,
+                label,
+                &classifier_model_id,
+                &first_observation,
+            )?
+        {
+            if !record(
+                &mut session,
+                "add_pipeline_node",
+                json!({
+                    "draft_id": revised.draft.id,
+                    "guided_action": "crop_verification",
+                    "evidence": {
+                        "review_count": first_observation.review_count,
+                        "review_rate": first_observation.review_rate(),
+                    }
+                }),
+                json!({
+                    "added": ["core.crop", "classification.classify", "core.attach_result"],
+                    "reason": "review_rate_above_target"
+                }),
+            ) {
+                return Ok(abort(session));
+            }
+            validation = validate(&revised.draft);
+            if !record(
+                &mut session,
+                "validate_pipeline",
+                json!({"draft_id": revised.draft.id, "revision": 3}),
+                json!({"valid": validation.valid, "issues": validation.issues}),
+            ) {
+                return Ok(abort(session));
+            }
+            if !validation.valid {
+                session.fail("Crop verification revision did not pass static validation");
+                self.store.save_agent_session(&session)?;
+                return Ok(WorkflowAdvisorAgentReport {
+                    session,
+                    suggestion: Some(revised),
+                    validation: Some(validation),
+                    dry_run: Some(dry_run),
+                    approval_required: false,
+                });
+            }
+            self.store.save_workflow_draft(&revised.draft)?;
+            dry_run = self
+                .dry_run_workflow_samples(&revised.draft.id, settings, &[0])
+                .await?;
+            let second_observation = agent_dry_run_summary(&dry_run, &revised.draft);
+            if !record(
+                &mut session,
+                "dry_run_pipeline",
+                json!({"draft_id": revised.draft.id, "image_limit": 1, "revision": 3}),
+                json!({
+                    "sandbox": dry_run.sandbox,
+                    "summary": second_observation,
+                    "previous_review_rate": first_observation.review_rate(),
+                    "review_rate": second_observation.review_rate(),
+                }),
+            ) {
+                return Ok(abort(session));
+            }
         }
         if revise_draft_after_failed_dry_run(&mut revised, dry_run.summary.failed_count) {
             let _recorded = record(
@@ -4572,6 +4744,8 @@ impl LocalApplication {
                 approval_required: false,
             });
         }
+        revised.draft.status = WorkflowDraftStatus::Suggested;
+        self.store.save_workflow_draft(&revised.draft)?;
         if session.status == AgentSessionStatus::Running
             && record(
                 &mut session,
@@ -4580,7 +4754,7 @@ impl LocalApplication {
                 json!({"published": false, "requires_human": true}),
             )
         {
-            session.wait_for_human("publish_workflow");
+            session.wait_for_human("approve_pipeline_draft");
         }
         self.store.save_agent_session(&session)?;
         Ok(WorkflowAdvisorAgentReport {
@@ -4833,6 +5007,7 @@ impl LocalApplication {
         let mut current: Option<WorkflowSuggestion> = None;
         let mut validation: Option<WorkflowValidationReport> = None;
         let mut dry_run: Option<WorkflowDryRunReport> = None;
+        let mut inspected_dry_run = false;
         let mut inspected_project = false;
         let mut inspected_label = false;
         let mut inspected_skills = false;
@@ -4996,6 +5171,7 @@ impl LocalApplication {
                         created.draft.updated_at = created.draft.created_at;
                         validation = None;
                         dry_run = None;
+                        inspected_dry_run = false;
                         self.store.save_workflow_draft(&created.draft)?;
                         let result = annotagent_core::AgentToolResult::summary(
                             "Created an editable Draft from a Registry template",
@@ -5003,6 +5179,104 @@ impl LocalApplication {
                         );
                         current = Some(created);
                         Ok(result)
+                    }
+                    Ok(PipelineBuilderTool::DisconnectPipelineNodes) => {
+                        let from_node =
+                            required_string_argument(&call.arguments, "from_node")?;
+                        let to_node = required_string_argument(&call.arguments, "to_node")?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before editing connections"))?;
+                        let removed = PipelineDraftTools.disconnect(
+                            &mut suggestion.draft,
+                            &from_node,
+                            &to_node,
+                        )?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Disconnected {from_node} from {to_node}"),
+                            json!({"draft_id": suggestion.draft.id, "removed_connections": removed}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ConnectPipelineNodes) => {
+                        let edge = WorkflowEdge {
+                            from_node: required_string_argument(&call.arguments, "from_node")?,
+                            from_port: required_string_argument(&call.arguments, "from_port")?,
+                            to_node: required_string_argument(&call.arguments, "to_node")?,
+                            to_port: required_string_argument(&call.arguments, "to_port")?,
+                            route: call
+                                .arguments
+                                .get("route")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToOwned::to_owned),
+                        };
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before editing connections"))?;
+                        PipelineDraftTools.connect(&mut suggestion.draft, edge.clone())?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Connected {} to {}", edge.from_node, edge.to_node),
+                            json!({"draft_id": suggestion.draft.id, "connection": edge}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::AddPipelineNode) => {
+                        let template =
+                            required_string_argument(&call.arguments, "guided_template")?;
+                        if template != "crop_verification" {
+                            bail!("unsupported Guided node template {template:?}");
+                        }
+                        let (task_id, label) = target.ok_or_else(|| {
+                            anyhow!("Crop verification requires a target Label session")
+                        })?;
+                        if !inspected_dry_run {
+                            bail!("inspect the latest Dry Run before adding Crop verification");
+                        }
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run and inspect a Dry Run before adding Crop verification")
+                        })?;
+                        let draft = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                        let observation = agent_dry_run_summary(report, &draft.draft);
+                        let classifier_model_id = available_model_for_capability(
+                            &input.model_registry,
+                            VisionCapability::Classification,
+                        )?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before revising it"))?;
+                        if !add_crop_verification_revision(
+                            suggestion,
+                            &input.project_schema,
+                            task_id,
+                            label,
+                            &classifier_model_id,
+                            &observation,
+                        )? {
+                            bail!("Crop verification is not applicable or is already present");
+                        }
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Added Crop verification from Dry Run evidence",
+                            json!({
+                                "draft_id": suggestion.draft.id,
+                                "guided_action": "crop_verification",
+                                "evidence": {
+                                    "review_count": observation.review_count,
+                                    "review_rate": observation.review_rate(),
+                                }
+                            }),
+                        ))
                     }
                     Ok(
                         tool @ (PipelineBuilderTool::SetNodeParameter
@@ -5061,6 +5335,7 @@ impl LocalApplication {
                         );
                         validation = None;
                         dry_run = None;
+                        inspected_dry_run = false;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Updated {parameter} on {node_id}"),
@@ -5084,6 +5359,7 @@ impl LocalApplication {
                         sync_label_step_model(&mut suggestion.draft, &node_id, &model_id);
                         validation = None;
                         dry_run = None;
+                        inspected_dry_run = false;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Bound {model_id} to {node_id}"),
@@ -5140,22 +5416,109 @@ impl LocalApplication {
                                 &image_indices,
                             )
                             .await?;
+                        let observation = agent_dry_run_summary(&report, &suggestion.draft);
                         let result = annotagent_core::AgentToolResult::summary(
                             "Completed sandbox Dry Run",
-                            json!({"sandbox": report.sandbox, "summary": report.summary, "estimated_cost": report.estimated_cost, "total_latency_ms": report.total_latency_ms}),
+                            json!({"sandbox": report.sandbox, "summary": observation, "review_rate": observation.review_rate()}),
                         );
                         dry_run = Some(report);
+                        inspected_dry_run = false;
                         Ok(result)
                     }
                     Ok(PipelineBuilderTool::InspectDryRunSummary) => {
                         let report = dry_run
                             .as_ref()
                             .ok_or_else(|| anyhow!("run dry_run_pipeline before inspecting it"))?;
-                        let total = report.summary.candidate_count.max(1);
-                        let review_rate = report.summary.needs_review_count as f64 / total as f64;
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                        let observation = agent_dry_run_summary(report, &suggestion.draft);
+                        inspected_dry_run = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Inspected Dry Run quality, cost, and latency",
-                            json!({"review_rate": review_rate, "failed_count": report.summary.failed_count, "empty_count": report.summary.empty_count, "candidate_count": report.summary.candidate_count, "latency_ms": report.total_latency_ms, "estimated_cost": report.estimated_cost}),
+                            json!({"summary": observation, "review_rate": observation.review_rate()}),
+                        ))
+                    }
+                    Ok(
+                        tool @ (PipelineBuilderTool::InspectFailedSamples
+                        | PipelineBuilderTool::InspectReviewSamples),
+                    ) => {
+                        let report = dry_run
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("run dry_run_pipeline before inspecting samples"))?;
+                        let limit = bounded_inspection_limit(&call.arguments)?;
+                        let samples = report
+                            .samples
+                            .iter()
+                            .filter(|sample| match tool {
+                                PipelineBuilderTool::InspectFailedSamples => sample.failed,
+                                PipelineBuilderTool::InspectReviewSamples => {
+                                    sample.review_count > 0
+                                        || sample.outcomes.iter().any(|outcome| {
+                                            outcome.status == SampleTestOutcomeStatus::NeedsReview
+                                        })
+                                }
+                                _ => false,
+                            })
+                            .take(limit)
+                            .map(|sample| {
+                                json!({
+                                    "image_index": sample.image_index,
+                                    "image_name": sample.image_name,
+                                    "failed": sample.failed,
+                                    "empty": sample.empty,
+                                    "result_count": sample.result_count,
+                                    "review_count": sample.review_count,
+                                    "outcomes": sample.outcomes.iter().map(|outcome| json!({
+                                        "id": outcome.id,
+                                        "label": outcome.label,
+                                        "confidence": outcome.confidence,
+                                        "status": outcome.status,
+                                    })).collect::<Vec<_>>(),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected {} bounded sample(s)", samples.len()),
+                            json!({"sample_count": samples.len(), "limit": limit, "samples": samples}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectNodeArtifacts) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting node results")
+                        })?;
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let limit = bounded_inspection_limit(&call.arguments)?;
+                        let node_results = report
+                            .samples
+                            .iter()
+                            .filter_map(|sample| {
+                                sample
+                                    .nodes
+                                    .iter()
+                                    .find(|node| node.node_id == node_id)
+                                    .map(|node| {
+                                        json!({
+                                            "image_index": sample.image_index,
+                                            "node_id": node.node_id,
+                                            "status": node.status,
+                                            "output_types": node.output_types,
+                                            "latency_ms": node.latency_ms,
+                                            "estimated_cost": node.estimated_cost,
+                                            "issues": node.issues,
+                                        })
+                                    })
+                            })
+                            .take(limit)
+                            .collect::<Vec<_>>();
+                        if node_results.is_empty() {
+                            bail!("node {node_id:?} has no result in the latest Dry Run");
+                        }
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected {} bounded result(s) for {node_id}", node_results.len()),
+                            json!({"node_id": node_id, "result_count": node_results.len(), "limit": limit, "results": node_results}),
                         ))
                     }
                     Ok(PipelineBuilderTool::SubmitDraftForHumanApproval) => {
@@ -5174,9 +5537,18 @@ impl LocalApplication {
                         {
                             name.clone_into(&mut suggestion.draft.name);
                         }
-                        suggestion.rationale = string_array_argument(&call.arguments, "rationale");
-                        suggestion.warnings = string_array_argument(&call.arguments, "warnings");
-                        suggestion.alternatives = string_array_argument(&call.arguments, "alternatives");
+                        suggestion
+                            .rationale
+                            .extend(string_array_argument(&call.arguments, "rationale"));
+                        suggestion
+                            .warnings
+                            .extend(string_array_argument(&call.arguments, "warnings"));
+                        suggestion
+                            .alternatives
+                            .extend(string_array_argument(&call.arguments, "alternatives"));
+                        suggestion.rationale.dedup();
+                        suggestion.warnings.dedup();
+                        suggestion.alternatives.dedup();
                         suggestion.draft.status = WorkflowDraftStatus::Suggested;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
@@ -5333,6 +5705,31 @@ impl LocalApplication {
             &enabled_skills,
             require_publish_ready,
         );
+        if draft.label_pipeline.is_some() {
+            let grammar = PipelineGrammarValidator.validate(
+                draft,
+                &nodes,
+                &models,
+                &validation_catalog,
+                &enabled_skills,
+                &PipelineBuilderConstraints {
+                    allow_external_models: true,
+                    ..PipelineBuilderConstraints::default()
+                },
+            );
+            let existing = report
+                .issues
+                .iter()
+                .map(|issue| (issue.code.clone(), issue.path.clone()))
+                .collect::<BTreeSet<_>>();
+            report.issues.extend(
+                grammar
+                    .issues
+                    .into_iter()
+                    .filter(|issue| issue.code.starts_with("builder_"))
+                    .filter(|issue| !existing.contains(&(issue.code.clone(), issue.path.clone()))),
+            );
+        }
         report
             .issues
             .extend(label_projection_issues(draft, &project, &nodes, &models));
@@ -5914,25 +6311,11 @@ impl LocalApplication {
         }
         draft.status = WorkflowDraftStatus::Validated;
         draft.updated_at = chrono::Utc::now();
-        let (nodes, models) = workflow_catalog(settings)?;
-        let enabled_skills = draft
-            .enabled_skills
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
-        let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
-        let publish_report = WorkflowStaticValidator.validate_for_publish(
-            &draft,
-            &nodes,
-            &models,
-            &validation_catalog,
-            &enabled_skills,
-            true,
-        );
+        let publish_report = self.validate_workflow_draft(&draft, settings, true)?;
         if !publish_report.valid {
             bail!("workflow has unresolved bindings and cannot be published");
         }
+        let (_, models) = workflow_catalog(settings)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone());
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
@@ -7342,6 +7725,291 @@ fn revise_draft_after_failed_dry_run(
     true
 }
 
+fn agent_dry_run_summary(
+    report: &WorkflowDryRunReport,
+    draft: &WorkflowDraft,
+) -> AgentDryRunSummary {
+    let mut warning_counts = BTreeMap::new();
+    let mut rejected_count = 0usize;
+    for sample in &report.samples {
+        for node in &sample.nodes {
+            for issue in &node.issues {
+                *warning_counts.entry(issue.code.clone()).or_insert(0) += 1;
+            }
+        }
+        rejected_count += sample
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.status == SampleTestOutcomeStatus::Invalid)
+            .count();
+    }
+    let as_u32 = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    let image_count = as_u32(report.summary.image_count);
+    let failed_images = as_u32(report.summary.failed_count);
+    let model_nodes = draft
+        .nodes
+        .iter()
+        .filter(|node| node.model_binding.is_some())
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let model_calls = report
+        .samples
+        .iter()
+        .flat_map(|sample| sample.nodes.iter())
+        .filter(|node| model_nodes.contains(node.node_id.as_str()) && node.status != "skipped")
+        .count();
+    AgentDryRunSummary {
+        image_count,
+        successful_images: image_count.saturating_sub(failed_images),
+        empty_images: as_u32(report.summary.empty_count),
+        failed_images,
+        detection_count: as_u32(report.summary.detection_count),
+        auto_accepted_count: as_u32(report.summary.auto_accepted_count),
+        review_count: as_u32(report.summary.needs_review_count),
+        rejected_count: as_u32(rejected_count),
+        warning_counts,
+        model_calls: as_u32(model_calls),
+        duration_ms: report.total_latency_ms,
+        cost: report
+            .estimated_cost
+            .parse()
+            .unwrap_or(rust_decimal::Decimal::ZERO),
+    }
+}
+
+fn available_model_for_capability(
+    models: &[VisionModelDescriptor],
+    capability: VisionCapability,
+) -> Result<String> {
+    models
+        .iter()
+        .find(|model| {
+            model.capabilities.contains(&capability)
+                && (model.status == ModelAvailabilityStatus::Available
+                    || model.health.status == VisionModelHealthStatus::Healthy)
+        })
+        .map(|model| model.id.clone())
+        .ok_or_else(|| anyhow!("no available Registry Model supports {capability:?}"))
+}
+
+fn add_crop_verification_revision(
+    suggestion: &mut WorkflowSuggestion,
+    project: &ProjectSchema,
+    target_task_id: &str,
+    target_label: &str,
+    classifier_model_id: &str,
+    evidence: &AgentDryRunSummary,
+) -> Result<bool> {
+    let Some(mut composition) = suggestion.draft.label_pipeline.clone() else {
+        return Ok(false);
+    };
+    let Some(pipeline_index) = composition.label_pipelines.iter().position(|pipeline| {
+        pipeline.target_task_id.as_str() == target_task_id
+            && pipeline.target_label.as_str() == target_label
+    }) else {
+        return Ok(false);
+    };
+    let pipeline = &composition.label_pipelines[pipeline_index];
+    if pipeline
+        .steps
+        .iter()
+        .any(|step| step.node_type == annotagent_runtime::CORE_CROP)
+    {
+        return Ok(false);
+    }
+    let filter = pipeline
+        .steps
+        .iter()
+        .find(|step| step.node_type == annotagent_runtime::CORE_FILTER)
+        .cloned()
+        .ok_or_else(|| anyhow!("Crop verification requires a Select detections step"))?;
+    let gate = pipeline
+        .steps
+        .iter()
+        .find(|step| step.kind == WorkflowNodeKind::Gate)
+        .cloned()
+        .ok_or_else(|| anyhow!("Crop verification requires a Decision step"))?;
+    let commit = pipeline
+        .steps
+        .iter()
+        .find(|step| step.kind == WorkflowNodeKind::Commit)
+        .cloned()
+        .ok_or_else(|| anyhow!("Crop verification requires a Commit step"))?;
+    let prefix = format!("{target_task_id}.{target_label}.crop_verify");
+    let crop = PipelineStep {
+        id: format!("{prefix}.crop"),
+        node_type: annotagent_runtime::CORE_CROP.to_owned(),
+        kind: WorkflowNodeKind::Transform,
+        inputs: BTreeMap::from([
+            ("image".to_owned(), PipelineSource::Image),
+            (
+                "detections".to_owned(),
+                PipelineSource::Step {
+                    step_id: filter.id.clone(),
+                    port: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                },
+            ),
+        ]),
+        outputs: BTreeMap::from([("crops".to_owned(), ArtifactKind::CropSet)]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::from([("padding".to_owned(), json!(0.08))]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let classifier = PipelineStep {
+        id: format!("{prefix}.classifier"),
+        node_type: annotagent_skill_classification::CLASSIFICATION_OPERATION.to_owned(),
+        kind: WorkflowNodeKind::VisionModel,
+        inputs: BTreeMap::from([(
+            "subjects".to_owned(),
+            PipelineSource::Step {
+                step_id: crop.id.clone(),
+                port: "crops".to_owned(),
+                artifact_type: ArtifactKind::CropSet,
+            },
+        )]),
+        outputs: BTreeMap::from([(
+            "classifications".to_owned(),
+            ArtifactKind::ClassificationSet,
+        )]),
+        model_binding: Some(PipelineModelBinding {
+            model_id: classifier_model_id.to_owned(),
+            capability: VisionCapability::Classification,
+            configuration: BTreeMap::new(),
+        }),
+        skill_binding: None,
+        parameters: BTreeMap::from([
+            ("labels".to_owned(), json!([target_label])),
+            ("mock_label".to_owned(), json!(target_label)),
+            ("target_label".to_owned(), json!(target_label)),
+        ]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let attach = PipelineStep {
+        id: format!("{prefix}.attach"),
+        node_type: annotagent_runtime::CORE_ATTACH_RESULT.to_owned(),
+        kind: WorkflowNodeKind::CandidateMerge,
+        inputs: BTreeMap::from([
+            (
+                "detections".to_owned(),
+                PipelineSource::Step {
+                    step_id: filter.id.clone(),
+                    port: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                },
+            ),
+            (
+                "classifications".to_owned(),
+                PipelineSource::Step {
+                    step_id: classifier.id.clone(),
+                    port: "classifications".to_owned(),
+                    artifact_type: ArtifactKind::ClassificationSet,
+                },
+            ),
+        ]),
+        outputs: BTreeMap::from([(
+            "candidates".to_owned(),
+            ArtifactKind::AnnotationCandidateSet,
+        )]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::from([
+            ("task_id".to_owned(), json!(target_task_id)),
+            (
+                "class_mapping".to_owned(),
+                json!(BTreeMap::from([(
+                    target_label.to_owned(),
+                    target_label.to_owned(),
+                )])),
+            ),
+        ]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let mut revised_gate = gate;
+    revised_gate.inputs = BTreeMap::from([(
+        "candidates".to_owned(),
+        PipelineSource::Step {
+            step_id: attach.id.clone(),
+            port: "candidates".to_owned(),
+            artifact_type: ArtifactKind::AnnotationCandidateSet,
+        },
+    )]);
+    revised_gate.outputs = BTreeMap::from([(
+        "candidates".to_owned(),
+        ArtifactKind::AnnotationCandidateSet,
+    )]);
+    // The first Dry Run supplied evidence for adding verification; keep acceptance conservative
+    // but avoid an impossible threshold that would route every verified candidate to Review.
+    revised_gate.parameters.insert(
+        "threshold".to_owned(),
+        json!(project.review.auto_accept_confidence.min(0.9)),
+    );
+    let mut revised_commit = commit;
+    revised_commit.inputs = BTreeMap::from([(
+        "candidates".to_owned(),
+        PipelineSource::Step {
+            step_id: revised_gate.id.clone(),
+            port: "candidates".to_owned(),
+            artifact_type: ArtifactKind::AnnotationCandidateSet,
+        },
+    )]);
+    let revised_gate_id = revised_gate.id.clone();
+    let revised_commit_id = revised_commit.id.clone();
+    let pipeline = &mut composition.label_pipelines[pipeline_index];
+    pipeline.steps = pipeline
+        .steps
+        .iter()
+        .filter(|step| step.id != revised_gate_id && step.id != revised_commit_id)
+        .cloned()
+        .chain([crop, classifier, attach, revised_gate, revised_commit])
+        .collect();
+
+    let old = suggestion.draft.clone();
+    let mut compiled = composition.compile_draft(
+        old.project_id.clone(),
+        old.name.clone(),
+        old.enabled_skills.clone(),
+        old.created_at,
+    );
+    compiled.id = old.id;
+    compiled.status = WorkflowDraftStatus::Editing;
+    compiled.resource_versions = old.resource_versions;
+    compiled.allow_unvalidated_commit = old.allow_unvalidated_commit;
+    compiled.updated_at = chrono::Utc::now();
+    suggestion.draft = compiled;
+    let decided = evidence
+        .auto_accepted_count
+        .saturating_add(evidence.review_count)
+        .saturating_add(evidence.rejected_count);
+    suggestion.rationale.push(format!(
+        "The first Dry Run routed {} of {} decided candidate(s) to Review ({:.0}%), so the Draft now crops each detection and verifies the crop before Decision.",
+        evidence.review_count,
+        decided,
+        evidence.review_rate() * 100.0
+    ));
+    suggestion.warnings.push(
+        "Crop verification adds one model call per candidate and remains an editable Draft change."
+            .to_owned(),
+    );
+    Ok(true)
+}
+
 trait TerminalEvent {
     fn payload_terminal(&self) -> bool;
 }
@@ -7404,6 +8072,26 @@ tasks:
     required: true
 review:
   auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native, coco]
+";
+
+    const HIGH_REVIEW_BBOX_PROJECT: &str = r"
+version: 1
+project:
+  name: High review component inspection
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: components
+    kind: bounding_box
+    labels: [component]
+    required: true
+review:
+  auto_accept_confidence: 0.99
   force_review_below: 0.5
 export:
   formats: [native, coco]
@@ -8629,6 +9317,119 @@ export:
     }
 
     #[tokio::test]
+    async fn advisor_uses_real_dry_run_evidence_to_add_crop_verification() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("review-revision", HIGH_REVIEW_BBOX_PROJECT)
+            .expect("detection Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("review-revision/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let report = application
+            .run_workflow_advisor_agent(
+                "review-revision",
+                &settings,
+                &WorkflowConstraints::default(),
+                Some(("components", "component")),
+                AgentBudget::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Advisor revision loop");
+
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(report.approval_required);
+        assert!(report.validation.as_ref().is_some_and(|value| value.valid));
+        assert!(report.dry_run.as_ref().is_some_and(|value| {
+            value.sandbox
+                && value.summary.auto_accepted_count == 1
+                && value.summary.needs_review_count == 0
+        }));
+        assert_eq!(
+            report
+                .session
+                .steps
+                .iter()
+                .map(|step| step.tool_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "inspect_project",
+                "list_enabled_skills",
+                "list_available_capabilities",
+                "list_available_models",
+                "list_pipeline_templates",
+                "create_draft_from_template",
+                "disconnect_pipeline_nodes",
+                "validate_pipeline",
+                "connect_pipeline_nodes",
+                "validate_pipeline",
+                "dry_run_pipeline",
+                "inspect_dry_run_summary",
+                "add_pipeline_node",
+                "validate_pipeline",
+                "dry_run_pipeline",
+                "submit_draft_for_human_approval",
+            ]
+        );
+        let validations = report
+            .session
+            .steps
+            .iter()
+            .filter(|step| step.tool_name == "validate_pipeline")
+            .filter_map(|step| step.result["model_payload"]["valid"].as_bool())
+            .collect::<Vec<_>>();
+        assert_eq!(validations, vec![false, true, true]);
+        let dry_runs = report
+            .session
+            .steps
+            .iter()
+            .filter(|step| step.tool_name == "dry_run_pipeline")
+            .collect::<Vec<_>>();
+        assert_eq!(dry_runs.len(), 2);
+        assert_eq!(
+            dry_runs[0].result["model_payload"]["summary"]["review_count"],
+            json!(1)
+        );
+        assert_eq!(
+            dry_runs[1].result["model_payload"]["summary"]["review_count"],
+            json!(0)
+        );
+
+        let suggestion = report.suggestion.expect("revised Draft");
+        let composition = suggestion.draft.label_pipeline.expect("Label Pipeline");
+        let steps = &composition.label_pipelines[0].steps;
+        assert!(
+            steps
+                .iter()
+                .any(|step| step.node_type == annotagent_runtime::CORE_CROP)
+        );
+        assert!(steps.iter().any(|step| {
+            step.node_type == annotagent_skill_classification::CLASSIFICATION_OPERATION
+                && step.model_binding.as_ref().is_some_and(|binding| {
+                    binding.capability == VisionCapability::Classification
+                        && !binding.model_id.is_empty()
+                })
+        }));
+        assert!(
+            suggestion
+                .rationale
+                .iter()
+                .any(|reason| reason.contains("1 of 1") && reason.contains("100%"))
+        );
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("review-revision"))
+                .expect("published versions")
+                .is_empty()
+        );
+        assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    #[tokio::test]
     async fn live_pipeline_builder_uses_multi_turn_tool_results_and_never_publishes() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -8753,6 +9554,167 @@ export:
                 .len(),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn live_pipeline_builder_repairs_then_revises_from_bounded_dry_run_feedback() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("live-revision", HIGH_REVIEW_BBOX_PROJECT)
+            .expect("detection Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("live-revision/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let constraints = WorkflowConstraints::default();
+        let input = application
+            .workflow_advisor_input_for_label(
+                "live-revision",
+                &settings,
+                constraints.clone(),
+                Some("components"),
+                Some("component"),
+            )
+            .expect("Advisor input");
+        let safe = application
+            .suggest_label_pipeline_preview(
+                "live-revision",
+                &settings,
+                "components",
+                "component",
+                &constraints,
+            )
+            .expect("safe Draft");
+        let scripted_step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        };
+        let gate = "components.component.confidence";
+        let commit = "components.component.commit";
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                scripted_step("inspect_project", json!({})),
+                scripted_step("inspect_label", json!({})),
+                scripted_step("list_enabled_skills", json!({})),
+                scripted_step("list_available_nodes", json!({})),
+                scripted_step("list_available_models", json!({})),
+                scripted_step("create_draft_from_template", json!({})),
+                scripted_step(
+                    "disconnect_pipeline_nodes",
+                    json!({"from_node": gate, "to_node": commit}),
+                ),
+                scripted_step("validate_pipeline", json!({})),
+                scripted_step(
+                    "connect_pipeline_nodes",
+                    json!({
+                        "from_node": gate,
+                        "from_port": "candidates",
+                        "to_node": commit,
+                        "to_port": "candidates"
+                    }),
+                ),
+                scripted_step("validate_pipeline", json!({})),
+                scripted_step("dry_run_pipeline", json!({"image_indices": [0]})),
+                scripted_step("inspect_dry_run_summary", json!({})),
+                scripted_step("inspect_review_samples", json!({"limit": 1})),
+                scripted_step(
+                    "add_pipeline_node",
+                    json!({"guided_template": "crop_verification"}),
+                ),
+                scripted_step("validate_pipeline", json!({})),
+                scripted_step("dry_run_pipeline", json!({"image_indices": [0]})),
+                scripted_step(
+                    "submit_draft_for_human_approval",
+                    json!({
+                        "name": "Component crop verification proposal",
+                        "rationale": ["The bounded Dry Run reported one Review candidate."],
+                        "warnings": ["This remains an editable Draft."],
+                        "alternatives": []
+                    }),
+                ),
+            ],
+        });
+        let budget = AgentBudget {
+            max_steps: 20,
+            max_tool_calls: 20,
+            ..AgentBudget::default()
+        };
+
+        let report = application
+            .run_workflow_advisor_with_provider(
+                "live-revision",
+                &settings,
+                &constraints,
+                Some(("components", "component")),
+                input,
+                safe,
+                &provider,
+                budget,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("live revision loop");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(report.approval_required);
+        assert_eq!(report.session.usage.tool_calls, 17);
+        assert_eq!(report.session.usage.input_tokens, 170);
+        assert_eq!(report.session.usage.output_tokens, 85);
+        assert_eq!(
+            report
+                .session
+                .steps
+                .iter()
+                .filter(|step| step.tool_name == "validate_pipeline")
+                .filter_map(|step| step.result["model_payload"]["valid"].as_bool())
+                .collect::<Vec<_>>(),
+            vec![false, true, true]
+        );
+        let review_inspection = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "inspect_review_samples")
+            .expect("bounded Review sample inspection");
+        assert_eq!(
+            review_inspection.result["model_payload"]["sample_count"],
+            json!(1)
+        );
+        assert!(
+            review_inspection.result["model_payload"]["samples"][0]["outcomes"][0]
+                .get("value")
+                .is_none(),
+            "the model must not receive full Artifact bodies"
+        );
+        let suggestion = report.suggestion.expect("revised suggestion");
+        assert!(
+            suggestion
+                .rationale
+                .iter()
+                .any(|reason| reason.contains("1 of 1") && reason.contains("100%"))
+        );
+        assert!(suggestion.draft.nodes.iter().any(|node| {
+            node.node_type == annotagent_runtime::CORE_CROP && node.id.contains("crop_verify")
+        }));
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("live-revision"))
+                .expect("published versions")
+                .is_empty()
+        );
+        assert!(application.list_runs().expect("formal Runs").is_empty());
     }
 
     #[tokio::test]

@@ -90,3 +90,18 @@ failed auditable Tool result that the next turn can repair.
 The initial live prompt contains no full Registry, Workflow JSON, image bytes, Run history or
 Artifact history. Explicit read tools reveal only the requested bounded subset. Assistant text is
 transient conversation context and is not persisted, avoiding hidden chain-of-thought storage.
+
+## D016 — Dry Run evidence is bounded data, not a second vision prompt
+
+The Pipeline Builder receives aggregate image/outcome/warning/model-call/latency/cost fields plus at
+most five selected failed or Review summaries. It does not automatically receive image bytes or full
+Artifact bodies. A graph revision invalidates the previous validation and Dry Run. Crop verification
+is available only after inspecting current evidence, binds a healthy/available Registry
+Classification Model, and preserves a user-visible rationale that cites the measured Review rate.
+
+## D017 — Agent grammar is a publish invariant
+
+Pipeline Grammar is not merely an advisory Tool result. Label Pipeline Dry Run and Publish invoke it
+inside the Application service, including Decision-before-Commit, bounded uncertainty, model-call,
+forbidden-node and Commit-count rules. The Agent may iterate through invalid editable Drafts, but an
+invalid graph cannot cross the publish boundary.

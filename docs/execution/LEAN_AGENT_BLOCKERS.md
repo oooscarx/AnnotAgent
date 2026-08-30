@@ -2,8 +2,8 @@
 
 ## Offline release blockers
 
-None through M2. The scoped M2 Rust suites and all Web checks pass; external models are not needed
-for the next constrained ScriptedMock and RuleBased work.
+None through M5. The real Rust validation/Dry Run revision loop passes with offline Model Backends;
+external models are not required for Guided UX, Diff/undo or the remaining offline release work.
 
 ## Live-conditional
 
