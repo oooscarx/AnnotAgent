@@ -1767,7 +1767,21 @@ impl AnnotationCandidateSet {
                         detection_ref.clone(),
                         classifications.reference.item(&classification.id),
                     ],
-                    validation_state: Some(ArtifactValidationState::Unvalidated),
+                    validation_state: Some(
+                        if detections.validation_state == ArtifactValidationState::Invalid
+                            || classifications.validation_state == ArtifactValidationState::Invalid
+                        {
+                            ArtifactValidationState::Invalid
+                        } else if detections.validation_state
+                            == ArtifactValidationState::NeedsReview
+                            || classifications.validation_state
+                                == ArtifactValidationState::NeedsReview
+                        {
+                            ArtifactValidationState::NeedsReview
+                        } else {
+                            ArtifactValidationState::Unvalidated
+                        },
+                    ),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

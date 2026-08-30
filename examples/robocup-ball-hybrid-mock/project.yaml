@@ -1,0 +1,51 @@
+version: 1
+project:
+  name: RoboCup Ball Hybrid Offline Mock
+  skill: robocup
+  skill_version: "1"
+  language: en
+  enabled_skills:
+    - id: annotagent.object_detection
+      version: "1"
+    - id: annotagent.open_vocabulary_grounding
+      version: "1"
+    - id: classification
+      version: "1"
+    - id: robocup.ball
+      version: "1"
+      configuration:
+        capability.object_detection: mock-object-detector
+        capability.open_vocabulary_detection: mock-open-vocabulary
+        capability.classification: mock-classifier
+dataset:
+  root: images
+  include: ["**/*.png"]
+  recursive: true
+runtime:
+  max_parallel_images: 1
+  max_model_turns_per_task: 4
+  max_tool_calls_per_task: 4
+  max_recovery_turns_per_task: 1
+  task_timeout_seconds: 30
+  provider_request_timeout_seconds: 10
+  max_retries: 1
+  auto_resume: true
+tasks:
+  - id: footballs
+    display_name: Footballs
+    kind: bounding_box
+    labels: [football]
+    required: true
+    multi_label: true
+    validators:
+      - robocup.ball.ball_hard_negative
+      - robocup.ball.robocup_ball_field_relation
+review:
+  auto_accept_confidence: 0.90
+  force_review_below: 0.72
+  force_review_on_warning_codes:
+    - possible_white_shoe
+    - possible_penalty_mark
+    - geometry_conflict
+export:
+  formats: [native, coco, yolo]

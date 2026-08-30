@@ -37,6 +37,8 @@ impl Default for YoloCapabilitySkill {
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
                 capabilities: vec!["object_detection".to_owned()],
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: vec![YOLO_DETECTION_OPERATION.to_owned()],
                 tools: Vec::new(),
                 validators: Vec::new(),

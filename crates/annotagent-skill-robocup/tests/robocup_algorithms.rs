@@ -5,7 +5,7 @@ use annotagent_core::{
     AnnotationValidator, AnnotationValue, AttributeValue, DomainSkill, ImageFrame, ImageId,
     ImageMetadata, Keypoint, LabelId, NormalizedPoint, NormalizedRect, ProjectSchema,
     RefinementContext, ReviewContext, ReviewDecision, ReviewPolicy, ReviewStatus, RunId, TaskId,
-    ToolContext, ValidationContext,
+    ToolContext, ValidationContext, WorkflowNodeKind,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image};
 use annotagent_skill_robocup::{
@@ -180,7 +180,21 @@ fn ball_field_relation_is_safe_inside_outside_and_without_field_evidence() {
         },
     );
     let fields = [full_field()];
-    let project = project();
+    let mut project = project();
+    project.tasks.push(annotagent_core::TaskConfig {
+        id: TaskId::from("field_region"),
+        display_name: Some("Field region".to_owned()),
+        kind: annotagent_core::TaskKind::Polygon,
+        labels: vec!["field".to_owned()],
+        required: false,
+        multi_label: false,
+        depends_on: Vec::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        target_task: None,
+        target_labels: Vec::new(),
+        attributes: BTreeMap::new(),
+    });
     assert!(
         validator
             .validate(&ValidationContext {
@@ -467,11 +481,24 @@ fn robocup_exposes_only_two_ball_workflow_templates() {
             .iter()
             .map(|template| template.id.as_str())
             .collect::<Vec<_>>(),
-        ["robocup.ball.vlm-bootstrap", "robocup.ball.detector-first"]
+        [
+            "robocup.ball.vlm-bootstrap",
+            "robocup.ball.specialist_with_open_vocab_fallback"
+        ]
     );
     for template in &templates {
-        assert!(template.nodes.iter().any(|node| node.id == "review"));
-        assert!(template.nodes.iter().any(|node| node.id == "commit"));
+        assert!(
+            template
+                .nodes
+                .iter()
+                .any(|node| node.kind == WorkflowNodeKind::HumanReview)
+        );
+        assert!(
+            template
+                .nodes
+                .iter()
+                .any(|node| node.kind == WorkflowNodeKind::Commit)
+        );
         assert!(template.nodes.iter().all(|node| {
             !node.id.contains("field") && !node.id.contains("robot") && !node.id.contains("penalty")
         }));

@@ -974,6 +974,32 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             produces: vec![ArtifactKind::CandidateClusterSet],
             deterministic: true,
         },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_PROJECT_CANDIDATES.to_owned(),
+            display_name: "Project Detection Candidates".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::CandidateClusterSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_REJECT.to_owned(),
+            display_name: "Reject Candidates".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![
+                ArtifactKind::DetectionSet,
+                ArtifactKind::CandidateClusterSet,
+                ArtifactKind::ClassificationSet,
+                ArtifactKind::AnnotationCandidateSet,
+            ],
+            produces: vec![
+                ArtifactKind::DetectionSet,
+                ArtifactKind::CandidateClusterSet,
+                ArtifactKind::ClassificationSet,
+                ArtifactKind::AnnotationCandidateSet,
+            ],
+            deterministic: true,
+        },
         annotagent_runtime::detection_recovery_node_descriptor(),
     ] {
         nodes.register(descriptor)?;
@@ -3533,29 +3559,14 @@ impl LocalApplication {
             .get(image_index)
             .ok_or_else(|| anyhow!("source image index {image_index} is no longer available"))?;
         let project_path = self.project_path(&workflow.project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
-        let use_namespace = project_skills.len() > 1;
-        let mut validators = BTreeMap::new();
-        let mut refiners = BTreeMap::new();
-        for skill in &project_skills {
-            for validator in skill.validators() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), validator.id())
-                } else {
-                    validator.id().to_owned()
-                };
-                validators.insert(id, validator);
-            }
-            for refiner in skill.refiners() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), refiner.id())
-                } else {
-                    refiner.id().to_owned()
-                };
-                refiners.insert(id, refiner);
-            }
-        }
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let enabled_ids = project
+            .project
+            .enabled_skill_versions()
+            .into_keys()
+            .collect::<Vec<_>>();
+        let (validators, refiners) =
+            workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
             "mock",
@@ -3700,29 +3711,14 @@ impl LocalApplication {
             .get(image_index)
             .ok_or_else(|| anyhow!("source image index {image_index} is no longer available"))?;
         let project_path = self.project_path(&workflow.project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
-        let use_namespace = project_skills.len() > 1;
-        let mut validators = BTreeMap::new();
-        let mut refiners = BTreeMap::new();
-        for skill in &project_skills {
-            for validator in skill.validators() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), validator.id())
-                } else {
-                    validator.id().to_owned()
-                };
-                validators.insert(id, validator);
-            }
-            for refiner in skill.refiners() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), refiner.id())
-                } else {
-                    refiner.id().to_owned()
-                };
-                refiners.insert(id, refiner);
-            }
-        }
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let enabled_ids = project
+            .project
+            .enabled_skill_versions()
+            .into_keys()
+            .collect::<Vec<_>>();
+        let (validators, refiners) =
+            workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
             "mock",
@@ -3899,7 +3895,11 @@ impl LocalApplication {
                 .ok_or_else(|| {
                     anyhow!("workflow template {template_id:?} is not provided by an enabled Skill")
                 })?;
-            template.instantiate(project_id, project.project.enabled_skill_versions(), now)
+            let mut draft =
+                template.instantiate(project_id, project.project.enabled_skill_versions(), now);
+            let (nodes, _) = workflow_catalog(settings)?;
+            apply_project_capability_bindings(&mut draft, &project, &nodes)?;
+            draft
         } else if from_template {
             let (nodes, models) = workflow_catalog(settings)?;
             let mut draft = RegistryWorkflowAdvisor
@@ -4858,8 +4858,7 @@ impl LocalApplication {
         temporary_api_key: Option<String>,
     ) -> Result<WorkflowDryRunReport> {
         let project_path = self.project_path(&draft.project_id)?;
-        let (project, project_skills) =
-            load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (_, models) = workflow_catalog(settings)?;
         let snapshot =
             WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions());
@@ -4880,27 +4879,13 @@ impl LocalApplication {
             .iter()
             .map(|node| node.id.clone())
             .collect::<Vec<_>>();
-        let use_namespace = project_skills.len() > 1;
-        let mut validators = BTreeMap::new();
-        let mut refiners = BTreeMap::new();
-        for skill in &project_skills {
-            for validator in skill.validators() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), validator.id())
-                } else {
-                    validator.id().to_owned()
-                };
-                validators.insert(id, validator);
-            }
-            for refiner in skill.refiners() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), refiner.id())
-                } else {
-                    refiner.id().to_owned()
-                };
-                refiners.insert(id, refiner);
-            }
-        }
+        let enabled_ids = project
+            .project
+            .enabled_skill_versions()
+            .into_keys()
+            .collect::<Vec<_>>();
+        let (validators, refiners) =
+            workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             published,
             &settings.default_provider,
@@ -6072,27 +6057,12 @@ fn prepare_run_with_settings(
     let image = Arc::new(load_image(&image_path, 40_000_000).map_err(|error| anyhow!(error))?);
     let model_image = to_model_image("full-image", &image, 1280).map_err(|error| anyhow!(error))?;
     let runtime: Arc<dyn ApplicationImageRuntime> = if let Some(published) = published_workflow {
-        let use_namespace = project_skills.len() > 1;
-        let mut validators = BTreeMap::new();
-        let mut refiners = BTreeMap::new();
-        for skill in &project_skills {
-            for validator in skill.validators() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), validator.id())
-                } else {
-                    validator.id().to_owned()
-                };
-                validators.insert(id, validator);
-            }
-            for refiner in skill.refiners() {
-                let id = if use_namespace {
-                    format!("{}.{}", skill.id(), refiner.id())
-                } else {
-                    refiner.id().to_owned()
-                };
-                refiners.insert(id, refiner);
-            }
-        }
+        let enabled_ids = project
+            .project
+            .enabled_skill_versions()
+            .into_keys()
+            .collect::<Vec<_>>();
+        let (validators, refiners) = workflow_extension_implementations(skills, &enabled_ids)?;
         Arc::new(PublishedWorkflowRuntime::new(
             published,
             provider_kind,
@@ -6256,6 +6226,97 @@ fn workflow_templates_for(
         }
     }
     Ok(templates)
+}
+
+type WorkflowValidators = BTreeMap<String, Arc<dyn annotagent_core::AnnotationValidator>>;
+type WorkflowRefiners = BTreeMap<String, Arc<dyn annotagent_core::AnnotationRefiner>>;
+
+fn workflow_extension_implementations(
+    skills: &SkillRegistry,
+    enabled_ids: &[String],
+) -> Result<(WorkflowValidators, WorkflowRefiners)> {
+    let use_namespace = enabled_ids.len() > 1;
+    let mut validators = BTreeMap::new();
+    let mut refiners = BTreeMap::new();
+    for skill_id in enabled_ids {
+        if let Ok(skill) = skills.get(skill_id) {
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{skill_id}.{}", validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{skill_id}.{}", refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
+        } else {
+            let skill = skills.get_layered(skill_id)?;
+            for validator in skill.validators() {
+                let id = if use_namespace {
+                    format!("{skill_id}.{}", validator.id())
+                } else {
+                    validator.id().to_owned()
+                };
+                validators.insert(id, validator);
+            }
+            for refiner in skill.refiners() {
+                let id = if use_namespace {
+                    format!("{skill_id}.{}", refiner.id())
+                } else {
+                    refiner.id().to_owned()
+                };
+                refiners.insert(id, refiner);
+            }
+        }
+    }
+    Ok((validators, refiners))
+}
+
+fn apply_project_capability_bindings(
+    draft: &mut WorkflowDraft,
+    project: &ProjectSchema,
+    nodes: &NodeRegistry,
+) -> Result<()> {
+    let mut configured = BTreeMap::new();
+    for skill in &project.project.enabled_skills {
+        for (key, model_id) in &skill.configuration {
+            let Some(capability) = key.strip_prefix("capability.") else {
+                continue;
+            };
+            if let Some(existing) = configured.insert(capability.to_owned(), model_id.clone())
+                && existing != *model_id
+            {
+                bail!(
+                    "Project capability {capability:?} has conflicting model bindings {existing:?} and {model_id:?}"
+                );
+            }
+        }
+    }
+    for node in &mut draft.nodes {
+        if node.model_binding.is_some() {
+            continue;
+        }
+        let Some(descriptor) = nodes.get(&node.node_type) else {
+            continue;
+        };
+        if descriptor.required_capabilities.len() != 1 {
+            continue;
+        }
+        let capability = serde_json::to_value(descriptor.required_capabilities[0])
+            .ok()
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
+        if let Some(model_id) = capability.and_then(|capability| configured.get(&capability)) {
+            node.model_binding = Some(model_id.clone());
+        }
+    }
+    Ok(())
 }
 
 fn find_or_generate_image(project_path: &Path, project: &ProjectSchema) -> Result<PathBuf> {
@@ -8198,6 +8259,308 @@ export:
                 .iter()
                 .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
         );
+    }
+
+    #[tokio::test]
+    async fn robocup_hybrid_template_resolves_capabilities_and_runs_fast_path_offline() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "robocup-hybrid-mock",
+                include_str!("../../../examples/robocup-ball-hybrid-mock/project.yaml"),
+            )
+            .expect("hybrid Project");
+        let settings = load_settings(None).expect("settings");
+        let mut draft = application
+            .create_workflow_draft_with_template(
+                "robocup-hybrid-mock",
+                &settings,
+                false,
+                Some("robocup.ball.specialist_with_open_vocab_fallback"),
+            )
+            .expect("hybrid Draft");
+        let binding = |node_id: &str| {
+            draft
+                .nodes
+                .iter()
+                .find(|node| node.id == node_id)
+                .and_then(|node| node.model_binding.as_deref())
+        };
+        assert_eq!(binding("specialist"), Some("mock-object-detector"));
+        assert_eq!(binding("recovery"), Some("mock-open-vocabulary"));
+        assert_eq!(binding("classify_crop"), Some("mock-classifier"));
+        let specialist = draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist node");
+        specialist
+            .parameters
+            .insert("mock_confidence".to_owned(), json!(0.92));
+        specialist
+            .parameters
+            .insert("mock_bbox".to_owned(), json!([0.55, 0.72, 0.04, 0.04]));
+        application
+            .save_workflow_draft(draft.clone())
+            .expect("save deterministic fixture");
+        let report = application
+            .dry_run_workflow(&draft.id, &settings)
+            .expect("static validation");
+        assert!(report.valid, "{:#?}", report.issues);
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("robocup-hybrid-mock/images/sample.png"),
+        )
+        .expect("sample image");
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish hybrid Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("robocup-hybrid-mock/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("hybrid-fast-path"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start hybrid Run");
+        let run = application
+            .wait_run(started.run_id)
+            .await
+            .expect("hybrid Run");
+        assert_eq!(run.status, RunStatus::Completed, "{:#?}", run.issues);
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("pipeline inspection");
+        assert!(
+            inspection
+                .nodes
+                .iter()
+                .any(|node| node.node_id == "commit_evidence")
+        );
+        assert!(
+            !inspection
+                .nodes
+                .iter()
+                .any(|node| node.node_id == "classify_crop"),
+            "{:#?}",
+            inspection.nodes
+        );
+
+        let mut fallback_draft = application
+            .create_workflow_draft_with_template(
+                "robocup-hybrid-mock",
+                &load_settings(None).expect("fallback settings"),
+                false,
+                Some("robocup.ball.specialist_with_open_vocab_fallback"),
+            )
+            .expect("fallback Draft");
+        fallback_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist")
+            .parameters
+            .insert("mock_empty".to_owned(), json!(true));
+        fallback_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "classify_crop")
+            .expect("classifier")
+            .parameters
+            .insert("mock_label".to_owned(), json!("football"));
+        application
+            .save_workflow_draft(fallback_draft.clone())
+            .expect("save fallback fixture");
+        let fallback_settings = load_settings(None).expect("fallback settings");
+        let fallback_published = application
+            .publish_workflow(&fallback_draft.id, &fallback_settings)
+            .expect("publish fallback Workflow");
+        let fallback_started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("robocup-hybrid-mock/project.yaml"),
+                "mock",
+                fallback_settings,
+                None,
+                Some("hybrid-fallback-path"),
+                Some((&fallback_published.workflow_id, fallback_published.version)),
+            )
+            .expect("start fallback Run");
+        let fallback_run = application
+            .wait_run(fallback_started.run_id)
+            .await
+            .expect("fallback Run");
+        assert_eq!(
+            fallback_run.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            fallback_run.issues
+        );
+        let fallback_inspection = application
+            .inspect_run_pipeline_artifacts(fallback_started.run_id)
+            .expect("fallback pipeline inspection");
+        for expected in [
+            "recovery",
+            "project_candidates",
+            "crop_verify",
+            "classify_crop",
+            "review_verified",
+        ] {
+            assert!(
+                fallback_inspection
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_id == expected),
+                "missing {expected}: {:#?}",
+                fallback_inspection.nodes
+            );
+        }
+
+        let mut reject_draft = application
+            .create_workflow_draft_with_template(
+                "robocup-hybrid-mock",
+                &load_settings(None).expect("reject settings"),
+                false,
+                Some("robocup.ball.specialist_with_open_vocab_fallback"),
+            )
+            .expect("reject Draft");
+        reject_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist")
+            .parameters
+            .insert("mock_empty".to_owned(), json!(true));
+        reject_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "classify_crop")
+            .expect("classifier")
+            .parameters
+            .insert("mock_label".to_owned(), json!("not_football"));
+        application
+            .save_workflow_draft(reject_draft.clone())
+            .expect("save reject fixture");
+        let reject_settings = load_settings(None).expect("reject settings");
+        let reject_published = application
+            .publish_workflow(&reject_draft.id, &reject_settings)
+            .expect("publish reject Workflow");
+        let reject_started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("robocup-hybrid-mock/project.yaml"),
+                "mock",
+                reject_settings,
+                None,
+                Some("hybrid-hard-negative-path"),
+                Some((&reject_published.workflow_id, reject_published.version)),
+            )
+            .expect("start reject Run");
+        let reject_run = application
+            .wait_run(reject_started.run_id)
+            .await
+            .expect("reject Run");
+        assert_ne!(
+            reject_run.status,
+            RunStatus::Failed,
+            "{:#?}",
+            reject_run.issues
+        );
+        let reject_inspection = application
+            .inspect_run_pipeline_artifacts(reject_started.run_id)
+            .expect("reject pipeline inspection");
+        let rejected = reject_inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "reject_hard_negative")
+            .expect("explicit reject node");
+        assert_eq!(rejected.metadata.get("decision"), Some(&json!("reject")));
+        assert!(!rejected.outputs.is_empty());
+        assert!(
+            !reject_inspection
+                .nodes
+                .iter()
+                .any(|node| node.node_id.starts_with("commit_")),
+            "{:#?}",
+            reject_inspection.nodes
+        );
+
+        let mut crashed_draft = application
+            .create_workflow_draft_with_template(
+                "robocup-hybrid-mock",
+                &load_settings(None).expect("crash settings"),
+                false,
+                Some("robocup.ball.specialist_with_open_vocab_fallback"),
+            )
+            .expect("crash Draft");
+        crashed_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist")
+            .parameters
+            .insert("mock_backend_error".to_owned(), json!(true));
+        crashed_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "classify_crop")
+            .expect("classifier")
+            .parameters
+            .insert("mock_label".to_owned(), json!("football"));
+        application
+            .save_workflow_draft(crashed_draft.clone())
+            .expect("save crash fixture");
+        let crashed_settings = load_settings(None).expect("crash settings");
+        let crashed_published = application
+            .publish_workflow(&crashed_draft.id, &crashed_settings)
+            .expect("publish crash Workflow");
+        let crashed_started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("robocup-hybrid-mock/project.yaml"),
+                "mock",
+                crashed_settings,
+                None,
+                Some("hybrid-specialist-crash"),
+                Some((&crashed_published.workflow_id, crashed_published.version)),
+            )
+            .expect("start crash Run");
+        let crashed_run = application
+            .wait_run(crashed_started.run_id)
+            .await
+            .expect("crash Run");
+        assert_eq!(
+            crashed_run.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            crashed_run.issues
+        );
+        let crashed_inspection = application
+            .inspect_run_pipeline_artifacts(crashed_started.run_id)
+            .expect("crash pipeline inspection");
+        let specialist = crashed_inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "specialist")
+            .expect("specialist trace");
+        assert_eq!(
+            specialist
+                .metadata
+                .get("backend_error")
+                .and_then(|error| error.get("code")),
+            Some(&json!("detection_backend"))
+        );
+        for expected in ["recovery", "classify_crop", "review_verified"] {
+            assert!(
+                crashed_inspection
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_id == expected),
+                "missing {expected}: {:#?}",
+                crashed_inspection.nodes
+            );
+        }
     }
 
     #[tokio::test]

@@ -145,6 +145,8 @@ impl Default for OpenVocabularyGroundingSkill {
                     "open_vocabulary_detection".to_owned(),
                     "phrase_grounding".to_owned(),
                 ],
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: vec![
                     OPEN_VOCABULARY_DETECTION_OPERATION.to_owned(),
                     PHRASE_GROUNDING_OPERATION.to_owned(),

@@ -23,6 +23,14 @@ pub struct SkillDependency {
     pub version: String,
 }
 
+/// Domain requirements name capabilities rather than concrete implementations or model ids.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCapabilityRequirements {
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillManifest {
@@ -42,6 +50,10 @@ pub struct SkillManifest {
     pub conflicts: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub requires: SkillCapabilityRequirements,
+    #[serde(default)]
+    pub optional_capabilities: Vec<String>,
     #[serde(default)]
     pub nodes: Vec<String>,
     #[serde(default)]
@@ -140,6 +152,28 @@ impl SkillManifest {
                 issues.push(ConfigIssue {
                     path: format!("correction_taxonomy[{index}]"),
                     message: format!("duplicate correction kind {kind:?}"),
+                });
+            }
+        }
+        let mut required_capabilities = BTreeSet::new();
+        for (index, capability) in self.requires.capabilities.iter().enumerate() {
+            if capability.trim().is_empty() || !required_capabilities.insert(capability) {
+                issues.push(ConfigIssue {
+                    path: format!("requires.capabilities[{index}]"),
+                    message: "required capabilities must be non-empty and unique".to_owned(),
+                });
+            }
+        }
+        let mut optional_capabilities = BTreeSet::new();
+        for (index, capability) in self.optional_capabilities.iter().enumerate() {
+            if capability.trim().is_empty()
+                || !optional_capabilities.insert(capability)
+                || required_capabilities.contains(capability)
+            {
+                issues.push(ConfigIssue {
+                    path: format!("optional_capabilities[{index}]"),
+                    message: "optional capabilities must be non-empty, unique, and not required"
+                        .to_owned(),
                 });
             }
         }

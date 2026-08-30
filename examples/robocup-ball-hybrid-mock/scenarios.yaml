@@ -1,0 +1,34 @@
+version: 1
+template: robocup.ball.specialist_with_open_vocab_fallback
+cases:
+  - id: specialist_high
+    specialist: {score: 0.92, detections: 1}
+    expected: {fallback_calls: 0, decision: commit}
+  - id: specialist_empty
+    specialist: {detections: 0}
+    fallback: {detections: 1, score_semantics: not_provided}
+    crop_verifier: {label: football, confidence: 0.95}
+    expected: {fallback_calls: 1, decision: commit_or_review}
+  - id: detector_agreement
+    specialist: {score: 0.40, bbox: [0.10, 0.10, 0.20, 0.20]}
+    fallback: {bbox: [0.08, 0.12, 0.20, 0.18], score_semantics: not_provided}
+    expected: {minimum_iou: 0.60, agreement: multi_source, decision: commit}
+  - id: geometry_conflict
+    specialist: {score: 0.40, bbox: [0.10, 0.10, 0.20, 0.20]}
+    fallback: {bbox: [0.65, 0.65, 0.10, 0.10], score_semantics: not_provided}
+    expected: {agreement: geometry_conflict, crop_verify: true, decision: review}
+  - id: white_shoe
+    specialist: {detections: 0}
+    fallback: {bbox: [0.218, 0.615, 0.04, 0.03], score_semantics: not_provided}
+    context: {robot_bbox: [0.225, 0.445, 0.07, 0.20]}
+    crop_verifier: {label: not_football, confidence: 0.96}
+    expected: {issue: possible_white_shoe, decision: reject}
+  - id: budget_insufficient
+    specialist: {score: 0.40, detections: 1}
+    budget: {max_cost: "0.00"}
+    fallback: {estimated_cost: "0.01"}
+    expected: {fallback_calls: 0, decision: human_review, run_failed: false}
+  - id: worker_crash
+    specialist: {score: 0.40, detections: 1}
+    fallback: {error: {code: worker_unavailable, retryable: true}}
+    expected: {decision: human_review, run_failed: false, panic: false}

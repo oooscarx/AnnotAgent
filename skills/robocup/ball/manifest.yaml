@@ -5,20 +5,29 @@ skill_version: "1"
 display_name: RoboCup Ball
 description: Ball detection validation, review policy, recovery resources, and correction taxonomy
 rust_implementation: annotagent_skill_robocup::RoboCupBallSkill
-dependencies:
-  - id: vlm-detection
-    version: "1"
+dependencies: []
 capabilities:
   - robocup_ball_validation
+requires:
+  capabilities:
+    - crop
+    - human_review
+optional_capabilities:
+  - object_detection
+  - open_vocabulary_detection
+  - classification
+  - field_segmentation
+  - robot_detection
 nodes:
   - robocup.ball.validate
 validators:
   - ball_hard_negative
+  - robocup_ball_field_relation
 policies:
   - robocup.ball.review
 templates:
   - robocup.ball.vlm-bootstrap
-  - robocup.ball.detector-first
+  - robocup.ball.specialist_with_open_vocab_fallback
 summary_resources:
   - ball/SKILL.md
 task_resources:

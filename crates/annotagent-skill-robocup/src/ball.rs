@@ -50,7 +50,7 @@ impl annotagent_core::AnnotationValidator for RoboCupBallHardNegativeValidator {
             .candidate
             .label
             .as_ref()
-            .is_none_or(|label| label.as_str() != "ball")
+            .is_none_or(|label| !is_ball_label(label.as_str()))
         {
             return Ok(Vec::new());
         }
@@ -102,7 +102,7 @@ impl annotagent_core::AnnotationValidator for RoboCupBallHardNegativeValidator {
                 annotation
                     .label
                     .as_ref()
-                    .is_some_and(|label| label.as_str() == "ball")
+                    .is_some_and(|label| is_ball_label(label.as_str()))
                     && annotation.id != context.candidate.id
             })
             .filter_map(|annotation| match annotation.value {
@@ -244,7 +244,7 @@ impl AnnotationRefiner for RoboCupBallForegroundRefiner {
             .candidate
             .label
             .as_ref()
-            .is_none_or(|label| label.as_str() != "ball")
+            .is_none_or(|label| !is_ball_label(label.as_str()))
         {
             return Err(CoreError::Refinement(
                 "ball foreground refiner requires a ball candidate".to_owned(),
@@ -523,13 +523,21 @@ impl annotagent_core::AnnotationValidator for RoboCupBallFieldRelationValidator 
             .candidate
             .label
             .as_ref()
-            .is_none_or(|label| label.as_str() != "ball")
+            .is_none_or(|label| !is_ball_label(label.as_str()))
         {
             return Ok(Vec::new());
         }
         let AnnotationValue::BoundingBox { rect } = context.candidate.value else {
             return Ok(Vec::new());
         };
+        let field_relation_enabled = context
+            .project
+            .tasks
+            .iter()
+            .any(|task| task.labels.iter().any(|label| label == "field"));
+        if !field_relation_enabled {
+            return Ok(Vec::new());
+        }
         let field_ring = context
             .related_annotations
             .iter()
@@ -564,6 +572,10 @@ impl annotagent_core::AnnotationValidator for RoboCupBallFieldRelationValidator 
             )])
         }
     }
+}
+
+fn is_ball_label(label: &str) -> bool {
+    matches!(label, "ball" | "football")
 }
 
 fn point_in_ring(point: NormalizedPoint, ring: &[NormalizedPoint]) -> bool {

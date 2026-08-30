@@ -125,6 +125,11 @@ impl DomainSkill for RoboCupSkill {
                     .map(|mut template| {
                         for node in &mut template.nodes {
                             node.required_skills = vec!["robocup".to_owned()];
+                            for validator in &mut node.validators {
+                                if let Some(unqualified) = validator.strip_prefix("robocup.ball.") {
+                                    *validator = unqualified.to_owned();
+                                }
+                            }
                         }
                         template.resource_versions = std::collections::BTreeMap::from([
                             ("SKILL.md".to_owned(), "1".to_owned()),

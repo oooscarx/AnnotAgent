@@ -4,10 +4,11 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M7. Both Capability Skills and Worker adapters, Candidate Match, Evidence Gate,
-capability-driven Advisor, bounded Recovery Agent, persisted structured Trace and exact published
-Runtime execution are complete. RoboCup hybrid policy, Guided mixed-evidence UX and cache/replay
-release proof remain scheduled repository work, not environment blockers.
+None at M8. Capability Skills and Worker adapters, Candidate Match, Evidence Gate,
+capability-driven Advisor, bounded Recovery Agent, persisted structured Trace, capability-bound
+RoboCup Ball hybrid policy and exact published Runtime execution are complete. Guided
+mixed-evidence UX and cache/replay release proof remain scheduled repository work, not environment
+blockers.
 
 ## Live-conditional external requirements
 

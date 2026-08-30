@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M7 — Registry-bounded Advisor and evidence-driven Recovery Agent (complete)
+M8 — Capability-bound RoboCup Ball hybrid Workflow (complete)
 
 ## Completed
 
@@ -139,21 +139,50 @@ M7 — Registry-bounded Advisor and evidence-driven Recovery Agent (complete)
 - Mock unit/integration tests cover the high-score fast path, empty-result fallback, domain-risk
   fallback, insufficient-cost Review, changed decision after agreement, one-call stop, persisted
   trace and exact published Runtime execution.
+- Extended Skill manifests with explicit required and optional capability declarations. The
+  RoboCup Ball Domain Skill requires only generic Crop/Human Review Core capabilities and advertises
+  Object Detection, Open Vocabulary Detection, Classification, field and robot evidence as optional.
+- Added Project-owned capability bindings. Draft creation resolves each model-backed template node
+  from `capability.<name>` configuration on the enabled Domain Skill; the Skill template contains no
+  concrete model identity or backend-brand branch.
+- Replaced the former detector-first Ball recipe with the bounded
+  `robocup.ball.specialist_with_open_vocab_fallback` Workflow. Accepted specialist evidence commits
+  directly; empty, low-score, Domain-risk or Correction-risk evidence may call one fallback; unresolved
+  evidence enters typed candidate projection, Crop and crop Classification verification.
+- Added generic Candidate Cluster → DetectionSet projection and explicit candidate rejection nodes.
+  Projection preserves every independent evidence record and source score semantics, while geometry
+  or label conflict becomes a Validation Issue instead of a fabricated aggregate confidence.
+- Domain Validator execution now reads Correction Memory from the exact Project/Skill/task/Label
+  scope and attaches a structured Correction Risk fact. RoboCup Ball combines hard-negative and
+  optional field-relation validation; lack of field evidence is not penalized when the Project does
+  not declare field semantics.
+- Crop Classification verification supports configured accept/reject labels and retains the exact
+  crop subject/parent reference. `not_football` takes an explicit terminal reject route; uncertain
+  classifications and conflicts remain reviewable.
+- Added live and no-key Mock RoboCup Ball hybrid Projects. Concrete specialist, fallback and
+  classifier model IDs exist only in Project configuration. The offline scenario manifest covers
+  high specialist evidence, empty fallback, agreement, conflict, white-shoe rejection, insufficient
+  budget and Worker crash.
+- Exact published-Workflow integration proves the 0.92 specialist fast path skips fallback/Crop
+  classification and commits, while an empty specialist result invokes fallback, projects evidence,
+  creates a Crop, classifies it and ends in review without failing the Run. The same frozen graph
+  proves `not_football` reaches only the explicit Reject terminal and an opted-in specialist Worker
+  error remains structured, invokes fallback and finishes in Review rather than Failed.
 
 ## In progress
 
-- None. M7 is ready for its independent local commit.
+- None. M8 is ready for its independent local commit.
 
 ## Next step
 
-M8 — add the capability-bound RoboCup Ball hybrid template, Domain validation/correction policy,
-and the required offline scenario matrix without introducing a concrete model branch in Core.
+M9 — expose Guided recommendations, Worker setup, mixed-evidence Results/Review explanations,
+source-box choice, TUI model controls, URL restoration and responsive accessibility evidence.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 216 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 219 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 34 tests |
@@ -166,7 +195,7 @@ and the required offline scenario matrix without introducing a concrete model br
 
 ## Latest local commit
 
-This document's containing M7 commit: `feat(agent): select open-vocabulary fallbacks from detection evidence`
+This document's containing M8 commit: `feat(robocup): add specialist and open-vocabulary ball workflow`
 
 ## Audited baseline
 
@@ -200,9 +229,9 @@ This document's containing M7 commit: `feat(agent): select open-vocabulary fallb
 
 ## Release Blocking remaining
 
-The matrix contains 75 `PASS`, 13 `OPEN`, and one `LIVE-CONDITIONAL` row after M7. Advisor and
-bounded per-image Recovery now pass; cache-specific proof, Guided Results/Review and the RoboCup
-hybrid policy remain scheduled work. Real five-image GPU smokes remain explicitly
+The matrix contains 78 `PASS`, 10 `OPEN`, and one `LIVE-CONDITIONAL` row after M8. Capability-bound
+RoboCup hybrid policy, Correction Memory, hard-negative and Crop verification now pass;
+cache-specific proof and Guided Results/Review remain scheduled work. Real five-image GPU smokes remain explicitly
 live-conditional and are not represented by Mock fixtures.
 
 ## Live-conditional items

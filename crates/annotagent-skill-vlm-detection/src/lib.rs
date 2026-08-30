@@ -41,6 +41,8 @@ impl Default for VlmDetectionCapabilitySkill {
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
                 capabilities: vec!["vision_language_detection".to_owned()],
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: vec![VLM_DETECTION_OPERATION.to_owned()],
                 tools: vec!["submit_detections".to_owned()],
                 validators: Vec::new(),

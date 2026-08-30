@@ -6,12 +6,14 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    ArtifactKind, ArtifactRef, CoreError, CoreResult, DETECTION_ARTIFACT_SCHEMA_VERSION, Detection,
-    DetectionScore, DetectionSetArtifact, DetectionSource, ImageId, LabelId, ModelImage, NodePort,
-    NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
+    ArtifactKind, ArtifactRef, ArtifactValidationState, CoreError, CoreResult,
+    DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionScore, DetectionSetArtifact,
+    DetectionSource, ImageId, IssueSeverity, LabelId, ModelImage, NodePort, NormalizedRect,
+    PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
     PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind, SkillManifest,
-    SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
-    VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    SkillResource, SkillResourceRequest, SuggestedAction, TaskId, TaskTemplate, ValidationEvidence,
+    ValidationIssue, VisionCapability, VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge,
+    WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -115,10 +117,23 @@ pub fn object_detection_parameter_schema() -> serde_json::Value {
                 "type": "object",
                 "additionalProperties": {"type": "string", "minLength": 1}
             },
+            "recover_on_backend_error": {"type": "boolean"},
             "mock_empty": {"type": "boolean"},
+            "mock_backend_error": {"type": "boolean"},
             "mock_count": {"type": "integer", "minimum": 0, "maximum": 100},
             "mock_model_label": {"type": "string", "minLength": 1},
-            "mock_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            "mock_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "mock_bbox": {
+                "type": "array",
+                "prefixItems": [
+                    {"type": "number", "minimum": 0, "maximum": 1},
+                    {"type": "number", "minimum": 0, "maximum": 1},
+                    {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+                ],
+                "minItems": 4,
+                "maxItems": 4
+            }
         }
     })
 }
@@ -145,6 +160,8 @@ impl Default for ObjectDetectionCapabilitySkill {
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
                 capabilities: vec!["object_detection".to_owned()],
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: vec![OBJECT_DETECTION_OPERATION.to_owned()],
                 tools: Vec::new(),
                 validators: Vec::new(),
@@ -377,7 +394,13 @@ impl DagNodeRunner for ObjectDetectionSkillRunner {
             .model_binding
             .as_deref()
             .unwrap_or(&self.model_id);
-        let mut response = self
+        let recover_on_backend_error = context
+            .node
+            .parameters
+            .get("recover_on_backend_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let response = self
             .backend
             .infer_pipeline(
                 PipelineInferenceRequest {
@@ -389,7 +412,7 @@ impl DagNodeRunner for ObjectDetectionSkillRunner {
                     model_id: model_id.to_owned(),
                     operation: VisionCapability::ObjectDetection,
                     image: self.image.clone(),
-                    input_artifacts: context.input_pipeline_artifacts,
+                    input_artifacts: context.input_pipeline_artifacts.clone(),
                     parameters: context.node.parameters.clone(),
                     timeout_ms: context
                         .node
@@ -397,11 +420,35 @@ impl DagNodeRunner for ObjectDetectionSkillRunner {
                         .timeout_seconds
                         .map(|seconds| seconds.saturating_mul(1_000)),
                 },
-                context.cancellation,
+                context.cancellation.clone(),
             )
-            .await
-            .map_err(|error| DagNodeFailure::retryable("detection_backend", error.to_string()))?;
+            .await;
+        let mut response = match response {
+            Ok(response) => response,
+            Err(_error) if recover_on_backend_error => {
+                return recoverable_backend_error_output(
+                    &context,
+                    model_id,
+                    "detection_backend",
+                    true,
+                );
+            }
+            Err(error) => {
+                return Err(DagNodeFailure::retryable(
+                    "detection_backend",
+                    error.to_string(),
+                ));
+            }
+        };
         if let Some(error) = response.error {
+            if recover_on_backend_error {
+                return recoverable_backend_error_output(
+                    &context,
+                    model_id,
+                    &error.code,
+                    error.retryable,
+                );
+            }
             return Err(DagNodeFailure {
                 code: error.code,
                 summary: error.message,
@@ -432,6 +479,65 @@ impl DagNodeRunner for ObjectDetectionSkillRunner {
             ..DagNodeOutput::default()
         })
     }
+}
+
+fn recoverable_backend_error_output(
+    context: &DagNodeContext<'_>,
+    model_id: &str,
+    error_code: &str,
+    retryable: bool,
+) -> Result<DagNodeOutput, DagNodeFailure> {
+    let artifact = DetectionSetArtifact {
+        schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference: ArtifactRef {
+            artifact_id: format!(
+                "detection-set:{}:{}:{}:backend-error",
+                context.run_id, context.image_id, context.node.id
+            ),
+            source_node: context.node.id.clone(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        },
+        image_id: context.image_id,
+        model_binding: model_id.to_owned(),
+        validation_state: ArtifactValidationState::NeedsReview,
+        detections: Vec::new(),
+        metadata: BTreeMap::from([(
+            "backend_error".to_owned(),
+            serde_json::json!({"code": error_code, "retryable": retryable}),
+        )]),
+    };
+    artifact
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_detection_output", error))?;
+    let issue = ValidationIssue {
+        code: "specialist_backend_error".to_owned(),
+        severity: IssueSeverity::Warning,
+        annotation_ids: Vec::new(),
+        message: "specialist detector failed; preserve the structured error and evaluate the configured fallback".to_owned(),
+        suggested_action: SuggestedAction::HumanReview,
+        evidence: ValidationEvidence::Rule {
+            facts: BTreeMap::from([
+                ("backend_error_code".to_owned(), error_code.to_owned()),
+                ("retryable".to_owned(), retryable.to_string()),
+            ]),
+        },
+    };
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(artifact)],
+        metadata: BTreeMap::from([
+            (
+                "backend_error".to_owned(),
+                serde_json::json!({"code": error_code, "retryable": retryable}),
+            ),
+            (
+                "validation_issues".to_owned(),
+                serde_json::to_value([issue]).unwrap_or_else(|_| serde_json::json!([])),
+            ),
+        ]),
+        ..DagNodeOutput::default()
+    })
 }
 
 fn parse_parameters(
@@ -613,6 +719,16 @@ impl PipelineModelBackend for MockObjectDetectionBackend {
                 "mock Object Detection inference cancelled".to_owned(),
             ));
         }
+        if request
+            .parameters
+            .get("mock_backend_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(CoreError::Provider(
+                "mock specialist Worker interrupted".to_owned(),
+            ));
+        }
         let count = if request
             .parameters
             .get("mock_empty")
@@ -646,6 +762,16 @@ impl PipelineModelBackend for MockObjectDetectionBackend {
             .get("mock_confidence")
             .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.9) as f32;
+        let mock_bbox = request
+            .parameters
+            .get("mock_bbox")
+            .map(|value| {
+                serde_json::from_value::<[f32; 4]>(value.clone())
+                    .map_err(|error| CoreError::Validation(format!("invalid mock_bbox: {error}")))
+                    .and_then(|bbox| NormalizedRect::new(bbox[0], bbox[1], bbox[2], bbox[3]))
+            })
+            .transpose()?
+            .unwrap_or(NormalizedRect::new(0.1, 0.1, 0.2, 0.2)?);
         let artifact_id = format!("detection-set:{}", request.request_id);
         let detections = (0..count)
             .map(|index| {
@@ -655,7 +781,12 @@ impl PipelineModelBackend for MockObjectDetectionBackend {
                     None,
                     Some(model_label.to_owned()),
                     None,
-                    NormalizedRect::new(0.1 + offset, 0.1 + offset, 0.2, 0.2)?,
+                    NormalizedRect::new(
+                        (mock_bbox.x() + offset).min(1.0 - mock_bbox.width()),
+                        (mock_bbox.y() + offset).min(1.0 - mock_bbox.height()),
+                        mock_bbox.width(),
+                        mock_bbox.height(),
+                    )?,
                     DetectionScore::relative(confidence).map_err(CoreError::Validation)?,
                     DetectionSource {
                         model_id: request.model_id.clone(),

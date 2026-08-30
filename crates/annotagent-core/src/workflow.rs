@@ -1082,6 +1082,13 @@ fn suggest_detection_workflow(
                 "candidates",
                 "review",
                 "candidates",
+                Some("verify"),
+            ),
+            edge(
+                "recovery",
+                "candidates",
+                "review",
+                "candidates",
                 Some("reject"),
             ),
         ]);

@@ -384,8 +384,8 @@ impl DagNodeRunner for DetectionRecoveryAgent {
             session.succeed("fallback evidence completed and the final Evidence Gate accepted");
             "accept"
         } else {
-            session.wait_for_human("review combined detector evidence");
-            "review"
+            session.wait_for_human("verify combined detector evidence with a bounded crop step");
+            "verify"
         };
         recovery_output(
             combined,
@@ -419,6 +419,16 @@ impl DagNodeRunner for DetectionRecoveryAgent {
                                 }))
                                 .collect::<Vec<_>>()
                         ),
+                    ),
+                    (
+                        "validation_issues".to_owned(),
+                        serde_json::to_value(&final_input.validation_issues)
+                            .unwrap_or_else(|_| serde_json::json!([])),
+                    ),
+                    (
+                        "correction_risk".to_owned(),
+                        serde_json::to_value(&final_input.correction_risk)
+                            .unwrap_or(serde_json::Value::Null),
                     ),
                 ]),
             },
@@ -899,6 +909,28 @@ mod tests {
         calls: Arc<AtomicUsize>,
         fail: bool,
     ) -> DagNodeOutput {
+        run_case_with_rect(
+            primary,
+            policy,
+            budget,
+            metadata,
+            calls,
+            NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("rect"),
+            fail,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_case_with_rect(
+        primary: DetectionSetArtifact,
+        policy: DetectionRecoveryPolicy,
+        budget: AgentBudget,
+        metadata: BTreeMap<String, BTreeMap<String, Value>>,
+        calls: Arc<AtomicUsize>,
+        fallback_rect: NormalizedRect,
+        fail: bool,
+    ) -> DagNodeOutput {
         let image_id = primary.image_id;
         let node = node(policy, budget);
         let image = PipelineArtifact::Image(ImageArtifact {
@@ -918,7 +950,7 @@ mod tests {
         DetectionRecoveryAgent::new(
             Arc::new(FixtureFallback {
                 calls,
-                rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("rect"),
+                rect: fallback_rect,
                 fail,
             }),
             "open",
@@ -982,6 +1014,7 @@ mod tests {
             EvidenceGateDecision::Fallback
         );
         assert_eq!(report.final_evidence.decision, EvidenceGateDecision::Review);
+        assert_eq!(output.route.as_deref(), Some("verify"));
         assert_eq!(report.session.steps.len(), 2);
     }
 
@@ -1074,6 +1107,32 @@ mod tests {
         );
         assert_eq!(report.final_evidence.decision, EvidenceGateDecision::Accept);
         assert_eq!(output.route.as_deref(), Some("accept"));
+    }
+
+    #[tokio::test]
+    async fn geometry_conflict_routes_to_bounded_crop_verification() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let output = run_case_with_rect(
+            primary(Some(0.40)),
+            DetectionRecoveryPolicy::default(),
+            AgentBudget::default(),
+            BTreeMap::new(),
+            calls.clone(),
+            NormalizedRect::new(0.26, 0.1, 0.2, 0.2).expect("conflicting rect"),
+            false,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(output.route.as_deref(), Some("verify"));
+        let report = report(&output);
+        assert_eq!(report.final_evidence.decision, EvidenceGateDecision::Review);
+        assert!(
+            report
+                .final_evidence
+                .reasons
+                .iter()
+                .any(|reason| { reason.code == "geometry_conflict" })
+        );
     }
 
     #[tokio::test]

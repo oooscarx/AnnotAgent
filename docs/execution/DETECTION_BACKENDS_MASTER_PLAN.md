@@ -61,4 +61,5 @@ external model checks are explicitly `LIVE-CONDITIONAL` with an exact blocker.
 - M4 complete — `a3ff9c2 feat(models): integrate locateanything grounding backend`
 - M5 complete — `e372d02 feat(models): integrate rfdetr detection backend`
 - M6 complete — `5ea8689 feat(runtime): combine detector evidence without fabricating scores`
-- M7 complete — this document's containing commit
+- M7 complete — `759dedb feat(agent): select open-vocabulary fallbacks from detection evidence`
+- M8 complete — this document's containing commit

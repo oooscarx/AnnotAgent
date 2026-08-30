@@ -8,8 +8,9 @@ use annotagent_core::{
     CandidateClusterSetArtifact, ClassificationSetArtifact, CorrectionRisk, CropSetArtifact,
     Detection, DetectionEvidence, DetectionSetArtifact, EvidenceAcceptRule, EvidenceFallbackRule,
     EvidenceGateConfig, EvidenceGateDecision, EvidenceGateInput, EvidenceGateReason,
-    EvidenceGateReport, EvidenceRejectRule, EvidenceReviewRule, LabelId, PipelineArtifact, TaskId,
-    ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
+    EvidenceGateReport, EvidenceRejectRule, EvidenceReviewRule, IssueSeverity, LabelId,
+    PipelineArtifact, SuggestedAction, TaskId, ValidationEvidence, ValidationIssue, VisionArtifact,
+    VisionArtifactValue, VisionCapability,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -26,6 +27,8 @@ pub const CORE_ATTACH_ATTRIBUTE: &str = "core.attach_attribute";
 pub const CORE_CONFIDENCE_GATE: &str = "core.confidence_gate";
 pub const CORE_CANDIDATE_MATCH: &str = "core.match_detection_sets";
 pub const CORE_EVIDENCE_GATE: &str = "core.evidence_gate";
+pub const CORE_PROJECT_CANDIDATES: &str = "core.project_detection_candidates";
+pub const CORE_REJECT: &str = "core.reject_candidates";
 pub const CORE_ARTIFACT_CACHE: &str = "core.artifact_cache";
 pub const CORE_IMAGE_STATISTICS: &str = "core.compute_image_statistics";
 
@@ -44,6 +47,8 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_CONFIDENCE_GATE => run_confidence_gate(&context),
             CORE_CANDIDATE_MATCH => run_candidate_match(&context),
             CORE_EVIDENCE_GATE => run_evidence_gate(&context),
+            CORE_PROJECT_CANDIDATES => run_project_candidates(&context),
+            CORE_REJECT => run_reject(&context),
             CORE_IMAGE_STATISTICS => run_image_statistics(&context),
             CORE_ARTIFACT_CACHE => Ok(DagNodeOutput {
                 pipeline_artifacts: context.input_pipeline_artifacts,
@@ -56,6 +61,147 @@ impl DagNodeRunner for CorePipelineRunner {
             )),
         }
     }
+}
+
+/// Converts evidence clusters back into a `DetectionSet` for downstream Core Crop fan-out while
+/// retaining every source evidence item and its original score semantics.
+fn run_project_candidates(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let clusters = one_candidate_cluster_set(context)?;
+    clusters
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_candidate_clusters", error))?;
+    let reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    let detections = clusters
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let representative = candidate
+                .members
+                .iter()
+                .find(|member| member.bbox == candidate.representative_bbox)
+                .or_else(|| candidate.members.first())
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "candidate_evidence_missing",
+                        "candidate projection requires source evidence",
+                    )
+                })?;
+            let mut detection = Detection::from_source(
+                candidate.id.clone(),
+                representative.query_id.clone(),
+                representative.model_label.clone(),
+                Some(candidate.target_label.clone()),
+                candidate.representative_bbox,
+                representative.score,
+                annotagent_core::DetectionSource {
+                    model_id: representative.source_model_id.clone(),
+                    capability: representative.source_capability,
+                    artifact_id: reference.artifact_id.clone(),
+                },
+            )
+            .map_err(|error| DagNodeFailure::terminal("candidate_projection_failed", error))?;
+            detection.evidence.clone_from(&candidate.members);
+            Ok(detection)
+        })
+        .collect::<Result<Vec<_>, DagNodeFailure>>()?;
+    let model_binding = clusters
+        .candidates
+        .iter()
+        .flat_map(|candidate| &candidate.members)
+        .map(|member| member.source_model_id.as_str())
+        .next()
+        .unwrap_or("evidence-projection")
+        .to_owned();
+    let projected = DetectionSetArtifact {
+        schema_version: annotagent_core::DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference,
+        image_id: clusters.image_id,
+        model_binding,
+        validation_state: clusters.validation_state,
+        detections,
+        metadata: BTreeMap::from([
+            (
+                "projected_from".to_owned(),
+                serde_json::json!(clusters.reference.artifact_id),
+            ),
+            (
+                "source_detection_sets".to_owned(),
+                serde_json::to_value(&clusters.source_detection_sets)
+                    .unwrap_or_else(|_| serde_json::json!([])),
+            ),
+        ]),
+    };
+    projected
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("candidate_projection_failed", error))?;
+    let mut metadata = propagated_evidence_metadata(context)?;
+    let mut projection_issues = collected_validation_issues(context)?;
+    projection_issues.extend(clusters.candidates.iter().filter_map(|candidate| {
+        let (code, message) = match candidate.agreement {
+            CandidateAgreement::GeometryConflict => (
+                "geometry_conflict",
+                "detector sources disagree on candidate geometry",
+            ),
+            CandidateAgreement::LabelConflict => (
+                "label_conflict",
+                "detector sources disagree on the Project Label",
+            ),
+            CandidateAgreement::SingleSource | CandidateAgreement::MultiSourceAgreement { .. } => {
+                return None;
+            }
+        };
+        Some(ValidationIssue {
+            code: code.to_owned(),
+            severity: IssueSeverity::Warning,
+            annotation_ids: Vec::new(),
+            message: message.to_owned(),
+            suggested_action: SuggestedAction::HumanReview,
+            evidence: ValidationEvidence::Rule {
+                facts: BTreeMap::from([("candidate_id".to_owned(), candidate.id.clone())]),
+            },
+        })
+    }));
+    if !projection_issues.is_empty() {
+        metadata.insert(
+            "validation_issues".to_owned(),
+            serde_json::to_value(projection_issues).unwrap_or_else(|_| serde_json::json!([])),
+        );
+    }
+    for source in context.input_metadata.values() {
+        if let Some(report) = source.get("recovery_agent") {
+            metadata.insert("recovery_agent".to_owned(), report.clone());
+        }
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(projected)],
+        metadata,
+        ..DagNodeOutput::default()
+    })
+}
+
+fn run_reject(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    if context.input_pipeline_artifacts.is_empty() {
+        return Err(DagNodeFailure::terminal(
+            "reject_input_missing",
+            "Reject Candidates requires candidate evidence",
+        ));
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: context.input_pipeline_artifacts.clone(),
+        metadata: BTreeMap::from([
+            ("decision".to_owned(), serde_json::json!("reject")),
+            (
+                "reason".to_owned(),
+                context
+                    .node
+                    .parameters
+                    .get("reason")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("candidate rejected by workflow policy")),
+            ),
+        ]),
+        ..DagNodeOutput::default()
+    })
 }
 
 fn run_image_statistics(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -1219,7 +1365,30 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         .iter()
         .flat_map(artifact_confidences)
         .reduce(f32::min);
-    let route = if confidence.is_some_and(|confidence| confidence >= threshold) {
+    let already_requires_review = artifacts.iter().any(|artifact| match artifact {
+        PipelineArtifact::DetectionSet(value) => matches!(
+            value.validation_state,
+            ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
+        ),
+        PipelineArtifact::ClassificationSet(value) => matches!(
+            value.validation_state,
+            ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
+        ),
+        PipelineArtifact::CandidateClusterSet(value) => matches!(
+            value.validation_state,
+            ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
+        ),
+        PipelineArtifact::AnnotationCandidateSet(value) => value.candidates.iter().any(|item| {
+            matches!(
+                item.validation_state,
+                Some(ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid)
+            )
+        }),
+        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+    });
+    let route = if !already_requires_review
+        && confidence.is_some_and(|confidence| confidence >= threshold)
+    {
         set_candidate_state(&mut artifacts, ArtifactValidationState::Valid);
         "pass"
     } else {

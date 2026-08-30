@@ -40,6 +40,8 @@ impl Default for ClassificationCapabilitySkill {
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
                 capabilities: vec!["classification".to_owned()],
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: vec![
                     CLASSIFICATION_OPERATION.to_owned(),
                     CLASSIFICATION_VERIFY_OPERATION.to_owned(),
@@ -199,7 +201,7 @@ pub fn verifier_node_descriptor() -> VisionNodeDescriptor {
         id: CLASSIFICATION_VERIFY_OPERATION.to_owned(),
         display_name: "Classification Verifier".to_owned(),
         required_capabilities: Vec::new(),
-        accepts: vec![ArtifactKind::ClassificationSet],
+        accepts: vec![ArtifactKind::ClassificationSet, ArtifactKind::DetectionSet],
         produces: vec![ArtifactKind::ClassificationSet],
         deterministic: true,
     }
@@ -226,7 +228,24 @@ impl DagNodeRunner for ClassificationVerifierRunner {
             .get("minimum_confidence")
             .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.0) as f32;
+        let accept_labels = label_parameter(context.node, "accept_labels");
+        let reject_labels = label_parameter(context.node, "reject_labels");
+        let review_on_validation_issue = context
+            .node
+            .parameters
+            .get("review_on_validation_issue")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let upstream_issue_count = context
+            .input_metadata
+            .values()
+            .filter_map(|metadata| metadata.get("validation_issues"))
+            .filter_map(serde_json::Value::as_array)
+            .map(Vec::len)
+            .sum::<usize>();
         let mut outputs = Vec::new();
+        let mut any_rejected = false;
+        let mut any_review = review_on_validation_issue && upstream_issue_count > 0;
         for input in context.input_pipeline_artifacts {
             let PipelineArtifact::ClassificationSet(mut set) = input else {
                 continue;
@@ -242,14 +261,27 @@ impl DagNodeRunner for ClassificationVerifierRunner {
                     "ClassificationSet contains a label outside the verifier allow-list",
                 ));
             }
-            set.validation_state = if set
+            let set_rejected = set
                 .classifications
                 .iter()
-                .all(|classification| classification.confidence >= minimum)
-            {
-                ArtifactValidationState::Valid
-            } else {
+                .any(|classification| reject_labels.contains(&classification.label));
+            let set_accepted = accept_labels.is_empty()
+                || set
+                    .classifications
+                    .iter()
+                    .all(|classification| accept_labels.contains(&classification.label));
+            let confidence_passes = set
+                .classifications
+                .iter()
+                .all(|classification| classification.confidence >= minimum);
+            any_rejected |= set_rejected;
+            any_review |= !set_accepted || !confidence_passes;
+            set.validation_state = if set_rejected {
+                ArtifactValidationState::Invalid
+            } else if any_review {
                 ArtifactValidationState::NeedsReview
+            } else {
+                ArtifactValidationState::Valid
             };
             set.reference.source_node.clone_from(&context.node.id);
             "classifications".clone_into(&mut set.reference.port);
@@ -263,11 +295,40 @@ impl DagNodeRunner for ClassificationVerifierRunner {
                 "Classification Verifier requires a ClassificationSet",
             ));
         }
+        let route = if any_rejected {
+            "reject"
+        } else if any_review {
+            "review"
+        } else {
+            "accept"
+        };
         Ok(DagNodeOutput {
             pipeline_artifacts: outputs,
+            route: Some(route.to_owned()),
+            metadata: BTreeMap::from([
+                (
+                    "classification_decision".to_owned(),
+                    serde_json::json!(route),
+                ),
+                (
+                    "upstream_validation_issue_count".to_owned(),
+                    serde_json::json!(upstream_issue_count),
+                ),
+            ]),
             ..DagNodeOutput::default()
         })
     }
+}
+
+fn label_parameter(node: &WorkflowDraftNode, name: &str) -> Vec<LabelId> {
+    node.parameters
+        .get(name)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(LabelId::from)
+        .collect()
 }
 
 pub struct ClassificationSkillRunner {
@@ -672,5 +733,78 @@ mod tests {
         };
         assert_eq!(set.validation_state, ArtifactValidationState::NeedsReview);
         assert_eq!(set.classifications[0].subject, subject);
+    }
+
+    #[tokio::test]
+    async fn crop_verifier_rejects_a_configured_hard_negative_label() {
+        let image_id = ImageId::new();
+        let parent = ArtifactRef {
+            artifact_id: "detections".to_owned(),
+            source_node: "project_candidates".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: Some("shoe-candidate".to_owned()),
+        };
+        let input = PipelineArtifact::ClassificationSet(ClassificationSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "classifications".to_owned(),
+                source_node: "classify_crop".to_owned(),
+                port: "classifications".to_owned(),
+                artifact_type: ArtifactKind::ClassificationSet,
+                item_id: None,
+            },
+            image_id,
+            model_binding: "mock-classifier".to_owned(),
+            validation_state: ArtifactValidationState::Valid,
+            classifications: vec![Classification {
+                id: "hard-negative".to_owned(),
+                subject: ArtifactRef {
+                    artifact_id: "crops".to_owned(),
+                    source_node: "crop_verify".to_owned(),
+                    port: "crops".to_owned(),
+                    artifact_type: ArtifactKind::CropSet,
+                    item_id: Some("shoe-crop".to_owned()),
+                },
+                parent: Some(parent),
+                label: LabelId::from("not_football"),
+                confidence: 0.96,
+                scores: BTreeMap::from([(LabelId::from("not_football"), 0.96)]),
+            }],
+        });
+        let node = WorkflowDraftNode {
+            id: "verify_crop".to_owned(),
+            node_type: CLASSIFICATION_VERIFY_OPERATION.to_owned(),
+            parameters: BTreeMap::from([
+                (
+                    "labels".to_owned(),
+                    serde_json::json!(["football", "not_football"]),
+                ),
+                ("accept_labels".to_owned(), serde_json::json!(["football"])),
+                (
+                    "reject_labels".to_owned(),
+                    serde_json::json!(["not_football"]),
+                ),
+                ("minimum_confidence".to_owned(), serde_json::json!(0.72)),
+            ]),
+            ..WorkflowDraftNode::default()
+        };
+        let output = ClassificationVerifierRunner
+            .run(DagNodeContext {
+                project_id: ProjectId::new(),
+                run_id: RunId::new(),
+                image_id,
+                node: &node,
+                input_artifacts: Vec::new(),
+                input_pipeline_artifacts: vec![input],
+                input_metadata: BTreeMap::new(),
+                cancellation: CancellationToken::new(),
+            })
+            .await
+            .expect("hard-negative decision");
+        assert_eq!(output.route.as_deref(), Some("reject"));
+        let PipelineArtifact::ClassificationSet(set) = &output.pipeline_artifacts[0] else {
+            panic!("ClassificationSet")
+        };
+        assert_eq!(set.validation_state, ArtifactValidationState::Invalid);
     }
 }

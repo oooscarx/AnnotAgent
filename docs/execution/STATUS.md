@@ -2,6 +2,25 @@
 
 Last updated: 2026-08-30 CST
 
+## Open-Vocabulary + Specialist Detection M8 — 2026-08-30
+
+- RoboCup Ball now has a capability-bound specialist + open-vocabulary fallback Workflow. The
+  reusable Skill contains no concrete detector/classifier ID; each Project maps generic
+  capabilities to Registry models when creating an editable Draft.
+- High specialist evidence commits without fallback. Empty, low-score, hard-negative,
+  field-relation or scoped Correction Memory risk may make one bounded fallback call. Successful
+  but unresolved evidence follows a published Candidate projection → Crop → Classification branch;
+  budget/Worker errors preserve evidence and route Human Review.
+- Candidate projection preserves every source box and score semantic. Crop classification retains
+  subject/parent references and can explicitly reject `not_football`; no aggregate score is
+  invented from mixed evidence.
+- Added real-binding and no-key Mock Projects plus seven deterministic scenario definitions. Exact
+  published Runtime tests cover the clean fast path and empty-result verification path; focused
+  tests cover agreement, conflict, hard negatives, budget exhaustion and Worker errors.
+- Full verification passes: 219 Rust tests and doc tests, strict Clippy, Rust build, 34 Web tests,
+  Web typecheck/build, formatting, diff checks and the Core/Runtime model/domain boundary scan.
+  M9 is the next active milestone; no push, API key, model download or remote mutation was used.
+
 ## Open-Vocabulary + Specialist Detection M7 — 2026-08-30
 
 - Capability-driven Advisor recommendations now distinguish detection cold start from a
@@ -17,7 +36,7 @@ Last updated: 2026-08-30 CST
   averaging independent scores. Persisted Agent Trace records reason codes, counts, timing,
   capability/model identity, budget and stop condition, never hidden reasoning or image bytes.
 - Mock unit and exact published-Run integration tests cover the clean fast path, fallback path,
-  changed decision, Domain risk, budget stop and durable trace. M8 is the next active milestone.
+  changed decision, Domain risk, budget stop and durable trace. M8 builds on this foundation above.
 
 ## Current scope reset — RoboCup Ball only
 
@@ -25,7 +44,7 @@ The active RoboCup product surface is now deliberately narrow:
 
 - one annotation task: `objects`, with one output label: `ball`;
 - one Domain Skill: `robocup.ball`, plus generic VLM/YOLO detection capabilities;
-- two templates: VLM bootstrap and detector first;
+- two templates: VLM bootstrap and specialist with open-vocabulary fallback;
 - white footwear, penalty marks and line intersections are hard-negative evidence only;
 - no field-region, field-line, penalty-mark, robot, person, team-color or robot-state annotation;
 - the active local workspace contains one `robocup-ball` Project with five B-Human images and a

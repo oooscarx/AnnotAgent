@@ -844,3 +844,36 @@ Review priority-rendering status: `PASS`.
 
 Detection Advisor and bounded Recovery status: `PASS`. Real LocateAnything/RF-DETR inference
 remains `LIVE-CONDITIONAL`; no API key, model weight, download or remote mutation was used.
+
+## Open-Vocabulary + Specialist Detection M8 — 2026-08-30
+
+1. `RoboCupBallSkill` publishes two Ball-only templates. The hybrid template has unresolved model
+   bindings and generic `ObjectDetection`, `OpenVocabularyDetection`, and `Classification`
+   requirements; a test rejects any concrete backend-brand string inside it.
+2. Draft creation resolves those requirements from Project-owned `capability.*` configuration.
+   The live example maps real Registry IDs, while the Mock example maps three in-process models and
+   requires no API key or weight.
+3. Exact published-Workflow execution with a 0.92 Mock specialist detection commits the candidate.
+   Recovery records zero fallback calls and the Crop classifier node remains skipped.
+4. The same immutable graph with an empty specialist result invokes one Mock open-vocabulary call,
+   projects the Candidate Cluster without fabricating a score, validates it, creates a Crop with
+   preserved parent lineage, executes crop Classification and ends `CompletedWithReview` rather
+   than failing the Run.
+5. Runtime tests prove a 0.76-IoU agreement can change fallback to accept and a geometry conflict
+   takes the bounded verification route. The cost-budget case makes zero fallback calls. Published
+   execution also proves an opted-in specialist Worker interruption becomes a structured empty
+   result, invokes fallback and reaches Review without a failed Run or panic.
+6. Ball validator tests cover white-shoe and penalty-mark risks and Project-aware field relation.
+   The Classification verifier and Published Workflow prove `not_football` takes the explicit
+   reject route, retains the rejected Artifact and never executes Commit while preserving the
+   original crop subject reference. Published validation reads Correction Memory only from the
+   exact Project/Skill/task/Label scope.
+7. `examples/robocup-ball-hybrid-mock/scenarios.yaml` records high specialist, empty fallback,
+   agreement, geometry conflict, white shoe, insufficient budget and Worker crash cases. This is
+   deterministic Mock/contract evidence and does not claim live model quality.
+8. `cargo test --workspace --all-features` passes 219 Rust tests and all doc tests. Strict Clippy,
+   workspace build, formatting, all 34 Web tests, Web typecheck/build, diff checks and a zero-hit
+   Core/Runtime brand/domain scan pass.
+
+RoboCup Ball capability-bound hybrid status: `PASS`. Real LocateAnything/RF-DETR inference remains
+`LIVE-CONDITIONAL`; no push, API key, model weight, download or remote mutation was used.

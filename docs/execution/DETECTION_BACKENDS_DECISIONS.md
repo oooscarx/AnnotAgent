@@ -273,3 +273,43 @@ issue counts, correction-risk presence, reason codes, model capability/identity,
 time, output counts, budget usage and the explicit stop condition. Query text, image bytes, raw
 Worker responses, prompts and hidden reasoning are excluded. Application persistence rebinds the
 session to the stable Project identity so Run inspection and Project history share the same trace.
+
+## DB-030 — Domain templates bind capabilities; Projects bind model identities
+
+`SkillManifest` distinguishes required Core capabilities from optional model/domain capabilities.
+The RoboCup Ball hybrid template declares the capability needed by each model-backed node but
+contains no concrete model ID. When the user creates a Draft, Application resolves
+`capability.<normalized-capability>` from the enabled Domain Skill configuration and writes the
+chosen Registry model into that editable Draft. Static Workflow validation remains the authority
+for model availability and capability compatibility.
+
+This keeps a reusable Skill independent of backend brand and deployment while letting a real or
+Mock Project choose different specialist, open-vocabulary and classification implementations.
+Rejected: a model-brand branch in Core/Runtime, a hidden global default, or publishing a template
+with an unresolved model binding.
+
+## DB-031 — Recovery chooses whether to call; the published DAG owns verification
+
+The bounded Recovery Agent may call one fallback and then emits `accept`, `verify`, or `review`.
+An accepted multi-source result reaches Commit. Successful fallback evidence that remains
+single-source or conflicted takes the published `verify` branch: Candidate Cluster projection,
+Domain validation, Crop, Classification and configured accept/reject/review routing. Budget
+exhaustion, unavailable Worker or structured Worker failure goes directly to Human Review without
+turning the Run into a panic/failure.
+
+Candidate projection copies one deterministic source rectangle for downstream Crop and preserves
+all source evidence, scores and semantics. It emits conflict Validation Issues and never averages
+geometry or confidence. Rejected: giving Recovery an unbounded tool loop or treating a successful
+fallback as automatically safe to Commit.
+
+## DB-032 — Correction Memory and field relation are scoped facts
+
+Published Domain Validator execution queries Correction Memory by exact Project, Skill, task and
+Label. The resulting `CorrectionRisk` is structured metadata consumed by Recovery/validation, not
+a prompt fragment or global penalty. Ball field-relation validation is active when the Project
+declares field semantics; a ball-only Project does not manufacture `missing_field_evidence` solely
+because no field task exists.
+
+Hard-negative and crop-classification decisions keep the original detection/crop subject
+reference. A configured `not_football` result uses an explicit reject route; uncertainty remains
+reviewable. This prevents a correction from one Project or Label from silently changing another.

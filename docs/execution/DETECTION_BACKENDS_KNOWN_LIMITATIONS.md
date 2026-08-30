@@ -2,7 +2,7 @@
 
 Updated: 2026-08-30
 
-These are honest boundaries after M7. Open Release work remains in
+These are honest boundaries after M8. Open Release work remains in
 `DETECTION_BACKENDS_ACCEPTANCE.md`.
 
 - Detection Worker profiles are persisted in local Settings and can be enabled, pointed at an
@@ -15,12 +15,13 @@ These are honest boundaries after M7. Open Release work remains in
 - Run Debug explains the persisted decision and previews representative boxes, but Results/Review
   do not yet show the full evidence comparison or let a reviewer choose either source box; those
   Guided product surfaces remain M9 work.
-- The Alpha Recovery policy permits at most one open-vocabulary fallback call. It does not
-  recursively call more detectors or dynamically invoke Crop Classification; unresolved evidence
-  is intentionally sent to Human Review.
-- The deterministic Advisor applies its detection strategy only to detection-only Projects without
-  Domain Validators/Refiners. Mixed-task and Domain Projects retain their existing Advisor path
-  until the capability-bound RoboCup work in M8.
+- The Alpha Recovery policy permits at most one open-vocabulary fallback call and never recursively
+  calls more detectors. The RoboCup hybrid template routes a successful but unresolved Recovery
+  result through a statically published Crop Classification branch; budget/Worker failures go
+  directly to Human Review.
+- The deterministic generic Advisor applies its detection strategy only to detection-only Projects
+  without Domain Validators/Refiners. The RoboCup Ball Domain Project has a dedicated
+  capability-bound template; arbitrary mixed-task Domain planning is not claimed.
 - Model availability and descriptor label space are considered. Historical Dry Run metrics are
   available to the richer Advisor input contract but are not yet used by this deterministic
   baseline; M9 will present measured recommendation evidence in Guided UX.
@@ -44,7 +45,8 @@ These are honest boundaries after M7. Open Release work remains in
 - No real RF-DETR inference was executed on this Darwin arm64 host. Offline Mock/contract results
   prove integration semantics and score preservation, not model quality, calibration or throughput.
 - The generic Object Detection Skill coexists with the legacy YOLO compatibility crate/operation.
-  New product registration is capability-based; the RoboCup template migration remains M8 work.
+  New product registration and the RoboCup Ball hybrid template are capability-based; compatibility
+  paths remain for older published Workflows.
 - Candidate Cluster Annotation projection selects one deterministic representative rectangle.
   Multi-source confidence remains absent and every original box/score remains in the persisted
   cluster; no box-selection UI is claimed yet.

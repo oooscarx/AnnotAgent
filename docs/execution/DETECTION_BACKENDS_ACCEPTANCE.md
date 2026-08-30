@@ -139,6 +139,31 @@ below:
 - `cargo test --workspace --all-features` passes 216 tests; strict workspace Clippy/build, all 34 Web
   tests, Web typecheck/build and diff checks pass.
 
+## M8 RoboCup Ball hybrid evidence
+
+- `robocup.ball` declares required Core capabilities and optional detection/classification
+  capabilities. Its hybrid template binds `ObjectDetection`, `OpenVocabularyDetection`, and
+  `Classification` capabilities without a concrete model ID; Project configuration performs the
+  capability-to-Registry-model mapping during Draft creation.
+- The specialist fast path, conditional Recovery fallback, Candidate Match projection, Domain
+  validation, Crop, crop Classification verification, explicit reject, Human Review and Commit are
+  one statically validated published DAG. Recovery success routes to verification when evidence is
+  not yet safe to accept; budget/Worker errors preserve evidence and route Review without failing.
+- Ball validation includes the hard-negative validator, optional Project-aware field relation and
+  exact-scope Correction Memory risk. White-shoe/penalty-mark facts cannot bypass verification;
+  configured `not_football` crop results take a typed reject route with the original subject ref.
+- Exact published Runtime integration proves a 0.92 specialist result makes no fallback/classifier
+  call and commits, while an empty specialist result makes one fallback call, projects evidence,
+  crops, classifies and reaches Review. The same graph proves `not_football` reaches Reject without
+  Commit and a specialist Worker interruption is preserved as a structured error, invokes fallback
+  and reaches Review. Focused tests prove agreement, conflict routing and insufficient budget.
+- `examples/robocup-ball-hybrid` contains real Project-owned bindings; the parallel Mock Project and
+  seven-case scenario manifest need no API key or weight. No live model result is inferred from the
+  Mock evidence.
+- `cargo test --workspace --all-features` passes 219 tests and doc tests. Strict workspace Clippy,
+  build, formatting, Core/Runtime brand scan, all 34 Web tests, Web typecheck/build and diff checks
+  pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
@@ -256,8 +281,8 @@ below:
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| I01 | `robocup.ball` uses Capability Binding | OPEN | model-agnostic today, hybrid bindings absent |
-| I02 | White-shoe risk triggers fallback or Crop Verify | OPEN | current validator/recovery exists; hybrid path absent |
+| I01 | `robocup.ball` uses Capability Binding | PASS | hybrid template has no model ID; Project capability map resolves all three model nodes in Draft integration |
+| I02 | White-shoe risk triggers fallback or Crop Verify | PASS | hard-negative + Recovery verification route + crop classifier reject tests |
 | I03 | Penalty-mark risk never directly auto-accepts | PASS | current deterministic Ball validator test |
 | I04 | Correction Memory affects Recovery | PASS | current Application/Skill tests; hybrid policy open |
 | I05 | Generic Project does not load RoboCup | PASS | existing generic project/runtime tests |

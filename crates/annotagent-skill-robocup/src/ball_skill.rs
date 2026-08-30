@@ -1,14 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    AnnotationRefiner, AnnotationValidator, ArtifactKind, CoreError, CoreResult, CorrectionKind,
-    NodePort, ReviewPolicy, Skill, SkillManifest, SkillResource, SkillResourceRequest, TaskId,
-    TaskTemplate, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
+    AgentBudget, AnnotationRefiner, AnnotationValidator, ArtifactKind, CoreError, CoreResult,
+    CorrectionKind, DetectionRecoveryPolicy, NodePort, ReviewPolicy, Skill, SkillManifest,
+    SkillResource, SkillResourceRequest, TaskId, TaskTemplate, WorkflowDraftNode, WorkflowEdge,
+    WorkflowNodeKind, WorkflowTemplate,
 };
 
 use crate::{
-    RoboCupBallForegroundRefiner, RoboCupBallHardNegativeValidator, RoboCupReviewPolicy,
-    RoboCupSamHttpRefiner,
+    RoboCupBallFieldRelationValidator, RoboCupBallForegroundRefiner,
+    RoboCupBallHardNegativeValidator, RoboCupReviewPolicy, RoboCupSamHttpRefiner,
 };
 
 pub const ROBOCUP_PACK_ID: &str = "robocup";
@@ -88,7 +89,10 @@ impl Skill for RoboCupBallSkill {
     }
 
     fn validators(&self) -> Vec<Arc<dyn AnnotationValidator>> {
-        vec![Arc::new(RoboCupBallHardNegativeValidator::default())]
+        vec![
+            Arc::new(RoboCupBallHardNegativeValidator::default()),
+            Arc::new(RoboCupBallFieldRelationValidator),
+        ]
     }
 
     fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
@@ -161,6 +165,13 @@ fn port(id: &str, kind: ArtifactKind) -> NodePort {
     }
 }
 
+fn optional_port(id: &str, kind: ArtifactKind) -> NodePort {
+    NodePort {
+        required: false,
+        ..port(id, kind)
+    }
+}
+
 fn node(
     id: &str,
     operation: &str,
@@ -179,36 +190,60 @@ fn node(
     }
 }
 
-fn edge(from: &str, to: &str, route: Option<&str>) -> WorkflowEdge {
+fn edge(from: &str, from_port: &str, to: &str, to_port: &str, route: Option<&str>) -> WorkflowEdge {
     WorkflowEdge {
         from_node: from.to_owned(),
-        from_port: "detections".to_owned(),
+        from_port: from_port.to_owned(),
         to_node: to.to_owned(),
-        to_port: "detections".to_owned(),
+        to_port: to_port.to_owned(),
         route: route.map(ToOwned::to_owned),
     }
 }
 
 fn ball_templates() -> Vec<WorkflowTemplate> {
-    [
-        (
-            "robocup.ball.vlm-bootstrap",
-            "RoboCup Ball · VLM bootstrap",
-            "vlm_detection.detect",
-            WorkflowNodeKind::VisionLanguageModel,
-        ),
-        (
-            "robocup.ball.detector-first",
-            "RoboCup Ball · detector first",
-            "yolo_detection.detect",
-            WorkflowNodeKind::VisionModel,
-        ),
-    ]
-    .into_iter()
-    .map(|(id, name, detector, detector_kind)| WorkflowTemplate {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        description: "Image → generic detector → Core Filter → prompted SAM refinement → RoboCup Ball Validators → Review Gate → Commit".to_owned(),
+    vec![vlm_bootstrap_template(), specialist_fallback_template()]
+}
+
+fn vlm_bootstrap_template() -> WorkflowTemplate {
+    let mut detector = node(
+        "detector",
+        "vlm_detection.detect",
+        WorkflowNodeKind::VisionLanguageModel,
+        vec![port("image", ArtifactKind::Image)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    detector.model_binding = Some("default-vision".to_owned());
+    detector
+        .parameters
+        .insert("labels".to_owned(), serde_json::json!(["ball"]));
+    detector.parameters.insert(
+        "target_description".to_owned(),
+        serde_json::json!("the compact round RoboCup football itself; ignore white field markings, footwear, robots, and green turf"),
+    );
+    let mut validator = node(
+        "validate_ball",
+        "static_validator",
+        WorkflowNodeKind::Validator,
+        vec![port("detections", ArtifactKind::DetectionSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    validator.validators = vec!["ball_hard_negative".to_owned()];
+    validator
+        .parameters
+        .insert("task_id".to_owned(), serde_json::json!("objects"));
+    let mut gate = node(
+        "gate",
+        "core.confidence_gate",
+        WorkflowNodeKind::Gate,
+        vec![port("detections", ArtifactKind::DetectionSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    gate.parameters
+        .insert("threshold".to_owned(), serde_json::json!(0.92));
+    WorkflowTemplate {
+        id: "robocup.ball.vlm-bootstrap".to_owned(),
+        name: "RoboCup Ball · VLM bootstrap".to_owned(),
+        description: "Image → VLM detection → RoboCup hard-negative validation → confidence gate → review or commit".to_owned(),
         nodes: vec![
             node(
                 "image",
@@ -217,95 +252,16 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                 Vec::new(),
                 vec![port("image", ArtifactKind::Image)],
             ),
-            {
-                let mut detector_node = node(
-                    "detector",
-                    detector,
-                    detector_kind,
-                    vec![port("image", ArtifactKind::Image)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                );
-                detector_node.model_binding = Some(if detector == "vlm_detection.detect" {
-                    "default-vision".to_owned()
-                } else {
-                    "mock-detector".to_owned()
-                });
-                detector_node
-                    .parameters
-                    .insert("labels".to_owned(), serde_json::json!(["ball"]));
-                detector_node.parameters.insert(
-                    "target_description".to_owned(),
-                    serde_json::json!("the compact round RoboCup football itself; return a pixel-tight box around the visible ball, ignore white field markings and green turf, and verify that every box edge encloses the ball"),
-                );
-                detector_node.parameters.insert(
-                    "instruction".to_owned(),
-                    serde_json::json!("Use the untouched image for recognition and the grid copy only to calibrate the small ball position. Inspect the full frame before returning exactly the visible football."),
-                );
-                detector_node.parameters.insert(
-                    "localization_grid".to_owned(),
-                    serde_json::json!({"rows": 8, "columns": 8}),
-                );
-                detector_node
-            },
-            {
-                let mut filter = node(
-                    "filter",
-                    "core.filter",
-                    WorkflowNodeKind::Transform,
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                );
-                filter
-                    .parameters
-                    .insert("labels".to_owned(), serde_json::json!(["ball"]));
-                filter
-            },
-            {
-                let mut refiner = node(
-                    "refine_ball",
-                    "annotation_refiner",
-                    WorkflowNodeKind::Refiner,
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                );
-                refiner.refiners = vec!["sam_prompted_refiner".to_owned()];
-                refiner.parameters.insert("task_id".to_owned(), serde_json::json!("objects"));
-                refiner
-            },
-            {
-                let mut validator = node(
-                    "validate_ball",
-                    "static_validator",
-                    WorkflowNodeKind::Validator,
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                );
-                validator.validators = vec!["ball_hard_negative".to_owned()];
-                validator
-                    .parameters
-                    .insert("task_id".to_owned(), serde_json::json!("objects"));
-                validator
-            },
+            detector,
+            validator,
+            gate,
             node(
-                "gate",
-                "core.confidence_gate",
-                WorkflowNodeKind::Gate,
+                "review",
+                "review_gate",
+                WorkflowNodeKind::HumanReview,
                 vec![port("detections", ArtifactKind::DetectionSet)],
                 vec![port("detections", ArtifactKind::DetectionSet)],
             ),
-            {
-                let mut review = node(
-                    "review",
-                    "review_gate",
-                    WorkflowNodeKind::HumanReview,
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                );
-                review
-                    .parameters
-                    .insert("task_id".to_owned(), serde_json::json!("objects"));
-                review
-            },
             {
                 let mut commit = node(
                     "commit",
@@ -314,36 +270,332 @@ fn ball_templates() -> Vec<WorkflowTemplate> {
                     vec![port("detections", ArtifactKind::DetectionSet)],
                     Vec::new(),
                 );
-                commit
-                    .parameters
-                    .insert("task_id".to_owned(), serde_json::json!("objects"));
                 commit.inputs[0].multiple = true;
                 commit
             },
         ],
         edges: vec![
-            WorkflowEdge {
-                from_node: "image".to_owned(),
-                from_port: "image".to_owned(),
-                to_node: "detector".to_owned(),
-                to_port: "image".to_owned(),
-                route: None,
-            },
-            edge("detector", "filter", None),
-            edge("filter", "refine_ball", None),
-            edge("refine_ball", "validate_ball", None),
-            edge("validate_ball", "gate", None),
-            edge("gate", "commit", Some("pass")),
-            edge("gate", "review", Some("review")),
-            edge("review", "commit", None),
+            edge("image", "image", "detector", "image", None),
+            edge("detector", "detections", "validate_ball", "detections", None),
+            edge("validate_ball", "detections", "gate", "detections", None),
+            edge("gate", "detections", "commit", "detections", Some("pass")),
+            edge("gate", "detections", "review", "detections", Some("review")),
+            edge("review", "detections", "commit", "detections", None),
         ],
-        resource_versions: BTreeMap::from([
-            ("ball/SKILL.md".to_owned(), "1".to_owned()),
-            ("ball/resources/hard-negatives.md".to_owned(), "1".to_owned()),
-        ]),
+        resource_versions: ball_resources(),
         allow_unvalidated_commit: false,
-    })
-    .collect()
+    }
+}
+
+fn specialist_fallback_template() -> WorkflowTemplate {
+    let required = |node: &mut WorkflowDraftNode, skills: &[&str]| {
+        node.required_skills = skills.iter().map(|skill| (*skill).to_owned()).collect();
+    };
+    let mut specialist = node(
+        "specialist",
+        "object_detection.detect",
+        WorkflowNodeKind::VisionModel,
+        vec![port("image", ArtifactKind::Image)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    required(&mut specialist, &["annotagent.object_detection"]);
+    specialist.parameters.extend([
+        ("target_labels".to_owned(), serde_json::json!(["football"])),
+        (
+            "recover_on_backend_error".to_owned(),
+            serde_json::json!(true),
+        ),
+        (
+            "class_mapping".to_owned(),
+            serde_json::json!({"ball": "football", "football": "football"}),
+        ),
+    ]);
+
+    let mut validate_primary = node(
+        "validate_primary",
+        "static_validator",
+        WorkflowNodeKind::Validator,
+        vec![port("detections", ArtifactKind::DetectionSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    validate_primary.validators = vec![
+        "robocup.ball.ball_hard_negative".to_owned(),
+        "robocup.ball.robocup_ball_field_relation".to_owned(),
+    ];
+    validate_primary.parameters.extend([
+        ("task_id".to_owned(), serde_json::json!("footballs")),
+        (
+            "correction_memory_skill_id".to_owned(),
+            serde_json::json!(ROBOCUP_BALL_SKILL_ID),
+        ),
+    ]);
+
+    let mut policy = DetectionRecoveryPolicy::default();
+    policy.initial_gate.accept_when[0].minimum_score = Some(0.9);
+    policy.initial_gate.fallback_when[1].specialist_score_below = Some(0.72);
+    let mut recovery = node(
+        "recovery",
+        "agent.detection_recovery",
+        WorkflowNodeKind::Gate,
+        vec![
+            port("image", ArtifactKind::Image),
+            port("primary", ArtifactKind::DetectionSet),
+        ],
+        vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+    );
+    required(
+        &mut recovery,
+        &[
+            ROBOCUP_BALL_SKILL_ID,
+            "annotagent.open_vocabulary_grounding",
+        ],
+    );
+    recovery.review_gate = true;
+    recovery.parameters.extend([
+        (
+            "queries".to_owned(),
+            serde_json::json!([{
+                "id": "football",
+                "text": "the compact round football on the playing field, excluding white shoes, socks, penalty marks, and line intersections",
+                "target_label": "football"
+            }]),
+        ),
+        (
+            "recovery_policy".to_owned(),
+            serde_json::to_value(policy).expect("static Recovery policy serializes"),
+        ),
+        (
+            "agent_budget".to_owned(),
+            serde_json::to_value(AgentBudget {
+                max_steps: 4,
+                max_tool_calls: 4,
+                max_tokens: None,
+                max_cost: None,
+            })
+            .expect("static Agent budget serializes"),
+        ),
+    ]);
+
+    let mut project_candidates = node(
+        "project_candidates",
+        "core.project_detection_candidates",
+        WorkflowNodeKind::Transform,
+        vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    project_candidates.required_skills.clear();
+    let mut validate_recovered = node(
+        "validate_recovered",
+        "static_validator",
+        WorkflowNodeKind::Validator,
+        vec![port("detections", ArtifactKind::DetectionSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    validate_recovered
+        .validators
+        .clone_from(&validate_primary.validators);
+    validate_recovered.parameters = validate_primary.parameters.clone();
+
+    let mut crop = node(
+        "crop_verify",
+        "core.crop",
+        WorkflowNodeKind::Transform,
+        vec![
+            port("image", ArtifactKind::Image),
+            port("detections", ArtifactKind::DetectionSet),
+        ],
+        vec![port("crops", ArtifactKind::CropSet)],
+    );
+    crop.required_skills.clear();
+    crop.parameters
+        .insert("padding".to_owned(), serde_json::json!(0.12));
+    let mut classifier = node(
+        "classify_crop",
+        "classification.classify",
+        WorkflowNodeKind::VisionModel,
+        vec![port("crops", ArtifactKind::CropSet)],
+        vec![port("classifications", ArtifactKind::ClassificationSet)],
+    );
+    required(&mut classifier, &["classification"]);
+    classifier.parameters.insert(
+        "labels".to_owned(),
+        serde_json::json!(["football", "not_football"]),
+    );
+    let mut verify = node(
+        "verify_crop",
+        "classification.verify",
+        WorkflowNodeKind::Validator,
+        vec![
+            port("classifications", ArtifactKind::ClassificationSet),
+            optional_port("detections", ArtifactKind::DetectionSet),
+        ],
+        vec![port("classifications", ArtifactKind::ClassificationSet)],
+    );
+    required(&mut verify, &["classification", ROBOCUP_BALL_SKILL_ID]);
+    verify.parameters.extend([
+        (
+            "labels".to_owned(),
+            serde_json::json!(["football", "not_football"]),
+        ),
+        ("accept_labels".to_owned(), serde_json::json!(["football"])),
+        (
+            "reject_labels".to_owned(),
+            serde_json::json!(["not_football"]),
+        ),
+        ("minimum_confidence".to_owned(), serde_json::json!(0.72)),
+        (
+            "review_on_validation_issue".to_owned(),
+            serde_json::json!(true),
+        ),
+    ]);
+    let mut attach = node(
+        "attach_verified",
+        "core.attach_result",
+        WorkflowNodeKind::CandidateMerge,
+        vec![
+            port("detections", ArtifactKind::DetectionSet),
+            port("classifications", ArtifactKind::ClassificationSet),
+        ],
+        vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+    );
+    attach.required_skills.clear();
+    attach.inputs[1].multiple = true;
+    attach.parameters.extend([
+        ("task_id".to_owned(), serde_json::json!("footballs")),
+        (
+            "class_mapping".to_owned(),
+            serde_json::json!({"football": "football"}),
+        ),
+    ]);
+    let mut verified_gate = node(
+        "verified_gate",
+        "core.confidence_gate",
+        WorkflowNodeKind::Gate,
+        vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+        vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+    );
+    verified_gate.required_skills.clear();
+    verified_gate
+        .parameters
+        .insert("threshold".to_owned(), serde_json::json!(0.72));
+
+    WorkflowTemplate {
+        id: "robocup.ball.specialist_with_open_vocab_fallback".to_owned(),
+        name: "RoboCup Ball · specialist with open-vocabulary fallback".to_owned(),
+        description: "Image → specialist capability → domain evidence → bounded open-vocabulary fallback → candidate projection → Crop Verify → commit, reject, or review".to_owned(),
+        nodes: vec![
+            node(
+                "image",
+                "core.image_input",
+                WorkflowNodeKind::ImageInput,
+                Vec::new(),
+                vec![port("image", ArtifactKind::Image)],
+            ),
+            specialist,
+            validate_primary,
+            recovery,
+            project_candidates,
+            validate_recovered,
+            crop,
+            classifier,
+            verify,
+            attach,
+            verified_gate,
+            node(
+                "review_evidence",
+                "review_gate",
+                WorkflowNodeKind::HumanReview,
+                vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+                vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+            ),
+            node(
+                "review_verified",
+                "review_gate",
+                WorkflowNodeKind::HumanReview,
+                vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+                vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+            ),
+            {
+                let mut commit = node(
+                    "commit_evidence",
+                    "commit",
+                    WorkflowNodeKind::Commit,
+                    vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+                    Vec::new(),
+                );
+                commit.inputs[0].multiple = true;
+                commit
+            },
+            {
+                let mut commit = node(
+                    "commit_verified",
+                    "commit",
+                    WorkflowNodeKind::Commit,
+                    vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+                    Vec::new(),
+                );
+                commit.inputs[0].multiple = true;
+                commit
+            },
+            {
+                let mut reject = node(
+                    "reject_hard_negative",
+                    "core.reject_candidates",
+                    WorkflowNodeKind::Export,
+                    vec![port("classifications", ArtifactKind::ClassificationSet)],
+                    vec![port("classifications", ArtifactKind::ClassificationSet)],
+                );
+                reject.parameters.insert(
+                    "reason".to_owned(),
+                    serde_json::json!("crop verification classified the candidate as a RoboCup hard negative"),
+                );
+                reject
+            },
+        ],
+        edges: vec![
+            edge("image", "image", "specialist", "image", None),
+            edge("specialist", "detections", "validate_primary", "detections", None),
+            edge("image", "image", "recovery", "image", None),
+            edge("validate_primary", "detections", "recovery", "primary", None),
+            edge("recovery", "candidates", "commit_evidence", "candidates", Some("accept")),
+            edge("recovery", "candidates", "review_evidence", "candidates", Some("review")),
+            edge("recovery", "candidates", "project_candidates", "candidates", Some("verify")),
+            edge("project_candidates", "detections", "validate_recovered", "detections", None),
+            edge("image", "image", "crop_verify", "image", None),
+            edge("validate_recovered", "detections", "crop_verify", "detections", None),
+            edge("crop_verify", "crops", "classify_crop", "crops", None),
+            edge("classify_crop", "classifications", "verify_crop", "classifications", None),
+            edge("validate_recovered", "detections", "verify_crop", "detections", None),
+            edge("validate_recovered", "detections", "attach_verified", "detections", None),
+            edge("verify_crop", "classifications", "attach_verified", "classifications", Some("accept")),
+            edge("verify_crop", "classifications", "attach_verified", "classifications", Some("review")),
+            edge("verify_crop", "classifications", "reject_hard_negative", "classifications", Some("reject")),
+            edge("attach_verified", "candidates", "verified_gate", "candidates", None),
+            edge("verified_gate", "candidates", "commit_verified", "candidates", Some("pass")),
+            edge("verified_gate", "candidates", "review_verified", "candidates", Some("review")),
+            edge("review_verified", "candidates", "commit_verified", "candidates", None),
+            edge("review_evidence", "candidates", "commit_evidence", "candidates", None),
+        ],
+        resource_versions: hybrid_resources(),
+        allow_unvalidated_commit: false,
+    }
+}
+
+fn ball_resources() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("ball/SKILL.md".to_owned(), "1".to_owned()),
+        (
+            "ball/resources/hard-negatives.md".to_owned(),
+            "1".to_owned(),
+        ),
+    ])
+}
+
+fn hybrid_resources() -> BTreeMap<String, String> {
+    ball_resources()
+        .into_iter()
+        .map(|(resource, version)| (format!("{ROBOCUP_BALL_SKILL_ID}.{resource}"), version))
+        .collect()
 }
 
 #[cfg(test)]
@@ -358,21 +610,32 @@ mod tests {
         let ball = RoboCupBallSkill::new().expect("Ball Skill");
         assert_eq!(pack.manifest().kind, SkillKind::Pack);
         assert_eq!(ball.manifest().kind, SkillKind::Domain);
-        assert_eq!(ball.validators().len(), 1);
+        assert_eq!(ball.validators().len(), 2);
         let templates = ball.workflow_templates();
         assert_eq!(templates.len(), 2);
-        assert!(templates.iter().all(|template| {
-            template
+        let hybrid = templates
+            .iter()
+            .find(|template| template.id == "robocup.ball.specialist_with_open_vocab_fallback")
+            .expect("hybrid template");
+        assert!(
+            hybrid
                 .nodes
                 .iter()
                 .filter(|node| {
                     matches!(
                         node.kind,
                         WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-                    )
+                    ) || node.node_type == "agent.detection_recovery"
                 })
-                .all(|node| node.model_binding.is_some())
-        }));
+                .all(|node| node.model_binding.is_none())
+        );
+        let serialized = serde_json::to_string(hybrid).expect("template JSON");
+        assert!(!serialized.contains("rfdetr"));
+        assert!(!serialized.contains("locate"));
+        assert_eq!(
+            ball.manifest().requires.capabilities,
+            ["crop", "human_review"]
+        );
         assert!(
             ball.resources(&SkillResourceRequest {
                 task_id: None,

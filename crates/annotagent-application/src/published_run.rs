@@ -6,14 +6,14 @@ use std::{
 use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
     AnnotationSource, AnnotationValidator, ArtifactId, ArtifactKind, ArtifactProvenance,
-    ArtifactRole, ArtifactValidationState, AttributeValue, DetectionRecoveryReport, ImageArtifact,
-    ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, NormalizedPoint, NormalizedRect,
-    PipelineArtifact, PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue,
-    ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
-    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
-    VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
-    WorkflowNodeKind,
+    ArtifactRole, ArtifactValidationState, AttributeValue, CorrectionRisk, DetectionRecoveryReport,
+    ImageArtifact, ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, NormalizedPoint,
+    NormalizedRect, PipelineArtifact, PublishedWorkflowVersion, RefinementContext,
+    RelationEndpoint, RelationValue, ReviewStatus, RunEvent, RunEventKind, RunEventPayload,
+    RunStatus, SuggestedAction, TaskId, TaskKind, TaskRunStatus, TokenUsage, UsageRecord,
+    UsageSource, UsageTotals, ValidationContext, ValidationEvidence, ValidationIssue,
+    VisionArtifact, VisionArtifactValue, VisionBackendKind, VisionInferenceRequest,
+    VisionModelBackend, VisionModelProvider, WorkflowDraftNode, WorkflowNodeKind,
 };
 use annotagent_provider::{
     HttpVisionDetectionBackend, OpenAiCompatiblePipelineClassifier,
@@ -22,10 +22,11 @@ use annotagent_provider::{
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
     CORE_CANDIDATE_MATCH, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_EVIDENCE_GATE, CORE_FILTER,
-    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
-    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
-    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
-    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CORE_PROJECT_CANDIDATES, CORE_REJECT,
+    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
+    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
+    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
+    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -251,6 +252,7 @@ impl PublishedWorkflowRuntime {
             provider_name: self.provider_name.clone(),
             model_name: self.model_name.clone(),
             control: self.control.clone(),
+            store: self.store.clone(),
             validators: self.validators.clone(),
             refiners: self.refiners.clone(),
         });
@@ -274,7 +276,9 @@ impl PublishedWorkflowRuntime {
                 | CORE_CONFIDENCE_GATE
                 | CORE_CANDIDATE_MATCH
                 | CORE_EVIDENCE_GATE
-                | CORE_IMAGE_STATISTICS => {
+                | CORE_IMAGE_STATISTICS
+                | CORE_PROJECT_CANDIDATES
+                | CORE_REJECT => {
                     executor.register_runner(
                         node.node_type.clone(),
                         core_pipeline_runner.clone(),
@@ -945,6 +949,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
             provider_name: self.provider_name.clone(),
             model_name: self.model_name.clone(),
             control: self.control.clone(),
+            store: self.store.clone(),
             validators: self.validators.clone(),
             refiners: self.refiners.clone(),
         });
@@ -965,7 +970,9 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_CONFIDENCE_GATE
                 | CORE_CANDIDATE_MATCH
                 | CORE_EVIDENCE_GATE
-                | CORE_IMAGE_STATISTICS => {
+                | CORE_IMAGE_STATISTICS
+                | CORE_PROJECT_CANDIDATES
+                | CORE_REJECT => {
                     executor.register_runner(
                         node.node_type.clone(),
                         core_pipeline_runner.clone(),
@@ -1247,6 +1254,7 @@ struct WorkflowRunner {
     provider_name: String,
     model_name: String,
     control: RunControl,
+    store: Arc<SqliteStore>,
     validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
     refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
 }
@@ -1262,7 +1270,7 @@ impl DagNodeRunner for WorkflowRunner {
             WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel => {
                 self.run_model(context).await
             }
-            WorkflowNodeKind::Validator => self.run_validator(context),
+            WorkflowNodeKind::Validator => self.run_validator(context).await,
             WorkflowNodeKind::Refiner => self.run_refiner(&context).await,
             WorkflowNodeKind::Gate => Ok(run_gate(context)),
             WorkflowNodeKind::Transform
@@ -1362,7 +1370,10 @@ impl WorkflowRunner {
         })
     }
 
-    fn run_validator(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    async fn run_validator(
+        &self,
+        context: DagNodeContext<'_>,
+    ) -> Result<DagNodeOutput, DagNodeFailure> {
         let mut detection_sets = context
             .input_pipeline_artifacts
             .iter()
@@ -1395,7 +1406,7 @@ impl WorkflowRunner {
                 set.validate()
                     .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
             }
-            let annotations = detection_sets
+            let mut annotations = detection_sets
                 .iter()
                 .flat_map(|set| {
                     set.detections.iter().map(|detection| Annotation {
@@ -1418,8 +1429,36 @@ impl WorkflowRunner {
                     })
                 })
                 .collect::<Vec<_>>();
-            let mut issues = Vec::new();
+            annotations.extend(
+                context
+                    .input_artifacts
+                    .iter()
+                    .map(|artifact| artifact_annotation(artifact, ReviewStatus::Draft)),
+            );
+            let mut issues = upstream_validation_issues(&context)?;
+            let correction_skill_id = context
+                .node
+                .parameters
+                .get("correction_memory_skill_id")
+                .and_then(serde_json::Value::as_str);
+            let mut maximum_correction_risk = 0.0_f32;
             for annotation in &annotations {
+                let correction_risk = if let Some(skill_id) = correction_skill_id {
+                    self.store
+                        .correction_risk(
+                            context.project_id,
+                            skill_id,
+                            &annotation.task_id,
+                            annotation.label.as_ref(),
+                        )
+                        .await
+                        .map_err(|error| {
+                            DagNodeFailure::terminal("correction_memory_error", error)
+                        })?
+                } else {
+                    0.0
+                };
+                maximum_correction_risk = maximum_correction_risk.max(correction_risk);
                 for validator_id in &context.node.validators {
                     let validator = self.validators.get(validator_id).ok_or_else(|| {
                         DagNodeFailure::terminal(
@@ -1434,7 +1473,7 @@ impl WorkflowRunner {
                                 image: Some(&self.image),
                                 candidate: annotation,
                                 related_annotations: &annotations,
-                                correction_risk: 0.0,
+                                correction_risk,
                             })
                             .map_err(|error| {
                                 DagNodeFailure::terminal("validator_error", error.to_string())
@@ -1444,7 +1483,7 @@ impl WorkflowRunner {
             }
             let state = if issues
                 .iter()
-                .any(|issue| issue.suggested_action == SuggestedAction::HumanReview)
+                .any(|issue| issue.suggested_action != SuggestedAction::Accept)
             {
                 ArtifactValidationState::NeedsReview
             } else {
@@ -1453,15 +1492,37 @@ impl WorkflowRunner {
             for set in &mut detection_sets {
                 set.validation_state = state;
             }
+            let mut metadata = BTreeMap::from([(
+                "validation_issues".to_owned(),
+                serde_json::to_value(&issues).unwrap_or_else(|_| json!([])),
+            )]);
+            if correction_skill_id.is_some() {
+                metadata.insert(
+                    "correction_risk".to_owned(),
+                    serde_json::to_value(CorrectionRisk {
+                        score: maximum_correction_risk,
+                        reasons: (maximum_correction_risk > 0.0)
+                            .then(|| {
+                                "recent Project corrections match this Skill, task, and label"
+                                    .to_owned()
+                            })
+                            .into_iter()
+                            .collect(),
+                    })
+                    .unwrap_or(serde_json::Value::Null),
+                );
+            }
             return Ok(DagNodeOutput {
                 pipeline_artifacts: detection_sets
                     .into_iter()
                     .map(PipelineArtifact::DetectionSet)
                     .collect(),
-                metadata: BTreeMap::from([(
-                    "validation_issues".to_owned(),
-                    serde_json::to_value(&issues).unwrap_or_else(|_| json!([])),
-                )]),
+                route: Some(if state == ArtifactValidationState::Valid {
+                    "pass".to_owned()
+                } else {
+                    "review".to_owned()
+                }),
+                metadata,
                 ..DagNodeOutput::default()
             });
         }
@@ -1470,7 +1531,7 @@ impl WorkflowRunner {
             .iter()
             .map(|artifact| artifact_annotation(artifact, ReviewStatus::Draft))
             .collect::<Vec<_>>();
-        let mut issues = Vec::new();
+        let mut issues = upstream_validation_issues(&context)?;
         for (artifact, annotation) in context.input_artifacts.iter().zip(&annotations) {
             artifact
                 .validate()
@@ -1500,7 +1561,7 @@ impl WorkflowRunner {
         let mut artifacts = context.input_artifacts;
         let requires_review = issues
             .iter()
-            .any(|issue| issue.suggested_action == SuggestedAction::HumanReview);
+            .any(|issue| issue.suggested_action != SuggestedAction::Accept);
         for artifact in &mut artifacts {
             artifact.validation_state = if requires_review {
                 ArtifactValidationState::NeedsReview
@@ -1510,6 +1571,7 @@ impl WorkflowRunner {
         }
         Ok(DagNodeOutput {
             artifacts,
+            route: Some(if requires_review { "review" } else { "pass" }.to_owned()),
             metadata: BTreeMap::from([(
                 "validation_issues".to_owned(),
                 serde_json::to_value(&issues).unwrap_or_else(|_| json!([])),
@@ -1749,6 +1811,26 @@ impl WorkflowRunner {
             ..DagNodeOutput::default()
         })
     }
+}
+
+fn upstream_validation_issues(
+    context: &DagNodeContext<'_>,
+) -> Result<Vec<ValidationIssue>, DagNodeFailure> {
+    let mut issues = Vec::new();
+    for value in context
+        .input_metadata
+        .values()
+        .filter_map(|metadata| metadata.get("validation_issues"))
+    {
+        issues.extend(
+            serde_json::from_value::<Vec<ValidationIssue>>(value.clone()).map_err(|error| {
+                DagNodeFailure::terminal("invalid_validation_evidence", error.to_string())
+            })?,
+        );
+    }
+    let mut seen = BTreeSet::new();
+    issues.retain(|issue| seen.insert((issue.code.clone(), issue.message.clone())));
+    Ok(issues)
 }
 
 fn run_gate(context: DagNodeContext<'_>) -> DagNodeOutput {

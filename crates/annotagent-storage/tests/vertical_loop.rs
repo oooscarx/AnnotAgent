@@ -111,6 +111,8 @@ impl BboxSkill {
                 dependencies: Vec::new(),
                 conflicts: Vec::new(),
                 capabilities: Vec::new(),
+                requires: annotagent_core::SkillCapabilityRequirements::default(),
+                optional_capabilities: Vec::new(),
                 nodes: Vec::new(),
                 tools: Vec::new(),
                 validators: Vec::new(),

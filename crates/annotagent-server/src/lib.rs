@@ -4528,6 +4528,7 @@ export:
                 .expect("versioned requirement");
             enabled.push(json!({"id": id, "version": version}));
         }
+        let expected_enabled_count = enabled.len();
         let configured = request(
             &service,
             axum::http::Method::POST,
@@ -4539,7 +4540,7 @@ export:
         let configured = response_json(configured).await;
         assert_eq!(
             configured["enabled_skills"].as_array().map(Vec::len),
-            Some(2)
+            Some(expected_enabled_count)
         );
     }
 
