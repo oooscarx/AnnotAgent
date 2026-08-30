@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M0 — Baseline and design ledger (complete)
+M1 — Capability and Model Registry refactor (complete)
 
 ## Completed
 
@@ -19,28 +19,41 @@ M0 — Baseline and design ledger (complete)
 - Created the Master Plan, Status, Decisions, Acceptance, Blockers, and Known Limitations ledgers.
 - Confirmed the Core/generic Runtime production scan contains no model-brand or RoboCup branch;
   domain names occur only in the dedicated Runtime integration test/dev dependency.
+- Added domain-neutral `OpenVocabularyDetection` and `PhraseGrounding` capabilities beside the
+  existing `ObjectDetection`; no model-branded node kind was introduced.
+- Expanded the existing Model Registry descriptor with provider/backend metadata, version,
+  architecture, checkpoint SHA-256, training dataset version, protocol version, typed input/output
+  contracts, score semantics, runtime requirements, label space, license metadata, and explicit
+  availability.
+- Registration now normalizes legacy descriptors, validates backend capability/kind, unique values,
+  checkpoint hashes, contract consistency, official-license references, and executable status.
+- Preserved JSON migration compatibility: older `http_json` values read as `http_vision`, older
+  descriptor fields populate the structured contracts, and `VisionModelDescriptor` remains a
+  source-compatible alias boundary for existing callers.
 
 ## In progress
 
-- None. M0 is ready for its independent local commit.
+- None. M1 is ready for its independent local commit.
 
 ## Next step
 
-M1 — add domain-neutral open-vocabulary/phrase grounding capabilities and a complete versioned
-Model Descriptor contract.
+M2 — make Detection scores optional and add per-model Detection Evidence, Candidate Clusters,
+lineage, persistence/API compatibility, and serialization tests.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 166 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 170 tests, 0 failed; doc tests pass |
+| Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 32 tests |
+| Web types | `npm --prefix web run typecheck` | PASS |
 | Worker protocol | compile both tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; new mixed-detector UI not implemented |
 
 ## Latest local commit
 
-This document's containing M0 commit: `docs: establish mixed detection backend baseline`
+This document's containing M1 commit: `feat(core): model open-vocabulary and specialist detection capabilities`
 
 ## Audited baseline
 

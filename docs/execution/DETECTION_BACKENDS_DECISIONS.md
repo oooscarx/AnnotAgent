@@ -65,3 +65,18 @@ user-authorized setup step and real smokes remain live-conditional until execute
 Guided UI will describe user intent (“Find objects by description”, “Use trained detector”, “Check
 uncertain results”). Expert/Debug views will expose capabilities, model/version/license, individual
 evidence, score semantics, match metrics, decisions, cache state, and lineage from the same DTOs.
+
+## DB-010 — Registry migration is additive and normalized at registration
+
+Published Workflow snapshots and API payloads already serialize `VisionModelDescriptor`, so M1
+extends that existing type and exposes `ModelDescriptor` as the preferred domain-neutral name
+rather than creating a competing registry. New fields use serde defaults. Registration copies old
+`model_version`, input/output, endpoint, backend kind, and health facts into structured fields and
+then validates one canonical representation. The serialized `http_json` backend spelling is read
+as `HttpVision` and new snapshots emit `http_vision`. No SQL migration is required because Model
+Descriptors are frozen inside existing JSON Workflow/Run snapshots rather than a relational model
+table.
+
+An explicitly Disabled, Misconfigured, IncompatibleProtocol, or MissingWeights descriptor remains
+visible in the Registry but cannot be resolved for execution. Unreachable is retained as a health
+fact for later Recovery policy rather than silently deleting the configured model.

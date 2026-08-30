@@ -7,6 +7,22 @@ Status vocabulary: `PASS` has executable repository evidence; `OPEN` requires im
 in the current browser environment. Existing platform behavior is marked PASS only when the M0
 baseline directly exercised it.
 
+## M1 foundation evidence
+
+The following prerequisites are implemented and tested but do not replace the model-specific rows
+below:
+
+- `OpenVocabularyDetection`, `PhraseGrounding`, and `ObjectDetection` are distinct capabilities.
+- Model Descriptor preserves backend kind/protocol/endpoint, architecture/version/checkpoint,
+  training data, input/output contracts, score semantics, runtime requirements, label space,
+  license, availability, health, limits, pricing, and secret reference.
+- Registry validation rejects capability/backend mismatches, duplicate capabilities, inconsistent
+  legacy/structured contracts, invalid checkpoint hashes, invalid verified-license sources, and
+  disabled execution.
+- Old descriptor JSON and the former `http_json` backend spelling migrate deterministically.
+- `cargo test --workspace --all-features` passes 170 tests, including four new Model Registry
+  migration/validation tests; strict workspace Clippy, Web typecheck, and all 32 Web tests pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |

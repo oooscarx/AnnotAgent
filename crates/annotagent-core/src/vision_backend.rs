@@ -14,6 +14,8 @@ pub const VISION_WORKER_PROTOCOL_VERSION: u32 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum VisionCapability {
     VisionLanguage,
+    OpenVocabularyDetection,
+    PhraseGrounding,
     ObjectDetection,
     SemanticSegmentation,
     InstanceSegmentation,
@@ -27,10 +29,126 @@ pub enum VisionCapability {
 #[serde(rename_all = "snake_case")]
 pub enum VisionBackendKind {
     OpenAiCompatible,
-    HttpJson,
+    #[serde(alias = "http_json")]
+    HttpVision,
     Onnx,
     DeterministicCv,
     Mock,
+}
+
+/// Public architecture name used by Model Registry APIs and documentation.
+pub type BackendKind = VisionBackendKind;
+/// Model IDs are opaque Registry identities, never product or scheduling concepts.
+pub type ModelId = String;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScoreSemantics {
+    CalibratedProbability,
+    RelativeConfidence,
+    RankingScore,
+    NotProvided,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelVersionMetadata {
+    pub architecture: Option<String>,
+    pub model_version: String,
+    pub checkpoint_sha256: Option<String>,
+    pub training_dataset_version: Option<String>,
+    pub backend_protocol_version: String,
+}
+
+impl Default for ModelVersionMetadata {
+    fn default() -> Self {
+        Self {
+            architecture: None,
+            model_version: "unversioned".to_owned(),
+            checkpoint_sha256: None,
+            training_dataset_version: None,
+            backend_protocol_version: VISION_WORKER_PROTOCOL_VERSION.to_string(),
+        }
+    }
+}
+
+/// Backend metadata is frozen with the model while the executable adapter remains Registry-owned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BackendDescriptor {
+    /// `None` is accepted only while migrating an older descriptor and is filled by registration.
+    pub kind: Option<VisionBackendKind>,
+    pub protocol_version: Option<String>,
+    pub endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelInputContract {
+    #[serde(default)]
+    pub input_types: Vec<VisionInputType>,
+    #[serde(default)]
+    pub supports_multiple_queries: bool,
+    pub max_queries: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelOutputContract {
+    #[serde(default)]
+    pub output_types: Vec<ArtifactKind>,
+    #[serde(default)]
+    pub normalized_coordinates: bool,
+    #[serde(default)]
+    pub allows_empty: bool,
+    #[serde(default)]
+    pub label_space: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeRequirements {
+    #[serde(default)]
+    pub devices: Vec<String>,
+    pub minimum_gpu_memory_mb: Option<u64>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub supports_batch: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LicensePermission {
+    Allowed,
+    Restricted,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LicenseMetadata {
+    pub code_license: Option<String>,
+    pub weight_license: Option<String>,
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub commercial_use: LicensePermission,
+    #[serde(default)]
+    pub redistribution: LicensePermission,
+    #[serde(default)]
+    pub usage_notes: Vec<String>,
+    #[serde(default)]
+    pub verified_from_official_source: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelAvailabilityStatus {
+    Available,
+    Unreachable,
+    Misconfigured,
+    IncompatibleProtocol,
+    MissingWeights,
+    Disabled,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -98,6 +216,10 @@ pub struct VisionModelDescriptor {
     #[serde(default)]
     pub display_name: String,
     pub backend_id: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub backend: BackendDescriptor,
     pub capabilities: Vec<VisionCapability>,
     #[serde(default)]
     pub input_types: Vec<VisionInputType>,
@@ -107,7 +229,21 @@ pub struct VisionModelDescriptor {
     pub model: String,
     #[serde(default)]
     pub model_version: String,
+    #[serde(default)]
+    pub version: ModelVersionMetadata,
     pub endpoint_or_path: Option<String>,
+    #[serde(default)]
+    pub input_contract: ModelInputContract,
+    #[serde(default)]
+    pub output_contract: ModelOutputContract,
+    #[serde(default)]
+    pub score_semantics: ScoreSemantics,
+    #[serde(default)]
+    pub runtime_requirements: RuntimeRequirements,
+    #[serde(default)]
+    pub license: LicenseMetadata,
+    #[serde(default)]
+    pub status: ModelAvailabilityStatus,
     #[serde(default)]
     pub pricing: VisionModelPricing,
     #[serde(default)]
@@ -118,6 +254,10 @@ pub struct VisionModelDescriptor {
     #[serde(default)]
     pub configuration: BTreeMap<String, serde_json::Value>,
 }
+
+/// Preferred domain-neutral name. `VisionModelDescriptor` remains source-compatible for existing
+/// callers and serialized Workflow snapshots.
+pub type ModelDescriptor = VisionModelDescriptor;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VisionNodeDescriptor {
@@ -276,8 +416,26 @@ impl ModelRegistry {
                 model.id, model.backend_id
             ))
         })?;
+        if model.capabilities.is_empty() {
+            return Err(CoreError::Validation(
+                "model capabilities cannot be empty".to_owned(),
+            ));
+        }
+        let unique_capabilities = model
+            .capabilities
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique_capabilities.len() != model.capabilities.len() {
+            return Err(CoreError::Validation(
+                "model capabilities must be unique".to_owned(),
+            ));
+        }
         if model.display_name.trim().is_empty() {
             model.display_name.clone_from(&model.id);
+        }
+        if model.provider.trim().is_empty() {
+            model.provider.clone_from(&model.backend_id);
         }
         if model.model.trim().is_empty() {
             model.model.clone_from(&model.id);
@@ -286,18 +444,68 @@ impl ModelRegistry {
             "unversioned".clone_into(&mut model.model_version);
         }
         if model.input_types.is_empty() {
-            model.input_types.push(VisionInputType::Image);
+            if model.input_contract.input_types.is_empty() {
+                model.input_types.push(VisionInputType::Image);
+            } else {
+                model
+                    .input_types
+                    .clone_from(&model.input_contract.input_types);
+            }
+        }
+        if model.input_contract.input_types.is_empty() {
+            model
+                .input_contract
+                .input_types
+                .clone_from(&model.input_types);
+        } else if model.input_types != model.input_contract.input_types {
+            return Err(CoreError::Validation(
+                "legacy input_types and input_contract must agree".to_owned(),
+            ));
         }
         if model.output_types.is_empty() {
-            model.output_types = model
-                .capabilities
-                .iter()
-                .copied()
-                .filter_map(capability_output_type)
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
+            if model.output_contract.output_types.is_empty() {
+                model.output_types = model
+                    .capabilities
+                    .iter()
+                    .copied()
+                    .filter_map(capability_output_type)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+            } else {
+                model
+                    .output_types
+                    .clone_from(&model.output_contract.output_types);
+            }
         }
+        if model.output_contract.output_types.is_empty() {
+            model
+                .output_contract
+                .output_types
+                .clone_from(&model.output_types);
+        } else if model.output_types != model.output_contract.output_types {
+            return Err(CoreError::Validation(
+                "legacy output_types and output_contract must agree".to_owned(),
+            ));
+        }
+        normalize_model_version(&mut model)?;
+        let backend_kind = backend.kind();
+        match model.backend.kind {
+            Some(kind) if kind != backend_kind => {
+                return Err(CoreError::Validation(format!(
+                    "model backend kind {kind:?} does not match registered backend {backend_kind:?}"
+                )));
+            }
+            Some(_) => {}
+            None => model.backend.kind = Some(backend_kind),
+        }
+        if model.backend.protocol_version.is_none() {
+            model.backend.protocol_version = Some(model.version.backend_protocol_version.clone());
+        }
+        if model.backend.endpoint.is_none() {
+            model.backend.endpoint.clone_from(&model.endpoint_or_path);
+        }
+        validate_model_contract(&model)?;
         if model.health.status == VisionModelHealthStatus::Unknown
             && matches!(
                 backend.kind(),
@@ -308,6 +516,15 @@ impl ModelRegistry {
                 status: VisionModelHealthStatus::Healthy,
                 detail: Some("in-process backend registered".to_owned()),
                 checked_at: Some(chrono::Utc::now()),
+            };
+        }
+        if model.status == ModelAvailabilityStatus::Unknown {
+            model.status = match model.health.status {
+                VisionModelHealthStatus::Healthy => ModelAvailabilityStatus::Available,
+                VisionModelHealthStatus::Unavailable => ModelAvailabilityStatus::Unreachable,
+                VisionModelHealthStatus::Degraded | VisionModelHealthStatus::Unknown => {
+                    ModelAvailabilityStatus::Unknown
+                }
             };
         }
         if let Some(secret_reference) = &model.secret_reference
@@ -365,11 +582,121 @@ impl ModelRegistry {
             .models
             .get(model_id)
             .ok_or_else(|| CoreError::Validation(format!("unknown vision model {model_id:?}")))?;
+        if matches!(
+            model.status,
+            ModelAvailabilityStatus::Disabled
+                | ModelAvailabilityStatus::Misconfigured
+                | ModelAvailabilityStatus::IncompatibleProtocol
+                | ModelAvailabilityStatus::MissingWeights
+        ) {
+            return Err(CoreError::Validation(format!(
+                "vision model {model_id:?} is not executable: {:?}",
+                model.status
+            )));
+        }
         let backend = self.backends.get(&model.backend_id).ok_or_else(|| {
             CoreError::Validation(format!("unknown vision backend {:?}", model.backend_id))
         })?;
         Ok((model, backend.clone()))
     }
+}
+
+fn normalize_model_version(model: &mut VisionModelDescriptor) -> CoreResult<()> {
+    let legacy = model.model_version.trim();
+    let structured = model.version.model_version.trim();
+    if structured.is_empty() || structured == "unversioned" {
+        model.version.model_version = if legacy.is_empty() {
+            "unversioned".to_owned()
+        } else {
+            legacy.to_owned()
+        };
+    } else if !legacy.is_empty() && legacy != "unversioned" && legacy != structured {
+        return Err(CoreError::Validation(
+            "legacy model_version and version.model_version must agree".to_owned(),
+        ));
+    }
+    model.model_version.clone_from(&model.version.model_version);
+    if model.version.backend_protocol_version.trim().is_empty() {
+        return Err(CoreError::Validation(
+            "backend protocol version cannot be empty".to_owned(),
+        ));
+    }
+    if let Some(checkpoint) = &model.version.checkpoint_sha256
+        && (checkpoint.len() != 64 || !checkpoint.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err(CoreError::Validation(
+            "checkpoint_sha256 must contain exactly 64 hexadecimal characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_model_contract(model: &VisionModelDescriptor) -> CoreResult<()> {
+    if model.input_contract.max_queries == Some(0) {
+        return Err(CoreError::Validation(
+            "model max_queries must be greater than zero".to_owned(),
+        ));
+    }
+    if model.runtime_requirements.minimum_gpu_memory_mb == Some(0) {
+        return Err(CoreError::Validation(
+            "minimum_gpu_memory_mb must be greater than zero".to_owned(),
+        ));
+    }
+    validate_unique_nonempty(&model.output_contract.label_space, "model label_space")?;
+    validate_unique_nonempty(&model.runtime_requirements.devices, "runtime devices")?;
+    validate_unique_nonempty(
+        &model.runtime_requirements.dependencies,
+        "runtime dependencies",
+    )?;
+    validate_unique_nonempty(&model.license.usage_notes, "license usage_notes")?;
+    if let Some(source_url) = &model.license.source_url
+        && !(source_url.starts_with("https://") || source_url.starts_with("http://"))
+    {
+        return Err(CoreError::Validation(
+            "license source_url must be an http(s) URL".to_owned(),
+        ));
+    }
+    if model.license.verified_from_official_source && model.license.source_url.is_none() {
+        return Err(CoreError::Validation(
+            "verified license metadata requires an official source_url".to_owned(),
+        ));
+    }
+    if model
+        .capabilities
+        .iter()
+        .any(|capability| is_detection_capability(*capability))
+        && !model
+            .output_contract
+            .output_types
+            .iter()
+            .any(|kind| matches!(kind, ArtifactKind::BoundingBox | ArtifactKind::DetectionSet))
+    {
+        return Err(CoreError::Validation(
+            "detection capabilities require BoundingBox or DetectionSet output".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_unique_nonempty(values: &[String], field: &str) -> CoreResult<()> {
+    let mut unique = std::collections::BTreeSet::new();
+    for value in values {
+        if value.trim().is_empty() || !unique.insert(value.as_str()) {
+            return Err(CoreError::Validation(format!(
+                "{field} values must be non-empty and unique"
+            )));
+        }
+    }
+    Ok(())
+}
+
+const fn is_detection_capability(capability: VisionCapability) -> bool {
+    matches!(
+        capability,
+        VisionCapability::OpenVocabularyDetection
+            | VisionCapability::PhraseGrounding
+            | VisionCapability::ObjectDetection
+    )
 }
 
 fn secret_configuration_path(fields: &BTreeMap<String, serde_json::Value>) -> Option<String> {
@@ -412,7 +739,9 @@ fn secret_configuration_path(fields: &BTreeMap<String, serde_json::Value>) -> Op
 
 const fn capability_output_type(capability: VisionCapability) -> Option<ArtifactKind> {
     match capability {
-        VisionCapability::ObjectDetection => Some(ArtifactKind::BoundingBox),
+        VisionCapability::OpenVocabularyDetection
+        | VisionCapability::PhraseGrounding
+        | VisionCapability::ObjectDetection => Some(ArtifactKind::BoundingBox),
         VisionCapability::SemanticSegmentation => Some(ArtifactKind::SemanticMask),
         VisionCapability::InstanceSegmentation | VisionCapability::PromptedSegmentation => {
             Some(ArtifactKind::InstanceMask)
@@ -456,5 +785,202 @@ impl NodeRegistry {
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&VisionNodeDescriptor> {
         self.nodes.get(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FixtureBackend {
+        kind: VisionBackendKind,
+        capabilities: Vec<VisionCapability>,
+    }
+
+    #[async_trait]
+    impl VisionModelBackend for FixtureBackend {
+        fn id(&self) -> &str {
+            "fixture"
+        }
+
+        fn kind(&self) -> VisionBackendKind {
+            self.kind
+        }
+
+        fn capabilities(&self) -> Vec<VisionCapability> {
+            self.capabilities.clone()
+        }
+
+        async fn infer(
+            &self,
+            _request: VisionInferenceRequest,
+            _cancellation: CancellationToken,
+        ) -> CoreResult<VisionInferenceResponse> {
+            Ok(VisionInferenceResponse::default())
+        }
+    }
+
+    fn registry(kind: VisionBackendKind, capabilities: Vec<VisionCapability>) -> ModelRegistry {
+        let mut registry = ModelRegistry::new();
+        registry
+            .register_backend(Arc::new(FixtureBackend { kind, capabilities }))
+            .expect("backend");
+        registry
+    }
+
+    #[test]
+    fn legacy_model_descriptor_migrates_to_structured_contract() {
+        let legacy = serde_json::json!({
+            "id": "legacy-detector",
+            "backend_id": "fixture",
+            "capabilities": ["object_detection"],
+            "input_types": ["image"],
+            "output_types": ["detection_set"],
+            "model": "legacy",
+            "model_version": "3",
+            "endpoint_or_path": null,
+            "secret_reference": null
+        });
+        let descriptor: VisionModelDescriptor =
+            serde_json::from_value(legacy).expect("legacy descriptor");
+        let mut registry = registry(
+            VisionBackendKind::Mock,
+            vec![VisionCapability::ObjectDetection],
+        );
+        registry.register_model(descriptor).expect("registered");
+
+        let migrated = &registry.models()[0];
+        assert_eq!(migrated.version.model_version, "3");
+        assert_eq!(migrated.model_version, "3");
+        assert_eq!(migrated.provider, "fixture");
+        assert_eq!(migrated.backend.kind, Some(VisionBackendKind::Mock));
+        assert_eq!(
+            migrated.input_contract.input_types,
+            vec![VisionInputType::Image]
+        );
+        assert_eq!(
+            migrated.output_contract.output_types,
+            vec![ArtifactKind::DetectionSet]
+        );
+        assert_eq!(migrated.score_semantics, ScoreSemantics::Unknown);
+        assert_eq!(migrated.status, ModelAvailabilityStatus::Available);
+    }
+
+    #[test]
+    fn rich_descriptor_preserves_version_license_and_open_vocabulary_capabilities() {
+        let capabilities = vec![
+            VisionCapability::OpenVocabularyDetection,
+            VisionCapability::PhraseGrounding,
+        ];
+        let mut registry = registry(VisionBackendKind::HttpVision, capabilities.clone());
+        registry
+            .register_model(VisionModelDescriptor {
+                id: "grounding-model".to_owned(),
+                backend_id: "fixture".to_owned(),
+                provider: "local-worker".to_owned(),
+                backend: BackendDescriptor {
+                    kind: Some(VisionBackendKind::HttpVision),
+                    protocol_version: Some("1".to_owned()),
+                    endpoint: Some("http://127.0.0.1:9000/v1/infer".to_owned()),
+                },
+                capabilities,
+                model: "grounding-model".to_owned(),
+                version: ModelVersionMetadata {
+                    architecture: Some("grounding-transformer".to_owned()),
+                    model_version: "1".to_owned(),
+                    checkpoint_sha256: Some("a".repeat(64)),
+                    training_dataset_version: Some("grounding-v1".to_owned()),
+                    backend_protocol_version: "1".to_owned(),
+                },
+                input_contract: ModelInputContract {
+                    input_types: vec![VisionInputType::Image, VisionInputType::Text],
+                    supports_multiple_queries: true,
+                    max_queries: Some(32),
+                },
+                output_contract: ModelOutputContract {
+                    output_types: vec![ArtifactKind::DetectionSet],
+                    normalized_coordinates: true,
+                    allows_empty: true,
+                    label_space: Vec::new(),
+                },
+                score_semantics: ScoreSemantics::NotProvided,
+                runtime_requirements: RuntimeRequirements {
+                    devices: vec!["cuda".to_owned()],
+                    minimum_gpu_memory_mb: Some(8_192),
+                    dependencies: vec!["transformers".to_owned()],
+                    supports_batch: true,
+                },
+                license: LicenseMetadata {
+                    code_license: Some("Apache-2.0".to_owned()),
+                    weight_license: Some("NVIDIA License".to_owned()),
+                    source_url: Some(
+                        "https://huggingface.co/example/model/blob/main/LICENSE".to_owned(),
+                    ),
+                    commercial_use: LicensePermission::Restricted,
+                    redistribution: LicensePermission::Restricted,
+                    usage_notes: vec!["Research/evaluation only".to_owned()],
+                    verified_from_official_source: true,
+                },
+                status: ModelAvailabilityStatus::Available,
+                ..VisionModelDescriptor::default()
+            })
+            .expect("rich descriptor");
+
+        let stored = &registry.models()[0];
+        assert_eq!(stored.model_version, "1");
+        assert_eq!(stored.version.checkpoint_sha256, Some("a".repeat(64)));
+        assert_eq!(stored.score_semantics, ScoreSemantics::NotProvided);
+        assert_eq!(stored.license.commercial_use, LicensePermission::Restricted);
+        assert!(stored.output_contract.allows_empty);
+    }
+
+    #[test]
+    fn registry_rejects_invalid_model_metadata_and_disabled_resolution() {
+        let mut registry = registry(
+            VisionBackendKind::HttpVision,
+            vec![VisionCapability::ObjectDetection],
+        );
+        let invalid = VisionModelDescriptor {
+            id: "invalid".to_owned(),
+            backend_id: "fixture".to_owned(),
+            capabilities: vec![VisionCapability::ObjectDetection],
+            version: ModelVersionMetadata {
+                checkpoint_sha256: Some("not-a-digest".to_owned()),
+                ..ModelVersionMetadata::default()
+            },
+            ..VisionModelDescriptor::default()
+        };
+        assert!(
+            registry
+                .register_model(invalid)
+                .expect_err("invalid hash")
+                .to_string()
+                .contains("checkpoint_sha256")
+        );
+
+        registry
+            .register_model(VisionModelDescriptor {
+                id: "disabled".to_owned(),
+                backend_id: "fixture".to_owned(),
+                capabilities: vec![VisionCapability::ObjectDetection],
+                status: ModelAvailabilityStatus::Disabled,
+                ..VisionModelDescriptor::default()
+            })
+            .expect("disabled descriptor can remain registered");
+        let Err(error) = registry.resolve("disabled") else {
+            panic!("disabled model cannot execute")
+        };
+        assert!(error.to_string().contains("Disabled"));
+    }
+
+    #[test]
+    fn legacy_http_json_backend_kind_deserializes_as_http_vision() {
+        let kind: VisionBackendKind =
+            serde_json::from_str("\"http_json\"").expect("legacy backend kind");
+        assert_eq!(kind, VisionBackendKind::HttpVision);
+        assert_eq!(
+            serde_json::to_string(&kind).expect("current backend kind"),
+            "\"http_vision\""
+        );
     }
 }

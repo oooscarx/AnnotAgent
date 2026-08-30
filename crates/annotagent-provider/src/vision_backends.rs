@@ -191,7 +191,7 @@ impl VisionModelBackend for HttpJsonVisionBackend {
     }
 
     fn kind(&self) -> VisionBackendKind {
-        VisionBackendKind::HttpJson
+        VisionBackendKind::HttpVision
     }
 
     fn capabilities(&self) -> Vec<VisionCapability> {

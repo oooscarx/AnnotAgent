@@ -51,3 +51,8 @@ For every Milestone:
 
 Alpha is complete only when every in-repository Release Blocking row is `PASS` and remaining
 external model checks are explicitly `LIVE-CONDITIONAL` with an exact blocker.
+
+## Progress
+
+- M0 complete — `cf2d988 docs: establish mixed detection backend baseline`
+- M1 complete — this document's containing commit

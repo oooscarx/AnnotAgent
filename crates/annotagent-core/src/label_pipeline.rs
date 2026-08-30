@@ -1231,7 +1231,7 @@ mod tests {
         CoreResult, DatasetConfig, EnabledSkillConfig, ExportConfig, ProjectDescriptor,
         ReviewConfig, RuntimeConfig, TaskConfig, TaskKind, VisionBackendKind,
         VisionInferenceRequest, VisionInferenceResponse, VisionModelBackend, VisionModelDescriptor,
-        VisionModelHealth, VisionModelLimits, VisionModelPricing, VisionNodeDescriptor,
+        VisionNodeDescriptor,
     };
 
     struct Backend;
@@ -1372,12 +1372,7 @@ mod tests {
                 output_types: vec![ArtifactKind::DetectionSet],
                 model: "fixture".to_owned(),
                 model_version: "1".to_owned(),
-                endpoint_or_path: None,
-                pricing: VisionModelPricing::default(),
-                health: VisionModelHealth::default(),
-                limits: VisionModelLimits::default(),
-                secret_reference: None,
-                configuration: BTreeMap::new(),
+                ..VisionModelDescriptor::default()
             })
             .expect("model");
         (nodes, models)
