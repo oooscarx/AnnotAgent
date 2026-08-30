@@ -88,6 +88,9 @@ pub struct ModelInputContract {
     pub input_types: Vec<VisionInputType>,
     #[serde(default)]
     pub supports_multiple_queries: bool,
+    /// Whether a model accepts an exemplar image/box in addition to text queries.
+    #[serde(default)]
+    pub supports_visual_prompt: bool,
     pub max_queries: Option<u32>,
 }
 
@@ -1012,6 +1015,7 @@ mod tests {
                 input_contract: ModelInputContract {
                     input_types: vec![VisionInputType::Image, VisionInputType::Text],
                     supports_multiple_queries: true,
+                    supports_visual_prompt: false,
                     max_queries: Some(32),
                 },
                 output_contract: ModelOutputContract {

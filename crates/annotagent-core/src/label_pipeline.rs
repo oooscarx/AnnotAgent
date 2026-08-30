@@ -997,7 +997,21 @@ fn validate_step(
                     binding.model_id, binding.capability
                 ),
             ),
-            Ok(_) => {}
+            Ok((model, _)) => {
+                if requests_visual_prompt(&step.parameters)
+                    && !model.input_contract.supports_visual_prompt
+                {
+                    push_issue(
+                        issues,
+                        "visual_prompt_unsupported",
+                        format!("{path}.parameters"),
+                        format!(
+                            "model {:?} does not advertise visual prompt support",
+                            binding.model_id
+                        ),
+                    );
+                }
+            }
             Err(_) => push_issue(
                 issues,
                 "unknown_model",
@@ -1027,6 +1041,15 @@ fn validate_step(
             ),
         }
     }
+}
+
+fn requests_visual_prompt(parameters: &BTreeMap<String, serde_json::Value>) -> bool {
+    parameters.iter().any(|(name, value)| {
+        matches!(
+            name.as_str(),
+            "visual_prompt" | "visual_prompt_box" | "visual_exemplar" | "exemplar_image"
+        ) && !value.is_null()
+    })
 }
 
 fn validate_source_output(

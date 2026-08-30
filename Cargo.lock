@@ -99,6 +99,7 @@ dependencies = [
  "annotagent-provider",
  "annotagent-runtime",
  "annotagent-skill-classification",
+ "annotagent-skill-open-vocabulary",
  "annotagent-skill-robocup",
  "annotagent-skill-vlm-detection",
  "annotagent-skill-yolo",
@@ -211,6 +212,7 @@ dependencies = [
  "annotagent-core",
  "annotagent-export",
  "annotagent-image-tools",
+ "annotagent-provider",
  "annotagent-runtime",
  "annotagent-storage",
  "anyhow",
@@ -238,6 +240,21 @@ dependencies = [
  "annotagent-runtime",
  "async-trait",
  "rust_decimal",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "annotagent-skill-open-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-runtime",
+ "async-trait",
+ "rust_decimal",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

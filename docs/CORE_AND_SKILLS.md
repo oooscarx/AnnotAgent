@@ -26,6 +26,12 @@ registrations before a Workflow is authored or run. Resource requests accept onl
 relative names; absolute paths, traversal and undeclared resources are rejected before Skill code
 runs.
 
+`annotagent.open_vocabulary_grounding` is a Capability Skill, not a domain pack. Its two registered
+operations schedule `OpenVocabularyDetection` and `PhraseGrounding` against any compatible Model
+Registry entry. `LocateAnything Local` is one optional HTTP Backend for those capabilities; its
+brand does not appear in Core node kinds. Text-query validation, model execution, Core transforms,
+and Project/domain policy remain separate layers.
+
 Special algorithms implement object-safe Rust traits and are registered explicitly:
 
 ```rust

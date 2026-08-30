@@ -567,6 +567,9 @@ main { min-width: 0; padding-bottom: 48px; }
 .catalog-summary { display: grid; gap: 6px; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .catalog-summary small { color: var(--aa-text-muted); }
 .binding-list code { margin-top: 5px; color: var(--aa-teal-text); font-size: 9px; overflow-wrap: anywhere; }
+.worker-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.worker-actions button { min-height: 30px; padding: 5px 9px; font-size: 9px; }
+.worker-discovery { display: grid; gap: 3px; margin-top: 10px; padding: 9px 10px; border: 1px solid var(--aa-success); border-radius: var(--aa-radius-sm); background: var(--aa-success-soft); }
 .catalog-monogram { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: var(--aa-radius-sm); background: var(--aa-primary-soft); color: var(--aa-primary); font: 700 10px var(--aa-font-sans); }
 .project-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .run-state-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -647,6 +650,12 @@ main { min-width: 0; padding-bottom: 48px; }
 .settings-save span { overflow-wrap: anywhere; }
 .error-banner { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 18px 32px 0; padding: 13px 16px; color: var(--aa-danger-text); background: var(--aa-danger-soft); border: 1px solid var(--aa-danger); border-radius: var(--aa-radius-md); font-size: 12px; }
 .settings-grid .error-banner { margin: 0; }
+.detection-worker-settings { display: grid; gap: 12px; }
+.detection-worker-settings > article { display: grid; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.worker-setting-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.worker-setting-heading strong, .worker-setting-heading small { display: block; }
+.worker-setting-heading small, .worker-contract-summary small { color: var(--aa-text-muted); font-size: 9px; overflow-wrap: anywhere; }
+.worker-contract-summary { display: grid; gap: 4px; }
 .error-banner button { min-height: 32px; padding: 4px 8px; background: transparent; border-color: var(--aa-danger); color: inherit; }
 .error-message { min-width: 0; display: grid; gap: 3px; }
 .error-message strong { color: var(--aa-text); }

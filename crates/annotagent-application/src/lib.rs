@@ -13,29 +13,32 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
-    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BatchBudgetLedger,
-    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
-    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter, DatasetImporter,
-    DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, ImageId,
-    ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
-    LabelWorkflowComposition, ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry,
-    ModelRequest, ModelRole, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
+    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor,
+    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
+    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter,
+    DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate,
+    ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
+    ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
+    ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
     PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion,
     RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, SampleTestOutcome, SampleTestOutcomeStatus,
-    SampleTestSummary, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind,
-    TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue,
-    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
-    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
-    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
-    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
-    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage, SnapshotImage,
+    TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
+    UsageSummary, VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
+    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
+    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -45,8 +48,9 @@ use annotagent_export::{
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
 use annotagent_provider::{
-    MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider,
-    OpenAiCompatibleConfig, OpenAiCompatibleProvider,
+    HttpVisionWorkerConfig, HttpVisionWorkerRegistryBackend, MockResponseSpec, MockScript,
+    MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
+    OpenAiCompatibleProvider,
 };
 use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
@@ -77,6 +81,106 @@ pub struct Settings {
     pub provider: OpenAiCompatibleConfig,
     pub pricing: PricingConfig,
     pub budget: Budget,
+    #[serde(default = "default_detection_workers")]
+    pub detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerSettings {
+    pub id: String,
+    pub display_name: String,
+    pub model_id: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub allow_remote: bool,
+    pub expected_capabilities: Vec<VisionCapability>,
+    pub score_semantics: ScoreSemantics,
+    pub version: ModelVersionMetadata,
+    #[serde(default)]
+    pub label_space: Vec<String>,
+    #[serde(default)]
+    pub runtime_requirements: RuntimeRequirements,
+    #[serde(default)]
+    pub license: LicenseMetadata,
+    pub timeout_seconds: u64,
+    pub max_request_bytes: usize,
+    pub max_response_bytes: usize,
+    #[serde(default)]
+    pub max_retries: u32,
+}
+
+impl DetectionWorkerSettings {
+    #[must_use]
+    pub fn http_config(&self) -> HttpVisionWorkerConfig {
+        HttpVisionWorkerConfig {
+            id: self.id.clone(),
+            base_url: self.base_url.clone(),
+            expected_model_id: self.model_id.clone(),
+            capabilities: self.expected_capabilities.clone(),
+            expected_score_semantics: Some(self.score_semantics),
+            request_timeout: Duration::from_secs(self.timeout_seconds),
+            max_request_bytes: self.max_request_bytes,
+            max_response_bytes: self.max_response_bytes,
+            max_retries: self.max_retries,
+            allow_remote: self.allow_remote,
+            authorization: None,
+        }
+    }
+}
+
+fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
+    vec![DetectionWorkerSettings {
+        id: "annotagent-locate-anything".to_owned(),
+        display_name: "LocateAnything Local".to_owned(),
+        model_id: "locate-anything-local".to_owned(),
+        base_url: "http://127.0.0.1:8791".to_owned(),
+        enabled: false,
+        allow_remote: false,
+        expected_capabilities: vec![
+            VisionCapability::OpenVocabularyDetection,
+            VisionCapability::PhraseGrounding,
+        ],
+        score_semantics: ScoreSemantics::NotProvided,
+        version: ModelVersionMetadata {
+            architecture: Some("locateanything-3b".to_owned()),
+            model_version: "local-unpinned".to_owned(),
+            checkpoint_sha256: None,
+            training_dataset_version: None,
+            backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION.to_string(),
+        },
+        label_space: Vec::new(),
+        runtime_requirements: RuntimeRequirements {
+            devices: vec!["cuda".to_owned()],
+            minimum_gpu_memory_mb: None,
+            dependencies: vec![
+                "official LocateAnything worker source".to_owned(),
+                "PyTorch CUDA".to_owned(),
+                "Transformers 4.57.1".to_owned(),
+            ],
+            supports_batch: false,
+        },
+        license: LicenseMetadata {
+            code_license: Some("NVIDIA source notice; verify the configured checkout".to_owned()),
+            weight_license: Some("NVIDIA License — non-commercial research/evaluation".to_owned()),
+            source_url: Some(
+                "https://huggingface.co/nvidia/LocateAnything-3B/blob/main/LICENSE".to_owned(),
+            ),
+            commercial_use: LicensePermission::Restricted,
+            redistribution: LicensePermission::Restricted,
+            usage_notes: vec![
+                "Use only in a setting permitted by the concrete model license.".to_owned(),
+                "This metadata is informational and is not legal advice.".to_owned(),
+            ],
+            verified_from_official_source: true,
+        },
+        timeout_seconds: 120,
+        max_request_bytes: 44_000_000,
+        max_response_bytes: 2_000_000,
+        max_retries: 0,
+    }]
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +218,18 @@ pub fn validate_settings(settings: &Settings) -> Result<()> {
         bail!("default_provider must be either \"mock\" or \"openai_compatible\"");
     }
     OpenAiCompatibleProvider::new(settings.provider.clone()).map_err(|error| anyhow!(error))?;
+    let mut worker_ids = BTreeSet::new();
+    let mut model_ids = BTreeSet::new();
+    for worker in &settings.detection_workers {
+        if worker.display_name.trim().is_empty()
+            || !worker_ids.insert(worker.id.as_str())
+            || !model_ids.insert(worker.model_id.as_str())
+        {
+            bail!("Detection Worker ids/model ids must be non-empty and unique");
+        }
+        HttpVisionWorkerRegistryBackend::new(worker.http_config())
+            .map_err(|error| anyhow!(error))?;
+    }
     Ok(())
 }
 
@@ -231,6 +347,18 @@ pub struct ModelBinding {
     pub scope: String,
     pub health_status: String,
     pub health_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_semantics: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -387,6 +515,8 @@ fn published_workflow_summary(
 fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
     let capabilities = vec![
         VisionCapability::VisionLanguage,
+        VisionCapability::OpenVocabularyDetection,
+        VisionCapability::PhraseGrounding,
         VisionCapability::ObjectDetection,
         VisionCapability::SemanticSegmentation,
         VisionCapability::InstanceSegmentation,
@@ -439,6 +569,105 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ]),
         ..VisionModelDescriptor::default()
     })?;
+    models.register_model(VisionModelDescriptor {
+        id: "mock-open-vocabulary".to_owned(),
+        display_name: "Offline mock open-vocabulary grounding".to_owned(),
+        backend_id: "workspace-provider-adapter".to_owned(),
+        capabilities: vec![
+            VisionCapability::OpenVocabularyDetection,
+            VisionCapability::PhraseGrounding,
+        ],
+        input_types: vec![VisionInputType::Image, VisionInputType::Text],
+        output_types: vec![ArtifactKind::DetectionSet],
+        model: "mock-open-vocabulary".to_owned(),
+        model_version: "1".to_owned(),
+        input_contract: ModelInputContract {
+            input_types: vec![VisionInputType::Image, VisionInputType::Text],
+            supports_multiple_queries: true,
+            supports_visual_prompt: false,
+            max_queries: Some(100),
+        },
+        output_contract: ModelOutputContract {
+            output_types: vec![ArtifactKind::DetectionSet],
+            normalized_coordinates: true,
+            allows_empty: true,
+            label_space: Vec::new(),
+        },
+        score_semantics: ScoreSemantics::NotProvided,
+        health: VisionModelHealth {
+            status: VisionModelHealthStatus::Healthy,
+            detail: Some("offline deterministic Grounding fixture available".to_owned()),
+            checked_at: Some(chrono::Utc::now()),
+        },
+        ..VisionModelDescriptor::default()
+    })?;
+    for worker in &settings.detection_workers {
+        models.register_backend(Arc::new(HttpVisionWorkerRegistryBackend::new(
+            worker.http_config(),
+        )?))?;
+        models.register_model(VisionModelDescriptor {
+            id: worker.model_id.clone(),
+            display_name: worker.display_name.clone(),
+            backend_id: worker.id.clone(),
+            provider: "http_vision".to_owned(),
+            backend: BackendDescriptor {
+                kind: Some(VisionBackendKind::HttpVision),
+                protocol_version: Some(worker.version.backend_protocol_version.clone()),
+                endpoint: Some(worker.base_url.clone()),
+            },
+            capabilities: worker.expected_capabilities.clone(),
+            input_types: vec![VisionInputType::Image, VisionInputType::Text],
+            output_types: vec![ArtifactKind::DetectionSet],
+            model: worker.model_id.clone(),
+            model_version: worker.version.model_version.clone(),
+            version: worker.version.clone(),
+            endpoint_or_path: Some(worker.base_url.clone()),
+            input_contract: ModelInputContract {
+                input_types: vec![VisionInputType::Image, VisionInputType::Text],
+                supports_multiple_queries: true,
+                supports_visual_prompt: false,
+                max_queries: Some(100),
+            },
+            output_contract: ModelOutputContract {
+                output_types: vec![ArtifactKind::DetectionSet],
+                normalized_coordinates: true,
+                allows_empty: true,
+                label_space: worker.label_space.clone(),
+            },
+            score_semantics: worker.score_semantics,
+            runtime_requirements: worker.runtime_requirements.clone(),
+            license: worker.license.clone(),
+            status: if worker.enabled {
+                ModelAvailabilityStatus::Unknown
+            } else {
+                ModelAvailabilityStatus::Disabled
+            },
+            health: VisionModelHealth {
+                status: if worker.enabled {
+                    VisionModelHealthStatus::Unknown
+                } else {
+                    VisionModelHealthStatus::Unavailable
+                },
+                detail: Some(if worker.enabled {
+                    "configured; health and capabilities are discovered from the Worker".to_owned()
+                } else {
+                    "disabled in workspace Settings".to_owned()
+                }),
+                checked_at: None,
+            },
+            limits: VisionModelLimits {
+                max_images: Some(1),
+                max_input_artifacts: Some(0),
+                max_request_bytes: Some(worker.max_request_bytes as u64),
+                timeout_seconds: Some(worker.timeout_seconds),
+            },
+            configuration: BTreeMap::from([
+                ("allow_remote".to_owned(), json!(worker.allow_remote)),
+                ("worker_enabled".to_owned(), json!(worker.enabled)),
+            ]),
+            ..VisionModelDescriptor::default()
+        })?;
+    }
     for (id, display_name, capability, output_type) in [
         (
             "mock-classifier",
@@ -550,6 +779,8 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     for descriptor in [
         annotagent_skill_classification::node_descriptor(),
         annotagent_skill_classification::verifier_node_descriptor(),
+        annotagent_skill_open_vocabulary::open_vocabulary_node_descriptor(),
+        annotagent_skill_open_vocabulary::phrase_grounding_node_descriptor(),
         annotagent_skill_vlm_detection::node_descriptor(),
         annotagent_skill_yolo::node_descriptor(),
         VisionNodeDescriptor {
@@ -1730,6 +1961,10 @@ impl LocalApplication {
             Arc::new(annotagent_skill_classification::ClassificationCapabilitySkill::default());
         registry.register_layered(classification.clone())?;
         layered_skills.register(classification)?;
+        let open_vocabulary =
+            Arc::new(annotagent_skill_open_vocabulary::OpenVocabularyGroundingSkill::default());
+        registry.register_layered(open_vocabulary.clone())?;
+        layered_skills.register(open_vocabulary)?;
         let vlm_detection =
             Arc::new(annotagent_skill_vlm_detection::VlmDetectionCapabilitySkill::default());
         registry.register_layered(vlm_detection.clone())?;
@@ -2293,6 +2528,12 @@ impl LocalApplication {
                         "unknown".to_owned()
                     },
                     health_detail: Some("health at execution time was not recorded".to_owned()),
+                    capabilities: Vec::new(),
+                    score_semantics: None,
+                    model_version: None,
+                    endpoint: None,
+                    enabled: None,
+                    license_summary: None,
                 }]
             })
             .unwrap_or_default();
@@ -6244,6 +6485,122 @@ review:
 export:
   formats: [native]
 ";
+
+    const OPEN_VOCABULARY_PROJECT: &str = r#"
+version: 1
+project:
+  name: Open vocabulary demo
+  language: en
+  enabled_skills:
+    - id: annotagent.open_vocabulary_grounding
+      version: "1"
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [target]
+    required: false
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [native]
+"#;
+
+    #[test]
+    fn open_vocabulary_skill_and_models_are_registered_without_contacting_worker() {
+        let settings = load_settings(None).expect("default Settings");
+        assert_eq!(settings.detection_workers.len(), 1);
+        assert!(!settings.detection_workers[0].enabled);
+        validate_settings(&settings).expect("offline Worker configuration remains valid");
+        let (nodes, models) = workflow_catalog(&settings).expect("catalog");
+        assert!(
+            nodes
+                .get(annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION)
+                .is_some()
+        );
+        assert!(
+            nodes
+                .get(annotagent_skill_open_vocabulary::PHRASE_GROUNDING_OPERATION)
+                .is_some()
+        );
+        assert!(models.resolve("mock-open-vocabulary").is_ok());
+        assert!(
+            models
+                .models()
+                .iter()
+                .any(|model| model.id == "locate-anything-local"
+                    && model.status == ModelAvailabilityStatus::Disabled)
+        );
+        assert!(models.resolve("locate-anything-local").is_err());
+    }
+
+    #[tokio::test]
+    async fn generic_open_vocabulary_template_dry_runs_and_executes_offline() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("open-vocabulary", OPEN_VOCABULARY_PROJECT)
+            .expect("Generic Project");
+        generate_synthetic_robocup(&temporary.path().join("open-vocabulary/images/sample.png"))
+            .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let draft = application
+            .create_workflow_draft_with_template(
+                "open-vocabulary",
+                &settings,
+                false,
+                Some("open-vocabulary.text-query-review"),
+            )
+            .expect("Grounding template");
+        let dry_run = application
+            .dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .expect("offline Grounding Dry Run");
+        assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
+        assert_eq!(dry_run.samples.len(), 1);
+        assert!(
+            dry_run.samples[0].nodes.iter().any(|node| {
+                node.node_id == "grounding" && node.status == "completed_in_sandbox"
+            })
+        );
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish Grounding Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("open-vocabulary/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("open-vocabulary-offline"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start Grounding Run");
+        let result = application
+            .wait_run(started.run_id)
+            .await
+            .expect("complete Grounding Run");
+        assert_eq!(
+            result.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            result.issues
+        );
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("persisted Pipeline Artifact inspection");
+        let grounding = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "grounding")
+            .expect("Grounding node inspection");
+        let serialized = serde_json::to_string(&grounding.outputs).expect("Pipeline Artifacts");
+        assert!(serialized.contains("grounding-0"));
+        assert!(serialized.contains("not_provided"));
+    }
 
     #[test]
     fn generic_project_and_workflow_need_no_robocup_skill() {

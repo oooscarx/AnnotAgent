@@ -1,0 +1,22 @@
+version: 1
+project:
+  name: Open-vocabulary Detection Demo
+  language: en
+  enabled_skills:
+    - id: annotagent.open_vocabulary_grounding
+      version: "1"
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [target]
+    required: false
+    multi_label: true
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [native, coco]

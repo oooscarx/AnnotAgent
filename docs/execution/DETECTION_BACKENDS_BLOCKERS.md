@@ -4,21 +4,24 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M3. Core, Runtime, Provider, Storage, Server, Web, TUI, Mock, protocol, and documentation
-work can proceed locally. The shared Worker contract is complete; concrete LocateAnything and
-RF-DETR Workers plus Candidate Match/Evidence Gate are scheduled work, not environment blockers.
+None at M4. The Open Vocabulary Capability Skill, LocateAnything Worker/adapter, Mock, Settings,
+Model discovery/test surface, validators, examples, and docs are complete. RF-DETR plus Candidate
+Match/Evidence Gate are scheduled local implementation work, not environment blockers.
 
 ## Live-conditional external requirements
 
 ### LocateAnything-3B
 
 - Current host is Darwin arm64 and has no `nvidia-smi`/NVIDIA CUDA runtime.
-- No LocateAnything model path is configured, and automatic download is prohibited.
+- No LocateAnything model/code path is configured, and automatic download is prohibited. The
+  tracked Worker was started without them and correctly reported `unavailable` while continuing to
+  serve capability discovery.
 - The official released model license restricts use to non-commercial research/evaluation. A live
   run must use a compatible environment and retain this restriction in its Model Descriptor.
 
-Result: Worker contract and Mock behavior are Release Blocking; real five-image GPU smoke is
-`LIVE-CONDITIONAL` until a legal, explicitly configured NVIDIA environment is available.
+Result: Worker contract, Mock behavior, startup isolation, Settings and capability discovery pass;
+real five-image GPU smoke is `LIVE-CONDITIONAL` until a legal, explicitly configured NVIDIA
+environment is available.
 
 ### RF-DETR
 

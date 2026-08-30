@@ -56,11 +56,16 @@ A Workflow is a typed graph of model, tool, validator/refiner, review, and outpu
 
 ## 4. Model
 
-Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers, persists non-secret configuration in the workspace, and stores the write-only key at `<workspace>/.annotagent/credentials/provider-api-key` with owner-only permissions. CLI environment-variable keys remain supported.
+Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers plus optional local Detection Workers, persists non-secret configuration in the workspace, and stores the write-only key at `<workspace>/.annotagent/credentials/provider-api-key` with owner-only permissions. CLI environment-variable keys remain supported. Worker health and capabilities are discovered live; an unavailable Worker never blocks AnnotAgent startup.
 
 ## 5. Skill
 
 A Skill contributes domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It does not own a Dataset or the application shell. Rust implementations are registered through `DomainSkill`; the generic canvas consumes stable `annotation-1` through `annotation-8` slots through a `SkillVisualProfile`.
+
+The bundled `annotagent.open_vocabulary_grounding` Capability Skill finds objects from category
+descriptions or referring phrases. Bind `mock-open-vocabulary` for an offline contract test or the
+optional versioned LocateAnything Worker for local GPU inference. See [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md)
+and [LocateAnything Backend](docs/LOCATE_ANYTHING_BACKEND.md).
 
 ## 6. Review
 
@@ -164,7 +169,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

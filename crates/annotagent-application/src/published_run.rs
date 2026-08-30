@@ -12,11 +12,12 @@ use annotagent_core::{
     RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind,
     TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
     ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
-    VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowNodeKind,
+    VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
+    WorkflowNodeKind,
 };
 use annotagent_provider::{
-    OpenAiCompatiblePipelineClassifier, OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider,
-    OpenAiVisionBackend,
+    HttpVisionDetectionBackend, OpenAiCompatiblePipelineClassifier,
+    OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider, OpenAiVisionBackend,
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
@@ -29,6 +30,10 @@ use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
     ClassificationVerifierRunner, MockClassificationBackend,
 };
+use annotagent_skill_open_vocabulary::{
+    GroundingSkillRunner, MockGroundingBackend, OPEN_VOCABULARY_DETECTION_OPERATION,
+    PHRASE_GROUNDING_OPERATION,
+};
 use annotagent_skill_vlm_detection::{VLM_DETECTION_OPERATION, VlmDetectionSkillRunner};
 use annotagent_skill_yolo::{MockYoloBackend, YOLO_DETECTION_OPERATION, YoloDetectionSkillRunner};
 use annotagent_storage::SqliteStore;
@@ -39,7 +44,7 @@ use rust_decimal::Decimal;
 use serde_json::json;
 use tokio::sync::broadcast;
 
-use crate::Settings;
+use crate::{DetectionWorkerSettings, Settings};
 
 #[async_trait]
 pub(crate) trait ApplicationImageRuntime: Send + Sync {
@@ -77,6 +82,7 @@ pub(crate) struct PublishedWorkflowRuntime {
     pricing: annotagent_core::PricingConfig,
     validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
     refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
+    detection_workers: Vec<DetectionWorkerSettings>,
 }
 
 impl PublishedWorkflowRuntime {
@@ -124,7 +130,45 @@ impl PublishedWorkflowRuntime {
             pricing: settings.pricing.clone(),
             validators,
             refiners,
+            detection_workers: settings.detection_workers.clone(),
         })
+    }
+
+    fn grounding_runner(
+        &self,
+        node: &WorkflowDraftNode,
+        request: &ImageRunRequest,
+        capability: annotagent_core::VisionCapability,
+    ) -> Result<Arc<GroundingSkillRunner>> {
+        let model_id = node
+            .model_binding
+            .clone()
+            .unwrap_or_else(|| "mock-open-vocabulary".to_owned());
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+            if model_id == "mock-open-vocabulary" {
+                Arc::new(MockGroundingBackend::new(
+                    "workspace-mock-open-vocabulary",
+                    capability,
+                )?)
+            } else {
+                let worker = self
+                    .detection_workers
+                    .iter()
+                    .find(|worker| worker.model_id == model_id)
+                    .ok_or_else(|| anyhow!("unknown Detection Worker model {model_id:?}"))?;
+                if !worker.enabled {
+                    bail!("Detection Worker model {model_id:?} is disabled in Settings");
+                }
+                Arc::new(HttpVisionDetectionBackend::new(
+                    worker.http_config(),
+                    capability,
+                )?)
+            };
+        Ok(Arc::new(GroundingSkillRunner::new(
+            backend,
+            model_id,
+            request.model_image.clone(),
+        )?))
     }
 
     async fn publish(&self, event: RunEvent) -> Result<()> {
@@ -211,6 +255,28 @@ impl PublishedWorkflowRuntime {
                         node.node_type.clone(),
                         Arc::new(ClassificationVerifierRunner),
                         true,
+                    )?;
+                }
+                OPEN_VOCABULARY_DETECTION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.grounding_runner(
+                            node,
+                            request,
+                            annotagent_core::VisionCapability::OpenVocabularyDetection,
+                        )?,
+                        false,
+                    )?;
+                }
+                PHRASE_GROUNDING_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.grounding_runner(
+                            node,
+                            request,
+                            annotagent_core::VisionCapability::PhraseGrounding,
+                        )?,
+                        false,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {
@@ -840,6 +906,28 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         node.node_type.clone(),
                         Arc::new(ClassificationVerifierRunner),
                         true,
+                    )?;
+                }
+                OPEN_VOCABULARY_DETECTION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.grounding_runner(
+                            node,
+                            &request,
+                            annotagent_core::VisionCapability::OpenVocabularyDetection,
+                        )?,
+                        false,
+                    )?;
+                }
+                PHRASE_GROUNDING_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        self.grounding_runner(
+                            node,
+                            &request,
+                            annotagent_core::VisionCapability::PhraseGrounding,
+                        )?,
+                        false,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {

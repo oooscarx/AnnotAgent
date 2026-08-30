@@ -12,8 +12,9 @@ use std::{
 };
 
 use annotagent_application::{
-    ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, LocalApplication, ModelBinding,
-    ProjectSummary, Settings, WorkflowVersion, stable_project_id, validate_settings,
+    ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, DetectionWorkerSettings,
+    LocalApplication, ModelBinding, ProjectSummary, Settings, WorkflowVersion, stable_project_id,
+    validate_settings,
 };
 use annotagent_core::{
     AgentBudget, Annotation, AnnotationId, ArtifactValidationState, AttributeDefinition, BatchId,
@@ -21,6 +22,7 @@ use annotagent_core::{
     RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, TaskKind, UsageTotals,
     WorkflowConstraints, WorkflowDraft,
 };
+use annotagent_provider::HttpVisionWorkerClient;
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::HistoryRun;
 use anyhow::{Context, anyhow, bail};
@@ -409,6 +411,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         )
         .route("/api/workflows/compare", post(compare_workflow_versions))
         .route("/api/models", get(list_models))
+        .route("/api/models/{model_id}/test", post(test_detection_worker))
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route(
@@ -762,6 +765,51 @@ fn workspace_model_binding(settings: &Settings) -> ModelBinding {
         } else {
             "external provider is checked on request".to_owned()
         }),
+        capabilities: vec!["vision_language".to_owned(), "classification".to_owned()],
+        score_semantics: None,
+        model_version: None,
+        endpoint: None,
+        enabled: Some(true),
+        license_summary: None,
+    }
+}
+
+fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
+    let capabilities = worker
+        .expected_capabilities
+        .iter()
+        .filter_map(|capability| {
+            serde_json::to_value(capability)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+        })
+        .collect();
+    let score_semantics = serde_json::to_value(worker.score_semantics)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned));
+    ModelBinding {
+        id: worker.model_id.clone(),
+        provider: "http_vision".to_owned(),
+        model: worker.display_name.clone(),
+        role: "detection".to_owned(),
+        scope: "workspace_worker".to_owned(),
+        health_status: if worker.enabled {
+            "unknown"
+        } else {
+            "unavailable"
+        }
+        .to_owned(),
+        health_detail: Some(if worker.enabled {
+            "Run Test Worker to discover live health and capabilities".to_owned()
+        } else {
+            "Disabled in workspace Settings".to_owned()
+        }),
+        capabilities,
+        score_semantics,
+        model_version: Some(worker.version.model_version.clone()),
+        endpoint: Some(worker.base_url.clone()),
+        enabled: Some(worker.enabled),
+        license_summary: worker.license.weight_license.clone(),
     }
 }
 
@@ -996,6 +1044,12 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
                 "unknown".to_owned()
             },
             health_detail: terminal_reason.clone(),
+            capabilities: Vec::new(),
+            score_semantics: None,
+            model_version: None,
+            endpoint: None,
+            enabled: None,
+            license_summary: None,
         }],
         provider: run.provider,
         model: run.model,
@@ -1333,13 +1387,45 @@ async fn compare_workflow_versions(
 }
 
 async fn list_models(State(state): State<ServerState>) -> Json<Value> {
-    let model = {
+    let models = {
         let settings = state.settings.read().await;
-        workspace_model_binding(&settings)
+        let mut models = vec![workspace_model_binding(&settings)];
+        models.extend(settings.detection_workers.iter().map(worker_model_binding));
+        models
     };
-    Json(json!({
-        "models": [model],
-    }))
+    Json(json!({"models": models}))
+}
+
+async fn test_detection_worker(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let worker = {
+        let settings = state.settings.read().await;
+        settings
+            .detection_workers
+            .iter()
+            .find(|worker| worker.model_id == model_id)
+            .cloned()
+    }
+    .ok_or_else(|| ApiError::not_found(format!("unknown Detection Worker model {model_id:?}")))?;
+    if !worker.enabled {
+        return Err(ApiError::bad_request(format!(
+            "Detection Worker model {model_id:?} is disabled"
+        )));
+    }
+    let client =
+        HttpVisionWorkerClient::new(worker.http_config()).map_err(ApiError::bad_request)?;
+    let health = client.health().await.map_err(ApiError::bad_request)?;
+    let capabilities = client
+        .discover_capabilities()
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({
+        "model_id": model_id,
+        "health": health,
+        "capabilities": capabilities,
+    })))
 }
 
 async fn list_run_summaries(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
@@ -3418,6 +3504,23 @@ mod tests {
                 .await;
         assert_eq!(models["models"][0]["provider"], json!("mock"));
         assert_eq!(models["models"][0]["health_status"], json!("healthy"));
+        assert_eq!(models["models"][1]["id"], json!("locate-anything-local"));
+        assert_eq!(models["models"][1]["enabled"], json!(false));
+        assert_eq!(
+            models["models"][1]["score_semantics"],
+            json!("not_provided")
+        );
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/models/locate-anything-local/test",
+                None,
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
 
         let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
         assert_eq!(sse.status(), StatusCode::OK);

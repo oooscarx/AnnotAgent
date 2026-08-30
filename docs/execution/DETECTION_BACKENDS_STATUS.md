@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M3 — Versioned Detection Worker Protocol (complete)
+M4 — LocateAnything open-vocabulary grounding backend (complete)
 
 ## Completed
 
@@ -57,32 +57,53 @@ M3 — Versioned Detection Worker Protocol (complete)
   local paths, NaN/out-of-bounds/reversed coordinates, duplicate identities, undeclared labels,
   capability/model/version spoofing, redirect credential leaks, timeout, and forwarded cancel.
 - Published the exact v1 JSON contract and security boundary in `docs/HTTP_VISION_PROTOCOL.md`.
+- Added the domain-neutral `annotagent.open_vocabulary_grounding` Capability Skill with separate
+  Open Vocabulary Detection and Phrase Grounding nodes, a strict text-query JSON Schema, Mock
+  backend, valid-empty behavior, Query-ID-to-Project-Label mapping, and an editable
+  Image → Grounding → Review → Commit Workflow template.
+- Added a shared-registry HTTP adapter for both grounding capabilities. It discovers Worker facts,
+  preserves optional scores and source/query evidence, validates normalized geometry, accepts an
+  empty DetectionSet, and persists only a bounded raw-response hash reference.
+- Added `examples/locate_anything_worker.py`, a loopback-only adapter over NVIDIA's official
+  LocateAnything worker API. It loads only explicitly configured local code/model directories,
+  never downloads weights, converts parsed pixel `xyxy` boxes to normalized coordinates, supports
+  multiple text queries and cooperative cancellation, and never fabricates a confidence value.
+- Added a disabled-by-default LocateAnything Detection Worker profile to local Settings. Disabled
+  or unavailable Workers remain visible in the Model Registry without blocking application startup.
+- Added live Worker Test support and Model metadata to the Models page, plus persistent Detection
+  Worker endpoint/enable/remote-opt-in editing in Settings. Visual prompt is disabled with the
+  exact unsupported-capability reason and static validation rejects hidden/manual use.
+- Added Generic Project documentation and a runnable offline template test proving Draft → Dry Run
+  → immutable publish → exact-version Run → persisted DetectionSet → Human Review without RoboCup.
+- Documented local deployment, security, model/license restrictions, missing-score behavior, and
+  the distinction between Mock/contract evidence and live GPU evidence.
 
 ## In progress
 
-- None. M3 is ready for its independent local commit.
+- None. M4 is ready for its independent local commit.
 
 ## Next step
 
-M4 — implement the capability-driven Open-Vocabulary Grounding Skill, LocateAnything-compatible
-Worker/adapter, Mock backend, templates, Settings metadata, validators, tests, and docs.
+M5 — implement the generic Object Detection Skill and RF-DETR-compatible Worker/adapter, Mock
+backend, class mapping, checkpoint/training metadata, Settings support, tests, and docs.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 188 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 196 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 33 tests |
 | Web types | `npm --prefix web run typecheck` | PASS |
 | Web build | `npm --prefix web run build` | PASS |
-| Worker protocol | compile both tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
-| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; new mixed-detector UI not implemented |
+| Worker | parse all tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
+| Locate worker | start without weights; request `/health` and `/v1/capabilities` | PASS — unavailable health is truthful; capabilities remain discoverable |
+| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M4 Models/Settings code is built/tested, full mixed-evidence browser gate remains M9/M10 |
 
 ## Latest local commit
 
-This document's containing M3 commit: `feat(provider): add versioned detection worker protocol`
+This document's containing M4 commit: `feat(models): integrate locateanything grounding backend`
 
 ## Audited baseline
 
@@ -116,9 +137,9 @@ This document's containing M3 commit: `feat(provider): add versioned detection w
 
 ## Release Blocking remaining
 
-The matrix contains 30 `PASS`, 58 `OPEN`, and one `LIVE-CONDITIONAL` row after M3. M3 adds shared
-protocol evidence but intentionally does not claim the model-specific C/D rows before those
-Workers exist.
+The matrix contains 46 `PASS`, 42 `OPEN`, and one `LIVE-CONDITIONAL` row after M4. LocateAnything
+Mock/contract/startup requirements now pass; a real five-image GPU smoke remains explicitly
+live-conditional and is not represented by the Mock result.
 
 ## Live-conditional items
 

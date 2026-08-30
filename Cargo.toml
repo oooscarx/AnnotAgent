@@ -9,6 +9,7 @@ members = [
     "crates/annotagent-runtime",
     "crates/annotagent-server",
     "crates/annotagent-skill-classification",
+    "crates/annotagent-skill-open-vocabulary",
     "crates/annotagent-skill-robocup",
     "crates/annotagent-skill-vlm-detection",
     "crates/annotagent-skill-yolo",

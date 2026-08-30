@@ -986,6 +986,15 @@ impl WorkflowStaticValidator {
                             ));
                         }
                     }
+                    if requests_visual_prompt(&node.parameters)
+                        && !model.input_contract.supports_visual_prompt
+                    {
+                        issues.push(issue(
+                            "visual_prompt_unsupported",
+                            &format!("{path}.parameters"),
+                            &format!("model {model_id:?} does not advertise visual prompt support"),
+                        ));
+                    }
                 }
                 Err(error) => issues.push(issue(
                     "unknown_model",
@@ -1019,6 +1028,15 @@ impl WorkflowStaticValidator {
             execution_order,
         }
     }
+}
+
+fn requests_visual_prompt(parameters: &BTreeMap<String, serde_json::Value>) -> bool {
+    parameters.iter().any(|(name, value)| {
+        matches!(
+            name.as_str(),
+            "visual_prompt" | "visual_prompt_box" | "visual_exemplar" | "exemplar_image"
+        ) && !value.is_null()
+    })
 }
 
 fn validate_edges(
@@ -1593,6 +1611,50 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "model_capability_mismatch")
+        );
+    }
+
+    #[test]
+    fn unsupported_visual_prompt_is_blocked_before_publish() {
+        let mut vision = node("vision", WorkflowNodeKind::VisionModel);
+        vision.model_binding = Some("classifier".to_owned());
+        vision.parameters.insert(
+            "visual_prompt_box".to_owned(),
+            serde_json::json!([0.1, 0.1, 0.2, 0.2]),
+        );
+        let workflow = draft(vec![vision], Vec::new());
+        let mut models = ModelRegistry::new();
+        models
+            .register_backend(Arc::new(ClassificationBackend))
+            .expect("backend");
+        models
+            .register_model(VisionModelDescriptor {
+                id: "classifier".to_owned(),
+                backend_id: "classification-backend".to_owned(),
+                capabilities: vec![VisionCapability::Classification],
+                input_contract: crate::ModelInputContract {
+                    input_types: vec![crate::VisionInputType::Image],
+                    supports_multiple_queries: false,
+                    supports_visual_prompt: false,
+                    max_queries: None,
+                },
+                ..VisionModelDescriptor::default()
+            })
+            .expect("model");
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &workflow,
+            &catalog(&[("vision", vec![VisionCapability::Classification])]),
+            &models,
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+        );
+        assert!(!report.valid);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "visual_prompt_unsupported")
         );
     }
 

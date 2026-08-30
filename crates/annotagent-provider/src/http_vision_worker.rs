@@ -3,14 +3,16 @@
 use std::{collections::BTreeSet, time::Duration};
 
 use annotagent_core::{
-    ArtifactKind, ArtifactRef, ArtifactValidationState, CoreError, CoreResult,
-    DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionScore, DetectionSetArtifact,
-    DetectionSource, DetectionWorkerCancelRequest, DetectionWorkerCancelResponse,
-    DetectionWorkerCapabilities, DetectionWorkerHealth, DetectionWorkerInferenceRequest,
-    DetectionWorkerInferenceResponse, DetectionWorkerOptions, DetectionWorkerQuery, LabelId,
-    NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
-    PipelineInferenceResponse, PipelineModelBackend, ScoreSemantics, StoredPayloadRef,
-    VISION_WORKER_PROTOCOL_VERSION, VisionBackendTimings, VisionBackendUsage, VisionCapability,
+    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef, ArtifactRole,
+    ArtifactValidationState, CoreError, CoreResult, DETECTION_ARTIFACT_SCHEMA_VERSION, Detection,
+    DetectionScore, DetectionSetArtifact, DetectionSource, DetectionWorkerCancelRequest,
+    DetectionWorkerCancelResponse, DetectionWorkerCapabilities, DetectionWorkerHealth,
+    DetectionWorkerInferenceRequest, DetectionWorkerInferenceResponse, DetectionWorkerOptions,
+    DetectionWorkerQuery, LabelId, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION,
+    PipelineArtifact, PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend,
+    ScoreSemantics, StoredPayloadRef, VISION_WORKER_PROTOCOL_VERSION, VisionArtifact,
+    VisionArtifactValue, VisionBackendKind, VisionBackendTimings, VisionBackendUsage,
+    VisionCapability, VisionInferenceRequest, VisionInferenceResponse, VisionModelBackend,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -311,6 +313,138 @@ impl HttpVisionWorkerClient {
 pub struct HttpVisionDetectionBackend {
     client: HttpVisionWorkerClient,
     capability: VisionCapability,
+}
+
+/// Registry-facing adapter for a Worker that advertises more than one detection capability.
+/// Pipeline execution still binds one capability per node through `HttpVisionDetectionBackend`.
+pub struct HttpVisionWorkerRegistryBackend {
+    client: HttpVisionWorkerClient,
+}
+
+impl HttpVisionWorkerRegistryBackend {
+    pub fn new(config: HttpVisionWorkerConfig) -> CoreResult<Self> {
+        Ok(Self {
+            client: HttpVisionWorkerClient::new(config)?,
+        })
+    }
+
+    pub async fn health(&self) -> CoreResult<DetectionWorkerHealth> {
+        self.client.health().await
+    }
+
+    pub async fn discover_capabilities(&self) -> CoreResult<DetectionWorkerCapabilities> {
+        self.client.discover_capabilities().await
+    }
+}
+
+#[async_trait]
+impl VisionModelBackend for HttpVisionWorkerRegistryBackend {
+    fn id(&self) -> &str {
+        self.client.id()
+    }
+
+    fn kind(&self) -> VisionBackendKind {
+        VisionBackendKind::HttpVision
+    }
+
+    fn capabilities(&self) -> Vec<VisionCapability> {
+        self.client.capabilities().to_vec()
+    }
+
+    async fn infer(
+        &self,
+        request: VisionInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<VisionInferenceResponse> {
+        if request.protocol_version != VISION_WORKER_PROTOCOL_VERSION
+            || !self.client.capabilities().contains(&request.operation)
+            || request.model_id != self.client.config.expected_model_id
+        {
+            return Err(CoreError::Validation(
+                "Registry Detection request protocol, model, or capability mismatch".to_owned(),
+            ));
+        }
+        let worker_request = DetectionWorkerInferenceRequest {
+            protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+            request_id: request.request_id.clone(),
+            operation: request.operation,
+            model_id: request.model_id.clone(),
+            image: request.image.ok_or_else(|| {
+                CoreError::Validation("Registry Detection requires inline image input".to_owned())
+            })?,
+            queries: parse_queries(&request.parameters)?,
+            target_labels: parse_target_labels(&request.parameters)?,
+            options: parse_options(&request.parameters)?,
+            timeout_ms: request.timeout_ms,
+        };
+        let result = self.client.infer(worker_request, cancellation).await?;
+        let mut artifacts = Vec::with_capacity(result.response.detections.len());
+        for detection in result.response.detections {
+            let score = DetectionScore::new(detection.score, detection.score_semantics)
+                .map_err(CoreError::Validation)?;
+            let mut metadata = std::collections::BTreeMap::from([
+                (
+                    "score_semantics".to_owned(),
+                    serde_json::json!(score.semantics),
+                ),
+                (
+                    "raw_output_ref".to_owned(),
+                    serde_json::to_value(&result.raw_output_ref).map_err(|error| {
+                        CoreError::Validation(format!(
+                            "cannot serialize controlled Worker response reference: {error}"
+                        ))
+                    })?,
+                ),
+            ]);
+            if let Some(query_id) = detection.query_id {
+                metadata.insert("query_id".to_owned(), serde_json::json!(query_id));
+            }
+            if let Some(model_label) = detection.model_label {
+                metadata.insert("model_label".to_owned(), serde_json::json!(model_label));
+            }
+            let artifact = VisionArtifact {
+                id: ArtifactId::new(),
+                image_id: request.image_id,
+                task_id: Some(request.task_id.clone()),
+                label: detection.target_label,
+                role: ArtifactRole::Candidate,
+                value: VisionArtifactValue::BoundingBox {
+                    rect: normalized_xyxy(detection.bbox_xyxy_normalized)?,
+                },
+                source_node: request.node_id.clone(),
+                confidence: score.comparable_confidence(),
+                metadata,
+                validation_state: ArtifactValidationState::Unvalidated,
+                provenance: ArtifactProvenance {
+                    provider: Some(self.client.id().to_owned()),
+                    model: Some(request.model_id.clone()),
+                    request_id: Some(request.request_id.clone()),
+                    ..ArtifactProvenance::default()
+                },
+                revision: 1,
+                replaces_artifact_id: None,
+                created_at: chrono::Utc::now(),
+            };
+            artifact.validate()?;
+            artifacts.push(artifact);
+        }
+        Ok(VisionInferenceResponse {
+            request_id: Some(request.request_id),
+            model_identity: Some(result.response.model_id),
+            artifacts,
+            usage: VisionBackendUsage {
+                source: Some("worker_reported".to_owned()),
+                compute_milliseconds: result.response.usage.duration_ms,
+                input_megapixels: None,
+            },
+            timings: VisionBackendTimings {
+                total_ms: result.response.usage.duration_ms,
+                ..VisionBackendTimings::default()
+            },
+            warnings: result.response.warnings,
+            ..VisionInferenceResponse::default()
+        })
+    }
 }
 
 impl HttpVisionDetectionBackend {
@@ -916,7 +1050,8 @@ mod tests {
     };
 
     use annotagent_core::{
-        ArtifactValidationState, ImageId, ModelImage, RunId, VisionModelHealthStatus,
+        ArtifactValidationState, DetectionWorkerUsage, ImageId, ModelImage, RunId,
+        VisionModelHealthStatus,
     };
     use axum::{
         Json, Router,
@@ -1125,6 +1260,134 @@ mod tests {
             .await
             .expect("empty Detection response");
         assert!(result.response.detections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn open_vocabulary_worker_preserves_queries_optional_score_and_empty_results() {
+        async fn capabilities() -> Json<DetectionWorkerCapabilities> {
+            Json(DetectionWorkerCapabilities {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                worker_id: "grounding-worker".to_owned(),
+                model_id: "grounding-model".to_owned(),
+                capabilities: vec![
+                    VisionCapability::OpenVocabularyDetection,
+                    VisionCapability::PhraseGrounding,
+                ],
+                score_semantics: ScoreSemantics::NotProvided,
+                supports_visual_prompt: false,
+                supports_batch: false,
+                label_space: Vec::new(),
+                limits: annotagent_core::VisionModelLimits {
+                    max_images: Some(1),
+                    max_input_artifacts: Some(0),
+                    max_request_bytes: Some(1_000_000),
+                    timeout_seconds: Some(2),
+                },
+            })
+        }
+        async fn infer(
+            Json(request): Json<DetectionWorkerInferenceRequest>,
+        ) -> Json<DetectionWorkerInferenceResponse> {
+            let detections = request
+                .queries
+                .iter()
+                .filter(|query| query.text != "absent")
+                .enumerate()
+                .map(|(index, query)| annotagent_core::DetectionWorkerDetection {
+                    detection_id: format!("detection-{index}"),
+                    query_id: Some(query.id.clone()),
+                    model_label: None,
+                    target_label: query.target_label.clone(),
+                    bbox_xyxy_normalized: [0.2, 0.3, 0.5, 0.7],
+                    score: None,
+                    score_semantics: ScoreSemantics::NotProvided,
+                })
+                .collect();
+            Json(DetectionWorkerInferenceResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                request_id: request.request_id,
+                model_id: request.model_id,
+                detections,
+                usage: DetectionWorkerUsage::default(),
+                warnings: Vec::new(),
+                error: None,
+            })
+        }
+        let base_url = spawn(
+            Router::new()
+                .route("/v1/capabilities", get(capabilities))
+                .route("/v1/infer", post(infer)),
+        )
+        .await;
+        let worker_config = HttpVisionWorkerConfig {
+            id: "grounding-worker".to_owned(),
+            base_url,
+            expected_model_id: "grounding-model".to_owned(),
+            capabilities: vec![
+                VisionCapability::OpenVocabularyDetection,
+                VisionCapability::PhraseGrounding,
+            ],
+            expected_score_semantics: Some(ScoreSemantics::NotProvided),
+            request_timeout: Duration::from_secs(2),
+            max_request_bytes: 1_000_000,
+            max_response_bytes: 100_000,
+            max_retries: 0,
+            allow_remote: false,
+            authorization: None,
+        };
+        let backend = HttpVisionDetectionBackend::new(
+            worker_config.clone(),
+            VisionCapability::OpenVocabularyDetection,
+        )
+        .expect("Grounding Backend");
+        let discovered = backend.discover_capabilities().await.expect("discovery");
+        assert!(!discovered.supports_visual_prompt);
+        assert_eq!(discovered.score_semantics, ScoreSemantics::NotProvided);
+
+        for (text, expected_count) in [("a football", 1), ("absent", 0)] {
+            let image_id = ImageId::new();
+            let response = backend
+                .infer_pipeline(
+                    PipelineInferenceRequest {
+                        protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+                        request_id: uuid::Uuid::new_v4().to_string(),
+                        run_id: RunId::new(),
+                        image_id,
+                        node_id: "grounding".to_owned(),
+                        model_id: "grounding-model".to_owned(),
+                        operation: VisionCapability::OpenVocabularyDetection,
+                        image: Some(ModelImage {
+                            id: "image".to_owned(),
+                            mime_type: "image/png".to_owned(),
+                            data_base64: STANDARD.encode(b"png"),
+                        }),
+                        input_artifacts: Vec::new(),
+                        parameters: std::collections::BTreeMap::from([(
+                            "queries".to_owned(),
+                            json!([{"id":"football","text":text,"target_label":"football"}]),
+                        )]),
+                        timeout_ms: Some(1_000),
+                    },
+                    CancellationToken::new(),
+                )
+                .await
+                .expect("Grounding inference");
+            let PipelineArtifact::DetectionSet(set) = &response.artifacts[0] else {
+                panic!("DetectionSet")
+            };
+            assert_eq!(set.detections.len(), expected_count);
+            if let Some(detection) = set.detections.first() {
+                assert_eq!(detection.query_id.as_deref(), Some("football"));
+                assert_eq!(detection.score, DetectionScore::not_provided());
+                assert!((detection.bbox.width() - 0.3).abs() < f32::EPSILON);
+                assert!((detection.bbox.height() - 0.4).abs() < f32::EPSILON);
+            }
+        }
+
+        let registry = HttpVisionWorkerRegistryBackend::new(worker_config)
+            .expect("registry-facing Grounding Backend");
+        assert_eq!(registry.kind(), VisionBackendKind::HttpVision);
+        assert_eq!(registry.capabilities().len(), 2);
     }
 
     #[test]

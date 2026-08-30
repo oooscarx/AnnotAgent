@@ -132,6 +132,27 @@ export interface ModelBinding {
   scope: string;
   health_status: "healthy" | "degraded" | "unavailable" | "unknown";
   health_detail?: string;
+  capabilities?: string[];
+  score_semantics?: string;
+  model_version?: string;
+  endpoint?: string;
+  enabled?: boolean;
+  license_summary?: string;
+}
+
+export interface DetectionWorkerTestResult {
+  model_id: string;
+  health: {
+    status: "healthy" | "degraded" | "unavailable" | "unknown";
+    detail?: string;
+  };
+  capabilities: {
+    capabilities: string[];
+    score_semantics: string;
+    supports_visual_prompt: boolean;
+    supports_batch: boolean;
+    label_space: string[];
+  };
 }
 
 export interface WorkflowNodeSummary {

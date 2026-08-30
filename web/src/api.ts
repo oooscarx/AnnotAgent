@@ -3,6 +3,7 @@ import type {
   AgentSession,
   CorrectionMemoryRecord,
   DashboardData,
+  DetectionWorkerTestResult,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -251,6 +252,10 @@ export const api = {
       }),
     }),
   models: () => request<{ models: ModelBinding[] }>("/api/models"),
+  testModel: (modelId: string) =>
+    request<DetectionWorkerTestResult>(`/api/models/${encodeURIComponent(modelId)}/test`, {
+      method: "POST",
+    }),
   reviews: (projectId?: string) =>
     request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
       `/api/reviews${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,

@@ -123,3 +123,35 @@ Inference sends bounded inline PNG/JPEG bytes rather than a host path. Successfu
 evidence stores only media type, SHA-256, and byte size, never the JSON body or image. Cancellation
 is cooperative through `/v1/cancel`; Runtime cancellation remains authoritative even if the
 best-effort Worker acknowledgement fails.
+
+## DB-016 — Open-vocabulary grounding is a Capability Skill, not a model node
+
+`annotagent.open_vocabulary_grounding` owns the text-query contract, JSON Schema, Mock behavior,
+Workflow template, and two capability-specific operations. LocateAnything is one registry backend
+for those operations. Generic Workflow validation reasons only about capability and input contract;
+it never branches on the Skill or model ID.
+
+Rejected: `NodeKind::LocateAnything`, model-branded Core DTOs, or allowing a backend-specific
+request shape to bypass the typed DetectionSet boundary.
+
+## DB-017 — The tracked LocateAnything adapter is local-install only
+
+The Python Worker loads an explicitly configured local model directory plus the official NVIDIA
+worker source. It does not clone code, download a checkpoint, accept arbitrary image paths, or turn
+missing files into fixture inference. Without both paths it remains reachable for health and
+capability discovery and reports `unavailable`; Mock inference stays visibly separate.
+
+The implementation was checked against NVIDIA's official `LocateAnything-3B` model card and the
+official `NVlabs/Eagle/Embodied/locateanything_worker.py` interfaces (`detect`, `ground_multi`, and
+`parse_boxes`). The registered model metadata retains the official non-commercial
+research/evaluation restriction as informational metadata rather than a legal conclusion.
+
+## DB-018 — Unsupported visual prompting fails before execution
+
+Visual exemplar prompting is an explicit input-contract boolean discovered from the Worker. The
+current LocateAnything profile reports false, the Models UI disables the action with a concrete
+reason, and both flat Workflow and Label Pipeline static validators reject visual-prompt parameters.
+The Worker also fails closed if such a request bypasses UI validation.
+
+Rejected: an enabled decorative control that fails only after starting a Run, or frontend-authored
+capability claims that disagree with Worker discovery.

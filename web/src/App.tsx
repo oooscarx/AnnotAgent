@@ -31,6 +31,7 @@ import type {
   AgentSession,
   Annotation,
   CorrectionMemoryRecord,
+  DetectionWorkerTestResult,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -1020,7 +1021,11 @@ function SettingsWorkspace({
       </nav>
       {section === "general" && <SettingsPage onError={onError} />}
       {section === "models" && (
-        <ModelsPage models={models} onConfigure={() => onNavigate("general")} />
+        <ModelsPage
+          models={models}
+          onConfigure={() => onNavigate("general")}
+          onError={onError}
+        />
       )}
       {section === "capabilities" && <SkillsPage onError={onError} />}
     </section>
@@ -4017,10 +4022,25 @@ function WorkflowDetail({
 function ModelsPage({
   models,
   onConfigure,
+  onError,
 }: {
   models: ModelBinding[];
   onConfigure: () => void;
+  onError: (value: string) => void;
 }) {
+  const [catalogModels, setCatalogModels] = useState(models);
+  const [testingModel, setTestingModel] = useState<string>();
+  const [testResults, setTestResults] = useState<Record<string, DetectionWorkerTestResult>>({});
+  useEffect(() => {
+    void api.models().then((value) => setCatalogModels(value.models)).catch((error: Error) => onError(error.message));
+  }, []);
+  const testWorker = (modelId: string) => {
+    setTestingModel(modelId);
+    void api.testModel(modelId)
+      .then((result) => setTestResults((current) => ({ ...current, [modelId]: result })))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setTestingModel(undefined));
+  };
   return (
     <section className="page-stack">
       <div className="toolbar-panel">
@@ -4038,9 +4058,9 @@ function ModelsPage({
       </div>
       <div className="split-grid">
         <Panel title="Configured bindings" eyebrow="Workspace default">
-          {models.length ? (
+          {catalogModels.length ? (
             <div className="binding-list">
-              {models.map((binding) => (
+              {catalogModels.map((binding) => (
                 <article key={binding.id}>
                   <span className="catalog-monogram">AI</span>
                   <div>
@@ -4054,6 +4074,33 @@ function ModelsPage({
                     <small
                       title={binding.health_detail}
                     >{`Health · ${binding.health_status}`}</small>
+                    {binding.capabilities?.length ? <small>Configured contract · {binding.capabilities.join(" · ")}</small> : null}
+                    {binding.score_semantics && <small>Score · {binding.score_semantics.replaceAll("_", " ")}</small>}
+                    {binding.model_version && <small>Version · {binding.model_version}</small>}
+                    {binding.license_summary && <small>Weights · {binding.license_summary}</small>}
+                    {binding.scope === "workspace_worker" && <div className="worker-actions">
+                      <button
+                        onClick={() => testWorker(binding.id)}
+                        disabled={!binding.enabled || testingModel === binding.id}
+                        title={binding.enabled ? "Read live health and capabilities from the Worker" : "Enable this Worker in Provider & budgets first"}
+                      >
+                        {testingModel === binding.id ? "Testing…" : "Test Worker"}
+                      </button>
+                      <button
+                        disabled
+                        title={testResults[binding.id]
+                          ? testResults[binding.id].capabilities.supports_visual_prompt
+                            ? "Worker reports support, but visual-prompt Workflow editing is not implemented in this Alpha"
+                            : "Worker reports supports_visual_prompt=false; this Alpha accepts text queries only"
+                          : "Test Worker to discover visual prompt capability"}
+                      >Visual prompt</button>
+                    </div>}
+                    {testResults[binding.id] && <div className="worker-discovery" role="status">
+                      <strong>Live · {testResults[binding.id].health.status}</strong>
+                      <small>{testResults[binding.id].capabilities.capabilities.join(" · ")}</small>
+                      <small>Confidence {testResults[binding.id].capabilities.score_semantics.replaceAll("_", " ")}</small>
+                      {!testResults[binding.id].capabilities.supports_visual_prompt && <small>Visual prompt unavailable in this Worker</small>}
+                    </div>}
                   </div>
                 </article>
               ))}
@@ -5521,6 +5568,9 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const provider = settings.provider ?? {};
   const pricing = settings.pricing ?? {};
   const budget = settings.budget ?? {};
+  const detectionWorkers = Array.isArray(settings.detection_workers)
+    ? settings.detection_workers
+    : [];
   const preset = getProviderPreset(presetId);
   const providerChanged =
     !preset.offline && credentialPresetRef.current !== preset.id;
@@ -5530,6 +5580,13 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
     !isCatalogModel(preset, provider.model);
   const setProvider = (field: string, value: unknown) =>
     setSettings({ ...settings, provider: { ...provider, [field]: value } });
+  const setDetectionWorker = (index: number, field: string, value: unknown) =>
+    setSettings({
+      ...settings,
+      detection_workers: detectionWorkers.map((worker: Record<string, unknown>, workerIndex: number) =>
+        workerIndex === index ? { ...worker, [field]: value } : worker,
+      ),
+    });
   const chooseProvider = (id: string) => {
     setPresetId(id);
     setSettings(applyProviderPreset(settings, id));
@@ -5800,6 +5857,24 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
             </span>
           </div>
         )}
+      </Panel>
+      <Panel title="Detection Workers" eyebrow="Optional local model processes">
+        {detectionWorkers.length ? <div className="detection-worker-settings">
+          {detectionWorkers.map((worker: Record<string, any>, index: number) => <article key={String(worker.id)}>
+            <div className="worker-setting-heading">
+              <span><strong>{String(worker.display_name)}</strong><small>{String(worker.model_id)}</small></span>
+              <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.enabled)} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
+            </div>
+            <label>Worker URL<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setDetectionWorker(index, "base_url", event.target.value)} /></label>
+            <div className="worker-contract-summary">
+              <small>Expected contract · {(worker.expected_capabilities ?? []).join(" · ")}</small>
+              <small>Score · {String(worker.score_semantics ?? "unknown").replaceAll("_", " ")}</small>
+              <small>Version · {String(worker.version?.model_version ?? "unversioned")}</small>
+            </div>
+            <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setDetectionWorker(index, "allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label>
+            <small>Loopback is the default trust boundary. Live capabilities are read from the Worker on the Models page; expected values here are validation constraints.</small>
+          </article>)}
+        </div> : <Empty title="No Detection Workers" detail="This Alpha ships an optional local LocateAnything profile in new workspaces." />}
       </Panel>
       <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">
         <div className="json-settings">
