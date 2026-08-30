@@ -25,7 +25,8 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
   Label Pipeline validation and publish both enforce the same grammar at the Application boundary.
 - D. Offline capability: PARTIAL. ScriptedMock and Registry RuleBased paths are available; the full
   offline demo matrix is finalized in M8.
-- E. UX: OPEN.
+- E. UX: PASS. The Agent is project-local, its persisted stages/Tools/validation/Dry Run/usage are
+  observable and cancellable, and structured Diff Apply selected/Undo never publishes.
 - F. RoboCup Domain boundary: OPEN.
 - G. Course requirements: OPEN.
 
@@ -105,3 +106,20 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | Publish boundary enforces Builder Grammar | PASS | `validate_workflow_draft` adds Builder Grammar issues for Label Pipelines and `publish_workflow` invokes the publish-ready form of that same boundary. |
 | Complete live Mock Provider loop | PASS | 17 provider calls, 17 registered Tool Calls, 170 input/85 output tokens, full persisted history and explicit approval stop pass offline. |
 | M5 regression/lint | PASS | Core 49, Application 31 and Server 9 passed; Web typecheck and 36 Vitest tests passed; 24 Playwright E2E tests passed; workspace Clippy all targets passed with warnings denied. |
+
+## M6 Guided Project Automation UX
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Agent is integrated in Project Automation | PASS | The bounded objective and `Ask AnnotAgent` action live in `Project → Build → Automation`; no standalone chat or Agent route was added. |
+| Structured objective reaches Rust | PASS | Priority, per-image cost/latency/model-call limits, Review target, external-model/human policy and Agent turn/tool/Dry-Run/cost limits are serialized as `PipelineBuilderConstraints`, validated and stored with the Agent Session. |
+| Progress is server truth | PASS | Application persists the Session before work and after every registered Tool Call; Web polls the project Agent audit during execution and renders status, stage, budgets, token/cost usage, validation, Dry Run, stop reason and ordered actions. |
+| GUI and TUI cancellation | PASS | Web calls the existing session cancellation endpoint; Application cancels the active token and persists `cancelled`. TUI `/advisor cancel` selects Pipeline Builder or compatibility Advisor sessions. |
+| Structured Draft Diff | PASS | Rust `PipelineDraftDiff` emits stable node, parameter, edge, model-binding and policy change IDs; unknown/empty selections, cross-Project comparisons and immutable bases are rejected. |
+| Apply selected and Apply all | PASS | Both actions call the Application-owned selective apply boundary and save into the existing editable Draft ID; the Agent proposal remains a separate auditable Suggested Draft. |
+| Reject and Undo | PASS | Reject mutates no Draft. Apply returns the exact previous snapshot; one-level GUI Undo restores it through the normal PATCH/save boundary. Application tests assert zero Published Versions and zero formal Runs. |
+| Human Publish boundary | PASS | The proposal can only be applied to an editable Draft. Test & Activate remains a separate user navigation and Pipeline Grammar/publish validation remain server-owned. |
+| Guided internal-ID boundary | PASS | Default Diff rows use human node/action names; node IDs, ports and raw configuration remain in Expert details/Debug. Tool protocol names are visible only in the explicitly expandable Tool actions audit. |
+| First-Draft experience | PASS | If no editable Current Draft exists, Automation creates a real empty Draft before invoking the Agent, then diffs the proposal against it; it does not fake a client-only baseline. |
+| M6 Rust regression | PASS | Core 50, Application 32, Server 9 and TUI 6 tests passed; focused selective apply/Undo and strict workspace Clippy with warnings denied pass. |
+| M6 Web/E2E regression | PASS | TypeScript, production build and 36 Vitest tests passed. Guided Chromium suite: 25 passed, including final Agent trace and real Apply selected → persisted DAG change → Undo restoration. |

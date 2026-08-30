@@ -275,6 +275,8 @@ pub struct AgentSession {
     pub kind: AgentKind,
     pub status: AgentSessionStatus,
     pub budget: AgentBudget,
+    #[serde(default)]
+    pub builder_constraints: Option<crate::PipelineBuilderConstraints>,
     pub usage: AgentUsage,
     pub steps: Vec<AgentToolStep>,
     pub stop_reason: Option<String>,
@@ -294,6 +296,7 @@ impl AgentSession {
             kind,
             status: AgentSessionStatus::Running,
             budget,
+            builder_constraints: None,
             usage: AgentUsage::default(),
             steps: Vec::new(),
             stop_reason: None,
@@ -306,6 +309,15 @@ impl AgentSession {
     #[must_use]
     pub fn with_project(mut self, project_id: impl Into<String>) -> Self {
         self.project_id = Some(project_id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_builder_constraints(
+        mut self,
+        constraints: crate::PipelineBuilderConstraints,
+    ) -> Self {
+        self.builder_constraints = Some(constraints);
         self
     }
 

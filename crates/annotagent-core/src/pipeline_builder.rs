@@ -1,6 +1,6 @@
 //! Constrained, auditable primitives for the Lean Pipeline Builder Agent.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -32,6 +32,380 @@ pub enum OptimizationPriority {
     Balanced,
     Accurate,
     LowCost,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NodeDiff {
+    pub change_id: String,
+    pub node_id: String,
+    pub node_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NodeParameterDiff {
+    pub change_id: String,
+    pub node_id: String,
+    pub before: BTreeMap<String, serde_json::Value>,
+    pub after: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EdgeDiff {
+    pub change_id: String,
+    pub edge: WorkflowEdge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelBindingDiff {
+    pub change_id: String,
+    pub node_id: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolicyDiff {
+    pub change_id: String,
+    pub node_id: String,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PipelineDraftDiff {
+    pub added_nodes: Vec<NodeDiff>,
+    pub removed_nodes: Vec<NodeDiff>,
+    pub modified_nodes: Vec<NodeParameterDiff>,
+    pub added_edges: Vec<EdgeDiff>,
+    pub removed_edges: Vec<EdgeDiff>,
+    pub model_binding_changes: Vec<ModelBindingDiff>,
+    pub policy_changes: Vec<PolicyDiff>,
+}
+
+impl PipelineDraftDiff {
+    pub fn between(base: &WorkflowDraft, proposed: &WorkflowDraft) -> CoreResult<Self> {
+        if base.project_id != proposed.project_id {
+            return Err(CoreError::Validation(
+                "Pipeline Draft Diff requires Drafts from the same Project".to_owned(),
+            ));
+        }
+        let base_nodes = base
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect::<BTreeMap<_, _>>();
+        let proposed_nodes = proposed
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect::<BTreeMap<_, _>>();
+        let mut diff = Self::default();
+        for node in &proposed.nodes {
+            let Some(previous) = base_nodes.get(node.id.as_str()) else {
+                diff.added_nodes.push(NodeDiff {
+                    change_id: format!("node:add:{}", node.id),
+                    node_id: node.id.clone(),
+                    node_type: node.node_type.clone(),
+                });
+                continue;
+            };
+            if !node_structure_equal(previous, node) {
+                diff.modified_nodes.push(NodeParameterDiff {
+                    change_id: format!("node:structure:{}", node.id),
+                    node_id: node.id.clone(),
+                    before: node_structure(previous),
+                    after: node_structure(node),
+                });
+            }
+            if previous.parameters != node.parameters {
+                diff.modified_nodes.push(NodeParameterDiff {
+                    change_id: format!("node:parameters:{}", node.id),
+                    node_id: node.id.clone(),
+                    before: previous.parameters.clone(),
+                    after: node.parameters.clone(),
+                });
+            }
+            if previous.model_binding != node.model_binding {
+                diff.model_binding_changes.push(ModelBindingDiff {
+                    change_id: format!("node:model:{}", node.id),
+                    node_id: node.id.clone(),
+                    before: previous.model_binding.clone(),
+                    after: node.model_binding.clone(),
+                });
+            }
+            let previous_policy = node_policy(previous);
+            let proposed_policy = node_policy(node);
+            if previous_policy != proposed_policy {
+                diff.policy_changes.push(PolicyDiff {
+                    change_id: format!("node:policy:{}", node.id),
+                    node_id: node.id.clone(),
+                    before: previous_policy,
+                    after: proposed_policy,
+                });
+            }
+        }
+        for node in &base.nodes {
+            if !proposed_nodes.contains_key(node.id.as_str()) {
+                diff.removed_nodes.push(NodeDiff {
+                    change_id: format!("node:remove:{}", node.id),
+                    node_id: node.id.clone(),
+                    node_type: node.node_type.clone(),
+                });
+            }
+        }
+        for edge in &proposed.edges {
+            if !base.edges.contains(edge) {
+                diff.added_edges.push(EdgeDiff {
+                    change_id: edge_change_id("add", edge),
+                    edge: edge.clone(),
+                });
+            }
+        }
+        for edge in &base.edges {
+            if !proposed.edges.contains(edge) {
+                diff.removed_edges.push(EdgeDiff {
+                    change_id: edge_change_id("remove", edge),
+                    edge: edge.clone(),
+                });
+            }
+        }
+        Ok(diff)
+    }
+
+    #[must_use]
+    pub fn all_change_ids(&self) -> BTreeSet<String> {
+        self.added_nodes
+            .iter()
+            .chain(&self.removed_nodes)
+            .map(|change| change.change_id.clone())
+            .chain(
+                self.modified_nodes
+                    .iter()
+                    .map(|change| change.change_id.clone()),
+            )
+            .chain(
+                self.added_edges
+                    .iter()
+                    .chain(&self.removed_edges)
+                    .map(|change| change.change_id.clone()),
+            )
+            .chain(
+                self.model_binding_changes
+                    .iter()
+                    .map(|change| change.change_id.clone()),
+            )
+            .chain(
+                self.policy_changes
+                    .iter()
+                    .map(|change| change.change_id.clone()),
+            )
+            .collect()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.all_change_ids().is_empty()
+    }
+
+    pub fn apply_selected(
+        &self,
+        base: &WorkflowDraft,
+        proposed: &WorkflowDraft,
+        selected_change_ids: &BTreeSet<String>,
+    ) -> CoreResult<WorkflowDraft> {
+        ensure_mutable(base)?;
+        if base.project_id != proposed.project_id {
+            return Err(CoreError::Validation(
+                "Pipeline Draft changes cannot cross Project boundaries".to_owned(),
+            ));
+        }
+        let known = self.all_change_ids();
+        if let Some(unknown) = selected_change_ids.difference(&known).next() {
+            return Err(CoreError::Validation(format!(
+                "unknown Pipeline Draft change {unknown:?}"
+            )));
+        }
+        if selected_change_ids.is_empty() {
+            return Err(CoreError::Validation(
+                "select at least one Pipeline Draft change to apply".to_owned(),
+            ));
+        }
+        if *selected_change_ids == known {
+            return Ok(applied_identity(base, proposed.clone()));
+        }
+
+        let mut applied = base.clone();
+        for change in &self.removed_nodes {
+            if selected_change_ids.contains(&change.change_id) {
+                applied.nodes.retain(|node| node.id != change.node_id);
+                applied.edges.retain(|edge| {
+                    edge.from_node != change.node_id && edge.to_node != change.node_id
+                });
+            }
+        }
+        for change in &self.added_nodes {
+            if selected_change_ids.contains(&change.change_id)
+                && let Some(node) = proposed.nodes.iter().find(|node| node.id == change.node_id)
+            {
+                applied.nodes.push(node.clone());
+            }
+        }
+        for change in &self.modified_nodes {
+            if !selected_change_ids.contains(&change.change_id) {
+                continue;
+            }
+            let Some(target) = applied
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == change.node_id)
+            else {
+                continue;
+            };
+            let Some(source) = proposed.nodes.iter().find(|node| node.id == change.node_id) else {
+                continue;
+            };
+            if change.change_id.starts_with("node:parameters:") {
+                target.parameters = source.parameters.clone();
+            } else {
+                copy_node_structure(target, source);
+            }
+        }
+        for change in &self.model_binding_changes {
+            if selected_change_ids.contains(&change.change_id)
+                && let Some(node) = applied
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.id == change.node_id)
+            {
+                node.model_binding.clone_from(&change.after);
+            }
+        }
+        for change in &self.policy_changes {
+            if selected_change_ids.contains(&change.change_id)
+                && let (Some(target), Some(source)) = (
+                    applied
+                        .nodes
+                        .iter_mut()
+                        .find(|node| node.id == change.node_id),
+                    proposed.nodes.iter().find(|node| node.id == change.node_id),
+                )
+            {
+                copy_node_policy(target, source);
+            }
+        }
+        for change in &self.removed_edges {
+            if selected_change_ids.contains(&change.change_id) {
+                applied.edges.retain(|edge| edge != &change.edge);
+            }
+        }
+        for change in &self.added_edges {
+            if selected_change_ids.contains(&change.change_id)
+                && !applied.edges.contains(&change.edge)
+            {
+                applied.edges.push(change.edge.clone());
+            }
+        }
+        let node_ids = applied
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
+        applied.edges.retain(|edge| {
+            node_ids.contains(edge.from_node.as_str()) && node_ids.contains(edge.to_node.as_str())
+        });
+        for node in &mut applied.nodes {
+            node.depends_on = applied
+                .edges
+                .iter()
+                .filter(|edge| edge.to_node == node.id)
+                .map(|edge| edge.from_node.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+        }
+        // A partial technical selection may no longer map losslessly to the original Label authoring
+        // projection. The Guided recipe remains available from flat node types, while Expert editing
+        // uses the exact selected DAG.
+        applied.label_pipeline = None;
+        applied.status = WorkflowDraftStatus::Editing;
+        applied.updated_at = Utc::now();
+        Ok(applied)
+    }
+}
+
+fn applied_identity(base: &WorkflowDraft, mut proposed: WorkflowDraft) -> WorkflowDraft {
+    proposed.id.clone_from(&base.id);
+    proposed.project_id.clone_from(&base.project_id);
+    proposed.created_at = base.created_at;
+    proposed.status = WorkflowDraftStatus::Editing;
+    proposed.updated_at = Utc::now();
+    proposed
+}
+
+fn edge_change_id(action: &str, edge: &WorkflowEdge) -> String {
+    format!(
+        "edge:{action}:{}:{}:{}:{}:{}",
+        edge.from_node,
+        edge.from_port,
+        edge.to_node,
+        edge.to_port,
+        edge.route.as_deref().unwrap_or("default")
+    )
+}
+
+fn node_structure_equal(left: &WorkflowDraftNode, right: &WorkflowDraftNode) -> bool {
+    left.node_type == right.node_type
+        && left.kind == right.kind
+        && left.inputs == right.inputs
+        && left.outputs == right.outputs
+        && left.required_skills == right.required_skills
+}
+
+fn node_structure(node: &WorkflowDraftNode) -> BTreeMap<String, serde_json::Value> {
+    BTreeMap::from([
+        ("node_type".to_owned(), serde_json::json!(node.node_type)),
+        ("kind".to_owned(), serde_json::json!(node.kind)),
+        ("inputs".to_owned(), serde_json::json!(node.inputs)),
+        ("outputs".to_owned(), serde_json::json!(node.outputs)),
+        (
+            "required_skills".to_owned(),
+            serde_json::json!(node.required_skills),
+        ),
+    ])
+}
+
+fn node_policy(node: &WorkflowDraftNode) -> serde_json::Value {
+    serde_json::json!({
+        "validators": node.validators,
+        "refiners": node.refiners,
+        "fallback": node.fallback,
+        "max_retries": node.max_retries,
+        "review_gate": node.review_gate,
+        "retry_policy": node.retry_policy,
+        "fallback_policy": node.fallback_policy,
+        "gate": node.gate,
+        "resources": node.resources,
+    })
+}
+
+fn copy_node_structure(target: &mut WorkflowDraftNode, source: &WorkflowDraftNode) {
+    target.node_type.clone_from(&source.node_type);
+    target.kind = source.kind;
+    target.inputs.clone_from(&source.inputs);
+    target.outputs.clone_from(&source.outputs);
+    target.required_skills.clone_from(&source.required_skills);
+}
+
+fn copy_node_policy(target: &mut WorkflowDraftNode, source: &WorkflowDraftNode) {
+    target.validators.clone_from(&source.validators);
+    target.refiners.clone_from(&source.refiners);
+    target.fallback.clone_from(&source.fallback);
+    target.max_retries = source.max_retries;
+    target.review_gate = source.review_gate;
+    target.retry_policy = source.retry_policy;
+    target.fallback_policy.clone_from(&source.fallback_policy);
+    target.gate = source.gate;
+    target.resources.clone_from(&source.resources);
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +476,7 @@ impl PipelineBuilderConstraints {
     #[must_use]
     pub fn agent_budget(&self) -> AgentBudget {
         AgentBudget {
-            max_steps: self.maximum_tool_calls,
+            max_steps: self.maximum_agent_turns,
             max_tool_calls: self.maximum_tool_calls,
             max_tokens: None,
             max_cost: Some(self.maximum_agent_cost),
@@ -366,6 +740,7 @@ impl PipelineBuilderSession {
         let project_id = project_id.into();
         let now = Utc::now();
         let audit = AgentSession::start(AgentKind::PipelineBuilder, constraints.agent_budget())
+            .with_builder_constraints(constraints.clone())
             .with_project(project_id.clone());
         Ok(Self {
             protocol_version: PIPELINE_BUILDER_PROTOCOL_VERSION,
@@ -865,6 +1240,19 @@ impl PipelineGrammarValidator {
                     "Decision uncertainty must route to Review or Reject",
                 ));
             }
+            if !constraints.allow_human_review
+                && (decision.review_gate
+                    || decision.gate.required
+                    || draft.edges.iter().any(|edge| {
+                        edge.from_node == decision.id && edge.route.as_deref() == Some("review")
+                    }))
+            {
+                report.issues.push(builder_issue(
+                    "builder_human_review_forbidden",
+                    &format!("nodes[{index}]"),
+                    "Human Review is disabled by the user's hard constraints; uncertainty must route to Reject",
+                ));
+            }
         }
         for (index, node) in draft.nodes.iter().enumerate() {
             if forbidden_node_type(&node.node_type) {
@@ -1326,6 +1714,71 @@ mod tests {
             PipelineDraftTools
                 .set_parameter(&mut draft, "detect", "threshold", serde_json::json!(0.5))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn structured_draft_diff_supports_selective_apply_and_exact_undo_snapshot() {
+        let base = draft();
+        let mut proposed = base.clone();
+        proposed.id = "proposal".to_owned();
+        proposed.nodes[0]
+            .parameters
+            .insert("threshold".to_owned(), serde_json::json!(0.4));
+        proposed.nodes[0].model_binding = None;
+        let mut crop = node(
+            "crop",
+            "core.crop",
+            WorkflowNodeKind::Transform,
+            ArtifactKind::DetectionSet,
+        );
+        crop.parameters
+            .insert("padding".to_owned(), serde_json::json!(0.08));
+        proposed.nodes.insert(1, crop);
+        proposed.edges.push(WorkflowEdge {
+            from_node: "detect".to_owned(),
+            from_port: "output".to_owned(),
+            to_node: "crop".to_owned(),
+            to_port: "input".to_owned(),
+            route: None,
+        });
+
+        let diff = PipelineDraftDiff::between(&base, &proposed).expect("Draft Diff");
+        assert_eq!(diff.added_nodes.len(), 1);
+        assert_eq!(diff.modified_nodes.len(), 1);
+        assert_eq!(diff.model_binding_changes.len(), 1);
+        assert_eq!(diff.added_edges.len(), 1);
+
+        let parameter_change = diff.modified_nodes[0].change_id.clone();
+        let selected = BTreeSet::from([parameter_change]);
+        let partially_applied = diff
+            .apply_selected(&base, &proposed, &selected)
+            .expect("selective apply");
+        assert_eq!(partially_applied.id, base.id);
+        assert_eq!(
+            partially_applied.nodes[0].parameters.get("threshold"),
+            Some(&serde_json::json!(0.4))
+        );
+        assert_eq!(partially_applied.nodes.len(), base.nodes.len());
+        assert_eq!(
+            partially_applied.nodes[0].model_binding,
+            base.nodes[0].model_binding
+        );
+        assert_eq!(base.nodes[0].parameters.get("threshold"), None);
+
+        let fully_applied = diff
+            .apply_selected(&base, &proposed, &diff.all_change_ids())
+            .expect("apply all");
+        assert_eq!(fully_applied.id, base.id);
+        assert_eq!(fully_applied.nodes.len(), proposed.nodes.len());
+        assert_eq!(fully_applied.status, WorkflowDraftStatus::Editing);
+        assert!(
+            diff.apply_selected(
+                &base,
+                &proposed,
+                &BTreeSet::from(["unknown-change".to_owned()])
+            )
+            .is_err()
         );
     }
 

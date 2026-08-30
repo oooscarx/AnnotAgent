@@ -9,7 +9,8 @@ use annotagent_application::{
     AnnotAgentApplication, DetectionWorkerSettings, LocalApplication, Settings, load_settings,
 };
 use annotagent_core::{
-    AgentBudget, AgentSessionStatus, ProjectSchema, RunEvent, RunEventPayload, RunStatus,
+    AgentSessionStatus, PipelineBuilderConstraints, ProjectSchema, RunEvent, RunEventPayload,
+    RunStatus,
 };
 use annotagent_provider::HttpVisionWorkerClient;
 use anyhow::{Context, Result};
@@ -597,18 +598,64 @@ impl TuiState {
                     .as_ref()
                     .map(|project| project.id.clone())
                     .context("open a Project before running Advisor")?;
-                if parts.next() == Some("cancel") {
+                let action = parts.next();
+                if action == Some("status") {
                     let session = self
                         .application
                         .list_agent_sessions(&project_id)?
                         .into_iter()
                         .find(|session| {
-                            session.kind == annotagent_core::AgentKind::WorkflowAdvisor
-                                && matches!(
-                                    session.status,
-                                    AgentSessionStatus::Running
-                                        | AgentSessionStatus::WaitingForHuman
-                                )
+                            matches!(
+                                session.kind,
+                                annotagent_core::AgentKind::PipelineBuilder
+                                    | annotagent_core::AgentKind::WorkflowAdvisor
+                            )
+                        })
+                        .context("no Pipeline Builder Session")?;
+                    self.push(format!(
+                        "Pipeline Builder {} · {:?} · tools {}/{} · tokens {} · cost {}",
+                        session.id,
+                        session.status,
+                        session.usage.tool_calls,
+                        session.budget.max_tool_calls,
+                        session.usage.input_tokens + session.usage.output_tokens,
+                        session.usage.cost
+                    ));
+                    if let Some(constraints) = &session.builder_constraints {
+                        self.push(format!(
+                            "objective {:?} · review target {} · external APIs {} · human review {}",
+                            constraints.priority,
+                            constraints
+                                .target_review_rate
+                                .map_or_else(|| "any".to_owned(), |value| format!("{:.0}%", value * 100.0)),
+                            constraints.allow_external_models,
+                            constraints.allow_human_review,
+                        ));
+                    }
+                    for step in &session.steps {
+                        self.push(format!(
+                            "{}. {} · {}",
+                            step.sequence,
+                            step.tool_name,
+                            if step.success { "completed" } else { "failed" }
+                        ));
+                    }
+                    return Ok(());
+                }
+                if action == Some("cancel") {
+                    let session = self
+                        .application
+                        .list_agent_sessions(&project_id)?
+                        .into_iter()
+                        .find(|session| {
+                            matches!(
+                                session.kind,
+                                annotagent_core::AgentKind::PipelineBuilder
+                                    | annotagent_core::AgentKind::WorkflowAdvisor
+                            ) && matches!(
+                                session.status,
+                                AgentSessionStatus::Running | AgentSessionStatus::WaitingForHuman
+                            )
                         })
                         .context("no cancellable Advisor Session")?;
                     let session = self.application.cancel_agent_session(session.id)?;
@@ -627,7 +674,7 @@ impl TuiState {
                         &load_settings(None)?,
                         &annotagent_core::WorkflowConstraints::default(),
                         None,
-                        AgentBudget::default(),
+                        PipelineBuilderConstraints::default(),
                         CancellationToken::new(),
                     )
                     .await?;
@@ -683,7 +730,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /models /models test <id> /advisor /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /models /models test <id> /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -1165,7 +1212,7 @@ export:
         let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
         let mut session = annotagent_core::AgentSession::start(
             annotagent_core::AgentKind::WorkflowAdvisor,
-            AgentBudget::default(),
+            annotagent_core::AgentBudget::default(),
         )
         .with_project("demo");
         session.wait_for_human("publish_workflow");

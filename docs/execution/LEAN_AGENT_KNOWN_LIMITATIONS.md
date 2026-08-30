@@ -21,7 +21,16 @@ Baseline limitations before implementation:
   hidden or changed.
 - Published versions using the legacy `localization_grid` parameter continue to run. New authoring
   writes `grounding_assist`; the compatibility reader is not yet removed.
-- Draft proposals support whole-apply/dismiss, not structured selective Diff application plus Undo.
+- Partial Diff selection operates on the exact flat typed DAG. When that selection no longer maps
+  losslessly to the optional Label Pipeline authoring projection, the projection is dropped and the
+  same graph remains editable through Guided recipe and Expert views; publish validation still
+  applies.
+- GUI Undo is deliberately one level and held by the current Automation page. Applied Draft content
+  is durable, but the Undo affordance itself is not reconstructed after a browser restart; Agent
+  Session and Suggested Draft audit records remain durable.
+- Live Agent progress uses 250 ms polling of persisted Sessions rather than SSE. Very fast offline
+  ScriptedMock work may complete before an intermediate frame is painted; the complete persisted
+  Tool trace is still shown with the proposal.
 - SAM, LocateAnything and RF-DETR workers are not running in the audited environment. YOLO has no
   repository weight. Real inference is not claimed.
 - Runtime Recovery remains named as an Agent in code and some UI copy even though its behavior is

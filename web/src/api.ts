@@ -7,6 +7,8 @@ import type {
   HistoryRun,
   ImageItem,
   ModelBinding,
+  PipelineBuilderConstraints,
+  PipelineDraftDiff,
   ExportReadiness,
   ProjectExportResult,
   ProjectWorkflow,
@@ -24,6 +26,7 @@ import type {
   RunEvent,
   SkillDetail,
   WorkflowDraft,
+  WorkflowDraftApplyReport,
   WorkflowCatalog,
   WorkflowDryRunReport,
   WorkflowVersionComparison,
@@ -158,6 +161,7 @@ export const api = {
       max_latency_ms?: number;
       minimum_accuracy?: number;
     },
+    builderConstraints?: PipelineBuilderConstraints,
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -168,8 +172,32 @@ export const api = {
           ? { target_task_id: target.task_id, target_label: target.label }
           : {}),
         constraints: { require_review_gate: true, ...constraints },
+        builder_constraints: builderConstraints,
       }),
     }),
+  workflowDraftDiff: (baseDraftId: string, proposedDraftId: string) =>
+    request<PipelineDraftDiff>("/api/workflow-drafts/diff", {
+      method: "POST",
+      body: JSON.stringify({
+        base_draft_id: baseDraftId,
+        proposed_draft_id: proposedDraftId,
+      }),
+    }),
+  applyWorkflowDraftDiff: (
+    baseDraftId: string,
+    proposedDraftId: string,
+    selectedChangeIds: string[],
+  ) =>
+    request<WorkflowDraftApplyReport>(
+      `/api/workflow-drafts/${encodeURIComponent(baseDraftId)}/apply-diff`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          proposed_draft_id: proposedDraftId,
+          selected_change_ids: selectedChangeIds,
+        }),
+      },
+    ),
   addProjectLabel: (projectId: string, taskId: string, label: string) =>
     request<ProjectSummary>(`/api/projects/${projectId}/schema/labels`, {
       method: "POST",

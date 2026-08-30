@@ -406,11 +406,59 @@ export interface WorkflowSuggestion {
   approval_required?: boolean;
 }
 
+export type OptimizationPriority = "fast" | "balanced" | "accurate" | "low_cost";
+
+export interface PipelineBuilderConstraints {
+  priority: OptimizationPriority;
+  max_cost_per_image?: string;
+  max_model_calls_per_image?: number;
+  max_expected_latency_ms?: number;
+  target_review_rate?: number;
+  allow_external_models: boolean;
+  allow_human_review: boolean;
+  maximum_agent_turns: number;
+  maximum_tool_calls: number;
+  maximum_dry_runs: number;
+  maximum_agent_cost: string;
+}
+
+export interface PipelineDraftDiff {
+  added_nodes: { change_id: string; node_id: string; node_type: string }[];
+  removed_nodes: { change_id: string; node_id: string; node_type: string }[];
+  modified_nodes: {
+    change_id: string;
+    node_id: string;
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+  }[];
+  added_edges: { change_id: string; edge: WorkflowEdge }[];
+  removed_edges: { change_id: string; edge: WorkflowEdge }[];
+  model_binding_changes: {
+    change_id: string;
+    node_id: string;
+    before?: string;
+    after?: string;
+  }[];
+  policy_changes: {
+    change_id: string;
+    node_id: string;
+    before: unknown;
+    after: unknown;
+  }[];
+}
+
+export interface WorkflowDraftApplyReport {
+  draft: WorkflowDraft;
+  previous_draft: WorkflowDraft;
+  diff: PipelineDraftDiff;
+  selected_change_ids: string[];
+}
+
 export interface AgentSession {
   id: string;
   project_id?: string;
   run_id?: string;
-  kind: "workflow_advisor" | "annotation_recovery";
+  kind: "pipeline_builder" | "workflow_advisor" | "annotation_recovery";
   status:
     | "running"
     | "waiting_for_human"
@@ -424,6 +472,7 @@ export interface AgentSession {
     max_tokens?: number;
     max_cost?: string;
   };
+  builder_constraints?: PipelineBuilderConstraints;
   usage: {
     steps: number;
     tool_calls: number;

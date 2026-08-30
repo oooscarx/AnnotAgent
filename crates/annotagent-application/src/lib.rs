@@ -27,21 +27,21 @@ use annotagent_core::{
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
     ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
     ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineBuilderConstraints,
-    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftTools, PipelineGrammarValidator,
-    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind,
-    TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue,
-    VisionBackendKind, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
-    WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds,
+    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftTools,
+    PipelineGrammarValidator, PipelineSource, PipelineStep, PricingConfig, ProjectId,
+    ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
+    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunId, RunStatus, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage, SnapshotImage,
+    TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
+    UsageSummary, VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
+    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
+    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -506,20 +506,19 @@ fn pipeline_builder_live_tools(
 
 fn pipeline_builder_constraints(
     constraints: &WorkflowConstraints,
-    budget: &AgentBudget,
-) -> PipelineBuilderConstraints {
-    PipelineBuilderConstraints {
-        max_cost_per_image: constraints
+    mut builder: PipelineBuilderConstraints,
+) -> Result<PipelineBuilderConstraints> {
+    if builder.max_cost_per_image.is_none() {
+        builder.max_cost_per_image = constraints
             .max_cost_per_image
             .as_deref()
-            .and_then(|value| value.parse().ok()),
-        max_expected_latency_ms: constraints.max_latency_ms,
-        allow_external_models: true,
-        maximum_agent_turns: budget.max_steps,
-        maximum_tool_calls: budget.max_tool_calls,
-        maximum_agent_cost: budget.max_cost.unwrap_or(rust_decimal::Decimal::ONE),
-        ..PipelineBuilderConstraints::default()
+            .and_then(|value| value.parse().ok());
     }
+    if builder.max_expected_latency_ms.is_none() {
+        builder.max_expected_latency_ms = constraints.max_latency_ms;
+    }
+    builder.validate().map_err(|error| anyhow!(error))?;
+    Ok(builder)
 }
 
 fn bounded_inspection_schema() -> serde_json::Value {
@@ -867,6 +866,14 @@ pub struct WorkflowSummary {
     pub validation_status: String,
     pub is_default: bool,
     pub node_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowDraftApplyReport {
+    pub draft: WorkflowDraft,
+    pub previous_draft: WorkflowDraft,
+    pub diff: PipelineDraftDiff,
+    pub selected_change_ids: Vec<String>,
 }
 
 fn task_kind_name(kind: annotagent_core::TaskKind) -> String {
@@ -2456,6 +2463,7 @@ pub struct LocalApplication {
     layered_skills: Arc<LayeredSkillRegistry>,
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
+    agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
 }
 
 impl LocalApplication {
@@ -2536,6 +2544,7 @@ impl LocalApplication {
             layered_skills: Arc::new(layered_skills),
             event_sender,
             active: Mutex::new(HashMap::new()),
+            agent_cancellations: Mutex::new(HashMap::new()),
         })
     }
 
@@ -2810,6 +2819,14 @@ impl LocalApplication {
                 "Agent Session is already terminal with status {:?}",
                 session.status
             );
+        }
+        if let Some(cancellation) = self
+            .agent_cancellations
+            .lock()
+            .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
+            .get(&session_id)
+        {
+            cancellation.cancel();
         }
         session.cancel();
         self.store.save_agent_session(&session)?;
@@ -4403,11 +4420,21 @@ impl LocalApplication {
         settings: &Settings,
         constraints: &WorkflowConstraints,
         target: Option<(&str, &str)>,
-        budget: AgentBudget,
+        builder_constraints: PipelineBuilderConstraints,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
-        let mut session =
-            AgentSession::start(AgentKind::PipelineBuilder, budget).with_project(project_id);
+        let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            builder_constraints.agent_budget(),
+        )
+        .with_builder_constraints(builder_constraints.clone())
+        .with_project(project_id);
+        self.agent_cancellations
+            .lock()
+            .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
+            .insert(session.id, cancellation.clone());
+        self.store.save_agent_session(&session)?;
         let abort = |session: AgentSession| WorkflowAdvisorAgentReport {
             session,
             suggestion: None,
@@ -4425,7 +4452,7 @@ impl LocalApplication {
             }
             let result =
                 annotagent_core::AgentToolResult::summary(format!("{name} completed"), result);
-            session
+            let recorded = session
                 .record_tool(
                     name,
                     arguments,
@@ -4434,7 +4461,17 @@ impl LocalApplication {
                     }),
                     true,
                 )
-                .is_ok()
+                .is_ok();
+            if recorded && self.store.save_agent_session(session).is_err() {
+                session.fail("could not persist Pipeline Builder progress");
+                return false;
+            }
+            if cancellation.is_cancelled() {
+                session.cancel();
+                let _ignored = self.store.save_agent_session(session);
+                return false;
+            }
+            recorded
         };
 
         if cancellation.is_cancelled() {
@@ -4526,16 +4563,6 @@ impl LocalApplication {
         let extensions = self
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
-        let builder_constraints = PipelineBuilderConstraints {
-            allow_external_models: true,
-            maximum_agent_turns: session.budget.max_steps,
-            maximum_tool_calls: session.budget.max_tool_calls,
-            maximum_agent_cost: session
-                .budget
-                .max_cost
-                .unwrap_or(rust_decimal::Decimal::ONE),
-            ..PipelineBuilderConstraints::default()
-        };
         let validate = |draft: &WorkflowDraft| {
             if target.is_some() {
                 PipelineGrammarValidator.validate(
@@ -4682,6 +4709,17 @@ impl LocalApplication {
             }
             if !validation.valid {
                 session.fail("Crop verification revision did not pass static validation");
+                self.store.save_agent_session(&session)?;
+                return Ok(WorkflowAdvisorAgentReport {
+                    session,
+                    suggestion: Some(revised),
+                    validation: Some(validation),
+                    dry_run: Some(dry_run),
+                    approval_required: false,
+                });
+            }
+            if builder_constraints.maximum_dry_runs < 2 {
+                session.fail("maximum Pipeline Builder Dry Runs reached before quality target");
                 self.store.save_agent_session(&session)?;
                 return Ok(WorkflowAdvisorAgentReport {
                     session,
@@ -4879,7 +4917,7 @@ impl LocalApplication {
             temporary_api_key,
             constraints,
             None,
-            AgentBudget::default(),
+            PipelineBuilderConstraints::default(),
             CancellationToken::new(),
         )
         .await?
@@ -4902,7 +4940,7 @@ impl LocalApplication {
             temporary_api_key,
             constraints,
             Some((target_task_id, target_label)),
-            AgentBudget::default(),
+            PipelineBuilderConstraints::default(),
             CancellationToken::new(),
         )
         .await?
@@ -4918,7 +4956,7 @@ impl LocalApplication {
         temporary_api_key: Option<String>,
         constraints: &WorkflowConstraints,
         target: Option<(&str, &str)>,
-        budget: AgentBudget,
+        builder_constraints: PipelineBuilderConstraints,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let input = self.workflow_advisor_input_for_label(
@@ -4946,7 +4984,7 @@ impl LocalApplication {
             input,
             suggestion,
             &provider,
-            budget,
+            builder_constraints,
             cancellation,
         )
         .await
@@ -4962,11 +5000,21 @@ impl LocalApplication {
         input: WorkflowAdvisorInput,
         safe_suggestion: WorkflowSuggestion,
         provider: &dyn VisionModelProvider,
-        budget: AgentBudget,
+        builder_constraints: PipelineBuilderConstraints,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
-        let mut session =
-            AgentSession::start(AgentKind::PipelineBuilder, budget).with_project(project_id);
+        let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            builder_constraints.agent_budget(),
+        )
+        .with_builder_constraints(builder_constraints.clone())
+        .with_project(project_id);
+        self.agent_cancellations
+            .lock()
+            .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
+            .insert(session.id, cancellation.clone());
+        self.store.save_agent_session(&session)?;
         let mut messages = vec![
             ModelMessage {
                 role: ModelRole::System,
@@ -4984,7 +5032,8 @@ impl LocalApplication {
                         "image_count": input.data_profile.image_count,
                     },
                     "target": {"task_id": input.target_task_id, "label": input.target_label},
-                    "constraints": constraints,
+                    "workflow_constraints": constraints,
+                    "builder_constraints": builder_constraints,
                     "enabled_skill_summaries": input.enabled_skills,
                     "rule": "Inspect details with tools; do not assume Registry identities."
                 }))?,
@@ -5003,7 +5052,6 @@ impl LocalApplication {
         let extensions = self
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
-        let builder_constraints = pipeline_builder_constraints(constraints, &session.budget);
         let mut current: Option<WorkflowSuggestion> = None;
         let mut validation: Option<WorkflowValidationReport> = None;
         let mut dry_run: Option<WorkflowDryRunReport> = None;
@@ -5401,6 +5449,20 @@ impl LocalApplication {
                         Ok(result)
                     }
                     Ok(PipelineBuilderTool::DryRunPipeline) => {
+                        let completed_dry_runs = session
+                            .steps
+                            .iter()
+                            .filter(|step| {
+                                step.success
+                                    && step.tool_name
+                                        == PipelineBuilderTool::DryRunPipeline.as_str()
+                            })
+                            .count();
+                        if completed_dry_runs
+                            >= builder_constraints.maximum_dry_runs as usize
+                        {
+                            bail!("maximum Pipeline Builder Dry Runs reached");
+                        }
                         if !validation.as_ref().is_some_and(|report| report.valid) {
                             bail!("validate_pipeline must pass before Dry Run");
                         }
@@ -5587,6 +5649,7 @@ impl LocalApplication {
                 {
                     break;
                 }
+                self.store.save_agent_session(&session)?;
                 messages.push(ModelMessage {
                     role: ModelRole::Tool,
                     content: serde_json::to_string(&model_payload)?,
@@ -5604,6 +5667,10 @@ impl LocalApplication {
             session.fail("Pipeline Builder stopped without requesting human approval");
         }
         self.store.save_agent_session(&session)?;
+        self.agent_cancellations
+            .lock()
+            .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
+            .remove(&session.id);
         Ok(WorkflowAdvisorAgentReport {
             approval_required: session.status == AgentSessionStatus::WaitingForHuman,
             session,
@@ -5654,6 +5721,41 @@ impl LocalApplication {
         }
         self.store.save_workflow_draft(&draft)?;
         Ok(draft)
+    }
+
+    pub fn diff_workflow_drafts(
+        &self,
+        base_draft_id: &str,
+        proposed_draft_id: &str,
+    ) -> Result<PipelineDraftDiff> {
+        let base = self.store.get_workflow_draft(base_draft_id)?;
+        let proposed = self.store.get_workflow_draft(proposed_draft_id)?;
+        self.project_path(&base.project_id)?;
+        PipelineDraftDiff::between(&base, &proposed).map_err(|error| anyhow!(error))
+    }
+
+    pub fn apply_workflow_draft_diff(
+        &self,
+        base_draft_id: &str,
+        proposed_draft_id: &str,
+        selected_change_ids: &[String],
+    ) -> Result<WorkflowDraftApplyReport> {
+        let previous_draft = self.store.get_workflow_draft(base_draft_id)?;
+        let proposed = self.store.get_workflow_draft(proposed_draft_id)?;
+        self.project_path(&previous_draft.project_id)?;
+        let diff = PipelineDraftDiff::between(&previous_draft, &proposed)
+            .map_err(|error| anyhow!(error))?;
+        let selected = selected_change_ids.iter().cloned().collect::<BTreeSet<_>>();
+        let applied = diff
+            .apply_selected(&previous_draft, &proposed, &selected)
+            .map_err(|error| anyhow!(error))?;
+        let draft = self.save_workflow_draft(applied)?;
+        Ok(WorkflowDraftApplyReport {
+            draft,
+            previous_draft,
+            diff,
+            selected_change_ids: selected.into_iter().collect(),
+        })
     }
 
     pub fn archive_workflow_draft(&self, draft_id: &str) -> Result<WorkflowDraft> {
@@ -9203,7 +9305,7 @@ export:
                 &settings,
                 &WorkflowConstraints::default(),
                 Some(("scene", "day")),
-                AgentBudget::default(),
+                PipelineBuilderConstraints::default(),
                 CancellationToken::new(),
             )
             .await
@@ -9305,7 +9407,7 @@ export:
                 &settings,
                 &WorkflowConstraints::default(),
                 None,
-                AgentBudget::default(),
+                PipelineBuilderConstraints::default(),
                 cancelled,
             )
             .await
@@ -9314,6 +9416,78 @@ export:
             cancelled_report.session.status,
             AgentSessionStatus::Cancelled
         );
+    }
+
+    #[test]
+    fn workflow_draft_diff_applies_selected_changes_and_undo_uses_the_saved_snapshot() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("draft-diff", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        let settings = load_settings(None).expect("settings");
+        let base = application
+            .create_workflow_draft("draft-diff", &settings, true)
+            .expect("base Draft");
+        let mut proposed = base.clone();
+        proposed.id = uuid::Uuid::new_v4().to_string();
+        proposed.name = "Agent proposal".to_owned();
+        proposed.status = WorkflowDraftStatus::Suggested;
+        proposed.nodes[0]
+            .parameters
+            .insert("agent_selected".to_owned(), json!(true));
+        application
+            .store
+            .save_workflow_draft(&proposed)
+            .expect("proposal Draft");
+
+        let diff = application
+            .diff_workflow_drafts(&base.id, &proposed.id)
+            .expect("structured Draft Diff");
+        let parameter_change = diff
+            .modified_nodes
+            .iter()
+            .find(|change| change.change_id.starts_with("node:parameters:"))
+            .expect("parameter change")
+            .change_id
+            .clone();
+        let report = application
+            .apply_workflow_draft_diff(
+                &base.id,
+                &proposed.id,
+                std::slice::from_ref(&parameter_change),
+            )
+            .expect("selected apply");
+
+        assert_eq!(report.draft.id, base.id);
+        assert_eq!(report.previous_draft, base);
+        assert_eq!(report.selected_change_ids, vec![parameter_change]);
+        assert_eq!(
+            report.draft.nodes[0].parameters["agent_selected"],
+            json!(true)
+        );
+        assert_eq!(
+            application
+                .store
+                .get_workflow_draft(&proposed.id)
+                .expect("proposal remains auditable")
+                .status,
+            WorkflowDraftStatus::Suggested
+        );
+
+        let restored = application
+            .save_workflow_draft(report.previous_draft)
+            .expect("Undo through the normal Draft save boundary");
+        assert!(!restored.nodes[0].parameters.contains_key("agent_selected"));
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("draft-diff"))
+                .expect("published versions")
+                .is_empty(),
+            "Apply and Undo must never publish"
+        );
+        assert!(application.list_runs().expect("formal Runs").is_empty());
     }
 
     #[tokio::test]
@@ -9334,7 +9508,7 @@ export:
                 &settings,
                 &WorkflowConstraints::default(),
                 Some(("components", "component")),
-                AgentBudget::default(),
+                PipelineBuilderConstraints::default(),
                 CancellationToken::new(),
             )
             .await
@@ -9507,7 +9681,7 @@ export:
                 input,
                 safe,
                 &provider,
-                AgentBudget::default(),
+                PipelineBuilderConstraints::default(),
                 CancellationToken::new(),
             )
             .await
@@ -9644,10 +9818,10 @@ export:
                 ),
             ],
         });
-        let budget = AgentBudget {
-            max_steps: 20,
-            max_tool_calls: 20,
-            ..AgentBudget::default()
+        let builder_constraints = PipelineBuilderConstraints {
+            maximum_agent_turns: 20,
+            maximum_tool_calls: 20,
+            ..PipelineBuilderConstraints::default()
         };
 
         let report = application
@@ -9659,7 +9833,7 @@ export:
                 input,
                 safe,
                 &provider,
-                budget,
+                builder_constraints,
                 CancellationToken::new(),
             )
             .await

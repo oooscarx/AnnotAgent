@@ -38,6 +38,9 @@ import type {
   ImageItem,
   ModelBinding,
   NodeReplayReport,
+  OptimizationPriority,
+  PipelineBuilderConstraints,
+  PipelineDraftDiff,
   PipelineArtifact,
   PipelineArtifactType,
   PipelineSource,
@@ -75,6 +78,74 @@ const PAGE_TITLES: Record<ProductPage | "project" | "build" | "export", string> 
   review: "Review",
   settings: "Settings",
 };
+
+const DEFAULT_PIPELINE_BUILDER_CONSTRAINTS: PipelineBuilderConstraints = {
+  priority: "balanced",
+  max_model_calls_per_image: 4,
+  target_review_rate: 0.25,
+  allow_external_models: false,
+  allow_human_review: true,
+  maximum_agent_turns: 16,
+  maximum_tool_calls: 48,
+  maximum_dry_runs: 3,
+  maximum_agent_cost: "1",
+};
+
+function pipelineDiffChangeIds(diff: PipelineDraftDiff): string[] {
+  return [
+    ...diff.added_nodes,
+    ...diff.removed_nodes,
+    ...diff.modified_nodes,
+    ...diff.added_edges,
+    ...diff.removed_edges,
+    ...diff.model_binding_changes,
+    ...diff.policy_changes,
+  ].map((change) => change.change_id);
+}
+
+function pipelineDiffRows(diff: PipelineDraftDiff, proposal: WorkflowDraft) {
+  const titleFor = (nodeId: string) =>
+    workflowNodeTitle(
+      proposal.nodes.find((node) => node.id === nodeId)?.node_type ?? "automation step",
+    );
+  return [
+    ...diff.added_nodes.map((change) => ({
+      id: change.change_id,
+      tone: "added",
+      label: `Add ${workflowNodeTitle(change.node_type)}`,
+    })),
+    ...diff.removed_nodes.map((change) => ({
+      id: change.change_id,
+      tone: "removed",
+      label: `Remove ${workflowNodeTitle(change.node_type)}`,
+    })),
+    ...diff.modified_nodes.map((change) => ({
+      id: change.change_id,
+      tone: "changed",
+      label: `Update ${titleFor(change.node_id)}`,
+    })),
+    ...diff.model_binding_changes.map((change) => ({
+      id: change.change_id,
+      tone: "changed",
+      label: `Change the model for ${titleFor(change.node_id)}`,
+    })),
+    ...diff.policy_changes.map((change) => ({
+      id: change.change_id,
+      tone: "changed",
+      label: `Update the decision policy for ${titleFor(change.node_id)}`,
+    })),
+    ...diff.added_edges.map((change) => ({
+      id: change.change_id,
+      tone: "added",
+      label: `Connect ${titleFor(change.edge.from_node)} to ${titleFor(change.edge.to_node)}`,
+    })),
+    ...diff.removed_edges.map((change) => ({
+      id: change.change_id,
+      tone: "removed",
+      label: `Disconnect ${titleFor(change.edge.from_node)} from ${titleFor(change.edge.to_node)}`,
+    })),
+  ];
+}
 
 export function App() {
   const [route, setRoute] = useState(() =>
@@ -2038,16 +2109,24 @@ function WorkflowsPage({
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [comparison, setComparison] = useState<WorkflowVersionComparison>();
   const [advisorProposal, setAdvisorProposal] = useState<WorkflowSuggestion>();
+  const [proposalDiff, setProposalDiff] = useState<PipelineDraftDiff>();
+  const [selectedProposalChanges, setSelectedProposalChanges] = useState<string[]>([]);
+  const [undoDraft, setUndoDraft] = useState<WorkflowDraft>();
+  const [activeAgentSession, setActiveAgentSession] = useState<AgentSession>();
   const [showProposalComparison, setShowProposalComparison] = useState(true);
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
+  const [builderConstraints, setBuilderConstraints] = useState<PipelineBuilderConstraints>(
+    DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
+  );
   const [templateId, setTemplateId] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const buildSummary = useBuildSummary(activeProject, onError);
   const [targetTaskId, setTargetTaskId] = useState("");
   const [targetLabel, setTargetLabel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [advisorRunning, setAdvisorRunning] = useState(false);
   const persistedDrafts = useRef(new Map<string, string>());
   const autosaveTimer = useRef<number | undefined>(undefined);
   const [savedAt, setSavedAt] = useState<Date>();
@@ -2104,6 +2183,22 @@ function WorkflowsPage({
     setTargetTaskId(activeProject?.annotation_schema[0]?.id ?? "");
     setTargetLabel(activeProject?.annotation_schema[0]?.labels[0] ?? "");
   }, [activeProjectId]);
+  useEffect(() => {
+    if (!advisorRunning || !activeProjectId) return;
+    let stopped = false;
+    const poll = () =>
+      api.agentSessions(activeProjectId).then(({ sessions }) => {
+        if (stopped) return;
+        const latest = sessions.find((session) => session.kind === "pipeline_builder");
+        if (latest) setActiveAgentSession(latest);
+      }).catch(() => undefined);
+    void poll();
+    const timer = window.setInterval(() => void poll(), 250);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [advisorRunning, activeProjectId]);
   const finish = (promise: Promise<unknown>) => {
     setBusy(true);
     void promise
@@ -2125,21 +2220,93 @@ function WorkflowsPage({
     if (!activeProjectId)
       return onError("Select a Project before suggesting a Pipeline.");
     setBusy(true);
-    void api
-      .suggestWorkflow(activeProjectId, advisorKind, target)
-      .then((proposal) => {
+    setAdvisorRunning(true);
+    setActiveAgentSession(undefined);
+    setProposalDiff(undefined);
+    setSelectedProposalChanges([]);
+    const editableBase = draft && !["published", "archived"].includes(draft.status)
+      ? Promise.resolve(draft)
+      : api.createWorkflowDraft(activeProjectId, false).then((created) => {
+          persistedDrafts.current.set(created.id, JSON.stringify(created));
+          setDraft(created);
+          return created;
+        });
+    void editableBase
+      .then(async (baseDraft) => {
+        const proposal = await api.suggestWorkflow(
+          activeProjectId,
+          advisorKind,
+          target,
+          {
+            require_review_gate: builderConstraints.allow_human_review,
+            max_cost_per_image: builderConstraints.max_cost_per_image,
+            max_latency_ms: builderConstraints.max_expected_latency_ms,
+          },
+          builderConstraints,
+        );
         setAdvisorProposal(proposal);
+        setActiveAgentSession(proposal.agent_session);
         setShowProposalComparison(true);
-        return refreshDrafts();
+        if (baseDraft.id !== proposal.draft.id) {
+          const diff = await api.workflowDraftDiff(baseDraft.id, proposal.draft.id);
+          setProposalDiff(diff);
+          setSelectedProposalChanges(pipelineDiffChangeIds(diff));
+        }
+        await refreshDrafts();
       })
       .catch((error: Error) => onError(error.message))
-      .finally(() => setBusy(false));
+      .finally(() => {
+        setAdvisorRunning(false);
+        setBusy(false);
+      });
   };
   const suggest = () => runAdvisor();
   const suggestLabelPipeline = () =>
     targetTaskId && targetLabel
       ? runAdvisor({ task_id: targetTaskId, label: targetLabel })
       : onError("Choose a Project task and target Label first.");
+  const applyProposalChanges = (changeIds = selectedProposalChanges) => {
+    if (!draft || !advisorProposal || !proposalDiff)
+      return onError("Create a Current Draft before applying Agent changes.");
+    if (!changeIds.length)
+      return onError("Select at least one proposed change, or reject the proposal.");
+    setBusy(true);
+    void api
+      .applyWorkflowDraftDiff(
+        draft.id,
+        advisorProposal.draft.id,
+        changeIds,
+      )
+      .then((report) => {
+        persistedDrafts.current.set(report.draft.id, JSON.stringify(report.draft));
+        setUndoDraft(report.previous_draft);
+        setDraft(report.draft);
+        setAdvisorProposal(undefined);
+        setProposalDiff(undefined);
+        setSelectedProposalChanges([]);
+        setReport(undefined);
+        setSavedAt(new Date());
+        return onRefresh();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const undoAgentApply = () => {
+    if (!undoDraft) return;
+    setBusy(true);
+    void api
+      .saveWorkflowDraft(undoDraft)
+      .then((restored) => {
+        persistedDrafts.current.set(restored.id, JSON.stringify(restored));
+        setDraft(restored);
+        setUndoDraft(undefined);
+        setReport(undefined);
+        setSavedAt(new Date());
+        return onRefresh();
+      })
+      .catch((error: Error) => onError(`Undo failed: ${error.message}`))
+      .finally(() => setBusy(false));
+  };
   const targetTask = activeProject?.annotation_schema.find(
     (task) => task.id === targetTaskId,
   );
@@ -2309,11 +2476,11 @@ function WorkflowsPage({
           </button>
         </section>
         <section className="workflow-command-card workflow-advisor-recommendation">
-          <span className="eyebrow">Contextual suggestion</span>
-          <h3>AnnotAgent recommendation</h3>
-          <p>{targetLabel ? `Build a registered Automation Recipe for ${targetLabel}, using only Models, Skills, Validators, and Refiners available to this Project.` : "Choose a Label to preview a registry-bounded Automation Recipe."}</p>
-          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>{busy ? "Preparing preview…" : "Preview recommendation"}</button>
-          <details className="advanced-settings"><summary>Recommendation scope</summary><div className="workflow-advisor-fields">
+          <span className="eyebrow">Pipeline Builder Agent</span>
+          <h3>Build a recommended automation</h3>
+          <p>{targetLabel ? `Set the boundaries for ${targetLabel}. The Agent may inspect, draft, validate, and Dry Run, but it cannot activate the result.` : "Choose a Label and bounded objective before starting the Agent."}</p>
+          <fieldset className="agent-objective" aria-label="Pipeline Builder objective">
+            <legend>Objective</legend>
             <select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
@@ -2324,18 +2491,39 @@ function WorkflowsPage({
             <select aria-label="Target Label" value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
               {(targetTask?.labels ?? []).map((label) => <option key={label} value={label}>{label}</option>)}
             </select>
-            <select aria-label="Workflow Advisor" value={advisorKind} onChange={(event) => setAdvisorKind(event.target.value as "mock" | "llm")}>
-              <option value="mock">Mock Advisor · offline</option>
-              <option value="llm">Workspace LLM Advisor</option>
+            <select aria-label="Optimization priority" value={builderConstraints.priority} onChange={(event) => setBuilderConstraints((current) => ({ ...current, priority: event.target.value as OptimizationPriority }))}>
+              <option value="balanced">Balanced</option>
+              <option value="accurate">Accuracy first</option>
+              <option value="fast">Speed first</option>
+              <option value="low_cost">Lowest cost</option>
             </select>
-            <button onClick={suggest} disabled={busy || !activeProjectId}>Preview complete Workflow</button>
+            <label>Maximum cost per image<input aria-label="Maximum cost per image" inputMode="decimal" placeholder="No per-image limit" value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
+            <label>Maximum latency (ms)<input aria-label="Maximum latency" type="number" min="1" placeholder="No latency limit" value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
+            <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
+            <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />Allow configured external APIs</label>
+            <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
+            <div className="agent-worker-summary"><span>Available local workers</span><strong>{activeProject?.model_bindings.filter((model) => model.scope === "workspace_worker" && model.availability_group === "ready").map((model) => model.id).join(", ") || "None ready"}</strong></div>
+          </fieldset>
+          <details className="advanced-settings"><summary>Agent limits and provider</summary><div className="workflow-advisor-fields">
+            <select aria-label="Workflow Advisor" value={advisorKind} onChange={(event) => setAdvisorKind(event.target.value as "mock" | "llm")}>
+              <option value="mock">ScriptedMock · offline evidence</option>
+              <option value="llm">Workspace LLM · configured provider</option>
+            </select>
+            <label>Maximum model calls / image<input type="number" min="1" max="16" value={builderConstraints.max_model_calls_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_model_calls_per_image: event.target.value ? Number(event.target.value) : undefined }))} /></label>
+            <label>Maximum Agent turns<input type="number" min="1" max="64" value={builderConstraints.maximum_agent_turns} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_turns: Number(event.target.value) }))} /></label>
+            <label>Maximum Tool Calls<input type="number" min="1" max="128" value={builderConstraints.maximum_tool_calls} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_tool_calls: Number(event.target.value) }))} /></label>
+            <label>Maximum Dry Runs<input type="number" min="1" max="10" value={builderConstraints.maximum_dry_runs} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_dry_runs: Number(event.target.value) }))} /></label>
+            <label>Maximum Agent cost<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
+            <button onClick={suggest} disabled={busy || !activeProjectId}>Build complete Project automation</button>
           </div></details>
+          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
         </section>
         <section className="workflow-command-card workflow-version-actions">
           <span className="eyebrow">Current Automation</span>
           <h3>{immutable ? "Immutable Version" : "Autosaved Draft"}</h3>
           <p>{immutable ? "Clone this Version before making changes." : "Edits stay unpublished until you test and activate them in the next step."}</p>
           <div className="button-row">
+            {!immutable && undoDraft && <button onClick={undoAgentApply} disabled={busy}>Undo Agent changes</button>}
             {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
             {!immutable && <button onClick={() => onNavigate("test")} disabled={busy || !draft}>Open Test &amp; Activate</button>}
             {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
@@ -2343,6 +2531,23 @@ function WorkflowsPage({
           </div>
         </section>
       </div>
+      {advisorRunning && (
+        <Panel title="Agent progress" eyebrow="Live persisted Pipeline Builder session">
+          {activeAgentSession ? (
+            <AgentSessionTrace
+              session={activeAgentSession}
+              onCancel={() =>
+                void api
+                  .cancelAgentSession(activeAgentSession.id)
+                  .then(({ session }) => setActiveAgentSession(session))
+                  .catch((error: Error) => onError(error.message))
+              }
+            />
+          ) : (
+            <div className="loading-banner" role="status">Starting the bounded Agent session…</div>
+          )}
+        </Panel>
+      )}
       {advisorProposal && (
         <Panel title="Proposed Changes" eyebrow="Advisor preview · Draft only · never activated automatically">
           <div className="advisor-proposal-grid">
@@ -2356,14 +2561,29 @@ function WorkflowsPage({
               <Fact label="Model calls / image" value={advisorProposal.estimated_model_calls_per_image} />
               <Fact label="Estimated latency" value={advisorProposal.estimated_latency_ms ? `${advisorProposal.estimated_latency_ms} ms` : "Unresolved"} />
               <Fact label="Cost tier" value={advisorProposal.estimated_cost_tier} />
+              <Fact label="Expected Review workload" value={advisorProposal.agent_dry_run ? `${advisorProposal.agent_dry_run.summary.needs_review_count} of ${advisorProposal.agent_dry_run.summary.image_count} samples` : "Test required"} />
               <Fact label="Compared with current" value={draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
             </div>
           </div>
-          {showProposalComparison && <div className="advisor-change-preview" aria-label="Advisor change preview">
-            <span className="eyebrow">Compared with Current Draft</span>
-            {(draft?.nodes ?? []).filter((node) => !advisorProposal.draft.nodes.some((candidate) => candidate.id === node.id)).map((node) => <div className="removed" key={`removed-${node.id}`}>− {workflowNodeTitle(node.node_type)}</div>)}
-            {advisorProposal.draft.nodes.map((node) => <div className={draft?.nodes.some((candidate) => candidate.id === node.id) ? "unchanged" : "added"} key={`proposal-${node.id}`}>{draft?.nodes.some((candidate) => candidate.id === node.id) ? "  " : "+ "}{workflowNodeTitle(node.node_type)}</div>)}
-          </div>}
+          {showProposalComparison && proposalDiff && (
+            <fieldset className="advisor-change-preview" aria-label="Draft Diff">
+              <legend>Review changes</legend>
+              {pipelineDiffRows(proposalDiff, advisorProposal.draft).map((change) => (
+                <label className={change.tone} key={change.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedProposalChanges.includes(change.id)}
+                    onChange={(event) => setSelectedProposalChanges((current) =>
+                      event.target.checked
+                        ? [...current, change.id]
+                        : current.filter((id) => id !== change.id))}
+                  />
+                  <span>{change.tone === "added" ? "+" : change.tone === "removed" ? "−" : "~"} {change.label}</span>
+                </label>
+              ))}
+              {!pipelineDiffChangeIds(proposalDiff).length && <p>No changes from the Current Draft.</p>}
+            </fieldset>
+          )}
           <TagGroup title="Why" values={advisorProposal.rationale} />
           <TagGroup title="Unresolved bindings" values={advisorProposal.unresolved_model_bindings} />
           <TagGroup title="Warnings" values={advisorProposal.warnings} />
@@ -2386,9 +2606,10 @@ function WorkflowsPage({
             />
           )}
           <div className="button-row">
-            <button className="primary" onClick={() => { setDraft(advisorProposal.draft); setAdvisorProposal(undefined); }}>Apply to Draft</button>
+            <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>
+            <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>Apply all</button>
             <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
-            <button onClick={() => setAdvisorProposal(undefined)}>Dismiss proposal</button>
+            <button onClick={() => { setAdvisorProposal(undefined); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>Reject proposal</button>
           </div>
         </Panel>
       )}
@@ -5542,6 +5763,19 @@ function Trace({ events }: { events: RunEvent[] }) {
   );
 }
 
+function agentStageLabel(session: AgentSession): string {
+  if (session.status === "waiting_for_human") return "Ready for your review";
+  if (session.status === "cancelled") return "Cancelled";
+  if (session.status === "budget_exceeded") return "Stopped at budget";
+  if (session.status === "failed") return "Needs attention";
+  const last = session.steps.at(-1)?.tool_name ?? "inspect_project";
+  if (last.includes("inspect") || last.includes("list_")) return "Inspecting Project and Registry";
+  if (last.includes("draft") || last.includes("node") || last.includes("connect")) return "Building the Draft";
+  if (last.includes("validate")) return "Validating the Draft";
+  if (last.includes("dry_run")) return "Testing on sample images";
+  return "Revising the recommendation";
+}
+
 function AgentSessionTrace({
   session,
   validation,
@@ -5554,11 +5788,14 @@ function AgentSessionTrace({
   onCancel?: () => void;
 }) {
   const cancellable = ["running", "waiting_for_human"].includes(session.status);
+  const stage = agentStageLabel(session);
+  const progress = Math.min(100, Math.round((session.usage.steps / Math.max(1, session.budget.max_steps)) * 100));
   return (
     <div className="agent-session-trace" aria-label={`${session.kind} Agent trace`}>
       <div className="context-line">
-        <strong>{session.kind.replaceAll("_", " ")}</strong>
+        <strong>Pipeline Builder</strong>
         <Status status={session.status} />
+        <span>{stage}</span>
         <span>{session.usage.tool_calls} tool calls</span>
         <span>{session.usage.input_tokens + session.usage.output_tokens} tokens</span>
         <span>${session.usage.cost}</span>
@@ -5568,7 +5805,11 @@ function AgentSessionTrace({
           </button>
         )}
       </div>
+      <div className="agent-progress" role="progressbar" aria-label="Agent progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
       <div className="fact-grid">
+        <Fact label="Current stage" value={stage} />
         <Fact
           label="Validation issues"
           value={validation?.issues.length ?? "Not recorded"}
@@ -5582,7 +5823,10 @@ function AgentSessionTrace({
           label="Human action"
           value={session.pending_human_action ?? "None"}
         />
+        {session.builder_constraints && <Fact label="Priority" value={session.builder_constraints.priority.replaceAll("_", " ")} />}
       </div>
+      <details className="agent-tool-trace" open={session.status === "running"}>
+        <summary>Tool actions ({session.steps.length})</summary>
       <ol className="agent-action-list">
         {session.steps.map((step) => (
           <li key={step.call_id}>
@@ -5595,6 +5839,7 @@ function AgentSessionTrace({
           </li>
         ))}
       </ol>
+      </details>
     </div>
   );
 }

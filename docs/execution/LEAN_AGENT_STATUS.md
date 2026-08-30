@@ -2,7 +2,7 @@
 
 Updated: 2026-08-31
 
-- Current Milestone: M6 — Guided Project Automation UX, Draft Diff and undo.
+- Current Milestone: M7 — capability-aware RoboCup Ball Domain experience.
 - Completed: M0 baseline; public Capability catalog now contains only
   `annotagent.classification`, `annotagent.detection`, and `annotagent.segmentation`; legacy Skill
   IDs remain hidden compatibility aliases; model bindings are grouped as Ready, Configured but
@@ -33,17 +33,30 @@ Updated: 2026-08-31
   Review sample inspection is limited to five summaries and omits image bytes and Artifact bodies;
   node inspection exposes only status, output types, latency, cost and structured issues. Label
   Pipeline publish now runs Pipeline Grammar at the Application boundary.
-- Next: project-local Agent entry/progress, structured objective controls, Draft Diff, selective
-  apply/undo and the matching TUI session projection.
+- M6 completed: Project Automation now owns the only Pipeline Builder entry. Its structured
+  objective captures target Label, priority, Review target, cost/latency, external-model and human
+  boundaries plus Agent/Dry-Run budgets. The server persists each real Tool action and the GUI polls
+  that audit while work is active, exposes cancellation, validation, Dry Run, usage and stop state,
+  and never renders invented progress.
+- M6 completed: Rust computes a typed node/edge/model/policy Draft Diff. Users may Apply selected or
+  Apply all changes through the normal Draft save boundary, reject the proposal, and restore the
+  exact pre-apply Draft content with one-level Undo. A no-Draft Project first receives a real empty
+  editable Draft so the Agent proposal still has a comparison target. Apply/Undo creates neither a
+  Published Version nor a formal Run.
+- M6 completed: the TUI `/advisor status` view shows the latest Builder objective, budget, status
+  and ordered Tool audit; `/advisor cancel` addresses both new Pipeline Builder and compatibility
+  Workflow Advisor sessions.
+- Next: audit and simplify the RoboCup Ball default path, Domain resources/validators, availability
+  filtering and the no-key Mock demonstration without broadening the domain.
 - Full-workspace baseline: `cargo test --workspace --all-features` — 221 passed, 0 failed at M0.
-- Recent Rust tests: Core 49, Application 31 and Server 9 passed; focused M5 offline and 17-turn live
-  revision loops passed. `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- Recent Rust tests: Core 50, Application 32, Server 9 and TUI 6 passed; the focused selective
+  Draft-apply/Undo test passed. Strict workspace Clippy passed with warnings denied.
 - Recent Web tests: `npm run typecheck` passed; `npm test -- --run` — 36 passed, 0 failed.
-- Recent E2E: `npm run test:e2e` — 24 passed, 0 failed. The run also repaired stale
-  accessibility/selectors for the collapsed Expert details drawer and current Guided action names.
-- Recent milestone commit subject: `feat(agent): revise workflow drafts from validation and dry runs`.
-- Release Blocking remaining: offline capability matrix and UX/Domain/course evidence in D–G;
-  architecture, Agent authenticity and Pipeline safety are evidenced PASS.
+- Recent E2E: `npm run test:e2e -- e2e/guided-workspace.spec.ts` — 25 passed, 0 failed, including
+  persisted Agent trace plus real Draft Diff Apply selected and Undo.
+- Recent milestone commit subject: `feat(ui): guide users through agent-built automations`.
+- Release Blocking remaining: RoboCup Domain and offline/course release evidence in D, F and G;
+  architecture, Agent authenticity, Pipeline safety and Guided UX are evidenced PASS.
 - Live-conditional: real Qwen request; SAM, LocateAnything, RF-DETR and YOLO inference with explicit
   external weights; manual native browser checks.
 - Real blocker: none for offline implementation. External credentials/weights are not required for

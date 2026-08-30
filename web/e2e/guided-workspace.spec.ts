@@ -8,6 +8,7 @@ const stamp = Date.now();
 const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
+const agentDiffProjectId = `guided-agent-diff-${stamp}`;
 const cropProjectId = `guided-crop-${stamp}`;
 const mixedProjectId = `guided-mixed-${stamp}`;
 const mixedRunId = "00000000-0000-4000-8000-000000000091";
@@ -257,11 +258,16 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await expect(page.locator(".pipeline-step-card > code")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Preview recommendation" }).click();
+  await page.getByRole("button", { name: "Ask AnnotAgent" }).click();
   await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeVisible();
-  await expect(page.getByLabel("Advisor change preview")).toBeVisible();
+  await expect(page.getByLabel("Draft Diff")).toBeVisible();
   await expect(page.getByText("Why", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Apply to Draft" }).click();
+  const agentTrace = page.getByLabel("pipeline_builder Agent trace");
+  await expect(agentTrace).toContainText("Ready for your review");
+  await agentTrace.getByText(/Tool actions/).click();
+  await expect(agentTrace).toContainText("validate_pipeline");
+  await expect(agentTrace).toContainText("dry_run_pipeline");
+  await page.getByRole("button", { name: "Reject proposal" }).click();
   await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeHidden();
 
   const configure = page.getByRole("button", { name: "Configure node" }).first();
@@ -281,6 +287,83 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await page.getByText("View technical graph", { exact: true }).click();
   await expect(page.getByLabel("Technical graph JSON")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
+});
+
+test("Pipeline Builder applies a structured Draft Diff and restores it with Undo", async ({ page, request }, testInfo) => {
+  const created = await request.post("/api/projects", {
+    data: {
+      id: agentDiffProjectId,
+      yaml: `version: 1
+project:
+  name: Agent Diff ${stamp}
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: components
+    display_name: Components
+    kind: bounding_box
+    labels: [component]
+    required: true
+review:
+  auto_accept_confidence: 0.99
+  force_review_below: 0.5
+export:
+  formats: [native, coco]
+`,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const imported = await request.post(`/api/projects/${agentDiffProjectId}/import`, {
+    data: { source: String(testInfo.config.metadata.e2eImport) },
+  });
+  expect(imported.ok()).toBeTruthy();
+  const baseResponse = await request.post("/api/workflow-drafts/suggest", {
+    data: {
+      project_id: agentDiffProjectId,
+      target_task_id: "components",
+      target_label: "component",
+      advisor: "mock",
+      constraints: { require_review_gate: true },
+      builder_constraints: {
+        priority: "balanced",
+        max_model_calls_per_image: 4,
+        target_review_rate: 1,
+        allow_external_models: false,
+        allow_human_review: true,
+        maximum_agent_turns: 16,
+        maximum_tool_calls: 48,
+        maximum_dry_runs: 3,
+        maximum_agent_cost: "1",
+      },
+    },
+  });
+  expect(baseResponse.status()).toBe(201);
+  const base = (await baseResponse.json()).draft;
+  expect(base.nodes.some((node: { node_type: string }) => node.node_type === "core.crop")).toBeFalsy();
+
+  await page.goto(`/projects/${agentDiffProjectId}/build/pipeline`);
+  await page.getByRole("button", { name: "Ask AnnotAgent" }).click();
+  const diff = page.getByLabel("Draft Diff");
+  await expect(diff).toBeVisible({ timeout: 30_000 });
+  await expect(diff.getByRole("checkbox").first()).toBeVisible();
+  await page.getByRole("button", { name: "Apply selected" }).click();
+  await expect(page.getByRole("button", { name: "Undo Agent changes" })).toBeVisible();
+
+  await expect.poll(async () => {
+    const response = await request.get(`/api/workflow-drafts?project_id=${agentDiffProjectId}`);
+    const current = (await response.json()).drafts.find((draft: { id: string }) => draft.id === base.id);
+    return current.nodes.some((node: { node_type: string }) => node.node_type === "core.crop");
+  }).toBeTruthy();
+
+  await page.getByRole("button", { name: "Undo Agent changes" }).click();
+  await expect.poll(async () => {
+    const response = await request.get(`/api/workflow-drafts?project_id=${agentDiffProjectId}`);
+    const current = (await response.json()).drafts.find((draft: { id: string }) => draft.id === base.id);
+    return current.nodes.some((node: { node_type: string }) => node.node_type === "core.crop");
+  }).toBeFalsy();
 });
 
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {

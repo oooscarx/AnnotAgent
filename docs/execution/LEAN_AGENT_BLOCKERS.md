@@ -2,8 +2,9 @@
 
 ## Offline release blockers
 
-None through M5. The real Rust validation/Dry Run revision loop passes with offline Model Backends;
-external models are not required for Guided UX, Diff/undo or the remaining offline release work.
+None through M6. The real Rust validation/Dry Run revision loop and Guided Diff/apply/undo path pass
+with offline Model Backends; external models are not required for the remaining offline release
+work.
 
 ## Live-conditional
 

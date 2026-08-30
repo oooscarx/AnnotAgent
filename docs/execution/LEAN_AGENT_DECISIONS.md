@@ -105,3 +105,25 @@ Pipeline Grammar is not merely an advisory Tool result. Label Pipeline Dry Run a
 inside the Application service, including Decision-before-Commit, bounded uncertainty, model-call,
 forbidden-node and Commit-count rules. The Agent may iterate through invalid editable Drafts, but an
 invalid graph cannot cross the publish boundary.
+
+## D018 — Agent proposals remain separate and are applied as typed changes
+
+Pipeline Builder output is persisted as its own Suggested Draft. Rust, not React, compares it with
+the user's editable Draft and assigns stable change IDs for nodes, parameters, edges, bindings and
+policies. Apply selected writes into the existing Draft identity; the Suggested Draft remains audit
+evidence. A partial technical selection intentionally drops the optional Label-authoring projection
+when it cannot be reconstructed losslessly, while preserving the exact typed DAG for Guided and
+Expert rendering. Static validation must still pass before Dry Run or Publish.
+
+## D019 — Progress is a projection of persisted Tool actions
+
+The GUI polls the project-local Agent Session while the request is active. Stage names are derived
+from persisted status and the last registered Tool, never from a client timer or hidden model text.
+Cancellation targets an Application-owned token for active work and persists terminal state. The
+TUI reads the same audit envelope, so GUI and terminal do not maintain competing Agent histories.
+
+## D020 — Undo is a normal Draft mutation, not history rewriting
+
+Apply returns the complete pre-change Draft snapshot. The current GUI offers one-level Undo and
+saves that snapshot through the same immutable-status and project checks as manual editing. Undo
+does not delete the Agent Session or Suggested Draft and cannot rewrite a Published Version.

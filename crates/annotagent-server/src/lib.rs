@@ -17,9 +17,9 @@ use annotagent_application::{
     validate_settings,
 };
 use annotagent_core::{
-    AgentBudget, Annotation, AnnotationId, AnnotationValue, ArtifactValidationState,
-    AttributeDefinition, BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord,
-    DetectionEvidence, EnabledSkillConfig, LabelId, NormalizedRect, PipelineArtifact,
+    Annotation, AnnotationId, AnnotationValue, ArtifactValidationState, AttributeDefinition,
+    BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord, DetectionEvidence,
+    EnabledSkillConfig, LabelId, NormalizedRect, PipelineArtifact, PipelineBuilderConstraints,
     ProjectSchema, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
     ScoreSemantics, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
@@ -390,9 +390,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(list_workflow_drafts).post(create_workflow_draft),
         )
         .route("/api/workflow-drafts/suggest", post(suggest_workflow))
+        .route("/api/workflow-drafts/diff", post(diff_workflow_drafts))
         .route(
             "/api/workflow-drafts/{draft_id}",
             patch(save_workflow_draft),
+        )
+        .route(
+            "/api/workflow-drafts/{draft_id}/apply-diff",
+            post(apply_workflow_draft_diff),
         )
         .route(
             "/api/workflow-drafts/{draft_id}/dry-run",
@@ -1304,6 +1309,8 @@ struct SuggestWorkflowRequest {
     advisor: String,
     #[serde(default)]
     constraints: WorkflowConstraints,
+    #[serde(default)]
+    builder_constraints: PipelineBuilderConstraints,
 }
 
 fn default_workflow_advisor() -> String {
@@ -1334,7 +1341,7 @@ async fn suggest_workflow(
                         &settings,
                         &request.constraints,
                         target,
-                        AgentBudget::default(),
+                        request.builder_constraints.clone(),
                         CancellationToken::default(),
                     )
                     .await
@@ -1356,7 +1363,7 @@ async fn suggest_workflow(
                         state.api_key.read().await.clone(),
                         &request.constraints,
                         target,
-                        AgentBudget::default(),
+                        request.builder_constraints.clone(),
                         CancellationToken::default(),
                     )
                     .await
@@ -1403,6 +1410,45 @@ async fn save_workflow_draft(
         .save_workflow_draft(draft)
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(draft)))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffWorkflowDraftRequest {
+    base_draft_id: String,
+    proposed_draft_id: String,
+}
+
+async fn diff_workflow_drafts(
+    State(state): State<ServerState>,
+    Json(request): Json<DiffWorkflowDraftRequest>,
+) -> ApiResult<Json<Value>> {
+    let diff = state
+        .application
+        .diff_workflow_drafts(&request.base_draft_id, &request.proposed_draft_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(diff)))
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplyWorkflowDraftDiffRequest {
+    proposed_draft_id: String,
+    selected_change_ids: Vec<String>,
+}
+
+async fn apply_workflow_draft_diff(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+    Json(request): Json<ApplyWorkflowDraftDiffRequest>,
+) -> ApiResult<Json<Value>> {
+    let report = state
+        .application
+        .apply_workflow_draft_diff(
+            &draft_id,
+            &request.proposed_draft_id,
+            &request.selected_change_ids,
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(report)))
 }
 
 async fn dry_run_workflow(
