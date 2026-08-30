@@ -16,6 +16,10 @@ use image::{DynamicImage, ImageFormat, RgbImage};
 use reqwest::Client;
 use tokio_util::sync::CancellationToken;
 
+use crate::http_transport::{
+    bounded_response_body, build_worker_client, validate_transport_limits, validate_worker_base_url,
+};
+
 #[derive(Debug, Clone)]
 pub struct HttpJsonPipelineBackendConfig {
     pub id: String,
@@ -25,6 +29,8 @@ pub struct HttpJsonPipelineBackendConfig {
     pub authorization: Option<String>,
     pub expected_model_identity: Option<String>,
     pub max_retries: u32,
+    pub max_response_bytes: usize,
+    pub allow_remote: bool,
 }
 
 pub struct HttpJsonPipelineBackend {
@@ -42,22 +48,9 @@ impl HttpJsonPipelineBackend {
                 "Pipeline HTTP backend supports Classification or ObjectDetection".to_owned(),
             ));
         }
-        let endpoint = reqwest::Url::parse(&config.endpoint).map_err(|error| {
-            CoreError::Validation(format!("invalid Pipeline HTTP endpoint: {error}"))
-        })?;
-        if !matches!(endpoint.scheme(), "http" | "https")
-            || endpoint.host_str().is_none()
-            || !endpoint.username().is_empty()
-            || endpoint.password().is_some()
-        {
-            return Err(CoreError::Validation(
-                "Pipeline HTTP endpoint must be http(s) without embedded credentials".to_owned(),
-            ));
-        }
-        let client = Client::builder()
-            .timeout(config.request_timeout)
-            .build()
-            .map_err(|error| CoreError::Provider(format!("cannot build HTTP client: {error}")))?;
+        let _ = validate_worker_base_url(&config.endpoint, config.allow_remote)?;
+        validate_transport_limits(config.max_response_bytes, config.max_retries)?;
+        let client = build_worker_client(config.request_timeout)?;
         Ok(Self { config, client })
     }
 
@@ -180,24 +173,21 @@ impl PipelineModelBackend for HttpJsonPipelineBackend {
                 response = send => response,
             };
             match response {
-                Ok(response) if response.status().is_success() => {
-                    let parsed =
-                        response
-                            .json::<PipelineInferenceResponse>()
-                            .await
-                            .map_err(|error| {
-                                CoreError::Provider(format!(
-                                    "invalid Pipeline worker response JSON: {error}"
-                                ))
-                            })?;
-                    return self.validate_response(&request, parsed);
-                }
                 Ok(response) => {
-                    last_error = Some(format!(
-                        "Pipeline worker returned HTTP {} on attempt {}",
-                        response.status(),
-                        attempt + 1
-                    ));
+                    let (status, body) =
+                        bounded_response_body(response, self.config.max_response_bytes).await?;
+                    if !status.is_success() {
+                        last_error = Some(format!(
+                            "Pipeline worker returned HTTP {status} on attempt {}",
+                            attempt + 1
+                        ));
+                        continue;
+                    }
+                    let parsed = serde_json::from_slice::<PipelineInferenceResponse>(&body)
+                        .map_err(|_| {
+                            CoreError::Provider("invalid Pipeline worker response JSON".to_owned())
+                        })?;
+                    return self.validate_response(&request, parsed);
                 }
                 Err(error) => {
                     last_error = Some(format!(
@@ -1174,6 +1164,8 @@ mod tests {
                 authorization: None,
                 expected_model_identity: Some("fixture".to_owned()),
                 max_retries: 0,
+                max_response_bytes: 2_000_000,
+                allow_remote: false,
             })
             .expect("backend");
             let response = backend
@@ -1185,6 +1177,22 @@ mod tests {
                 .expect("inference");
             assert_eq!(response.artifacts[0].artifact_type(), expected);
         }
+    }
+
+    #[test]
+    fn legacy_pipeline_worker_is_also_loopback_only_by_default() {
+        let result = HttpJsonPipelineBackend::new(HttpJsonPipelineBackendConfig {
+            id: "remote-worker".to_owned(),
+            endpoint: "https://worker.example/v1/infer".to_owned(),
+            capability: VisionCapability::ObjectDetection,
+            request_timeout: Duration::from_secs(1),
+            authorization: None,
+            expected_model_identity: None,
+            max_retries: 0,
+            max_response_bytes: 2_000_000,
+            allow_remote: false,
+        });
+        assert!(result.is_err());
     }
 
     struct ToolCallingProvider;

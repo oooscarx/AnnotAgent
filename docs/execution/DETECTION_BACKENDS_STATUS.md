@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M2 — Detection Artifact and Evidence (complete)
+M3 — Versioned Detection Worker Protocol (complete)
 
 ## Completed
 
@@ -44,30 +44,45 @@ M2 — Detection Artifact and Evidence (complete)
   and unknown scores route to Review instead of receiving a default; Filter retains such candidates
   for Evidence Gate or Human Review.
 - Added typed Web API DTOs and legacy-compatible geometry/label/score parsing for existing history.
+- Added one versioned Detection Worker v1 contract for health, capability discovery, inference,
+  structured errors, timeouts, and cancellation, shared with the existing Pipeline protocol
+  version constant so the two cannot drift.
+- Added a generic HTTP Detection backend that converts validated normalized `xyxy` wire geometry
+  to Core `xywh` Artifacts while preserving query/model/Project labels, source identity, optional
+  score semantics, raw-response hash/size references, and valid empty results.
+- Hardened all generic HTTP Vision/Pipeline transports: loopback-only by default, explicit HTTPS
+  opt-in for remote hosts, no embedded credentials/query/fragment, redirects disabled, bounded
+  requests/responses, bounded retries, connect/request timeouts, and no raw response logging.
+- Added adversarial Worker contract coverage for malformed/oversized payloads, unknown fields and
+  local paths, NaN/out-of-bounds/reversed coordinates, duplicate identities, undeclared labels,
+  capability/model/version spoofing, redirect credential leaks, timeout, and forwarded cancel.
+- Published the exact v1 JSON contract and security boundary in `docs/HTTP_VISION_PROTOCOL.md`.
 
 ## In progress
 
-- None. M2 is ready for its independent local commit.
+- None. M3 is ready for its independent local commit.
 
 ## Next step
 
-M3 — converge detection workers on one versioned health/capability/infer protocol with loopback
-policy, response limits, cancellation, malformed-response handling, and contract tests.
+M4 — implement the capability-driven Open-Vocabulary Grounding Skill, LocateAnything-compatible
+Worker/adapter, Mock backend, templates, Settings metadata, validators, tests, and docs.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 178 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 188 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
+| Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 33 tests |
 | Web types | `npm --prefix web run typecheck` | PASS |
+| Web build | `npm --prefix web run build` | PASS |
 | Worker protocol | compile both tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; new mixed-detector UI not implemented |
 
 ## Latest local commit
 
-This document's containing M2 commit: `feat(core): preserve detection evidence and score semantics`
+This document's containing M3 commit: `feat(provider): add versioned detection worker protocol`
 
 ## Audited baseline
 
@@ -101,7 +116,9 @@ This document's containing M2 commit: `feat(core): preserve detection evidence a
 
 ## Release Blocking remaining
 
-The matrix contains 30 `PASS`, 58 `OPEN`, and one `LIVE-CONDITIONAL` row after M2.
+The matrix contains 30 `PASS`, 58 `OPEN`, and one `LIVE-CONDITIONAL` row after M3. M3 adds shared
+protocol evidence but intentionally does not claim the model-specific C/D rows before those
+Workers exist.
 
 ## Live-conditional items
 

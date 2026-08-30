@@ -36,6 +36,25 @@ below:
 - `cargo test --workspace --all-features` passes 178 tests, strict workspace Clippy passes, Web
   typecheck passes, and all 33 Web tests pass.
 
+## M3 Worker protocol evidence
+
+- Detection Worker v1 has strict health, capabilities, infer, structured error, and cancel DTOs;
+  the shared protocol version is the same constant used by Pipeline Model requests.
+- The generic adapter validates model/capability/request scope, optional score semantics, query and
+  target-label declarations, unique identities, finite normalized geometry, and valid empty sets
+  before creating a Core Artifact.
+- The shared HTTP boundary is loopback-only by default. Remote Workers require explicit opt-in and
+  HTTPS; URLs with credentials/query/fragment, redirects, oversized requests/responses, excessive
+  retry counts, zero timeouts, and malformed bodies fail closed.
+- Contract tests cover capability spoofing, model/version mismatch, unknown local paths, duplicate
+  IDs, undeclared labels, NaN/out-of-bounds/reversed boxes, oversized bodies, redirect credential
+  isolation, distinct timeout/cancellation errors, and forwarding a bounded cancel request.
+- Raw image/response bytes are not logged or persisted. Accepted raw responses retain only a
+  controlled SHA-256/size reference in Detection evidence.
+- `cargo test --workspace --all-features` passes 188 tests, strict workspace Clippy and build pass,
+  Web typecheck/build pass, and all 33 Web tests pass. Model-specific C/D rows remain OPEN until M4
+  and M5 provide real Worker implementations rather than inferring acceptance from the transport.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |

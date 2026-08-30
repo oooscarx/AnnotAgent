@@ -46,6 +46,8 @@ impl RoboCupSamHttpRefiner {
             authorization: None,
             expected_model_identity: None,
             max_retries: 0,
+            max_response_bytes: 2_000_000,
+            allow_remote: false,
         })?;
         Ok(Self {
             backend,

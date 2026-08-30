@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M2. Core, Runtime, Provider, Storage, Server, Web, TUI, Mock, protocol, and documentation
-work can proceed locally. Candidate Match/Evidence Gate and model workers are scheduled work, not
-environment blockers.
+None at M3. Core, Runtime, Provider, Storage, Server, Web, TUI, Mock, protocol, and documentation
+work can proceed locally. The shared Worker contract is complete; concrete LocateAnything and
+RF-DETR Workers plus Candidate Match/Evidence Gate are scheduled work, not environment blockers.
 
 ## Live-conditional external requirements
 

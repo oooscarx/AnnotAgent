@@ -12,6 +12,10 @@ use base64::Engine;
 use reqwest::Client;
 use tokio_util::sync::CancellationToken;
 
+use crate::http_transport::{
+    bounded_response_body, build_worker_client, validate_transport_limits, validate_worker_base_url,
+};
+
 const MAX_INLINE_IMAGE_BASE64_BYTES: usize = 28_000_000;
 
 pub struct MockVisionBackend {
@@ -86,6 +90,8 @@ pub struct HttpJsonVisionBackendConfig {
     pub authorization: Option<String>,
     pub expected_model_identity: Option<String>,
     pub max_retries: u32,
+    pub max_response_bytes: usize,
+    pub allow_remote: bool,
 }
 
 pub struct HttpJsonVisionBackend {
@@ -95,23 +101,9 @@ pub struct HttpJsonVisionBackend {
 
 impl HttpJsonVisionBackend {
     pub fn new(config: HttpJsonVisionBackendConfig) -> CoreResult<Self> {
-        let endpoint = reqwest::Url::parse(&config.endpoint).map_err(|error| {
-            CoreError::Validation(format!("invalid HTTP vision endpoint: {error}"))
-        })?;
-        if !matches!(endpoint.scheme(), "http" | "https")
-            || endpoint.host_str().is_none()
-            || !endpoint.username().is_empty()
-            || endpoint.password().is_some()
-        {
-            return Err(CoreError::Validation(
-                "HTTP vision endpoint must be an http(s) URL without embedded credentials"
-                    .to_owned(),
-            ));
-        }
-        let client = Client::builder()
-            .timeout(config.request_timeout)
-            .build()
-            .map_err(|error| CoreError::Provider(format!("cannot build HTTP client: {error}")))?;
+        let _ = validate_worker_base_url(&config.endpoint, config.allow_remote)?;
+        validate_transport_limits(config.max_response_bytes, config.max_retries)?;
+        let client = build_worker_client(config.request_timeout)?;
         Ok(Self { config, client })
     }
 
@@ -129,16 +121,16 @@ impl HttpJsonVisionBackend {
             .send()
             .await
             .map_err(|error| CoreError::Provider(format!("worker health failed: {error}")))?;
-        if !response.status().is_success() {
+        let (status, body) =
+            bounded_response_body(response, self.config.max_response_bytes).await?;
+        if !status.is_success() {
             return Ok(VisionModelHealth {
                 status: VisionModelHealthStatus::Unavailable,
-                detail: Some(format!("worker health returned {}", response.status())),
+                detail: Some(format!("worker health returned {status}")),
                 checked_at: Some(chrono::Utc::now()),
             });
         }
-        let mut health = response
-            .json::<VisionModelHealth>()
-            .await
+        let mut health = serde_json::from_slice::<VisionModelHealth>(&body)
             .map_err(|error| CoreError::Provider(format!("invalid worker health JSON: {error}")))?;
         health.checked_at = Some(chrono::Utc::now());
         Ok(health)
@@ -155,16 +147,15 @@ impl HttpJsonVisionBackend {
             .map_err(|error| {
                 CoreError::Provider(format!("worker capability discovery failed: {error}"))
             })?;
-        if !response.status().is_success() {
+        let (status, body) =
+            bounded_response_body(response, self.config.max_response_bytes).await?;
+        if !status.is_success() {
             return Err(CoreError::Provider(format!(
-                "worker capability discovery returned {}",
-                response.status()
+                "worker capability discovery returned {status}"
             )));
         }
-        let capabilities = response
-            .json::<VisionWorkerCapabilities>()
-            .await
-            .map_err(|error| {
+        let capabilities =
+            serde_json::from_slice::<VisionWorkerCapabilities>(&body).map_err(|error| {
                 CoreError::Provider(format!("invalid worker capabilities JSON: {error}"))
             })?;
         if capabilities.protocol_version != VISION_WORKER_PROTOCOL_VERSION {
@@ -249,10 +240,8 @@ impl VisionModelBackend for HttpJsonVisionBackend {
                     )));
                 }
             };
-            let status = response.status();
-            let detail = response.bytes().await.map_err(|error| {
-                CoreError::Provider(format!("cannot read HTTP vision response: {error}"))
-            })?;
+            let (status, detail) =
+                bounded_response_body(response, self.config.max_response_bytes).await?;
             let decoded = serde_json::from_slice::<VisionInferenceResponse>(&detail);
             if let Ok(response) = decoded {
                 if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION {
@@ -309,14 +298,13 @@ impl VisionModelBackend for HttpJsonVisionBackend {
                 continue;
             }
             return Err(CoreError::Provider(format!(
-                "worker={} model={} node={} task={} elapsed_ms={} retry={} code=invalid_response detail={}",
+                "worker={} model={} node={} task={} elapsed_ms={} retry={} code=invalid_response",
                 self.config.id,
                 request.model_id,
                 request.node_id,
                 request.task_id,
                 started.elapsed().as_millis(),
-                retry,
-                truncate(&String::from_utf8_lossy(&detail), 300)
+                retry
             )));
         }
         Err(CoreError::Provider(
@@ -874,6 +862,8 @@ mod tests {
             authorization: None,
             expected_model_identity: Some("fixture".to_owned()),
             max_retries: 1,
+            max_response_bytes: 2_000_000,
+            allow_remote: false,
         })
         .expect("backend");
         let response = backend
@@ -910,6 +900,7 @@ mod tests {
     fn http_backend_rejects_non_http_and_credential_bearing_endpoints() {
         for endpoint in [
             "file:///tmp/worker.sock",
+            "http://worker.example/v1/infer",
             "https://user:password@worker.example/v1/infer",
         ] {
             let result = HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
@@ -920,6 +911,8 @@ mod tests {
                 authorization: None,
                 expected_model_identity: None,
                 max_retries: 0,
+                max_response_bytes: 2_000_000,
+                allow_remote: false,
             });
             assert!(result.is_err(), "endpoint {endpoint:?} must be rejected");
         }
@@ -987,6 +980,8 @@ mod tests {
             authorization: None,
             expected_model_identity: Some("fixture".to_owned()),
             max_retries: 1,
+            max_response_bytes: 2_000_000,
+            allow_remote: false,
         })
         .expect("backend");
         let error = backend

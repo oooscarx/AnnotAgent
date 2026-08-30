@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::{CoreError, CoreResult, ImageId, ModelImage, RunId, TaskId, VisionArtifact};
+use crate::{CoreError, CoreResult, ImageId, LabelId, ModelImage, RunId, TaskId, VisionArtifact};
 
 pub const VISION_WORKER_PROTOCOL_VERSION: u32 = 1;
 
@@ -368,6 +368,122 @@ pub struct VisionWorkerCapabilities {
     pub output_types: Vec<ArtifactKind>,
     #[serde(default)]
     pub limits: VisionModelLimits,
+}
+
+/// Health response for the versioned detection-worker protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerHealth {
+    pub protocol_version: u32,
+    pub worker_id: String,
+    pub model_id: ModelId,
+    pub status: VisionModelHealthStatus,
+    pub detail: Option<String>,
+}
+
+/// Runtime-discovered facts reported by a detection Worker, never inferred by the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerCapabilities {
+    pub protocol_version: u32,
+    pub worker_id: String,
+    pub model_id: ModelId,
+    pub capabilities: Vec<VisionCapability>,
+    pub score_semantics: ScoreSemantics,
+    #[serde(default)]
+    pub supports_visual_prompt: bool,
+    #[serde(default)]
+    pub supports_batch: bool,
+    #[serde(default)]
+    pub label_space: Vec<String>,
+    #[serde(default)]
+    pub limits: VisionModelLimits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerQuery {
+    pub id: String,
+    pub text: String,
+    pub target_label: Option<LabelId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerOptions {
+    pub confidence_threshold: Option<f32>,
+    pub iou_threshold: Option<f32>,
+    pub max_detections: Option<u32>,
+    pub generation_mode: Option<String>,
+}
+
+/// The only image-bearing request accepted by detection Workers. It has no filesystem path field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerInferenceRequest {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub operation: VisionCapability,
+    pub model_id: ModelId,
+    pub image: ModelImage,
+    #[serde(default)]
+    pub queries: Vec<DetectionWorkerQuery>,
+    #[serde(default)]
+    pub target_labels: Vec<LabelId>,
+    #[serde(default)]
+    pub options: DetectionWorkerOptions,
+    pub timeout_ms: Option<u64>,
+}
+
+/// Worker-native Detection before the Provider adapter converts xyxy into Core xywh geometry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerDetection {
+    pub detection_id: String,
+    pub query_id: Option<String>,
+    pub model_label: Option<String>,
+    pub target_label: Option<LabelId>,
+    pub bbox_xyxy_normalized: [f32; 4],
+    pub score: Option<f32>,
+    pub score_semantics: ScoreSemantics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerUsage {
+    pub duration_ms: Option<u64>,
+    pub device: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerInferenceResponse {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub model_id: ModelId,
+    #[serde(default)]
+    pub detections: Vec<DetectionWorkerDetection>,
+    #[serde(default)]
+    pub usage: DetectionWorkerUsage,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub error: Option<VisionBackendError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerCancelRequest {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub model_id: ModelId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectionWorkerCancelResponse {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub cancelled: bool,
 }
 
 #[async_trait]

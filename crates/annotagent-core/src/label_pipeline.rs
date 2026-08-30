@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
-pub const PIPELINE_VISION_PROTOCOL_VERSION: u32 = 1;
+pub const PIPELINE_VISION_PROTOCOL_VERSION: u32 = crate::VISION_WORKER_PROTOCOL_VERSION;
 pub const DETECTION_ARTIFACT_SCHEMA_VERSION: u32 = 2;
 pub const IMAGE_INPUT_NODE_ID: &str = "core.image_input";
 pub const IMAGE_INPUT_OPERATION: &str = "core.image_input";

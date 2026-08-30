@@ -102,3 +102,24 @@ the legacy Annotation confidence field. `RankingScore`, `Unknown`, and `NotProvi
 inside the evidence-aware Artifact but cannot silently become a percentage, an auto-accept value,
 or a detection/classification combined confidence. Score-less filtering preserves candidates for
 Evidence Gate, another model, deterministic validation, or Human Review.
+
+## DB-013 — Detection Worker v1 is a strict numeric-version envelope
+
+Health, capabilities, infer, error, and cancel use one numeric protocol version sourced from Core.
+Every inference response is checked against the request ID, model ID, capability, and declared
+query/target-label scope before an error or Detection is attributed to the active Run. Unknown
+wire fields fail closed so filesystem paths or future semantics cannot silently cross the boundary.
+
+## DB-014 — Worker HTTP is an untrusted local boundary by default
+
+Generic Worker URLs accept only HTTP(S), no embedded credentials, query, or fragment. Loopback is
+the default trust scope; remote access is an explicit setting and requires HTTPS. Redirects are
+never followed, bodies/retries/timeouts are bounded, and remote payload text is not copied into
+errors. This policy also applies to the older generic Vision/Pipeline HTTP clients.
+
+## DB-015 — Raw Worker payloads use controlled references
+
+Inference sends bounded inline PNG/JPEG bytes rather than a host path. Successful raw response
+evidence stores only media type, SHA-256, and byte size, never the JSON body or image. Cancellation
+is cooperative through `/v1/cancel`; Runtime cancellation remains authoritative even if the
+best-effort Worker acknowledgement fails.
