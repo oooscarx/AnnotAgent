@@ -17,6 +17,7 @@ export type WorkspaceRoute =
       canonicalPath: string;
       runId?: string;
       projectId?: string;
+      status?: string;
       imageId?: string;
       nodeId?: string;
       artifactId?: string;
@@ -128,6 +129,8 @@ export function parseWorkspaceRoute(
     const context = new URLSearchParams();
     const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
     if (!run[1] && projectId) context.set("project_id", projectId);
+    const status = !run[1] ? params.get("status") ?? undefined : undefined;
+    if (status && status !== "all") context.set("status", status);
     const view = params.get("view") === "debug" || params.has("node") || params.has("artifact")
       ? "debug"
       : undefined;
@@ -141,6 +144,7 @@ export function parseWorkspaceRoute(
       kind: "runs",
       runId: run[1] ? decodeURIComponent(run[1]) : undefined,
       projectId,
+      status,
       imageId: params.get("image") ?? undefined,
       nodeId: params.get("node") ?? undefined,
       artifactId: params.get("artifact") ?? undefined,

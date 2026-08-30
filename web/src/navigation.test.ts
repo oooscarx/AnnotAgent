@@ -55,10 +55,11 @@ describe("guided workspace routing", () => {
   });
 
   it("keeps global Project filters explicit in the URL", () => {
-    expect(parseWorkspaceRoute("/runs", "?project_id=alpha")).toMatchObject({
+    expect(parseWorkspaceRoute("/runs", "?project_id=alpha&status=failed")).toMatchObject({
       kind: "runs",
       projectId: "alpha",
-      canonicalPath: "/runs?project_id=alpha",
+      status: "failed",
+      canonicalPath: "/runs?project_id=alpha&status=failed",
     });
     expect(parseWorkspaceRoute("/review", "?project_id=alpha")).toMatchObject({
       kind: "review",

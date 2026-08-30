@@ -90,6 +90,7 @@ export function App() {
   const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const hasConnectedRef = useRef(false);
+  const needsReconnectSyncRef = useRef(false);
   const [activeProjectId, setActiveProjectId] = useState(() =>
     window.localStorage.getItem("annotagent.activeProjectId") ?? "",
   );
@@ -165,12 +166,14 @@ export function App() {
             void refresh();
         },
         () => {
+          needsReconnectSyncRef.current = true;
           setConnection("reconnecting");
         },
         () => {
           setConnection("connected");
-          if (hasConnectedRef.current) void refresh();
+          if (hasConnectedRef.current || needsReconnectSyncRef.current) void refresh();
           hasConnectedRef.current = true;
+          needsReconnectSyncRef.current = false;
         },
       ),
     [],
@@ -204,7 +207,9 @@ export function App() {
     setProjectContext(id);
     if (route.kind === "export")
       navigate(id ? `/projects/${encodeURIComponent(id)}/export` : "/projects");
-    else if (route.kind === "project" || route.kind === "build") openProject(id);
+    else if (route.kind === "build")
+      navigate(id ? `/projects/${encodeURIComponent(id)}/build/${route.step}` : "/projects");
+    else if (route.kind === "project") openProject(id);
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
@@ -1279,6 +1284,12 @@ function ProjectPage({
     initialProject?.active_batch?.event_sequence,
     initialProject?.review_count,
     initialProject?.readiness,
+    initialProject?.image_count,
+    initialProject?.task_count,
+    initialProject?.active_workflow.workflow_id,
+    initialProject?.active_workflow.version,
+    initialProject?.default_workflow_version?.workflow_id,
+    initialProject?.default_workflow_version?.version,
   ]);
   useEffect(() => {
     if (project)
@@ -1868,7 +1879,13 @@ function ProjectExportPage({
     setResult(undefined);
     setCopyStatus("");
     void loadReadiness().catch((error: Error) => onError(error.message));
-  }, [project?.id]);
+  }, [
+    project?.id,
+    project?.image_count,
+    project?.review_count,
+    project?.active_run?.updated_at,
+    project?.active_batch?.event_sequence,
+  ]);
   const executeExport = () => {
     if (!project || !format || !activeReadiness?.ready) return;
     setExporting(true);
@@ -4035,7 +4052,6 @@ function RunsPage({
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
-  const [statusFilter, setStatusFilter] = useState("all");
   const run = runs.find((item) => item.id === route.runId);
   if (route.runId && run)
     return (
@@ -4049,7 +4065,14 @@ function RunsPage({
       />
     );
   const projectRuns = runsForContext(runs, scopeProject);
+  const statusFilter = route.status ?? "all";
   const visibleRuns = runsForContext(runs, scopeProject, statusFilter);
+  const setListFilters = (projectId: string, status: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (status !== "all") params.set("status", status);
+    onNavigate(`/runs${params.size ? `?${params.toString()}` : ""}`);
+  };
   return (
     <section className="page-stack">
       {scopeProject && <ProjectBreadcrumb
@@ -4065,18 +4088,14 @@ function RunsPage({
             <select
               aria-label="Project filter"
               value={scopeProject?.id ?? ""}
-              onChange={(event) =>
-                onNavigate(event.target.value
-                  ? `/runs?project_id=${encodeURIComponent(event.target.value)}`
-                  : "/runs")
-              }
+              onChange={(event) => setListFilters(event.target.value, statusFilter)}
             >
               <option value="">All projects</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
             </select>
           </label>
           <label>Status
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <select aria-label="Status filter" value={statusFilter} onChange={(event) => setListFilters(scopeProject?.id ?? "", event.target.value)}>
               <option value="all">All statuses</option>
               {[...new Set(projectRuns.map((item) => item.status))].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
             </select>

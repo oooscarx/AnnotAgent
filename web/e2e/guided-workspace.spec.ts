@@ -575,3 +575,80 @@ test("Export readiness blocks unresolved reviews and persists a completed export
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test("Build and Runs state survives refresh plus browser history", async ({ page }) => {
+  await page.goto(`/projects/${projectId}`);
+  await page.getByRole("button", { name: "Build", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
+  await page.getByLabel("Build steps").getByRole("button").filter({ hasText: "Labels" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
+  await expect(page.getByRole("heading", { name: "Add images to your Project" })).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
+  await expect(page.getByRole("heading", { name: "What do you want to annotate?" })).toBeVisible();
+
+  await page.getByLabel("Active project").selectOption(emptyProjectId);
+  await expect(page).toHaveURL(new RegExp(`/projects/${emptyProjectId}/build/labels$`));
+  await expect(page.getByLabel("Build step blocked")).toBeVisible();
+  await page.getByLabel("Active project").selectOption(projectId);
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
+
+  await page.goto(`/runs?project_id=${projectId}`);
+  await page.getByLabel("Status filter").selectOption("completed");
+  await expect(page).toHaveURL(new RegExp(`/runs\\?project_id=${projectId}&status=completed$`));
+  await page.reload();
+  await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
+  await expect(page.getByLabel("Status filter")).toHaveValue("completed");
+});
+
+test("SSE reconnect refreshes Export from server truth", async ({ page, request }) => {
+  await page.route("**/api/events", (route) => route.abort("connectionfailed"));
+  await page.goto(`/projects/${projectId}/export`);
+  await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
+  await expect(page.locator(".sidebar-foot")).toContainText("SSE reconnecting");
+  const reconnectReviewId = randomUUID();
+  const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
+    data: {
+      annotation: {
+        id: reconnectReviewId,
+        image_id: reviewImageId,
+        task_id: "day-class",
+        label: "day",
+        value: { kind: "classification", labels: ["day"] },
+        attributes: {},
+        confidence: null,
+        source: "human",
+        review_status: "needs_review",
+        provenance: {
+          run_step_id: null,
+          provider: null,
+          model: null,
+          tool_names: [],
+          parent_annotation_id: null,
+          artifact_ids: [],
+        },
+        created_at: new Date().toISOString(),
+      },
+    },
+  });
+  expect(createdReview.status()).toBe(201);
+
+  await page.unroute("**/api/events");
+  await expect(page.locator(".sidebar-foot")).toContainText("SSE connected", { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Export needs attention" })).toBeVisible();
+  await expect(page.getByText("1 annotation still requires a human decision.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toHaveCount(0);
+
+  const accepted = await request.post(`/api/reviews/${reconnectReviewId}/accept-and-next`, {
+    data: {
+      project_id: projectId,
+      queue_project_id: projectId,
+      decision: "accept",
+      reason_code: "accepted_as_is",
+      note: "SSE recovery cleanup",
+    },
+  });
+  expect(accepted.ok()).toBeTruthy();
+});

@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 11 — Reliability
-- Last completed Milestone: 10 — Guided Export
-- Latest Milestone commit: this document's containing Milestone 10 commit
+- Active Milestone: 12 — Release
+- Last completed Milestone: 11 — Reliability
+- Latest Milestone commit: this document's containing Milestone 11 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -26,8 +26,8 @@ Updated: 2026-08-30
 | 8 Run Workspace | Complete | Results is the default outcome workspace; Debug is an explicit URL-backed mode with Inspector, deep links, Replay, provider context, and repair actions. |
 | 9 Inbox Review | Complete | Server-owned progress and next-item decisions drive a keyboard-operable Inbox with controlled reasons, correction impact, deep links, and terminal guidance. |
 | 10 Guided Export | Complete | Server-owned readiness blocks incomplete processing and pending Review, recommends only compatible configured formats, exports the accepted Project snapshot, and persists a fingerprint-bound completion report. |
-| 11 Reliability | In progress | URL/SSE/server recovery foundations exist; the complete guided journey now needs end-to-end recovery coverage. |
-| 12 Release | Pending | Full matrix, documentation, responsiveness, accessibility, and E2E expansion remain. |
+| 11 Reliability | Complete | Build step, Runs filters, Run Debug, Review selection, and Export are URL/server restored; browser history and failed-first SSE reconnect resynchronization pass end to end. |
+| 12 Release | In progress | Full matrix, documentation, responsiveness, accessibility, and final Release gate remain. |
 
 ## Latest automated tests
 
@@ -38,7 +38,7 @@ Updated: 2026-08-30
 | `npm run typecheck` | PASS |
 | `npm test` | PASS — 12 files, 32 tests |
 | `npm run build` | PASS — production bundle built |
-| `npm run test:e2e` | PASS — 16 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
+| `npm run test:e2e` | PASS — 18 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
 
 Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
 
@@ -124,6 +124,15 @@ Milestone 10 focused checks:
 - Application 21/21 and Server 9/9 tests pass; strict all-target/all-feature Clippy for both crates passes. Web typecheck, 32 unit tests, production build, and 16 executable Chromium E2E scenarios pass; one Crop lineage scenario remains conditional.
 - E2E proves unresolved Review blocks export, Review acceptance repairs it, the real Native exporter runs, completion survives reload, and the 390px page has no horizontal overflow.
 
+Milestone 11 focused checks:
+
+- Project switching preserves the exact active Build step and Export destination rather than falling back to Overview. Project Overview refresh dependencies include data, schema, active/default Automation, Run, Batch, Review, and readiness changes.
+- The global Runs status filter joins explicit Project scope in canonical URL state. Reload and browser history restore both controls; Run Results/Debug Image, Node, and Artifact deep links remain unchanged.
+- Export rechecks server-owned readiness whenever dashboard image, Review, Run, or Batch truth changes. A source-fingerprint mismatch removes a stale completion report rather than continuing to present an old export as current.
+- SSE tracks whether any connection error occurred before `onopen`, including a failed first connection. The next successful open refreshes dashboard truth before subsequent Project projections settle.
+- Chromium E2E deliberately aborts the SSE endpoint, changes Review state through the real API, restores the event stream, and observes Export change from completed to blocked without reloading. Build browser back/forward, Project switching, Runs filter reload, active Run restoration, duplicate-Start lock, Review selection, and Build reload are covered in the same isolated journey.
+- Web typecheck, 32 unit tests, production build, and 18 executable Chromium E2E scenarios pass; one external Crop fixture scenario remains explicitly conditional.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -138,11 +147,12 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Build now behaves as one gated sequence rather than four unrelated management screens; URL refresh preserves the step and server prerequisites prevent manual URL bypass.
 - Sample Test now leads with outcomes and Full Run impact; node statuses, timings, usage, and Artifact types are collapsed diagnostics.
 - Run defaults to outcome-first Results, Review is a fast decision Inbox, and Export is the explicit terminal Project workspace with preflight compatibility and durable completion.
+- URL/browser history now restores Build and Runs list context, and an interrupted initial or established SSE connection resynchronizes Project/Export truth after reconnect.
 
 ## Release Blocking remaining
 
-- `PASS`: 84
-- `PARTIAL`: 9
+- `PASS`: 86
+- `PARTIAL`: 7
 - `OPEN`: 1
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 

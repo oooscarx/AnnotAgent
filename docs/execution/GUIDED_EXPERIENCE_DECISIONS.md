@@ -81,3 +81,7 @@ Review progress and the item after a human decision are derived from persisted A
 ## GE-020 — Export is a readiness-gated Project snapshot
 
 Export never chooses an arbitrary historical Run. The Application selects the newest terminal Run per Project image, includes only accepted Annotations and their revisions, records processed negative images, and blocks while an image is unprocessed or a Review is unresolved. Format support and recommendation come from the configured exporters against that exact Project snapshot. A successful report is persisted beside the output with a deterministic source fingerprint and is restored only while the current exportable snapshot still matches it. This makes Export the durable end of the guided journey without treating an old output as current after data or annotation changes.
+
+## GE-021 — Recoverable context is URL state plus a reconnect resync latch
+
+Build step, Runs Project/status filters, Run Results/Debug Image/Node/Artifact, Review item/scope, and Export destination are canonical URL state; local state may hold only transient editor interaction. Project switching preserves the current scoped task. SSE errors set a latch even before the first successful connection, and the next open re-fetches dashboard truth. Downstream Project and Export projections watch the persisted summary fields that can invalidate them. This prevents a recovered transport from being labelled connected while the visible journey still reflects pre-disconnect data.

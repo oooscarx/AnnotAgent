@@ -122,9 +122,9 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Refresh Run preserves Image | PASS | Image query state exists and E2E passes. |
 | Refresh Debug preserves Node | PASS | `view=debug`, Image, Node, and Artifact are canonical URL state; legacy technical links infer Debug. |
 | URL reopens same Artifact | PASS | Artifact query identity is parsed and used. |
-| Browser back/forward is correct | PARTIAL | `popstate` implemented; full journey regression remains. |
+| Browser back/forward is correct | PASS | E2E traverses Data ↔ Labels with native back/forward and restores the matching URL, content, and server-gated Build state. |
 | Active Run restores from server | PASS | Summary and E2E cover server-owned state. |
-| SSE reconnect resynchronizes | PARTIAL | refetch-on-open exists; interruption E2E remains. |
+| SSE reconnect resynchronizes | PASS | A failed-first SSE connection sets a resync latch; E2E mutates Review truth during the interruption and observes Export invalidate its stale success state after reconnect. |
 | Start disabled during active Run | PASS | Project helper/UI and E2E cover it. |
 | Backend rejects duplicate start | PASS | Transactional 409 test exists. |
 
@@ -268,3 +268,12 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - `/projects/:id/export` is canonical URL state and part of the Project workspace tabs. The default screen exposes exactly three readiness metrics, compatibility cards, one solid export action, repair actions, result path/copy action, and a collapsed readable report; the old duplicate Advanced export controls were removed.
 - Application 21/21 and Server 9/9 tests execute the real Native exporter, prove pending Review blocks POST, accept the Review, verify accepted-only counts, and reload the persisted report; strict all-target/all-feature Clippy passes for both crates. Web typecheck, 32 unit tests, production build, and Chromium E2E pass with 16 scenarios plus one conditional Crop skip.
 - Browser E2E covers Review blocker → repair → ready → export → refresh and asserts no horizontal overflow at 390px. Visual evidence: `docs/execution/screenshots/11-export-complete.png`.
+
+## Milestone 11 evidence
+
+- Runs list `status` is canonical query state beside explicit `project_id`; refresh restores both selectors. Existing Run detail `view`, `image`, `node`, and `artifact` context remains URL-owned, and Review item/scope plus Build step remain canonical paths.
+- Selecting another Project while inside Build now retains the exact Data/Labels/Automation/Test step. Selecting another Project from Export retains Export. Project Overview refetches its combined server summary when data, schema, Automation, Run, Batch, Review, or readiness dashboard facts change.
+- Export readiness reloads when server dashboard counters change and still validates the persisted source fingerprint. It cannot keep showing `Dataset exported successfully` after a newly pending Review changes the exportable Project snapshot.
+- SSE records errors that occur before either the first or a later successful connection. On the next open it re-fetches dashboard truth; this closes the failed-first-connection gap where the old code treated recovery as an initial connection and skipped synchronization.
+- Browser E2E uses native `goBack`/`goForward`, switches Project context while retaining the Build step, persists the Runs status/Project filters over reload, aborts and restores `/api/events`, mutates a real Review during interruption, and observes Export transition from completed to blocked without manual refresh.
+- Active Run restoration and duplicate Start locking remain covered by server-derived Project state; Review item selection survives Run round trips and reload; Build direct URLs remain prerequisite-gated. Web typecheck, 32 unit tests, production build, and 18 executable Chromium scenarios pass with one conditional Crop fixture skip.
