@@ -17,12 +17,9 @@ use annotagent_application::{
 };
 use annotagent_core::{
     AgentBudget, Annotation, AnnotationId, ArtifactValidationState, AttributeDefinition, BatchId,
-    CorrectionFeatures, CorrectionRecord, DatasetExporter, EnabledSkillConfig, ExportRequest,
-    LabelId, ProjectSchema, ProjectSnapshot, ReviewStatus, RunEvent, RunEventKind, RunEventPayload,
-    RunId, RunStatus, SnapshotImage, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
-};
-use annotagent_export::{
-    CocoExporter, LabelMeExporter, NativeExporter, YoloDetectionExporter, YoloSegmentationExporter,
+    CorrectionFeatures, CorrectionRecord, EnabledSkillConfig, LabelId, ProjectSchema, ReviewStatus,
+    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, TaskKind, UsageTotals,
+    WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::HistoryRun;
@@ -471,6 +468,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/batches/{batch_id}/pause", post(pause_batch))
         .route("/api/batches/{batch_id}/resume", post(resume_batch))
         .route("/api/batches/{batch_id}/cancel", post(cancel_batch))
+        .route(
+            "/api/projects/{project_id}/export-readiness",
+            get(get_export_readiness),
+        )
         .route("/api/projects/{project_id}/export", post(export_dataset))
         .route("/api/runs/{run_id}", get(get_run))
         .route(
@@ -2711,110 +2712,28 @@ fn default_export_format() -> String {
     "native".to_owned()
 }
 
+async fn get_export_readiness(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let readiness = state
+        .application
+        .export_readiness(&project_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(readiness)))
+}
+
 async fn export_dataset(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
     Json(request): Json<ExportBody>,
 ) -> ApiResult<Json<Value>> {
-    let project_path = state
+    let result = state
         .application
-        .project_path(&project_id)
-        .map_err(ApiError::not_found)?;
-    let project_yaml = std::fs::read_to_string(&project_path).map_err(ApiError::bad_request)?;
-    let schema = ProjectSchema::from_yaml(&project_yaml).map_err(ApiError::bad_request)?;
-    let runs = state
-        .application
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter();
-    let mut export_source = None;
-    for run in runs.filter(|run| run.project_name == schema.project.name) {
-        let annotations = state
-            .application
-            .store()
-            .list_annotations(run.id)
-            .map_err(ApiError::internal)?;
-        if !annotations.is_empty() {
-            export_source = Some((run, annotations));
-            break;
-        }
-    }
-    let (run, annotations) = export_source
-        .ok_or_else(|| ApiError::bad_request("project has no run with annotations"))?;
-    let image_paths = state
-        .application
-        .list_project_images(&project_id)
-        .map_err(ApiError::bad_request)?;
-    let source_sha256 = run
-        .workflow_snapshot_json
-        .as_deref()
-        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok())
-        .and_then(|snapshot| {
-            snapshot
-                .pointer("/image/sha256")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    let image_path = if let Some(source_sha256) = source_sha256 {
-        image_paths
-            .iter()
-            .find(|path| {
-                annotagent_image_tools::load_image(path, 40_000_000)
-                    .is_ok_and(|frame| frame.metadata.sha256 == source_sha256)
-            })
-            .cloned()
-    } else {
-        image_paths.first().cloned()
-    }
-    .ok_or_else(|| ApiError::bad_request("the annotated source image is unavailable"))?;
-    let frame = annotagent_image_tools::load_image(&image_path, 40_000_000)
-        .map_err(ApiError::bad_request)?;
-    let image_id = annotations
-        .first()
-        .map(|annotation| annotation.image_id)
-        .ok_or_else(|| ApiError::bad_request("run has no annotations"))?;
-    let root = project_path
-        .parent()
-        .unwrap_or(state.application.workspace());
-    let snapshot = ProjectSnapshot {
-        schema,
-        images: vec![SnapshotImage {
-            id: image_id,
-            relative_path: image_path
-                .strip_prefix(root)
-                .unwrap_or(&image_path)
-                .to_path_buf(),
-            metadata: frame.metadata,
-        }],
-        annotations,
-        revisions: state
-            .application
-            .store()
-            .history(run.id)
-            .map_err(ApiError::internal)?
-            .revisions,
-    };
-    let output = root.join("exports").join(&request.format);
-    let exporter: Box<dyn DatasetExporter> = match request.format.as_str() {
-        "native" => Box::new(NativeExporter),
-        "coco" => Box::new(CocoExporter),
-        "yolo" | "yolo_detection" => Box::new(YoloDetectionExporter),
-        "yolo_segmentation" => Box::new(YoloSegmentationExporter),
-        "labelme" => Box::new(LabelMeExporter),
-        other => {
-            return Err(ApiError::bad_request(format!(
-                "unknown export format {other:?}"
-            )));
-        }
-    };
-    let report = exporter
-        .export(ExportRequest {
-            project: snapshot,
-            output,
-        })
+        .export_project_dataset(&project_id, &request.format)
         .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(json!(report)))
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(result)))
 }
 
 async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
@@ -4297,6 +4216,20 @@ export:
                 .as_array()
                 .is_some_and(|nodes| nodes.contains(&json!("core.image_input")))
         );
+        let ready = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/export-readiness",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(ready["ready"], json!(true));
+        assert_eq!(ready["accepted_annotations"], json!(0));
+        assert_eq!(ready["unresolved_reviews"], json!(0));
+        assert_eq!(ready["recommended_format"], json!("native"));
 
         let annotation_id = uuid::Uuid::new_v4();
         let image_id = uuid::Uuid::new_v4();
@@ -4329,6 +4262,57 @@ export:
         )
         .await;
         assert_eq!(created_annotation.status(), StatusCode::CREATED);
+        let blocked = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/export-readiness",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(blocked["ready"], json!(false));
+        assert_eq!(blocked["unresolved_reviews"], json!(1));
+        assert_eq!(
+            blocked["blocking_issues"][0]["code"],
+            json!("reviews_unresolved")
+        );
+        let blocked_export = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/http-label/export",
+            Some(json!({"format": "native"})),
+        )
+        .await;
+        assert_eq!(blocked_export.status(), StatusCode::BAD_REQUEST);
+        let accepted = request(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/reviews/{annotation_id}/accept-and-next"),
+            Some(json!({
+                "project_id": "http-label",
+                "queue_project_id": "http-label",
+                "decision": "accept",
+                "reason_code": "accepted_as_is",
+                "note": "release export readiness test"
+            })),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let ready = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/export-readiness",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(ready["ready"], json!(true));
+        assert_eq!(ready["accepted_annotations"], json!(1));
+        assert_eq!(ready["unresolved_reviews"], json!(0));
         let exported = request(
             &service,
             axum::http::Method::POST,
@@ -4337,6 +4321,31 @@ export:
         )
         .await;
         assert_eq!(exported.status(), StatusCode::OK);
+        let exported = response_json(exported).await;
+        assert_eq!(exported["format"], json!("native"));
+        assert_eq!(exported["report"]["exported_count"], json!(1));
+        assert!(exported["output_path"].is_string());
+        assert!(
+            exported["report"]["output_files"]
+                .as_array()
+                .is_some_and(|files| {
+                    files.iter().any(|file| {
+                        file.as_str()
+                            .is_some_and(|file| file.ends_with("export-report.json"))
+                    })
+                })
+        );
+        let persisted = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/export-readiness",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(persisted["last_export"]["format"], json!("native"));
     }
 
     #[tokio::test]

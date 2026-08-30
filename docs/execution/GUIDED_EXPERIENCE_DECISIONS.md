@@ -77,3 +77,7 @@ Results reads a server-owned outcome summary derived from persisted formal Annot
 ## GE-019 — Inbox advancement is a server decision result
 
 Review progress and the item after a human decision are derived from persisted Annotation statuses and stable queue order. Accept-and-next and reject-and-next apply the decision first, then return the exact remaining item and updated progress; React does not remove an optimistic local row and guess what comes next. Project scope is explicit in the queue request and URL. Generic reasons belong to Core Review UX, while additional taxonomy values come only from Skills enabled by the Project. Correction evidence is saved against a real enabled Skill when available, but a generic human decision cannot be blocked merely because a Project has no correction taxonomy.
+
+## GE-020 — Export is a readiness-gated Project snapshot
+
+Export never chooses an arbitrary historical Run. The Application selects the newest terminal Run per Project image, includes only accepted Annotations and their revisions, records processed negative images, and blocks while an image is unprocessed or a Review is unresolved. Format support and recommendation come from the configured exporters against that exact Project snapshot. A successful report is persisted beside the output with a deterministic source fingerprint and is restored only while the current exportable snapshot still matches it. This makes Export the durable end of the guided journey without treating an old output as current after data or annotation changes.

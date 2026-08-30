@@ -30,6 +30,14 @@ describe("guided workspace routing", () => {
     });
   });
 
+  it("keeps the guided export destination in Project context", () => {
+    expect(parseWorkspaceRoute("/projects/demo/export")).toEqual({
+      kind: "export",
+      projectId: "demo",
+      canonicalPath: "/projects/demo/export",
+    });
+  });
+
   it("restores Run artifact context from the URL", () => {
     expect(
       parseWorkspaceRoute(

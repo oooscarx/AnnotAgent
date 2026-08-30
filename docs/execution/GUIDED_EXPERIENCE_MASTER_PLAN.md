@@ -91,8 +91,8 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | 7 | outcome-first sample testing and activation | complete |
 | 8 | Results-first Run workspace with optional Debug | complete |
 | 9 | inbox Review | complete |
-| 10 | guided Export endpoint and completion state | in progress |
-| 11 | durable URL, SSE, and server-state recovery | pending |
+| 10 | guided Export endpoint and completion state | complete |
+| 11 | durable URL, SSE, and server-state recovery | in progress |
 | 12 | responsive, accessible, documented Release gate | pending |
 
 ## Verification policy

@@ -11,6 +11,7 @@ const emptyProjectId = `guided-empty-${stamp}`;
 const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
 let reviewId = "";
+let reviewImageId = "";
 
 async function dashboard(request: APIRequestContext) {
   const response = await request.get("/api/projects");
@@ -237,11 +238,12 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
     return current.runs.find((run: { id: string }) => run.id === runId)?.status;
   }, { timeout: 30_000 }).toMatch(/completed|completed_with_review/);
   const annotationId = randomUUID();
+  reviewImageId = randomUUID();
   const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
     data: {
       annotation: {
         id: annotationId,
-        image_id: randomUUID(),
+        image_id: reviewImageId,
         task_id: "day-class",
         label: "day",
         value: { kind: "classification", labels: ["day"] },
@@ -520,4 +522,56 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await page.reload();
   await expect(page.getByLabel("Review progress")).toContainText("1 of 1 results reviewed");
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
+});
+
+test("Export readiness blocks unresolved reviews and persists a completed export", async ({ page, request }) => {
+  const exportReviewId = randomUUID();
+  const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
+    data: {
+      annotation: {
+        id: exportReviewId,
+        image_id: reviewImageId,
+        task_id: "day-class",
+        label: "day",
+        value: { kind: "classification", labels: ["day"] },
+        attributes: {},
+        confidence: 0.98,
+        source: "human",
+        review_status: "needs_review",
+        provenance: {
+          run_step_id: null,
+          provider: null,
+          model: null,
+          tool_names: [],
+          parent_annotation_id: null,
+          artifact_ids: [],
+        },
+        created_at: new Date().toISOString(),
+      },
+    },
+  });
+  expect(createdReview.status()).toBe(201);
+
+  await page.goto(`/projects/${projectId}/export`);
+  await expect(page.getByRole("heading", { name: "Export needs attention" })).toBeVisible();
+  await expect(page.getByText("1 annotation still requires a human decision.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export AnnotAgent Native dataset" })).toBeDisabled();
+  await page.getByRole("button", { name: "Resolve" }).click();
+  await expect(page).toHaveURL(new RegExp(`/review/${exportReviewId}\\?project_id=${projectId}$`));
+  await page.getByRole("button", { name: "Accept and next" }).click();
+  await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue to export" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/export$`));
+  await expect(page.getByRole("heading", { name: "Your dataset is ready" })).toBeVisible();
+  await expect(page.getByText("Recommended", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Export AnnotAgent Native dataset" }).click();
+  await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
+  await expect(page.getByText("Result folder", { exact: true })).toBeVisible();
+  await expect(page.locator(".export-report")).not.toHaveAttribute("open", "");
+  await page.screenshot({ path: `${screenshots}/11-export-complete.png`, fullPage: true });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

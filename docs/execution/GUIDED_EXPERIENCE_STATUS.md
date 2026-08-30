@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 10 — Guided Export
-- Last completed Milestone: 9 — Inbox Review
-- Latest Milestone commit: this document's containing Milestone 9 commit
+- Active Milestone: 11 — Reliability
+- Last completed Milestone: 10 — Guided Export
+- Latest Milestone commit: this document's containing Milestone 10 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -25,8 +25,8 @@ Updated: 2026-08-30
 | 7 Dry Run | Complete | Rust SampleTestSummary now reports outcomes, empty/failure counts, usage, Review workload, and Full Run estimates; the UI leads with Gallery and keeps diagnostics collapsed. |
 | 8 Run Workspace | Complete | Results is the default outcome workspace; Debug is an explicit URL-backed mode with Inspector, deep links, Replay, provider context, and repair actions. |
 | 9 Inbox Review | Complete | Server-owned progress and next-item decisions drive a keyboard-operable Inbox with controlled reasons, correction impact, deep links, and terminal guidance. |
-| 10 Guided Export | In progress | Export is real; readiness, recommendation, compatibility, and completion UX remain. |
-| 11 Reliability | Pending | URL/SSE/server recovery foundations exist; new guided state needs end-to-end recovery coverage. |
+| 10 Guided Export | Complete | Server-owned readiness blocks incomplete processing and pending Review, recommends only compatible configured formats, exports the accepted Project snapshot, and persists a fingerprint-bound completion report. |
+| 11 Reliability | In progress | URL/SSE/server recovery foundations exist; the complete guided journey now needs end-to-end recovery coverage. |
 | 12 Release | Pending | Full matrix, documentation, responsiveness, accessibility, and E2E expansion remain. |
 
 ## Latest automated tests
@@ -36,9 +36,9 @@ Updated: 2026-08-30
 | `cargo fmt --all --check` | PASS |
 | `cargo test --workspace --all-features` | PASS — 159 tests, 0 failures |
 | `npm run typecheck` | PASS |
-| `npm test` | PASS — 12 files, 31 tests |
+| `npm test` | PASS — 12 files, 32 tests |
 | `npm run build` | PASS — production bundle built |
-| `npm run test:e2e` | PASS — 14 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
+| `npm run test:e2e` | PASS — 16 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
 
 Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
 
@@ -115,6 +115,15 @@ Milestone 9 focused checks:
 - Server 9 tests and strict Server Clippy pass. Web typecheck, 31 unit tests, production build, and 15 executable Chromium E2E scenarios pass in a fresh temporary workspace; one Crop lineage scenario remains conditional.
 - Desktop and 390px browser evidence show no horizontal overflow, and the last decision restores a Project-scoped completed Inbox with a Continue to export action after reload.
 
+Milestone 10 focused checks:
+
+- `GET /api/projects/:id/export-readiness` returns image/processed/accepted/Review totals, actionable blockers, configured format compatibility, a recommendation, output root, and the latest still-current export.
+- Export assembles the latest terminal Run per Project image, excludes rejected and pending Annotations, includes accepted revision history, and blocks while any image is unprocessed or any Review is unresolved.
+- The dedicated Project Export route leads with exactly three readiness metrics, one compatible format selection, one primary export action, repair links, a result folder, and a collapsed human-readable report.
+- Export reports persist beside output data and carry a source fingerprint. Reload restores completion only while the Project snapshot remains identical, preventing a stale success state after annotation changes.
+- Application 21/21 and Server 9/9 tests pass; strict all-target/all-feature Clippy for both crates passes. Web typecheck, 32 unit tests, production build, and 16 executable Chromium E2E scenarios pass; one Crop lineage scenario remains conditional.
+- E2E proves unresolved Review blocks export, Review acceptance repairs it, the real Native exporter runs, completion survives reload, and the 390px page has no horizontal overflow.
+
 ## Latest browser audit
 
 The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
@@ -128,13 +137,13 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Project Overview now presents one server-selected next action, Journey progress, and blocker repairs before Recent Activity and Usage; schema, bindings, versions, import/export, and image records are collapsed under Advanced Project Details.
 - Build now behaves as one gated sequence rather than four unrelated management screens; URL refresh preserves the step and server prerequisites prevent manual URL bypass.
 - Sample Test now leads with outcomes and Full Run impact; node statuses, timings, usage, and Artifact types are collapsed diagnostics.
-- Run defaults to outcome-first Results and Review is now a fast decision Inbox. Export remains the next management-heavy surface to convert into the journey endpoint.
+- Run defaults to outcome-first Results, Review is a fast decision Inbox, and Export is the explicit terminal Project workspace with preflight compatibility and durable completion.
 
 ## Release Blocking remaining
 
-- `PASS`: 79
-- `PARTIAL`: 10
-- `OPEN`: 5
+- `PASS`: 84
+- `PARTIAL`: 9
+- `OPEN`: 1
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.

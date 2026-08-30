@@ -5,6 +5,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
+  | { kind: "export"; canonicalPath: string; projectId: string }
   | {
       kind: "build";
       canonicalPath: string;
@@ -102,6 +103,15 @@ export function parseWorkspaceRoute(
       projectId,
       step,
       canonicalPath: `/projects/${encodeURIComponent(projectId)}/build/${step}`,
+    };
+  }
+  const projectExport = clean.match(/^\/projects\/([^/]+)\/export$/);
+  if (projectExport) {
+    const projectId = decodeURIComponent(projectExport[1]);
+    return {
+      kind: "export",
+      projectId,
+      canonicalPath: `/projects/${encodeURIComponent(projectId)}/export`,
     };
   }
   const project = clean.match(/^\/projects\/([^/]+)$/);

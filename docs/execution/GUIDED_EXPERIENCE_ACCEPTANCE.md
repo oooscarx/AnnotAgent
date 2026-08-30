@@ -107,12 +107,12 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| Shows Export Readiness | OPEN | No readiness endpoint/DTO. |
-| Unresolved Review blocks or warns | OPEN | Export report exists; preflight guidance missing. |
-| Recommends Schema-compatible format | OPEN | Available formats exist; no recommendation. |
-| Shows format compatibility | PARTIAL | Export protocol reports skips/warnings after execution, not as preflight. |
-| Shows Export report | PASS | Real report is returned/rendered. |
-| Clear completed journey state | OPEN | No terminal success guidance. |
+| Shows Export Readiness | PASS | The server DTO and dedicated route show image, processed, accepted, unresolved Review, blocker, format, and output facts before execution. |
+| Unresolved Review blocks or warns | PASS | Any persisted `NeedsReview` Annotation makes readiness false, provides a Project-scoped Review repair link, and makes POST export fail closed. |
+| Recommends Schema-compatible format | PASS | Recommendation chooses only an enabled format whose real exporter supports every active task kind, preferring YOLO for pure detection and Native for mixed/classification schemas. |
+| Shows format compatibility | PASS | Every configured format displays preflight support, purpose, warnings, and unsupported task kinds; incompatible choices cannot execute. |
+| Shows Export report | PASS | The real exporter result is rendered as counts, output files, warnings, and result path; technical file detail is collapsed by default. |
+| Clear completed journey state | PASS | Successful export shows an explicit terminal state and restores the persisted fingerprint-matched report after reload. |
 
 ## I. State recovery
 
@@ -257,3 +257,14 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - The final decision navigates to a Project-scoped completed Inbox, remains completed after reload, and exposes Continue to export. Run → Review → Run retains the exact selected Review URL.
 - Server 9 tests pass, including real reject-and-next and accept-and-next transactions over persisted annotations; strict Server Clippy passes. Web typecheck, 31 unit tests, production build, and 15 executable Chromium E2E scenarios pass in a fresh temporary workspace; one external Crop fixture scenario is explicitly skipped.
 - Browser evidence: `docs/execution/screenshots/09-review-inbox.png`, `docs/execution/screenshots/10-review-reject.png`, and the responsive `docs/execution/screenshots/03-review-mobile.png`.
+
+## Milestone 10 evidence
+
+- Added `ExportReadiness`, `ExportBlocker`, `ExportFormatCompatibility`, and `ProjectExportResult` at the Application boundary plus `GET /api/projects/:id/export-readiness`. The POST endpoint now delegates to the same Project snapshot/readiness service instead of rebuilding a one-Run export in HTTP code.
+- Snapshot assembly selects the newest terminal Run for each Project image, exports only `AutoAccepted`/`HumanAccepted` candidates (plus legacy completed Drafts), excludes rejected/pending records, retains accepted revisions, and represents processed negative images without inventing annotations.
+- Real exporter compatibility drives the configured Native, COCO, YOLO Detection, YOLO Segmentation, and LabelMe choices. Pure bbox and segmentation Projects receive task-specific recommendations; classification or mixed schemas prefer lossless Native.
+- Unprocessed images, unresolved Reviews, absent data, and lack of a compatible enabled format produce fail-closed blockers with exact repair destinations. A valid no-target dataset is exportable and is not confused with a failed Run.
+- Export writes `export-report.json` beside output files. Its deterministic source fingerprint restores the terminal success state after reload only while images, accepted Annotations, and revisions still match the exported snapshot.
+- `/projects/:id/export` is canonical URL state and part of the Project workspace tabs. The default screen exposes exactly three readiness metrics, compatibility cards, one solid export action, repair actions, result path/copy action, and a collapsed readable report; the old duplicate Advanced export controls were removed.
+- Application 21/21 and Server 9/9 tests execute the real Native exporter, prove pending Review blocks POST, accept the Review, verify accepted-only counts, and reload the persisted report; strict all-target/all-feature Clippy passes for both crates. Web typecheck, 32 unit tests, production build, and Chromium E2E pass with 16 scenarios plus one conditional Crop skip.
+- Browser E2E covers Review blocker → repair → ready → export → refresh and asserts no horizontal overflow at 390px. Visual evidence: `docs/execution/screenshots/11-export-complete.png`.

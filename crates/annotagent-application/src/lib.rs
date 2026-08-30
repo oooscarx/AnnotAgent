@@ -19,26 +19,29 @@ use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentKind, AgentSession, AgentSessionStatus, Annotation,
     AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BatchBudgetLedger,
     BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
-    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetImporter, DomainSkill,
-    EnabledSkillConfig, FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest,
-    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
-    ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry, ModelRequest, ModelRole,
-    NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep, PricingConfig, ProjectId,
-    ProjectSchema, PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements,
-    RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary, SharedWorkflowStage,
-    SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition,
-    UsageSource, UsageSummary, VisionArtifactValue, VisionCapability, VisionInferenceRequest,
-    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
-    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter, DatasetImporter,
+    DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, ImageId,
+    ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline, LabelPipelineStaticValidator,
+    LabelWorkflowComposition, ModelBinding as PipelineModelBinding, ModelMessage, ModelRegistry,
+    ModelRequest, ModelRole, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
+    PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion,
+    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, SampleTestOutcome, SampleTestOutcomeStatus,
+    SampleTestSummary, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind,
+    TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue,
+    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
+    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
+    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
-    CocoImporter, LabelMeImporter, NativeImporter, YoloDetectionImporter, YoloSegmentationImporter,
+    CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
+    YoloDetectionExporter, YoloDetectionImporter, YoloSegmentationExporter,
+    YoloSegmentationImporter,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
 use annotagent_provider::{
@@ -1004,6 +1007,58 @@ pub struct RunDebugIssue {
     pub code: String,
     pub summary: String,
     pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportReadiness {
+    pub project_id: String,
+    pub ready: bool,
+    pub image_count: u64,
+    pub processed_image_count: u64,
+    pub accepted_annotations: u64,
+    pub unresolved_reviews: u64,
+    pub blocking_issues: Vec<ExportBlocker>,
+    pub recommended_format: Option<String>,
+    pub formats: Vec<ExportFormatCompatibility>,
+    pub output_root: PathBuf,
+    pub last_export: Option<ProjectExportResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportBlocker {
+    pub code: String,
+    pub title: String,
+    pub explanation: String,
+    pub repair_destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportFormatCompatibility {
+    pub format: String,
+    pub display_name: String,
+    pub supported: bool,
+    pub recommended: bool,
+    pub summary: String,
+    pub warnings: Vec<String>,
+    pub unsupported_task_kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectExportResult {
+    pub format: String,
+    pub output_path: PathBuf,
+    pub completed_at: String,
+    #[serde(default)]
+    pub source_fingerprint: String,
+    pub report: ExportReport,
+}
+
+struct ProjectExportData {
+    snapshot: ProjectSnapshot,
+    project_root: PathBuf,
+    image_count: usize,
+    processed_image_count: usize,
+    unresolved_reviews: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2717,6 +2772,178 @@ impl LocalApplication {
             issues,
             duration_ms: history_run_duration_ms(&history.run),
             usage: history_usage_summary(&history),
+        })
+    }
+
+    pub fn export_readiness(&self, project_id: &str) -> Result<ExportReadiness> {
+        let data = self.project_export_data(project_id)?;
+        export_readiness_from_data(project_id, &data)
+    }
+
+    pub async fn export_project_dataset(
+        &self,
+        project_id: &str,
+        requested_format: &str,
+    ) -> Result<ProjectExportResult> {
+        let data = self.project_export_data(project_id)?;
+        let readiness = export_readiness_from_data(project_id, &data)?;
+        if !readiness.ready {
+            bail!(
+                "dataset is not ready to export: {}",
+                readiness
+                    .blocking_issues
+                    .iter()
+                    .map(|issue| issue.title.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        let format = canonical_export_format(requested_format);
+        let compatibility = readiness
+            .formats
+            .iter()
+            .find(|candidate| candidate.format == format)
+            .ok_or_else(|| anyhow!("format {format:?} is not enabled by the Project Schema"))?;
+        if !compatibility.supported {
+            bail!(
+                "format {format:?} is incompatible with task kinds: {}",
+                compatibility.unsupported_task_kinds.join(", ")
+            );
+        }
+        let output_path = data.project_root.join("exports").join(&format);
+        let source_fingerprint = sha256(&serde_json::to_vec(&data.snapshot)?);
+        let mut report = dataset_exporter(&format)?
+            .export(ExportRequest {
+                project: data.snapshot,
+                output: output_path.clone(),
+            })
+            .await
+            .map_err(|error| anyhow!(error))?;
+        let report_path = output_path.join("export-report.json");
+        report.output_files.push(report_path.clone());
+        let result = ProjectExportResult {
+            format,
+            output_path,
+            completed_at: chrono::Utc::now().to_rfc3339(),
+            source_fingerprint,
+            report,
+        };
+        std::fs::write(&report_path, serde_json::to_vec_pretty(&result)?)
+            .with_context(|| format!("cannot write export report {}", report_path.display()))?;
+        Ok(result)
+    }
+
+    fn project_export_data(&self, project_id: &str) -> Result<ProjectExportData> {
+        let project_path = self.project_path(project_id)?;
+        let (schema, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let project_root = project_path
+            .parent()
+            .unwrap_or(&self.workspace)
+            .to_path_buf();
+        let stable_id = stable_project_id(&project_root);
+        let image_paths = self.list_project_images(project_id)?;
+        let mut unresolved_reviews = 0_usize;
+        let mut selected_runs = BTreeMap::<usize, (HistoryRun, Vec<Annotation>)>::new();
+        for run in self.store.list_runs()? {
+            let belongs_to_project = run.project_id.as_ref().map_or_else(
+                || run.project_name == schema.project.name,
+                |run_project_id| *run_project_id == stable_id,
+            );
+            if !belongs_to_project {
+                continue;
+            }
+            let annotations = self.store.list_annotations(run.id)?;
+            unresolved_reviews += annotations
+                .iter()
+                .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
+                .count();
+            if !matches!(
+                run.status,
+                RunStatus::Completed | RunStatus::CompletedWithReview | RunStatus::Partial
+            ) {
+                continue;
+            }
+            let image_index = self
+                .inspect_run_annotations(run.id)
+                .ok()
+                .and_then(|inspection| inspection.image_index)
+                .or_else(|| (image_paths.len() == 1).then_some(0));
+            if let Some(image_index) = image_index.filter(|index| *index < image_paths.len()) {
+                selected_runs
+                    .entry(image_index)
+                    .or_insert((run, annotations));
+            }
+        }
+
+        let processed_image_count = selected_runs.len();
+        let mut annotations = Vec::new();
+        let mut image_ids = BTreeMap::<usize, BTreeSet<ImageId>>::new();
+        let mut revisions = Vec::new();
+        for (image_index, (run, candidates)) in selected_runs {
+            let accepted = candidates
+                .into_iter()
+                .filter(|annotation| {
+                    matches!(
+                        annotation.review_status,
+                        ReviewStatus::AutoAccepted | ReviewStatus::HumanAccepted
+                    ) || (annotation.review_status == ReviewStatus::Draft
+                        && run.status == RunStatus::Completed)
+                })
+                .collect::<Vec<_>>();
+            let accepted_ids = accepted
+                .iter()
+                .map(|annotation| annotation.id)
+                .collect::<BTreeSet<_>>();
+            image_ids
+                .entry(image_index)
+                .or_default()
+                .extend(accepted.iter().map(|annotation| annotation.image_id));
+            revisions.extend(
+                self.store
+                    .history(run.id)?
+                    .revisions
+                    .into_iter()
+                    .filter(|revision| accepted_ids.contains(&revision.annotation_id)),
+            );
+            annotations.extend(accepted);
+        }
+
+        let mut images = Vec::new();
+        for (index, image_path) in image_paths.iter().enumerate() {
+            let frame = load_image(image_path, 40_000_000)
+                .with_context(|| format!("cannot load export image {}", image_path.display()))?;
+            let relative_path = image_path
+                .strip_prefix(&project_root)
+                .unwrap_or(image_path)
+                .to_path_buf();
+            let ids = image_ids
+                .remove(&index)
+                .filter(|ids| !ids.is_empty())
+                .unwrap_or_else(|| {
+                    BTreeSet::from([ImageId(uuid::Uuid::new_v5(
+                        &stable_id.0,
+                        relative_path.to_string_lossy().as_bytes(),
+                    ))])
+                });
+            for id in ids {
+                images.push(SnapshotImage {
+                    id,
+                    relative_path: relative_path.clone(),
+                    metadata: frame.metadata.clone(),
+                });
+            }
+        }
+        Ok(ProjectExportData {
+            snapshot: ProjectSnapshot {
+                schema,
+                images,
+                annotations,
+                revisions,
+            },
+            project_root,
+            image_count: image_paths.len(),
+            processed_image_count,
+            unresolved_reviews,
         })
     }
 
@@ -5145,6 +5372,241 @@ pub fn is_supported_image(path: &Path) -> bool {
             })
 }
 
+fn canonical_export_format(format: &str) -> String {
+    match format.trim().to_ascii_lowercase().as_str() {
+        "yolo" => "yolo_detection".to_owned(),
+        canonical => canonical.to_owned(),
+    }
+}
+
+fn dataset_exporter(format: &str) -> Result<Box<dyn DatasetExporter>> {
+    match canonical_export_format(format).as_str() {
+        "native" => Ok(Box::new(NativeExporter)),
+        "coco" => Ok(Box::new(CocoExporter)),
+        "yolo_detection" => Ok(Box::new(YoloDetectionExporter)),
+        "yolo_segmentation" => Ok(Box::new(YoloSegmentationExporter)),
+        "labelme" => Ok(Box::new(LabelMeExporter)),
+        other => bail!("unknown export format {other:?}"),
+    }
+}
+
+fn export_format_display_name(format: &str) -> &'static str {
+    match format {
+        "native" => "AnnotAgent Native",
+        "coco" => "COCO",
+        "yolo_detection" => "YOLO Detection",
+        "yolo_segmentation" => "YOLO Segmentation",
+        "labelme" => "LabelMe",
+        _ => "Dataset",
+    }
+}
+
+fn export_format_summary(format: &str, supported: bool) -> String {
+    if !supported {
+        return "This format cannot represent every task in the current Project Schema.".to_owned();
+    }
+    match format {
+        "native" => "Preserves the full schema, provenance, review state, and revision history.",
+        "coco" => "A standardized computer-vision interchange format for compatible geometry.",
+        "yolo_detection" => "Training-ready labels for bounding-box detection models.",
+        "yolo_segmentation" => {
+            "Training-ready labels for polygon and instance segmentation models."
+        }
+        "labelme" => "Editable per-image annotations for compatible geometry.",
+        _ => "A configured Project Schema export format.",
+    }
+    .to_owned()
+}
+
+fn recommended_export_format(
+    snapshot: &ProjectSnapshot,
+    formats: &[ExportFormatCompatibility],
+) -> Option<String> {
+    let task_kinds = snapshot
+        .schema
+        .tasks
+        .iter()
+        .map(|task| task.kind)
+        .collect::<Vec<_>>();
+    let all_bbox =
+        !task_kinds.is_empty() && task_kinds.iter().all(|kind| *kind == TaskKind::BoundingBox);
+    let all_segmentation = !task_kinds.is_empty()
+        && task_kinds
+            .iter()
+            .all(|kind| matches!(kind, TaskKind::Polygon | TaskKind::InstanceMask));
+    let preference = if all_bbox {
+        [
+            "yolo_detection",
+            "coco",
+            "labelme",
+            "native",
+            "yolo_segmentation",
+        ]
+    } else if all_segmentation {
+        [
+            "yolo_segmentation",
+            "coco",
+            "labelme",
+            "native",
+            "yolo_detection",
+        ]
+    } else {
+        [
+            "native",
+            "coco",
+            "labelme",
+            "yolo_detection",
+            "yolo_segmentation",
+        ]
+    };
+    preference.into_iter().find_map(|preferred| {
+        formats
+            .iter()
+            .find(|format| format.format == preferred && format.supported)
+            .map(|format| format.format.clone())
+    })
+}
+
+fn latest_project_export(
+    output_root: &Path,
+    formats: &[ExportFormatCompatibility],
+    source_fingerprint: &str,
+) -> Option<ProjectExportResult> {
+    formats
+        .iter()
+        .filter_map(|format| {
+            let report_path = output_root.join(&format.format).join("export-report.json");
+            let contents = std::fs::read_to_string(report_path).ok()?;
+            serde_json::from_str::<ProjectExportResult>(&contents)
+                .ok()
+                .filter(|result| result.source_fingerprint == source_fingerprint)
+        })
+        .max_by(|left, right| left.completed_at.cmp(&right.completed_at))
+}
+
+fn export_readiness_from_data(
+    project_id: &str,
+    data: &ProjectExportData,
+) -> Result<ExportReadiness> {
+    let configured = if data.snapshot.schema.export.formats.is_empty() {
+        vec!["native".to_owned()]
+    } else {
+        data.snapshot.schema.export.formats.clone()
+    };
+    let mut seen = BTreeSet::new();
+    let mut formats = Vec::new();
+    for configured_format in configured {
+        let format = canonical_export_format(&configured_format);
+        if !seen.insert(format.clone()) {
+            continue;
+        }
+        let (supported, warnings, unsupported_task_kinds) = match dataset_exporter(&format) {
+            Ok(exporter) => {
+                let compatibility = exporter.compatibility(&data.snapshot);
+                (
+                    compatibility.supported,
+                    compatibility.warnings,
+                    compatibility.unsupported_task_kinds,
+                )
+            }
+            Err(_) => (
+                false,
+                vec![format!(
+                    "No exporter is registered for {configured_format:?}."
+                )],
+                Vec::new(),
+            ),
+        };
+        formats.push(ExportFormatCompatibility {
+            display_name: export_format_display_name(&format).to_owned(),
+            summary: export_format_summary(&format, supported),
+            format,
+            supported,
+            recommended: false,
+            warnings,
+            unsupported_task_kinds,
+        });
+    }
+    let recommended_format = recommended_export_format(&data.snapshot, &formats);
+    if let Some(recommended) = recommended_format.as_deref()
+        && let Some(format) = formats
+            .iter_mut()
+            .find(|format| format.format == recommended)
+    {
+        format.recommended = true;
+    }
+
+    let mut blocking_issues = Vec::new();
+    if data.image_count == 0 {
+        blocking_issues.push(ExportBlocker {
+            code: "images_missing".to_owned(),
+            title: "Add images before exporting".to_owned(),
+            explanation: "The dataset has no images to include in an export.".to_owned(),
+            repair_destination: format!("/projects/{project_id}/build/data"),
+        });
+    } else if data.processed_image_count < data.image_count {
+        blocking_issues.push(ExportBlocker {
+            code: "images_not_processed".to_owned(),
+            title: "Run the remaining images".to_owned(),
+            explanation: format!(
+                "{} of {} images have a completed annotation run.",
+                data.processed_image_count, data.image_count
+            ),
+            repair_destination: format!("/projects/{project_id}"),
+        });
+    }
+    if data.unresolved_reviews > 0 {
+        blocking_issues.push(ExportBlocker {
+            code: "reviews_unresolved".to_owned(),
+            title: "Resolve pending reviews".to_owned(),
+            explanation: format!(
+                "{} annotation{} still {} a human decision.",
+                data.unresolved_reviews,
+                if data.unresolved_reviews == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                if data.unresolved_reviews == 1 {
+                    "requires"
+                } else {
+                    "require"
+                }
+            ),
+            repair_destination: format!("/review?project_id={project_id}"),
+        });
+    }
+    if recommended_format.is_none() {
+        blocking_issues.push(ExportBlocker {
+            code: "no_compatible_format".to_owned(),
+            title: "Choose a compatible export format".to_owned(),
+            explanation:
+                "None of the formats enabled by the Project Schema can represent every task."
+                    .to_owned(),
+            repair_destination: format!("/projects/{project_id}/build/labels"),
+        });
+    }
+    let output_root = data.project_root.join("exports");
+    let source_fingerprint = sha256(&serde_json::to_vec(&data.snapshot)?);
+    let last_export = blocking_issues
+        .is_empty()
+        .then(|| latest_project_export(&output_root, &formats, &source_fingerprint))
+        .flatten();
+    Ok(ExportReadiness {
+        project_id: project_id.to_owned(),
+        ready: blocking_issues.is_empty(),
+        image_count: data.image_count as u64,
+        processed_image_count: data.processed_image_count as u64,
+        accepted_annotations: data.snapshot.annotations.len() as u64,
+        unresolved_reviews: data.unresolved_reviews as u64,
+        blocking_issues,
+        recommended_format,
+        formats,
+        output_root,
+        last_export,
+    })
+}
+
 fn prepare_run_with(
     project_path: &Path,
     provider_kind: &str,
@@ -6028,6 +6490,32 @@ export:
             replay
                 .preserved_upstream_nodes
                 .contains(&"image".to_owned())
+        );
+        let readiness = application
+            .export_readiness("label-classification")
+            .expect("Export Readiness");
+        assert!(readiness.ready, "{:#?}", readiness.blocking_issues);
+        assert_eq!(readiness.image_count, 1);
+        assert_eq!(readiness.processed_image_count, 1);
+        assert_eq!(readiness.accepted_annotations, 1);
+        assert_eq!(readiness.unresolved_reviews, 0);
+        assert_eq!(readiness.recommended_format.as_deref(), Some("native"));
+        let export = application
+            .export_project_dataset("label-classification", "native")
+            .await
+            .expect("native Project export");
+        assert_eq!(export.report.exported_count, 1);
+        assert!(export.output_path.join("annotagent-native.json").is_file());
+        assert!(export.output_path.join("export-report.json").is_file());
+        let persisted = application
+            .export_readiness("label-classification")
+            .expect("persisted Export result");
+        assert_eq!(
+            persisted
+                .last_export
+                .as_ref()
+                .map(|result| &result.completed_at),
+            Some(&export.completed_at)
         );
 
         let image_root = temporary.path().join("label-classification/images");

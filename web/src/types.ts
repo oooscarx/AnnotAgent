@@ -677,6 +677,53 @@ export interface RunDebugSummary {
   usage: { input_tokens: number; output_tokens: number; estimated_cost: string };
 }
 
+export interface ExportBlocker {
+  code: string;
+  title: string;
+  explanation: string;
+  repair_destination: string;
+}
+
+export interface ExportFormatCompatibility {
+  format: string;
+  display_name: string;
+  supported: boolean;
+  recommended: boolean;
+  summary: string;
+  warnings: string[];
+  unsupported_task_kinds: string[];
+}
+
+export interface ExportReport {
+  exported_count: number;
+  skipped_count: number;
+  warnings: string[];
+  unsupported_task_kinds: string[];
+  output_files: string[];
+}
+
+export interface ProjectExportResult {
+  format: string;
+  output_path: string;
+  completed_at: string;
+  source_fingerprint: string;
+  report: ExportReport;
+}
+
+export interface ExportReadiness {
+  project_id: string;
+  ready: boolean;
+  image_count: number;
+  processed_image_count: number;
+  accepted_annotations: number;
+  unresolved_reviews: number;
+  blocking_issues: ExportBlocker[];
+  recommended_format?: string;
+  formats: ExportFormatCompatibility[];
+  output_root: string;
+  last_export?: ProjectExportResult;
+}
+
 export type Point = [number, number];
 
 export type AnnotationValue =

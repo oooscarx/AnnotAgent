@@ -39,6 +39,8 @@ import type {
   PipelineArtifactType,
   PipelineSource,
   PipelineStep,
+  ExportReadiness,
+  ProjectExportResult,
   GuidedAction,
   ProjectSummary,
   ProjectGuidance,
@@ -60,11 +62,12 @@ import type {
   WorkflowSuggestion,
 } from "./types";
 
-const PAGE_TITLES: Record<ProductPage | "project" | "build", string> = {
+const PAGE_TITLES: Record<ProductPage | "project" | "build" | "export", string> = {
   home: "Home",
   projects: "Projects",
   project: "Project",
   build: "Build",
+  export: "Export",
   runs: "Runs",
   review: "Review",
   settings: "Settings",
@@ -177,7 +180,7 @@ export function App() {
   }, [route.canonicalPath]);
 
   const routeProjectId =
-    route.kind === "project" || route.kind === "build"
+    route.kind === "project" || route.kind === "build" || route.kind === "export"
       ? route.projectId
       : "";
   const routeRun = route.kind === "runs" && route.runId
@@ -199,7 +202,9 @@ export function App() {
   };
   const switchProject = (id: string) => {
     setProjectContext(id);
-    if (route.kind === "project" || route.kind === "build") openProject(id);
+    if (route.kind === "export")
+      navigate(id ? `/projects/${encodeURIComponent(id)}/export` : "/projects");
+    else if (route.kind === "project" || route.kind === "build") openProject(id);
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
@@ -250,7 +255,8 @@ export function App() {
                 item.page === "projects"
                   ? route.kind === "projects" ||
                     route.kind === "project" ||
-                    route.kind === "build"
+                    route.kind === "build" ||
+                    route.kind === "export"
                   : page === item.page
               }
               href={item.href}
@@ -277,7 +283,7 @@ export function App() {
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
             <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
           </div>
-          {(route.kind === "project" || route.kind === "build") && <div className="project-switch">
+          {(route.kind === "project" || route.kind === "build" || route.kind === "export") && <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
               const profile = visualProfilesForSkills([skill.id])[0];
               return (
@@ -390,6 +396,13 @@ export function App() {
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
             onRefresh={refresh}
+            onError={setError}
+          />
+        )}
+        {loaded && route.kind === "export" && (
+          <ProjectExportPage
+            project={selectedProject}
+            onNavigate={navigate}
             onError={setError}
           />
         )}
@@ -1242,8 +1255,6 @@ function ProjectPage({
   const [importFormat, setImportFormat] = useState("native");
   const [importDryRun, setImportDryRun] = useState(true);
   const [importResult, setImportResult] = useState("");
-  const [exportResult, setExportResult] = useState("");
-  const [exporting, setExporting] = useState("");
   const [labelTaskId, setLabelTaskId] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [skillCatalog, setSkillCatalog] = useState<SkillDetail[]>([]);
@@ -1335,19 +1346,6 @@ function ProjectPage({
         `${workflow.workflow_id}:${workflow.version}` === workflowKey,
     ) ?? project.active_workflow;
   const guidance = activeWorkspace.guidance;
-  const exportAnnotations = (format: string) => {
-    setExporting(format);
-    setExportResult("");
-    void api
-      .export(project.id, format)
-      .then((value) =>
-        setExportResult(
-          `Exported ${format}: ${JSON.stringify(value, null, 2)}`,
-        ),
-      )
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setExporting(""));
-  };
   const startBatch = () => {
     setStarting(true);
     void api
@@ -1437,26 +1435,14 @@ function ProjectPage({
   const runGuidedAction = (action: GuidedAction) => {
     if (!action.enabled) return;
     if (action.kind === "run_dataset") return startBatch();
-    if (action.kind === "export_dataset") {
-      const details = document.getElementById("project-advanced-details") as HTMLDetailsElement | null;
-      if (details) details.open = true;
-      return window.requestAnimationFrame(() =>
-        document.getElementById("project-export")?.scrollIntoView({ behavior: "smooth" }),
-      );
-    }
+    if (action.kind === "export_dataset")
+      return onNavigate(`/projects/${encodeURIComponent(project.id)}/export`);
     if (action.kind === "open_active_run" && project.active_batch)
       return document.getElementById("project-active-run")?.scrollIntoView({ behavior: "smooth" });
     if (action.destination) return onNavigate(action.destination);
   };
   const openJourneyStep = (step: ProjectWorkspaceSummary["guidance"]["journey"][number]) => {
     if (!step.destination) return;
-    if (step.id === "export")
-      return runGuidedAction({
-        kind: "export_dataset",
-        label: "Export dataset",
-        destination: step.destination,
-        enabled: true,
-      });
     onNavigate(step.destination);
   };
   const labelCount = project.annotation_schema.reduce(
@@ -1477,7 +1463,7 @@ function ProjectPage({
         <button onClick={() => onOpenBuild("data")}>Build</button>
         <button onClick={() => onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`)}>Runs</button>
         <button onClick={onOpenReview}>Review</button>
-        <button onClick={() => runGuidedAction({ kind: "export_dataset", label: "Export dataset", enabled: true })}>Export</button>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Export</button>
       </nav>
       <header className="project-context-header">
         <div>
@@ -1635,7 +1621,7 @@ function ProjectPage({
       </div>
 
       <details className="advanced-project-details" id="project-advanced-details">
-        <summary><span><strong>Advanced Project Details</strong><small>Schema, model bindings, Skills, versions, import, export, and image records</small></span><b aria-hidden="true">⌄</b></summary>
+        <summary><span><strong>Advanced Project Details</strong><small>Schema, model bindings, Skills, versions, import, and image records</small></span><b aria-hidden="true">⌄</b></summary>
         <div className="project-overview-grid">
         <Panel title="Run configuration" eyebrow="Immutable Workflow selection">
           <label>
@@ -1783,8 +1769,7 @@ function ProjectPage({
             </button>
           </div>
         </Panel>
-        <div id="project-export">
-        <Panel title="Versions, Runs, Reviews & Exports" eyebrow="Project outputs">
+        <Panel title="Versions, Runs & Reviews" eyebrow="Project outputs">
           <Fact
             label="Workflow versions"
             value={project.available_workflow_versions.length}
@@ -1798,25 +1783,8 @@ function ProjectPage({
               ).length
             }
           />
-          <TagGroup title="Export formats" values={project.export_formats} />
-          <div className="button-row" aria-label="Export annotations">
-            {project.export_formats.map((format) => (
-              <button
-                key={format}
-                disabled={Boolean(exporting)}
-                onClick={() => exportAnnotations(format)}
-              >
-                {exporting === format ? "Exporting…" : `Export ${format}`}
-              </button>
-            ))}
-          </div>
-          {exportResult && (
-            <pre className="import-report" aria-live="polite">
-              {exportResult}
-            </pre>
-          )}
+          <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Open Export workspace</button>
         </Panel>
-        </div>
         <Panel title="Annotation import" eyebrow="Dry-run first · compatibility report">
           <label>
             Format
@@ -1864,6 +1832,137 @@ function ProjectPage({
         </div>
       </Panel>
       </details>
+    </section>
+  );
+}
+
+function ProjectExportPage({
+  project,
+  onNavigate,
+  onError,
+}: {
+  project?: ProjectSummary;
+  onNavigate: (destination: string) => void;
+  onError: (value: string) => void;
+}) {
+  const [readiness, setReadiness] = useState<ExportReadiness>();
+  const [format, setFormat] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [result, setResult] = useState<ProjectExportResult>();
+  const [copyStatus, setCopyStatus] = useState("");
+  const activeReadiness = readiness?.project_id === project?.id ? readiness : undefined;
+  const loadReadiness = () => {
+    if (!project) return Promise.resolve();
+    return api.exportReadiness(project.id).then((value) => {
+      setReadiness(value);
+      setFormat((current) =>
+        value.formats.some((item) => item.format === current && item.supported)
+          ? current
+          : value.recommended_format ?? value.formats.find((item) => item.supported)?.format ?? "",
+      );
+      setResult(value.last_export);
+    });
+  };
+  useEffect(() => {
+    setReadiness(undefined);
+    setResult(undefined);
+    setCopyStatus("");
+    void loadReadiness().catch((error: Error) => onError(error.message));
+  }, [project?.id]);
+  const executeExport = () => {
+    if (!project || !format || !activeReadiness?.ready) return;
+    setExporting(true);
+    setCopyStatus("");
+    void api
+      .export(project.id, format)
+      .then((value) => {
+        setResult(value);
+        return loadReadiness();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setExporting(false));
+  };
+  const copyOutputPath = () => {
+    if (!result) return;
+    void navigator.clipboard
+      .writeText(result.output_path)
+      .then(() => setCopyStatus("Folder path copied"))
+      .catch(() => setCopyStatus("Select the path above to copy it"));
+  };
+  if (!project)
+    return <section className="page-stack"><Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." /></section>;
+  return (
+    <section className="page-stack export-workspace">
+      <ProjectBreadcrumb project={project} current="Export" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
+      <nav className="section-tabs" aria-label={`${project.name} workspace`}>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>Overview</button>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/data`)}>Build</button>
+        <button onClick={() => onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`)}>Runs</button>
+        <button onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Review</button>
+        <button className="active" aria-current="page">Export</button>
+      </nav>
+      {!activeReadiness ? (
+        <div className="loading-banner" role="status">Checking dataset export readiness…</div>
+      ) : (
+        <>
+          <header className={`export-hero ${activeReadiness.ready ? "ready" : "blocked"}`}>
+            <div>
+              <span className="eyebrow">Dataset delivery</span>
+              <h2>{activeReadiness.ready ? "Your dataset is ready" : "Export needs attention"}</h2>
+              <p>{activeReadiness.ready ? "All images have completed runs and every review decision is resolved. Choose a compatible format to create the dataset." : "Resolve the items below before creating a formal dataset export."}</p>
+            </div>
+            <dl className="export-readiness-metrics">
+              <div><dt>Images</dt><dd>{activeReadiness.image_count}</dd><small>{activeReadiness.processed_image_count} processed</small></div>
+              <div><dt>Accepted annotations</dt><dd>{activeReadiness.accepted_annotations}</dd><small>Included in export</small></div>
+              <div><dt>Unresolved reviews</dt><dd>{activeReadiness.unresolved_reviews}</dd><small>{activeReadiness.unresolved_reviews ? "Blocking export" : "Queue is clear"}</small></div>
+            </dl>
+          </header>
+
+          {activeReadiness.blocking_issues.length > 0 && <section className="export-blockers" aria-labelledby="export-blockers-title">
+            <div className="section-heading"><div><span className="eyebrow">Blocking reviews and setup</span><h2 id="export-blockers-title">Complete these items</h2></div></div>
+            {activeReadiness.blocking_issues.map((issue) => <article key={issue.code}>
+              <span aria-hidden="true">!</span>
+              <div><strong>{issue.title}</strong><small>{issue.explanation}</small></div>
+              <button onClick={() => onNavigate(issue.repair_destination)}>Resolve</button>
+            </article>)}
+          </section>}
+
+          <section className="export-format-section" aria-labelledby="export-format-title">
+            <div className="section-heading"><div><span className="eyebrow">Schema compatibility</span><h2 id="export-format-title">Choose an export format</h2></div><small>The recommendation is calculated from the active Project Schema.</small></div>
+            <div className="export-format-grid">
+              {activeReadiness.formats.map((item) => <label className={`export-format-card ${format === item.format ? "selected" : ""} ${!item.supported ? "unsupported" : ""}`} key={item.format}>
+                <input type="radio" name="export-format" value={item.format} checked={format === item.format} disabled={!item.supported} onChange={() => setFormat(item.format)} />
+                <span>
+                  <span className="export-format-title"><strong>{item.display_name}</strong>{item.recommended && <b>Recommended</b>}{!item.supported && <b>Incompatible</b>}</span>
+                  <small>{item.summary}</small>
+                  {item.unsupported_task_kinds.length > 0 && <small>Unsupported: {item.unsupported_task_kinds.join(", ")}</small>}
+                  {item.warnings.map((warning) => <small key={warning}>{warning}</small>)}
+                </span>
+              </label>)}
+            </div>
+            <div className="export-actions">
+              <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>Back to Project</button>
+              <button className="primary" disabled={!activeReadiness.ready || !format || exporting} onClick={executeExport}>
+                {exporting ? "Exporting dataset…" : `Export ${activeReadiness.formats.find((item) => item.format === format)?.display_name ?? "dataset"} dataset`}
+              </button>
+            </div>
+          </section>
+
+          {result && <section className="export-success" aria-live="polite">
+            <div className="export-success-heading"><span aria-hidden="true">✓</span><div><span className="eyebrow">Export complete</span><h2>Dataset exported successfully</h2><p>{result.report.exported_count} annotation{result.report.exported_count === 1 ? "" : "s"} exported · {result.report.skipped_count} skipped · {new Date(result.completed_at).toLocaleString()}</p></div></div>
+            <div className="export-result-path"><span>Result folder</span><code>{result.output_path}</code><button onClick={copyOutputPath}>Copy folder path</button>{copyStatus && <small role="status">{copyStatus}</small>}</div>
+            <details className="export-report"><summary>View export report</summary><dl>
+              <div><dt>Format</dt><dd>{result.format}</dd></div>
+              <div><dt>Exported</dt><dd>{result.report.exported_count}</dd></div>
+              <div><dt>Skipped</dt><dd>{result.report.skipped_count}</dd></div>
+              <div><dt>Files</dt><dd>{result.report.output_files.length}</dd></div>
+            </dl>
+              {result.report.output_files.length > 0 && <ul>{result.report.output_files.map((file) => <li key={file}><code>{file}</code></li>)}</ul>}
+              {result.report.warnings.length > 0 && <ul>{result.report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+            </details>
+          </section>}
+        </>
+      )}
     </section>
   );
 }
@@ -4956,7 +5055,7 @@ function ReviewPage({
           <span className="eyebrow">Inbox complete</span>
           <h2>{progress.total_count > 0 ? "Review complete" : "Nothing needs review"}</h2>
           <p>{progress.total_count > 0 ? `All ${progress.total_count} queued results have a human decision.` : "Uncertain results will appear here when an Automation routes them to Human Review."}</p>
-          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => onNavigate(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}`)}>Continue to export</button>}
+          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => onNavigate(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}/export`)}>Continue to export</button>}
         </section> : <section className="review-complete panel" aria-busy="true">
           <span className="eyebrow">Review inbox</span>
           <h2>Loading review results…</h2>

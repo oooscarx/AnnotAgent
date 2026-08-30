@@ -6,6 +6,8 @@ import type {
   HistoryRun,
   ImageItem,
   ModelBinding,
+  ExportReadiness,
+  ProjectExportResult,
   ProjectWorkflow,
   ProjectSummary,
   ProjectWorkspaceSummary,
@@ -331,8 +333,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(value),
     }),
+  exportReadiness: (projectId: string) =>
+    request<ExportReadiness>(`/api/projects/${projectId}/export-readiness`),
   export: (projectId: string, format: string) =>
-    request(`/api/projects/${projectId}/export`, {
+    request<ProjectExportResult>(`/api/projects/${projectId}/export`, {
       method: "POST",
       body: JSON.stringify({ format }),
     }),
