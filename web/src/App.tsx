@@ -1146,6 +1146,7 @@ function Dashboard({
           <h2>
             Move vision data from setup
             <br />
+            {" "}
             <em>to reviewed output.</em>
           </h2>
           <p>
