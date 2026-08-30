@@ -166,13 +166,7 @@ impl LayeredSkillRegistry {
                 .resources(request)
                 .map_err(|error| RegistryError::InvalidManifest(error.to_string()));
         };
-        if name.is_empty()
-            || std::path::Path::new(name).is_absolute()
-            || name.split('/').any(|component| component == "..")
-            || name.split('\\').any(|component| component == "..")
-        {
-            return Err(RegistryError::UnsafeResource(name.to_owned()));
-        }
+        ensure_safe_resource_name(name)?;
         let declared = skill
             .manifest()
             .summary_resources
@@ -313,6 +307,38 @@ impl SkillRegistry {
             .ok_or_else(|| RegistryError::UnknownSkill(id.to_owned()))
     }
 
+    pub fn load_resource(
+        &self,
+        skill_id: &str,
+        request: &SkillResourceRequest,
+    ) -> Result<Vec<SkillResource>, RegistryError> {
+        if self.get(skill_id).is_err() {
+            return self.layered.load_resource(skill_id, request);
+        }
+        let skill = self.get(skill_id)?;
+        let Some(name) = request.resource_name.as_deref() else {
+            return skill
+                .prompt_resources(request)
+                .map_err(|error| RegistryError::InvalidManifest(error.to_string()));
+        };
+        ensure_safe_resource_name(name)?;
+        let declared = skill
+            .manifest()
+            .summary_resources
+            .iter()
+            .chain(skill.manifest().task_resources.values().flatten())
+            .any(|resource| resource == name);
+        if !declared {
+            return Err(RegistryError::UndeclaredResource {
+                skill: skill_id.to_owned(),
+                resource: name.to_owned(),
+            });
+        }
+        skill
+            .prompt_resources(request)
+            .map_err(|error| RegistryError::InvalidManifest(error.to_string()))
+    }
+
     #[must_use]
     pub fn list(&self) -> Vec<Arc<dyn DomainSkill>> {
         self.skills.values().cloned().collect()
@@ -432,6 +458,17 @@ impl SkillRegistry {
         }
         Ok(extensions)
     }
+}
+
+fn ensure_safe_resource_name(name: &str) -> Result<(), RegistryError> {
+    if name.is_empty()
+        || std::path::Path::new(name).is_absolute()
+        || name.split('/').any(|component| component == "..")
+        || name.split('\\').any(|component| component == "..")
+    {
+        return Err(RegistryError::UnsafeResource(name.to_owned()));
+    }
+    Ok(())
 }
 
 fn extend_validation_catalog(

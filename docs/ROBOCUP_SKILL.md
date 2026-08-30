@@ -7,7 +7,7 @@ ID/version. The compatibility `RoboCupSkill` now exposes the same single ball ta
 penalty-mark, robot, person and robot-attribute annotation tasks are no longer product options.
 
 The Ball Skill owns only domain resources, correction taxonomy, hard-negative/field-relation
-Validators, review policy and two model-agnostic templates. Detection is supplied by generic
+Validators, review policy and model-agnostic template hints. Detection is supplied by generic
 Object Detection, Open Vocabulary Detection or VLM capabilities;
 Filter/Crop/Gates/Review/Commit are Core.
 
@@ -23,10 +23,20 @@ The compatibility task graph is deliberately one node:
 objects[ball]
 ```
 
-The only task resource is `tasks/ball.md`. The Workflow Designer exposes
-`robocup.ball.vlm-bootstrap` and `robocup.ball.specialist_with_open_vocab_fallback` only.
+The compatibility Project exposes one default starter, `robocup.ball.vlm-bootstrap`, and the Agent
+loads `resources/advisor.md` before drafting. The default is deliberately small:
 
-The release hybrid path is:
+```text
+Image → Detection → Select football candidates → RoboCup Validators → Decision
+      → Save strong candidates
+      → Human Review uncertain candidates
+```
+
+An explicitly enabled `robocup.ball` extension retains the specialist/fallback template for
+advanced, configured deployments and immutable-version compatibility. It is not a recommendation
+when its required Worker is Disabled, Unknown, unhealthy, or missing checkpoint metadata.
+
+The optional hybrid path is:
 
 ```text
 Image → specialist Object Detection → primary validation → Detection Recovery
@@ -40,17 +50,9 @@ each source score semantic remain in independent evidence. White-shoe, penalty-m
 and exact-scope Correction Memory risks can force fallback or Crop verification; a configured
 `not_football` classification takes an explicit Reject terminal.
 
-The current live Ball Project can add real boundary refinement with
-`sam_prompted_refiner`. It first uses bounded local pixels to correct an imprecise VLM prompt, then
-calls SAM2.1 through HTTP Vision Protocol v1. SAM returns an `InstanceMask`; Rust independently
-decodes its mask, applies geometry guards, and derives the final box. The original box, mask, and
-refined box remain separate, linked Artifacts. Missing/invalid SAM output is explicitly marked and
-routes the local fallback result to Human Review.
-
-```bash
-./scripts/setup-sam2.sh       # once; files stay under ignored workspace/.annotagent
-./scripts/start-sam2-worker.sh
-```
+The Domain Skill registers one dependency-free foreground refiner. SAM is a Model Backend in Labs,
+not a RoboCup Skill action. A deployment may compose prompted Segmentation through HTTP Vision
+Protocol v1 after the Worker is explicitly configured and healthy; the default Agent never adds it.
 
 ## Ball hard negatives
 
@@ -66,10 +68,16 @@ Human decisions store project/Skill/task/labels/reason, before/after snapshots, 
 cargo test -p annotagent-skill-robocup --test robocup_algorithms
 cargo test -p annotagent-storage --test robocup_loops
 cargo run -p annotagent -- demo robocup-ball
+cargo run -p annotagent -- demo lean-agent-robocup
 cargo run -p annotagent -- evaluate \
   --ground-truth examples/robocup/evaluation/ground-truth.synthetic.json \
   --predictions examples/robocup/evaluation/predictions.synthetic.json \
   --bbox-iou-threshold 0.5
 ```
 
-Synthetic labelled evaluation covers geometry and operational metrics. Accuracy is refused for unlabelled real data. Real Qwen and external worker smoke remain live-conditional and are never inferred from fixture output.
+`lean-agent-robocup` is the no-key Pipeline Builder demonstration: it loads the Domain Advisor
+resource, creates an invalid Draft, consumes Rust validation, repairs, performs a real sandbox Dry
+Run, and stops at human approval. Its visual evidence is explicitly labelled Mock. Synthetic
+labelled evaluation covers geometry and operational metrics. Accuracy is refused for unlabelled
+real data. Real Qwen and external worker smoke remain live-conditional and are never inferred from
+fixture output.

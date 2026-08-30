@@ -23,11 +23,12 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
   audited invalid→repair→Dry Run→evidence revision→human approval loop through real Rust tools.
 - C. Pipeline safety: PASS. Tool allow-list, Registry-bound mutations and Builder Grammar pass;
   Label Pipeline validation and publish both enforce the same grammar at the Application boundary.
-- D. Offline capability: PARTIAL. ScriptedMock and Registry RuleBased paths are available; the full
-  offline demo matrix is finalized in M8.
+- D. Offline capability: PARTIAL. ScriptedMock, Registry RuleBased and the lean RoboCup Agent demo
+  are available; the full offline demo/release matrix is finalized in M8.
 - E. UX: PASS. The Agent is project-local, its persisted stages/Tools/validation/Dry Run/usage are
   observable and cancellable, and structured Diff Apply selected/Undo never publishes.
-- F. RoboCup Domain boundary: OPEN.
+- F. RoboCup Domain boundary: PASS. The Domain owns advice and Validators, the default recipe uses
+  one availability-qualified Detection backend, and unavailable Labs bindings are not selected.
 - G. Course requirements: OPEN.
 
 Evidence is added per milestone; an item is not marked PASS merely because a type or button exists.
@@ -123,3 +124,16 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | First-Draft experience | PASS | If no editable Current Draft exists, Automation creates a real empty Draft before invoking the Agent, then diffs the proposal against it; it does not fake a client-only baseline. |
 | M6 Rust regression | PASS | Core 50, Application 32, Server 9 and TUI 6 tests passed; focused selective apply/Undo and strict workspace Clippy with warnings denied pass. |
 | M6 Web/E2E regression | PASS | TypeScript, production build and 36 Vitest tests passed. Guided Chromium suite: 25 passed, including final Agent trace and real Apply selected → persisted DAG change → Undo restoration. |
+
+## M7 minimal RoboCup Ball Domain
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| One lean default workflow | PASS | Compatibility RoboCup exposes only `robocup.ball.vlm-bootstrap`; the Draft contains one Detection model call followed by football selection, both Domain Validators and Decision/Review/Commit. |
+| Domain Advisor resource is real | PASS | `resources/advisor.md` is declared by the Pack and Ball manifests. Registry loading is traversal safe, bounded by the Application, recorded as `load_skill_resource`, and required before Domain template creation. |
+| Domain Validators remain domain-owned | PASS | Hard-negative and field-relation Validators are registered by RoboCup; generic Core/Application contains no football-label branching. |
+| Model availability affects selection | PASS | Application test selects ready `default-vision` for VLM Detection and rejects an enabled but Unknown LocateAnything Labs binding as not ready. |
+| Labs are not default recommendations | PASS | The default Draft test rejects SAM, recovery, Crop and multiple model nodes; explicit specialist/hybrid templates remain compatibility-only alternatives. |
+| Offline Agent demonstration | PASS | `cargo run -p annotagent -- demo lean-agent-robocup` loads advice, repairs/validates/Dry Runs and stops `waiting_for_human`; it prints `offline ScriptedMock` and `labelled_mock_evidence`, with zero Publish/formal Run. |
+| External Qwen request | LIVE-CONDITIONAL | No operator credential was available under the task's credential restrictions; no conversation API Key was read or used. |
+| M7 Rust regression | PASS | Application 34, Runtime 35, Server 9 and RoboCup 17 tests passed with zero failures after the lean one-template expectation was updated. |

@@ -1,14 +1,16 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use annotagent_application::{AnnotAgentApplication, LocalApplication};
 use annotagent_core::{
-    AgentBudget, Annotation, AnnotationId, AnnotationProvenance, AnnotationSource,
-    AnnotationValidator, AnnotationValue, ArtifactId, ArtifactKind, ArtifactProvenance,
-    ArtifactRef, ArtifactRole, ArtifactValidationState, CorrectionFeatures, CorrectionRecord,
-    ImageArtifact, ImageFrame, ImageId, IssueSeverity, LabelId, MaskEncoding, ModelRegistry,
-    NodePort, NormalizedRect, PipelineArtifact, ProjectId, ProjectSchema, ReviewStatus, RunId,
-    Skill, SuggestedAction, TaskId, ValidationContext, ValidationEvidence, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, VisionCapability, VisionModelDescriptor,
-    VisionNodeDescriptor, WorkflowDraftNode, WorkflowNodeKind, all_artifact_kinds,
+    AgentBudget, AgentSessionStatus, Annotation, AnnotationId, AnnotationProvenance,
+    AnnotationSource, AnnotationValidator, AnnotationValue, ArtifactId, ArtifactKind,
+    ArtifactProvenance, ArtifactRef, ArtifactRole, ArtifactValidationState, CorrectionFeatures,
+    CorrectionRecord, ImageArtifact, ImageFrame, ImageId, IssueSeverity, LabelId, MaskEncoding,
+    ModelRegistry, NodePort, NormalizedRect, PipelineArtifact, PipelineBuilderConstraints,
+    ProjectId, ProjectSchema, ReviewStatus, RunId, Skill, SuggestedAction, TaskId,
+    ValidationContext, ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue,
+    VisionCapability, VisionModelDescriptor, VisionNodeDescriptor, WorkflowConstraints,
+    WorkflowDraftNode, WorkflowNodeKind, all_artifact_kinds,
 };
 use annotagent_provider::MockVisionBackend;
 use annotagent_runtime::{
@@ -37,13 +39,81 @@ pub async fn run(name: &str) -> Result<()> {
         "generic-classification" => generic_classification().await,
         "generic-detection-crop" => generic_detection_crop().await,
         "robocup-ball" => robocup_ball().await,
+        "lean-agent-robocup" => lean_agent_robocup().await,
         "generic-workflow" => generic_workflow().await,
         "robocup-hybrid" | "robocup" => robocup_hybrid().await,
         other => bail!(
             "unknown demo {other:?}; available demos: generic-classification, \
-             generic-detection-crop, robocup-ball, generic-workflow, robocup-hybrid"
+             generic-detection-crop, robocup-ball, lean-agent-robocup, generic-workflow, \
+             robocup-hybrid"
         ),
     }
+}
+
+async fn lean_agent_robocup() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let application = LocalApplication::new(workspace.path())?;
+    application.create_project(
+        "robocup-ball-agent",
+        include_str!("../../../examples/robocup/project.yaml"),
+    )?;
+    annotagent_image_tools::generate_synthetic_robocup(
+        &workspace
+            .path()
+            .join("robocup-ball-agent/images/synthetic.png"),
+    )?;
+    let settings = annotagent_application::load_settings(None)?;
+    let report = application
+        .run_workflow_advisor_agent(
+            "robocup-ball-agent",
+            &settings,
+            &WorkflowConstraints::default(),
+            Some(("objects", "ball")),
+            PipelineBuilderConstraints {
+                target_review_rate: Some(1.0),
+                ..PipelineBuilderConstraints::default()
+            },
+            CancellationToken::new(),
+        )
+        .await?;
+    if report.session.status != AgentSessionStatus::WaitingForHuman || !report.approval_required {
+        bail!("Pipeline Builder did not stop at human approval");
+    }
+    let suggestion = report
+        .suggestion
+        .as_ref()
+        .context("Pipeline Builder returned no Draft")?;
+    if application.list_runs()?.is_empty()
+        && application
+            .store()
+            .list_published_workflow_versions(Some("robocup-ball-agent"))?
+            .is_empty()
+    {
+        println!("AnnotAgent Lean Agent Alpha · RoboCup Ball · offline ScriptedMock");
+    } else {
+        bail!("Pipeline Builder crossed the Publish or formal Run boundary");
+    }
+    println!("objective=objects.ball model_result=labelled_mock_evidence");
+    for step in &report.session.steps {
+        println!(
+            "tool={} success={} summary={}",
+            step.tool_name,
+            step.success,
+            step.result["display_summary"]
+                .as_str()
+                .unwrap_or("recorded")
+        );
+    }
+    println!(
+        "draft_nodes={} validation={} dry_run_images={} published=false formal_runs=0 stop=waiting_for_human",
+        suggestion.draft.nodes.len(),
+        report.validation.as_ref().is_some_and(|value| value.valid),
+        report
+            .dry_run
+            .as_ref()
+            .map_or(0, |value| value.summary.image_count),
+    );
+    Ok(())
 }
 
 async fn generic_classification() -> Result<()> {

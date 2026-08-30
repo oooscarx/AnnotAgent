@@ -26,7 +26,7 @@ tasks:
     labels: [ball]
     required: true
     multi_label: true
-    validators: [ball_hard_negative]
+    validators: [ball_hard_negative, robocup_ball_field_relation]
     refiners: [ball_foreground_refiner]
 review:
   auto_accept_confidence: 0.92

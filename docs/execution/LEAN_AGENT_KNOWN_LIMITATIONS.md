@@ -33,5 +33,10 @@ Baseline limitations before implementation:
   Tool trace is still shown with the proposal.
 - SAM, LocateAnything and RF-DETR workers are not running in the audited environment. YOLO has no
   repository weight. Real inference is not claimed.
+- The legacy explicit `robocup.ball` hybrid template and SAM adapter remain executable for stored
+  version compatibility, but neither is exposed by the default RoboCup template list or registered
+  as a Domain refiner. Removing their code requires a persisted-version migration outside Alpha.
+- Domain Advisor resources are Markdown policy text supplied by repository Skills. Alpha bounds and
+  audits them but does not support a remote Skill marketplace or dynamically downloaded advice.
 - Runtime Recovery remains named as an Agent in code and some UI copy even though its behavior is
   deterministic and bounded.

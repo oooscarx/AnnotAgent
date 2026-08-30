@@ -2,7 +2,7 @@
 
 Updated: 2026-08-31
 
-- Current Milestone: M7 — capability-aware RoboCup Ball Domain experience.
+- Current Milestone: M8 — full regression, course demo and release evidence.
 - Completed: M0 baseline; public Capability catalog now contains only
   `annotagent.classification`, `annotagent.detection`, and `annotagent.segmentation`; legacy Skill
   IDs remain hidden compatibility aliases; model bindings are grouped as Ready, Configured but
@@ -46,18 +46,32 @@ Updated: 2026-08-31
 - M6 completed: the TUI `/advisor status` view shows the latest Builder objective, budget, status
   and ordered Tool audit; `/advisor cancel` addresses both new Pipeline Builder and compatibility
   Workflow Advisor sessions.
-- Next: audit and simplify the RoboCup Ball default path, Domain resources/validators, availability
-  filtering and the no-key Mock demonstration without broadening the domain.
+- M7 completed: the default RoboCup authoring surface exposes one lean football-bounding-box recipe.
+  The Agent must load the enabled Domain Skill's bounded `advisor.md` resource before selecting a
+  template, then chooses one ready Detection backend, selects/maps football detections, applies the
+  hard-negative and field-relation Validators, and routes through Decision to Commit or Review.
+  SAM, RF-DETR, LocateAnything, YOLO and multi-model recovery are alternatives in Labs unless their
+  concrete binding is healthy and available; none is injected into the default Draft.
+- M7 completed: explicit preferred-model selection is capability and health aware. A configured
+  available `default-vision` binding creates a VLM Detection step, while an Unknown Labs worker is
+  rejected. A real offline `lean-agent-robocup` demonstration loads Domain advice, repairs an
+  invalid Draft, validates, Dry Runs one labelled synthetic image and stops for human approval;
+  output names ScriptedMock evidence and asserts zero Published Versions and zero formal Runs.
+- Next: execute the full Rust/Web/E2E and operational release matrix, add the five-minute course
+  demo guide, close evidence, and report live-conditional external model checks without inference.
 - Full-workspace baseline: `cargo test --workspace --all-features` — 221 passed, 0 failed at M0.
-- Recent Rust tests: Core 50, Application 32, Server 9 and TUI 6 passed; the focused selective
-  Draft-apply/Undo test passed. Strict workspace Clippy passed with warnings denied.
+- Recent Rust tests: M7 Application 34, Runtime 35 (unit and integration), Server 9 and RoboCup 17
+  passed after updating the one-template expectation; the offline Lean RoboCup Agent demo passed.
+  Strict workspace Clippy from M6 passed with warnings denied; the M8 full gate is pending.
 - Recent Web tests: `npm run typecheck` passed; `npm test -- --run` — 36 passed, 0 failed.
 - Recent E2E: `npm run test:e2e -- e2e/guided-workspace.spec.ts` — 25 passed, 0 failed, including
   persisted Agent trace plus real Draft Diff Apply selected and Undo.
-- Recent milestone commit subject: `feat(ui): guide users through agent-built automations`.
-- Release Blocking remaining: RoboCup Domain and offline/course release evidence in D, F and G;
-  architecture, Agent authenticity, Pipeline safety and Guided UX are evidenced PASS.
+- Recent milestone commit subject: `feat(robocup): focus ball annotation on agent-selected capabilities`
+  (pending the M7 local commit at this status update).
+- Release Blocking remaining: the M8 full regression, course guide, operational evidence and final
+  matrix in D and G; architecture, Agent authenticity, Pipeline safety, Guided UX and RoboCup Domain
+  boundary are evidenced PASS.
 - Live-conditional: real Qwen request; SAM, LocateAnything, RF-DETR and YOLO inference with explicit
   external weights; manual native browser checks.
-- Real blocker: none for offline implementation. External credentials/weights are not required for
-  ScriptedMock, RuleBased, protocol, UI or test work.
+- Real blocker: none for offline implementation or release validation. External credentials/weights
+  are not required for ScriptedMock, RuleBased, protocol, UI or test work.

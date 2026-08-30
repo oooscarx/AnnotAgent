@@ -10,7 +10,7 @@ capabilities:
   - robocup_ball_validation
 requires:
   capabilities:
-    - crop
+    - detection
     - human_review
 optional_capabilities:
   - object_detection
@@ -30,6 +30,7 @@ templates:
   - robocup.ball.specialist_with_open_vocab_fallback
 summary_resources:
   - ball/SKILL.md
+  - ball/resources/advisor.md
 task_resources:
   objects:
     - ball/resources/hard-negatives.md

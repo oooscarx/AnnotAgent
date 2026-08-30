@@ -15,6 +15,7 @@ templates:
   - robocup.ball.detector-first
 summary_resources:
   - SKILL.md
+  - resources/advisor.md
 task_resources:
   objects:
     - tasks/ball.md

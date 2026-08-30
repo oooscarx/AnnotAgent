@@ -9,7 +9,7 @@ use annotagent_core::{
 
 use crate::{
     RoboCupBallFieldRelationValidator, RoboCupBallForegroundRefiner,
-    RoboCupBallHardNegativeValidator, RoboCupReviewPolicy, RoboCupSamHttpRefiner,
+    RoboCupBallHardNegativeValidator, RoboCupReviewPolicy,
 };
 
 pub const ROBOCUP_PACK_ID: &str = "robocup";
@@ -41,9 +41,20 @@ impl Skill for RoboCupPackSkill {
 
     fn resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
         match request.resource_name.as_deref() {
-            None | Some("SKILL.md") => Ok(vec![resource(
+            None => Ok(vec![
+                resource("SKILL.md", include_str!("../../../skills/robocup/SKILL.md")),
+                resource(
+                    "resources/advisor.md",
+                    include_str!("../../../skills/robocup/resources/advisor.md"),
+                ),
+            ]),
+            Some("SKILL.md") => Ok(vec![resource(
                 "SKILL.md",
                 include_str!("../../../skills/robocup/SKILL.md"),
+            )]),
+            Some("resources/advisor.md") => Ok(vec![resource(
+                "resources/advisor.md",
+                include_str!("../../../skills/robocup/resources/advisor.md"),
             )]),
             Some(other) => Err(CoreError::Validation(format!(
                 "unknown RoboCup Pack resource {other:?}"
@@ -64,10 +75,7 @@ impl RoboCupBallSkill {
                 "../../../skills/robocup/ball/manifest.yaml"
             ))
             .map_err(|error| CoreError::InvalidManifest(error.to_string()))?,
-            refiners: vec![
-                Arc::new(RoboCupBallForegroundRefiner::default()),
-                Arc::new(RoboCupSamHttpRefiner::from_env()?),
-            ],
+            refiners: vec![Arc::new(RoboCupBallForegroundRefiner::default())],
         })
     }
 }
@@ -121,6 +129,10 @@ impl Skill for RoboCupBallSkill {
                     "ball/resources/hard-negatives.md",
                     include_str!("../../../skills/robocup/ball/resources/hard-negatives.md"),
                 ),
+                resource(
+                    "ball/resources/advisor.md",
+                    include_str!("../../../skills/robocup/resources/advisor.md"),
+                ),
             ]),
             Some("ball/SKILL.md") => Ok(vec![resource(
                 "ball/SKILL.md",
@@ -129,6 +141,10 @@ impl Skill for RoboCupBallSkill {
             Some("ball/resources/hard-negatives.md") => Ok(vec![resource(
                 "ball/resources/hard-negatives.md",
                 include_str!("../../../skills/robocup/ball/resources/hard-negatives.md"),
+            )]),
+            Some("ball/resources/advisor.md") => Ok(vec![resource(
+                "ball/resources/advisor.md",
+                include_str!("../../../skills/robocup/resources/advisor.md"),
             )]),
             Some(other) => Err(CoreError::Validation(format!(
                 "unknown RoboCup Ball resource {other:?}"
@@ -220,6 +236,22 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
         "target_description".to_owned(),
         serde_json::json!("the compact round RoboCup football itself; ignore white field markings, footwear, robots, and green turf"),
     );
+    let mut select = node(
+        "select_football",
+        "core.filter",
+        WorkflowNodeKind::Transform,
+        vec![port("detections", ArtifactKind::DetectionSet)],
+        vec![port("detections", ArtifactKind::DetectionSet)],
+    );
+    select.required_skills.clear();
+    select.parameters.extend([
+        ("labels".to_owned(), serde_json::json!(["ball", "football"])),
+        (
+            "class_mapping".to_owned(),
+            serde_json::json!({"ball": "ball", "football": "ball", "sports ball": "ball"}),
+        ),
+        ("minimum_confidence".to_owned(), serde_json::json!(0.0)),
+    ]);
     let mut validator = node(
         "validate_ball",
         "static_validator",
@@ -227,7 +259,10 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
         vec![port("detections", ArtifactKind::DetectionSet)],
         vec![port("detections", ArtifactKind::DetectionSet)],
     );
-    validator.validators = vec!["ball_hard_negative".to_owned()];
+    validator.validators = vec![
+        "robocup.ball.ball_hard_negative".to_owned(),
+        "robocup.ball.robocup_ball_field_relation".to_owned(),
+    ];
     validator
         .parameters
         .insert("task_id".to_owned(), serde_json::json!("objects"));
@@ -243,7 +278,7 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
     WorkflowTemplate {
         id: "robocup.ball.vlm-bootstrap".to_owned(),
         name: "RoboCup Ball · VLM bootstrap".to_owned(),
-        description: "Image → VLM detection → RoboCup hard-negative validation → confidence gate → review or commit".to_owned(),
+        description: "Image → one VLM detector → Select football candidates → RoboCup validation → Decision → review or save".to_owned(),
         nodes: vec![
             node(
                 "image",
@@ -253,6 +288,7 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
                 vec![port("image", ArtifactKind::Image)],
             ),
             detector,
+            select,
             validator,
             gate,
             node(
@@ -276,7 +312,8 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
         ],
         edges: vec![
             edge("image", "image", "detector", "image", None),
-            edge("detector", "detections", "validate_ball", "detections", None),
+            edge("detector", "detections", "select_football", "detections", None),
+            edge("select_football", "detections", "validate_ball", "detections", None),
             edge("validate_ball", "detections", "gate", "detections", None),
             edge("gate", "detections", "commit", "detections", Some("pass")),
             edge("gate", "detections", "review", "detections", Some("review")),
@@ -588,6 +625,7 @@ fn ball_resources() -> BTreeMap<String, String> {
             "ball/resources/hard-negatives.md".to_owned(),
             "1".to_owned(),
         ),
+        ("ball/resources/advisor.md".to_owned(), "1".to_owned()),
     ])
 }
 
@@ -634,8 +672,16 @@ mod tests {
         assert!(!serialized.contains("locate"));
         assert_eq!(
             ball.manifest().requires.capabilities,
-            ["crop", "human_review"]
+            ["detection", "human_review"]
         );
+        let advisor = ball
+            .resources(&SkillResourceRequest {
+                task_id: None,
+                resource_name: Some("ball/resources/advisor.md".to_owned()),
+            })
+            .expect("Advisor resource");
+        assert!(advisor[0].content.contains("smallest Pipeline"));
+        assert!(advisor[0].content.contains("never add an unavailable"));
         assert!(
             ball.resources(&SkillResourceRequest {
                 task_id: None,

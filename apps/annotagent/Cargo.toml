@@ -36,12 +36,10 @@ tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tempfile = "3"
 uuid.workspace = true
 walkdir.workspace = true
 webbrowser.workspace = true
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-tempfile = "3"

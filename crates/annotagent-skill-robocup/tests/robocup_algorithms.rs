@@ -462,15 +462,14 @@ fn required_robot_attributes_and_memory_change_review_decision() {
 }
 
 #[test]
-fn robocup_exposes_only_two_ball_workflow_templates() {
+fn robocup_exposes_one_lean_default_ball_workflow_template() {
     let skill = RoboCupSkill::new().expect("RoboCup Skill");
     assert_eq!(skill.task_templates().len(), 1);
     assert_eq!(skill.workflow().nodes.len(), 1);
     assert_eq!(skill.tool_factories().len(), 1);
-    assert_eq!(skill.validators().len(), 1);
-    assert_eq!(skill.refiners().len(), 2);
+    assert_eq!(skill.validators().len(), 2);
+    assert_eq!(skill.refiners().len(), 1);
     assert_eq!(skill.refiners()[0].id(), "ball_foreground_refiner");
-    assert_eq!(skill.refiners()[1].id(), "sam_prompted_refiner");
     let schema = ProjectSchema::from_yaml(skill.project_template().expect("Ball project template"))
         .expect("Ball Project Schema");
     assert_eq!(schema.tasks.len(), 1);
@@ -481,10 +480,7 @@ fn robocup_exposes_only_two_ball_workflow_templates() {
             .iter()
             .map(|template| template.id.as_str())
             .collect::<Vec<_>>(),
-        [
-            "robocup.ball.vlm-bootstrap",
-            "robocup.ball.specialist_with_open_vocab_fallback"
-        ]
+        ["robocup.ball.vlm-bootstrap"]
     );
     for template in &templates {
         assert!(

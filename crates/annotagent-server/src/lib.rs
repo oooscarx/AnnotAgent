@@ -1322,6 +1322,14 @@ async fn suggest_workflow(
     Json(request): Json<SuggestWorkflowRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let settings = state.settings.read().await.clone();
+    let mut workflow_constraints = request.constraints.clone();
+    if workflow_constraints.preferred_model_id.is_none()
+        && settings.default_provider != "mock"
+        && request.builder_constraints.allow_external_models
+        && state.api_key.read().await.is_some()
+    {
+        workflow_constraints.preferred_model_id = Some("default-vision".to_owned());
+    }
     if request.target_task_id.is_some() != request.target_label.is_some() {
         return Err(ApiError::bad_request(
             "target_task_id and target_label must be supplied together",
@@ -1339,7 +1347,7 @@ async fn suggest_workflow(
                     .run_workflow_advisor_agent(
                         &request.project_id,
                         &settings,
-                        &request.constraints,
+                        &workflow_constraints,
                         target,
                         request.builder_constraints.clone(),
                         CancellationToken::default(),
@@ -1361,7 +1369,7 @@ async fn suggest_workflow(
                         &request.project_id,
                         &settings,
                         state.api_key.read().await.clone(),
-                        &request.constraints,
+                        &workflow_constraints,
                         target,
                         request.builder_constraints.clone(),
                         CancellationToken::default(),
@@ -3606,7 +3614,7 @@ mod tests {
         assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
         assert_eq!(
             catalog["workflow_templates"].as_array().map(Vec::len),
-            Some(2)
+            Some(1)
         );
         let hybrid_draft = response_json(
             request(

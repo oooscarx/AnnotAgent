@@ -40,10 +40,7 @@ impl RoboCupSkill {
                 .map_err(|error| annotagent_core::CoreError::InvalidManifest(error.to_string()))?;
         Ok(Self {
             manifest,
-            refiners: vec![
-                Arc::new(RoboCupBallForegroundRefiner::default()),
-                Arc::new(RoboCupSamHttpRefiner::from_env()?),
-            ],
+            refiners: vec![Arc::new(RoboCupBallForegroundRefiner::default())],
         })
     }
 }
@@ -75,7 +72,10 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn validators(&self) -> Vec<Arc<dyn AnnotationValidator>> {
-        vec![Arc::new(BallHardNegativeValidator::default())]
+        vec![
+            Arc::new(BallHardNegativeValidator::default()),
+            Arc::new(RoboCupBallFieldRelationValidator),
+        ]
     }
 
     fn refiners(&self) -> Vec<Arc<dyn AnnotationRefiner>> {
@@ -83,10 +83,32 @@ impl DomainSkill for RoboCupSkill {
     }
 
     fn prompt_resources(&self, request: &SkillResourceRequest) -> CoreResult<Vec<SkillResource>> {
-        let mut resources = vec![resource(
-            "SKILL.md",
-            include_str!("../../../skills/robocup/SKILL.md"),
-        )];
+        if let Some(resource_name) = request.resource_name.as_deref() {
+            return match resource_name {
+                "SKILL.md" => Ok(vec![resource(
+                    "SKILL.md",
+                    include_str!("../../../skills/robocup/SKILL.md"),
+                )]),
+                "resources/advisor.md" => Ok(vec![resource(
+                    "resources/advisor.md",
+                    include_str!("../../../skills/robocup/resources/advisor.md"),
+                )]),
+                "tasks/ball.md" => Ok(vec![resource(
+                    "tasks/ball.md",
+                    include_str!("../../../skills/robocup/tasks/ball.md"),
+                )]),
+                other => Err(annotagent_core::CoreError::Validation(format!(
+                    "unknown RoboCup resource {other:?}"
+                ))),
+            };
+        }
+        let mut resources = vec![
+            resource("SKILL.md", include_str!("../../../skills/robocup/SKILL.md")),
+            resource(
+                "resources/advisor.md",
+                include_str!("../../../skills/robocup/resources/advisor.md"),
+            ),
+        ];
         if let Some(task) = &request.task_id {
             let task_resource = match task.as_str() {
                 "objects" => Some((
@@ -122,6 +144,7 @@ impl DomainSkill for RoboCupSkill {
             .map(|skill| {
                 annotagent_core::Skill::workflow_templates(&skill)
                     .into_iter()
+                    .filter(|template| template.id == "robocup.ball.vlm-bootstrap")
                     .map(|mut template| {
                         for node in &mut template.nodes {
                             node.required_skills = vec!["robocup".to_owned()];
@@ -133,6 +156,7 @@ impl DomainSkill for RoboCupSkill {
                         }
                         template.resource_versions = std::collections::BTreeMap::from([
                             ("SKILL.md".to_owned(), "1".to_owned()),
+                            ("resources/advisor.md".to_owned(), "1".to_owned()),
                             ("tasks/ball.md".to_owned(), "1".to_owned()),
                         ]);
                         template

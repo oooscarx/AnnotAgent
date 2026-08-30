@@ -32,16 +32,17 @@ use annotagent_core::{
     ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
     ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
     RunEventPayload, RunId, RunStatus, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage, SnapshotImage,
-    TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
-    UsageSummary, VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
-    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
-    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
+    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
+    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
+    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -288,7 +289,7 @@ fn pipeline_builder_live_tools(
         parameters,
         read_only: false,
     };
-    vec![
+    let mut tools = vec![
         read(
             PipelineBuilderTool::InspectProject,
             "Read a bounded Project summary without file paths or image bytes.",
@@ -501,7 +502,26 @@ fn pipeline_builder_live_tools(
                 }
             }),
         ),
-    ]
+    ];
+    if !input.resource_ids.is_empty() {
+        tools.insert(
+            5,
+            read(
+                PipelineBuilderTool::LoadSkillResource,
+                "Load one declared Advisor resource from an enabled Skill. Paths and undeclared resources are rejected by Rust.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["skill_id", "resource_name"],
+                    "properties": {
+                        "skill_id": {"type": "string", "enum": input.enabled_skills},
+                        "resource_name": {"type": "string", "enum": input.resource_ids}
+                    }
+                }),
+            ),
+        );
+    }
+    tools
 }
 
 fn pipeline_builder_constraints(
@@ -529,6 +549,44 @@ fn bounded_inspection_schema() -> serde_json::Value {
             "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
         }
     })
+}
+
+fn load_enabled_skill_resource(
+    skills: &SkillRegistry,
+    enabled_skill_ids: &[String],
+    resource_id: &str,
+    task_id: Option<&str>,
+) -> Result<(String, String, Vec<annotagent_core::SkillResource>)> {
+    for skill_id in enabled_skill_ids {
+        let prefix = format!("{skill_id}.");
+        let resource_name = resource_id.strip_prefix(&prefix).unwrap_or(resource_id);
+        let request = SkillResourceRequest {
+            task_id: task_id.map(TaskId::from),
+            resource_name: Some(resource_name.to_owned()),
+        };
+        if let Ok(resources) = skills.load_resource(skill_id, &request)
+            && !resources.is_empty()
+        {
+            return Ok((skill_id.clone(), resource_name.to_owned(), resources));
+        }
+    }
+    bail!("declared Skill resource {resource_id:?} is unavailable from enabled Skills")
+}
+
+fn bounded_skill_resources(resources: &[annotagent_core::SkillResource]) -> Vec<serde_json::Value> {
+    resources
+        .iter()
+        .take(4)
+        .map(|resource| {
+            let content = resource.content.chars().take(12_000).collect::<String>();
+            json!({
+                "name": resource.name,
+                "media_type": resource.media_type,
+                "content": content,
+                "truncated": resource.content.chars().count() > 12_000,
+            })
+        })
+        .collect()
 }
 
 fn bounded_inspection_limit(arguments: &serde_json::Value) -> Result<usize> {
@@ -1406,6 +1464,7 @@ fn controlled_label_composition(
     target_task_id: &str,
     target_label: &str,
     constraints: &WorkflowConstraints,
+    models: &ModelRegistry,
 ) -> Result<LabelWorkflowComposition> {
     let task = project
         .tasks
@@ -1471,10 +1530,12 @@ fn controlled_label_composition(
                     ArtifactKind::ClassificationSet,
                 )]),
                 model_binding: Some(PipelineModelBinding {
-                    model_id: constraints
-                        .preferred_model_id
-                        .clone()
-                        .unwrap_or_else(|| "mock-classifier".to_owned()),
+                    model_id: preferred_model_for(
+                        models,
+                        constraints.preferred_model_id.as_deref(),
+                        &[VisionCapability::Classification],
+                    )?
+                    .map_or_else(|| "mock-classifier".to_owned(), |(model, _)| model),
                     capability: VisionCapability::Classification,
                     configuration: BTreeMap::new(),
                 }),
@@ -1515,25 +1576,85 @@ fn controlled_label_composition(
             let detector_id = "shared.detector".to_owned();
             let filter_id = format!("{target_task_id}.{target_label}.filter");
             let gate_id = format!("{target_task_id}.{target_label}.confidence");
+            let preferred = preferred_model_for(
+                models,
+                constraints.preferred_model_id.as_deref(),
+                &[
+                    VisionCapability::ObjectDetection,
+                    VisionCapability::VisionLanguage,
+                    VisionCapability::OpenVocabularyDetection,
+                ],
+            )?;
+            let (model_id, capability, node_type, kind, parameters) =
+                if let Some((model_id, capability)) = preferred {
+                    let (node_type, kind, parameters) = match capability {
+                        VisionCapability::VisionLanguage => (
+                            annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION.to_owned(),
+                            WorkflowNodeKind::VisionLanguageModel,
+                            BTreeMap::from([
+                                ("labels".to_owned(), json!([target_label])),
+                                (
+                                    "target_description".to_owned(),
+                                    json!(format!("the {target_label} object itself")),
+                                ),
+                            ]),
+                        ),
+                        VisionCapability::OpenVocabularyDetection => (
+                            annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION
+                                .to_owned(),
+                            WorkflowNodeKind::VisionModel,
+                            BTreeMap::from([(
+                                "queries".to_owned(),
+                                json!([{
+                                    "id": target_label,
+                                    "text": target_label.replace(['_', '-'], " "),
+                                    "target_label": target_label,
+                                }]),
+                            )]),
+                        ),
+                        VisionCapability::ObjectDetection => (
+                            annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION
+                                .to_owned(),
+                            WorkflowNodeKind::VisionModel,
+                            BTreeMap::from([
+                                ("target_labels".to_owned(), json!([target_label])),
+                                (
+                                    "class_mapping".to_owned(),
+                                    json!(BTreeMap::from([(
+                                        target_label.to_owned(),
+                                        target_label.to_owned(),
+                                    )])),
+                                ),
+                            ]),
+                        ),
+                        _ => unreachable!("preferred_model_for returns an allowed capability"),
+                    };
+                    (model_id, capability, node_type, kind, parameters)
+                } else {
+                    (
+                        "mock-detector".to_owned(),
+                        VisionCapability::ObjectDetection,
+                        annotagent_skill_yolo::YOLO_DETECTION_OPERATION.to_owned(),
+                        WorkflowNodeKind::VisionModel,
+                        BTreeMap::from([
+                            ("mock_label".to_owned(), json!(target_label)),
+                            ("mock_class_id".to_owned(), json!(target_label)),
+                        ]),
+                    )
+                };
             let detector = PipelineStep {
                 id: detector_id.clone(),
-                node_type: annotagent_skill_yolo::YOLO_DETECTION_OPERATION.to_owned(),
-                kind: WorkflowNodeKind::VisionModel,
+                node_type,
+                kind,
                 inputs: BTreeMap::from([("image".to_owned(), PipelineSource::Image)]),
                 outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
                 model_binding: Some(PipelineModelBinding {
-                    model_id: constraints
-                        .preferred_model_id
-                        .clone()
-                        .unwrap_or_else(|| "mock-detector".to_owned()),
-                    capability: VisionCapability::ObjectDetection,
+                    model_id,
+                    capability,
                     configuration: BTreeMap::new(),
                 }),
                 skill_binding: None,
-                parameters: BTreeMap::from([
-                    ("mock_label".to_owned(), json!(target_label)),
-                    ("mock_class_id".to_owned(), json!(target_label)),
-                ]),
+                parameters,
                 validators: Vec::new(),
                 refiners: Vec::new(),
                 fallback: None,
@@ -1609,6 +1730,36 @@ fn controlled_label_composition(
             steps,
         }],
     })
+}
+
+fn preferred_model_for(
+    models: &ModelRegistry,
+    preferred_model_id: Option<&str>,
+    allowed_capabilities: &[VisionCapability],
+) -> Result<Option<(String, VisionCapability)>> {
+    let Some(model_id) = preferred_model_id else {
+        return Ok(None);
+    };
+    let (model, _) = models.resolve(model_id).map_err(|error| anyhow!(error))?;
+    if model.status != ModelAvailabilityStatus::Available
+        && model.health.status != VisionModelHealthStatus::Healthy
+    {
+        bail!(
+            "preferred Model {model_id:?} is not ready: status={:?}, health={:?}",
+            model.status,
+            model.health.status
+        );
+    }
+    let capability = allowed_capabilities
+        .iter()
+        .copied()
+        .find(|capability| model.capabilities.contains(capability))
+        .ok_or_else(|| {
+            anyhow!(
+                "preferred Model {model_id:?} does not provide any allowed capability: {allowed_capabilities:?}"
+            )
+        })?;
+    Ok(Some((model.id.clone(), capability)))
 }
 
 fn compile_label_projection(draft: WorkflowDraft, project: &ProjectSchema) -> WorkflowDraft {
@@ -4499,7 +4650,33 @@ impl LocalApplication {
             "list_enabled_skills",
             json!({}),
             json!({"enabled_skills": input.enabled_skills}),
-        ) || !record(
+        ) {
+            return Ok(abort(session));
+        }
+        if let Some(resource_id) = input
+            .resource_ids
+            .iter()
+            .find(|resource| resource.ends_with("advisor.md"))
+        {
+            let (skill_id, resource_name, resources) = load_enabled_skill_resource(
+                &self.skills,
+                &input.enabled_skills,
+                resource_id,
+                target.map(|value| value.0),
+            )?;
+            if !record(
+                &mut session,
+                "load_skill_resource",
+                json!({"skill_id": skill_id, "resource_name": resource_name}),
+                json!({
+                    "resource_id": resource_id,
+                    "resources": bounded_skill_resources(&resources),
+                }),
+            ) {
+                return Ok(abort(session));
+            }
+        }
+        if !record(
             &mut session,
             "list_available_capabilities",
             json!({"skills": input.enabled_skills}),
@@ -4834,8 +5011,13 @@ impl LocalApplication {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (nodes, models) = workflow_catalog(settings)?;
-        let composition =
-            controlled_label_composition(&project, target_task_id, target_label, constraints)?;
+        let composition = controlled_label_composition(
+            &project,
+            target_task_id,
+            target_label,
+            constraints,
+            &models,
+        )?;
         let label_report =
             LabelPipelineStaticValidator.validate(&composition, &project, &nodes, &models);
         if !label_report.valid {
@@ -5061,6 +5243,12 @@ impl LocalApplication {
         let mut inspected_skills = false;
         let mut inspected_nodes = false;
         let mut inspected_models = false;
+        let required_advisor_resource = input
+            .resource_ids
+            .iter()
+            .find(|resource| resource.ends_with("advisor.md"))
+            .cloned();
+        let mut loaded_resources = BTreeSet::new();
 
         while session.status == AgentSessionStatus::Running {
             if cancellation.is_cancelled() {
@@ -5168,6 +5356,32 @@ impl LocalApplication {
                             json!({"skill_ids": input.enabled_skills}),
                         ))
                     }
+                    Ok(PipelineBuilderTool::LoadSkillResource) => {
+                        let skill_id = required_string_argument(&call.arguments, "skill_id")?;
+                        let resource_id =
+                            required_string_argument(&call.arguments, "resource_name")?;
+                        if !input.enabled_skills.contains(&skill_id) {
+                            bail!("Skill {skill_id:?} is not enabled by this Project");
+                        }
+                        if !input.resource_ids.contains(&resource_id) {
+                            bail!("Skill resource {resource_id:?} is not declared for this Project");
+                        }
+                        let (_, resource_name, resources) = load_enabled_skill_resource(
+                            &self.skills,
+                            std::slice::from_ref(&skill_id),
+                            &resource_id,
+                            target.map(|value| value.0),
+                        )?;
+                        loaded_resources.insert(resource_id.clone());
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Loaded Advisor resource {resource_name}"),
+                            json!({
+                                "skill_id": skill_id,
+                                "resource_id": resource_id,
+                                "resources": bounded_skill_resources(&resources),
+                            }),
+                        ))
+                    }
                     Ok(
                         PipelineBuilderTool::ListAvailableCapabilities
                         | PipelineBuilderTool::ListAvailableNodes,
@@ -5211,6 +5425,12 @@ impl LocalApplication {
                             || !inspected_models
                         {
                             bail!("inspect Project, target Label, enabled Skills, available nodes, and Models before creating a Draft");
+                        }
+                        if required_advisor_resource
+                            .as_ref()
+                            .is_some_and(|resource| !loaded_resources.contains(resource))
+                        {
+                            bail!("load the enabled Domain Advisor resource before creating a Draft");
                         }
                         let mut created = safe_suggestion.clone();
                         created.draft.id = uuid::Uuid::new_v4().to_string();
@@ -10223,7 +10443,7 @@ export:
         let catalog = application
             .workflow_advisor_input("robocup-demo", &settings, WorkflowConstraints::default())
             .expect("RoboCup catalog");
-        assert_eq!(catalog.workflow_templates.len(), 2);
+        assert_eq!(catalog.workflow_templates.len(), 1);
         let draft = application
             .create_workflow_draft_with_template(
                 "robocup-demo",
@@ -10248,6 +10468,171 @@ export:
                 .annotation_schema
                 .iter()
                 .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
+        );
+    }
+
+    #[tokio::test]
+    async fn robocup_pipeline_builder_loads_domain_advice_and_keeps_the_default_flow_lean() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "robocup-lean",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Ball Project");
+        generate_synthetic_robocup(&temporary.path().join("robocup-lean/images/synthetic.png"))
+            .expect("synthetic image");
+        let settings = load_settings(None).expect("settings");
+        let report = application
+            .run_workflow_advisor_agent(
+                "robocup-lean",
+                &settings,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints {
+                    target_review_rate: Some(1.0),
+                    ..PipelineBuilderConstraints::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("RoboCup Pipeline Builder");
+
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        let tools = report
+            .session
+            .steps
+            .iter()
+            .map(|step| step.tool_name.as_str())
+            .collect::<Vec<_>>();
+        let resource_index = tools
+            .iter()
+            .position(|tool| *tool == "load_skill_resource")
+            .expect("Domain Advisor resource Tool");
+        let create_index = tools
+            .iter()
+            .position(|tool| *tool == "create_draft_from_template")
+            .expect("Draft creation Tool");
+        assert!(resource_index < create_index);
+        let resource_step = &report.session.steps[resource_index];
+        assert_eq!(
+            resource_step.result["model_payload"]["resource_id"],
+            json!("resources/advisor.md")
+        );
+        assert!(
+            resource_step.result["model_payload"]["resources"][0]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("smallest Pipeline"))
+        );
+
+        let suggestion = report.suggestion.expect("lean RoboCup Draft");
+        let model_nodes = suggestion
+            .draft
+            .nodes
+            .iter()
+            .filter(|node| node.model_binding.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(model_nodes.len(), 1);
+        assert!(suggestion.draft.nodes.iter().all(|node| {
+            !node.node_type.contains("sam")
+                && !node.node_type.contains("recovery")
+                && node.node_type != annotagent_runtime::CORE_CROP
+        }));
+        let selection = suggestion
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.node_type == annotagent_runtime::CORE_FILTER)
+            .expect("Select football candidates");
+        assert_eq!(
+            selection.validators,
+            ["ball_hard_negative", "robocup_ball_field_relation"]
+        );
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("robocup-lean"))
+                .expect("published versions")
+                .is_empty()
+        );
+        assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    #[test]
+    fn robocup_advisor_uses_a_ready_workspace_vlm_and_rejects_unready_labs_models() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "robocup-model-choice",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Ball Project");
+        let mut settings = load_settings(None).expect("settings");
+        let ready = application
+            .suggest_label_pipeline_preview(
+                "robocup-model-choice",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints {
+                    preferred_model_id: Some("default-vision".to_owned()),
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect("ready workspace VLM Draft");
+        let detector = ready
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.model_binding.as_deref() == Some("default-vision"))
+            .expect("workspace VLM binding");
+        assert_eq!(
+            detector.node_type,
+            annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION
+        );
+        assert!(
+            ready
+                .draft
+                .nodes
+                .iter()
+                .all(|node| node.node_type != annotagent_skill_yolo::YOLO_DETECTION_OPERATION)
+        );
+
+        settings.detection_workers[0].enabled = true;
+        let labs_model = settings.detection_workers[0].model_id.clone();
+        let error = application
+            .suggest_label_pipeline_preview(
+                "robocup-model-choice",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints {
+                    preferred_model_id: Some(labs_model.clone()),
+                    ..WorkflowConstraints::default()
+                },
+            )
+            .expect_err("unverified Labs Worker must not be recommended");
+        assert!(error.to_string().contains("not ready"));
+
+        let input = application
+            .workflow_advisor_input_for_label(
+                "robocup-model-choice",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Advisor input");
+        let tools = pipeline_builder_live_tools(&input, &ready);
+        assert!(tools.iter().any(|tool| tool.name == "load_skill_resource"));
+        assert!(
+            input
+                .model_registry
+                .iter()
+                .find(|model| model.id == labs_model)
+                .is_some_and(|model| model.status != ModelAvailabilityStatus::Available)
         );
     }
 
