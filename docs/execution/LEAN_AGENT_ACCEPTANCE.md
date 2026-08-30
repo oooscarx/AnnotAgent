@@ -19,9 +19,12 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
   are Backends; Guided Automation presents Select detections, Decision and Combine model evidence;
   Grid is Detection configuration; legacy Workflow, Provider and Artifact entry points converge on
   Project Automation, Settings / Models and Run Debug.
-- B. Agent authenticity: OPEN.
-- C. Pipeline safety: OPEN.
-- D. Offline capability: OPEN.
+- B. Agent authenticity: PARTIAL. The ScriptedMock and Application tool paths are real and audited;
+  the live OpenAI-compatible policy remains M4.
+- C. Pipeline safety: PARTIAL. Tool allow-list, Registry-bound mutations and Builder Grammar pass;
+  wiring that grammar into every publish boundary remains M5.
+- D. Offline capability: PARTIAL. ScriptedMock and Registry RuleBased paths are available; the full
+  offline demo matrix is finalized in M8.
 - E. UX: OPEN.
 - F. RoboCup Domain boundary: OPEN.
 - G. Course requirements: OPEN.
@@ -54,3 +57,19 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | ONNX is not shown as available | PASS | M1 Model registry evidence remains valid; M2 introduces no ONNX binding. |
 | Rust M2 regression | PASS | Core 43, Provider 34, Application 28 and Server 9 tests passed with 0 failures. |
 | Web M2 regression | PASS | TypeScript passed and 36 Vitest tests passed. |
+
+## M3 Pipeline Builder Agent Core
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Dedicated Builder session model | PASS | `PipelineBuilderSession`, constraints, statuses, stop reasons, backend kind, usage and audit envelope are typed and serialized in Core. |
+| Registered tools only | PASS | `PipelineBuilderToolRegistry` contains 31 bounded tools and rejects Shell, Python, install, download, arbitrary URL and code execution names; unit test passes. |
+| Draft mutations are Rust-owned | PASS | `PipelineDraftTools` validates mutable status, Registry node/model identity, capability, enabled Skill, typed connections and cycle safety. |
+| Pipeline Grammar is enforced in Rust | PASS | `PipelineGrammarValidator` composes static validation with Commit count, Decision-before-Commit, uncertainty route, fallback depth, model-call budget, external-model and forbidden-node rules. |
+| Budget and stop boundaries | PASS | Core test covers maximum turns, tool calls, Dry Runs and the explicit human-approval stop; cost is inherited by the audit budget. |
+| Tool result separation | PASS | `AgentToolResult` separates persisted payload reference, model payload and display summary; Application audit assertions verify the shape. |
+| ScriptedMock complete policy | PASS | State-machine test verifies invalid validation, repair, first Dry Run high review rate, Crop verification addition, second validation/Dry Run and human submission in order. |
+| Real Application invalid→repair | PASS | Application integration disconnects the Commit edge through `PipelineDraftTools`, observes `valid=false`, reconnects it, observes `valid=true`, performs sandbox Dry Run and stops for approval without publishing. |
+| Core M3 regression | PASS | 48 Core tests passed, 0 failed. |
+| Application/HTTP/persistence M3 regression | PASS | Application 28, Server 9, Storage unit 9 and Storage integration 16 tests passed; 0 failed. |
+| M3 lint gate | PASS | Clippy passed for Core, Application and Server all targets with warnings denied. |

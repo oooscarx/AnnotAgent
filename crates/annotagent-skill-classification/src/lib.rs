@@ -73,8 +73,8 @@ impl Default for LegacyClassificationCapabilitySkill {
     fn default() -> Self {
         let inner = ClassificationCapabilitySkill::default();
         let mut manifest = inner.manifest.clone();
-        manifest.id = LEGACY_CLASSIFICATION_SKILL_ID.to_owned();
-        manifest.display_name = "Classification (compatibility)".to_owned();
+        LEGACY_CLASSIFICATION_SKILL_ID.clone_into(&mut manifest.id);
+        "Classification (compatibility)".clone_into(&mut manifest.display_name);
         manifest.product_visibility = SkillProductVisibility::Compatibility;
         manifest.deprecated_alias_for = Some(CLASSIFICATION_SKILL_ID.to_owned());
         Self { inner, manifest }
@@ -102,7 +102,7 @@ impl Skill for LegacyClassificationCapabilitySkill {
         {
             for required in &mut node.required_skills {
                 if required == CLASSIFICATION_SKILL_ID {
-                    *required = LEGACY_CLASSIFICATION_SKILL_ID.to_owned();
+                    LEGACY_CLASSIFICATION_SKILL_ID.clone_into(required);
                 }
             }
         }

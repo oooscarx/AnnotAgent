@@ -10,6 +10,7 @@ pub const DETECTION_RECOVERY_PROTOCOL_VERSION: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
+    PipelineBuilder,
     WorkflowAdvisor,
     AnnotationRecovery,
 }

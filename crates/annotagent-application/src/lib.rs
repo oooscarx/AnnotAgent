@@ -26,19 +26,21 @@ use annotagent_core::{
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
     ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineSource, PipelineStep,
-    PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion,
-    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage, SnapshotImage,
-    TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource,
-    UsageSummary, VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
-    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
-    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineBuilderConstraints,
+    PipelineBuilderToolRegistry, PipelineDraftTools, PipelineGrammarValidator, PipelineSource,
+    PipelineStep, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SnapshotImage, TaskConfig, TaskId, TaskKind,
+    TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue,
+    VisionBackendKind, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
+    WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowNodeKind, WorkflowSnapshot, WorkflowStaticValidator,
+    WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
     WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
@@ -4048,7 +4050,7 @@ impl LocalApplication {
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let mut session =
-            AgentSession::start(AgentKind::WorkflowAdvisor, budget).with_project(project_id);
+            AgentSession::start(AgentKind::PipelineBuilder, budget).with_project(project_id);
         let abort = |session: AgentSession| WorkflowAdvisorAgentReport {
             session,
             suggestion: None,
@@ -4060,7 +4062,22 @@ impl LocalApplication {
                       name: &str,
                       arguments: serde_json::Value,
                       result: serde_json::Value| {
-            session.record_tool(name, arguments, result, true).is_ok()
+            if PipelineBuilderToolRegistry.resolve(name).is_err() {
+                session.fail(format!("unregistered Pipeline Builder tool {name:?}"));
+                return false;
+            }
+            let result =
+                annotagent_core::AgentToolResult::summary(format!("{name} completed"), result);
+            session
+                .record_tool(
+                    name,
+                    arguments,
+                    serde_json::to_value(result).unwrap_or_else(|error| {
+                        json!({"display_summary": "tool result serialization failed", "error": error.to_string()})
+                    }),
+                    true,
+                )
+                .is_ok()
         };
 
         if cancellation.is_cancelled() {
@@ -4077,7 +4094,7 @@ impl LocalApplication {
         )?;
         if !record(
             &mut session,
-            "inspect_project_schema",
+            "inspect_project",
             json!({"project_id": project_id}),
             json!({"task_count": input.project_schema.tasks.len(), "target": target}),
         ) {
@@ -4085,24 +4102,24 @@ impl LocalApplication {
         }
         if !record(
             &mut session,
-            "list_skills",
+            "list_enabled_skills",
             json!({}),
             json!({"enabled_skills": input.enabled_skills}),
         ) || !record(
             &mut session,
-            "list_skill_capabilities",
+            "list_available_capabilities",
             json!({"skills": input.enabled_skills}),
             json!({"nodes": input.node_catalog}),
         ) || !record(
             &mut session,
-            "list_models",
+            "list_available_models",
             json!({}),
             json!({"models": input.model_registry}),
         ) || !record(
             &mut session,
-            "list_resources",
+            "list_pipeline_templates",
             json!({"skills": input.enabled_skills}),
-            json!({"resource_ids": input.resource_ids}),
+            json!({"template_ids": input.workflow_templates.iter().map(|template| template.id.as_str()).collect::<Vec<_>>() }),
         ) {
             return Ok(abort(session));
         }
@@ -4113,19 +4130,33 @@ impl LocalApplication {
             self.suggest_workflow_preview(project_id, settings, constraints)?
         };
         let mut invalid = suggestion.draft.clone();
-        if let Some(node) = invalid.nodes.iter_mut().find(|node| {
-            matches!(
-                node.kind,
-                WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-            )
-        }) {
-            node.model_binding = Some("advisor.invalid-model".to_owned());
-        }
         if !record(
             &mut session,
-            "propose_draft",
+            "create_draft_from_template",
             json!({"strategy": "registry_bounded_initial_proposal"}),
             json!({"draft_id": invalid.id, "node_count": invalid.nodes.len()}),
+        ) {
+            return Ok(abort(session));
+        }
+        let commit_id = invalid
+            .nodes
+            .iter()
+            .find(|node| node.kind == WorkflowNodeKind::Commit)
+            .map(|node| node.id.clone())
+            .ok_or_else(|| anyhow!("Pipeline Builder template has no Commit"))?;
+        let incoming = invalid
+            .edges
+            .iter()
+            .find(|edge| edge.to_node == commit_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("Pipeline Builder template has no connection into Commit"))?;
+        let removed =
+            PipelineDraftTools.disconnect(&mut invalid, &incoming.from_node, &incoming.to_node)?;
+        if !record(
+            &mut session,
+            "disconnect_pipeline_nodes",
+            json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
+            json!({"draft_id": invalid.id, "removed_connections": removed.len()}),
         ) {
             return Ok(abort(session));
         }
@@ -4138,17 +4169,41 @@ impl LocalApplication {
         let extensions = self
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
-        let invalid_report = WorkflowStaticValidator.validate_for_publish(
-            &invalid,
-            &nodes,
-            &models,
-            &extensions,
-            &enabled_skills,
-            false,
-        );
+        let builder_constraints = PipelineBuilderConstraints {
+            allow_external_models: true,
+            maximum_agent_turns: session.budget.max_steps,
+            maximum_tool_calls: session.budget.max_tool_calls,
+            maximum_agent_cost: session
+                .budget
+                .max_cost
+                .unwrap_or(rust_decimal::Decimal::ONE),
+            ..PipelineBuilderConstraints::default()
+        };
+        let validate = |draft: &WorkflowDraft| {
+            if target.is_some() {
+                PipelineGrammarValidator.validate(
+                    draft,
+                    &nodes,
+                    &models,
+                    &extensions,
+                    &enabled_skills,
+                    &builder_constraints,
+                )
+            } else {
+                WorkflowStaticValidator.validate_for_publish(
+                    draft,
+                    &nodes,
+                    &models,
+                    &extensions,
+                    &enabled_skills,
+                    false,
+                )
+            }
+        };
+        let invalid_report = validate(&invalid);
         if !record(
             &mut session,
-            "static_validate",
+            "validate_pipeline",
             json!({"draft_id": invalid.id}),
             json!({"valid": invalid_report.valid, "issues": invalid_report.issues}),
         ) {
@@ -4160,26 +4215,21 @@ impl LocalApplication {
         }
 
         let mut revised = suggestion;
-        revised.draft.updated_at = chrono::Utc::now();
+        PipelineDraftTools.connect(&mut invalid, incoming.clone())?;
+        invalid.status = WorkflowDraftStatus::Suggested;
+        revised.draft = invalid;
         if !record(
             &mut session,
-            "revise_draft",
-            json!({"draft_id": revised.draft.id, "cause": "static_validation"}),
-            json!({"restored_registry_bindings": true}),
+            "connect_pipeline_nodes",
+            json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
+            json!({"draft_id": revised.draft.id, "restored_connection": true}),
         ) {
             return Ok(abort(session));
         }
-        let validation = WorkflowStaticValidator.validate_for_publish(
-            &revised.draft,
-            &nodes,
-            &models,
-            &extensions,
-            &enabled_skills,
-            false,
-        );
+        let validation = validate(&revised.draft);
         if !record(
             &mut session,
-            "static_validate",
+            "validate_pipeline",
             json!({"draft_id": revised.draft.id, "revision": 2}),
             json!({"valid": validation.valid, "issues": validation.issues}),
         ) {
@@ -4201,12 +4251,12 @@ impl LocalApplication {
             .await?;
         if !record(
             &mut session,
-            "dry_run",
+            "dry_run_pipeline",
             json!({"draft_id": revised.draft.id, "image_limit": 1}),
             json!({"sandbox": dry_run.sandbox, "summary": dry_run.summary}),
         ) || !record(
             &mut session,
-            "inspect_metrics",
+            "inspect_dry_run_summary",
             json!({"draft_id": revised.draft.id}),
             json!({
                 "latency_ms": dry_run.total_latency_ms,
@@ -4225,7 +4275,7 @@ impl LocalApplication {
         if revise_draft_after_failed_dry_run(&mut revised, dry_run.summary.failed_count) {
             let _recorded = record(
                 &mut session,
-                "revise_draft",
+                "set_node_parameter",
                 json!({"draft_id": revised.draft.id, "cause": "dry_run_metrics"}),
                 json!({
                     "retry_policy_hardened": true,
@@ -4259,7 +4309,7 @@ impl LocalApplication {
         if session.status == AgentSessionStatus::Running
             && record(
                 &mut session,
-                "request_publish_approval",
+                "submit_draft_for_human_approval",
                 json!({"draft_id": revised.draft.id}),
                 json!({"published": false, "requires_human": true}),
             )
@@ -7883,6 +7933,7 @@ export:
             .await
             .expect("Advisor Agent");
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(report.session.kind, AgentKind::PipelineBuilder);
         assert!(report.approval_required);
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
         assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
@@ -7893,19 +7944,33 @@ export:
             .map(|step| step.tool_name.as_str())
             .collect::<Vec<_>>();
         assert!(tools.starts_with(&[
-            "inspect_project_schema",
-            "list_skills",
-            "list_skill_capabilities",
-            "list_models",
-            "list_resources",
-            "propose_draft",
-            "static_validate",
-            "revise_draft",
-            "static_validate",
-            "dry_run",
-            "inspect_metrics",
-            "request_publish_approval",
+            "inspect_project",
+            "list_enabled_skills",
+            "list_available_capabilities",
+            "list_available_models",
+            "list_pipeline_templates",
+            "create_draft_from_template",
+            "disconnect_pipeline_nodes",
+            "validate_pipeline",
+            "connect_pipeline_nodes",
+            "validate_pipeline",
+            "dry_run_pipeline",
+            "inspect_dry_run_summary",
+            "submit_draft_for_human_approval",
         ]));
+        assert!(report.session.steps.iter().all(|step| {
+            PipelineBuilderToolRegistry.resolve(&step.tool_name).is_ok()
+                && step.result.get("display_summary").is_some()
+                && step.result.get("model_payload").is_some()
+        }));
+        let validation_outcomes = report
+            .session
+            .steps
+            .iter()
+            .filter(|step| step.tool_name == "validate_pipeline")
+            .filter_map(|step| step.result["model_payload"]["valid"].as_bool())
+            .collect::<Vec<_>>();
+        assert_eq!(validation_outcomes, vec![false, true]);
         assert_eq!(
             application
                 .store

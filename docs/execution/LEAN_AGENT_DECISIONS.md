@@ -58,3 +58,22 @@ silently discard them.
 Grid assistance is the bounded `grounding_assist` configuration of a Detection step. The provider
 receives the unmodified source image first and an optional generated calibration view second. The
 legacy `localization_grid` parameter is read only for published-version compatibility.
+
+## D011 — Agent tools form a closed protocol
+
+Pipeline Builder accepts only the versioned Rust Registry of 31 tools. Unknown names fail before
+an Application action runs. Shell, code execution, Python, package installation, model download and
+arbitrary URL access are not represented by the protocol and are covered by rejection tests.
+
+## D012 — Intermediate Drafts may be invalid, mutations may not escape the Registry
+
+An Agent is allowed to create a structurally incomplete editable Draft so static validation can
+guide repair. It cannot introduce unknown node/model/Skill identities, type-invalid connections,
+cycles, or mutate Published/Archived content. The ScriptedMock creates its first error by removing a
+real connection through the same bounded mutation service, not by inventing a fake model ID.
+
+## D013 — ScriptedMock is a policy, not fake inference
+
+ScriptedMock deterministically chooses the full tool sequence and supplies labelled mock evaluation
+observations for CI/course demonstrations. Rust still validates and records every tool. It is never
+presented as a real visual-model result; M5 binds the same phases to real sandbox summaries.

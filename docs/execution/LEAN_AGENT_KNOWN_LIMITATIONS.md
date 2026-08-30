@@ -4,11 +4,12 @@ Baseline limitations before implementation:
 
 - The live Workflow Advisor performs one constrained submission call; it is not yet the required
   multi-turn Pipeline Builder tool loop.
-- The offline iterative Advisor proves an invalid-Draft repair but uses a fixed Application sequence,
-  does not yet expose the complete Pipeline Builder tool grammar and tests only a limited Dry Run
-  revision.
-- Agent sessions use generic statuses and free-form stop strings rather than the Lean Builder
-  constraints/status/stop-reason model.
+- The Application persists the backward-compatible generic `AgentSession` audit envelope. Dedicated
+  Builder status/constraints/stop-reason types exist in Core; API/GUI/TUI projection is completed in
+  M6 without invalidating stored sessions.
+- ScriptedMock has the complete deterministic policy and Application performs real invalid/repair,
+  validation and sandbox steps. Binding the post-Dry-Run revision to real metrics and Artifact
+  inspection is M5.
 - Pre-Lean Capability implementations still exist as Registry compatibility adapters and internal
   node IDs. New authoring exposes the generic Skills, but removal awaits persisted-version migration.
 - Expert mode intentionally exposes internal Workflow node IDs, ports and raw parameters. Guided

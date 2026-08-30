@@ -201,8 +201,8 @@ impl Default for LegacyObjectDetectionCapabilitySkill {
     fn default() -> Self {
         let inner = ObjectDetectionCapabilitySkill::default();
         let mut manifest = inner.manifest.clone();
-        manifest.id = LEGACY_OBJECT_DETECTION_SKILL_ID.to_owned();
-        manifest.display_name = "Object detection (compatibility)".to_owned();
+        LEGACY_OBJECT_DETECTION_SKILL_ID.clone_into(&mut manifest.id);
+        "Object detection (compatibility)".clone_into(&mut manifest.display_name);
         manifest.capabilities = vec!["object_detection".to_owned()];
         manifest.nodes = vec![OBJECT_DETECTION_OPERATION.to_owned()];
         manifest.product_visibility = SkillProductVisibility::Compatibility;
@@ -232,7 +232,7 @@ impl Skill for LegacyObjectDetectionCapabilitySkill {
         {
             for required in &mut node.required_skills {
                 if required == OBJECT_DETECTION_SKILL_ID {
-                    *required = LEGACY_OBJECT_DETECTION_SKILL_ID.to_owned();
+                    LEGACY_OBJECT_DETECTION_SKILL_ID.clone_into(required);
                 }
             }
         }

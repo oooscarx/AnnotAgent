@@ -4519,7 +4519,7 @@ export:
         );
         assert_eq!(
             suggestion["agent_session"]["kind"],
-            json!("workflow_advisor")
+            json!("pipeline_builder")
         );
         assert_eq!(
             suggestion["agent_session"]["status"],
