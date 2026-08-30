@@ -1066,11 +1066,45 @@ fn node_cache_key(
             .iter()
             .find(|model| model.id == model_id)
     });
+    let pipeline_inputs = inputs
+        .pipeline_artifacts
+        .iter()
+        .map(|artifact| match artifact {
+            PipelineArtifact::Image(image) => Ok(serde_json::json!({
+                "kind": "image",
+                "image_id": image.image_id,
+                "content_ref": image.blob_ref,
+                "width": image.width,
+                "height": image.height,
+                "mime_type": image.mime_type,
+            })),
+            other => serde_json::to_value(other),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let node_config = serde_json::json!({
+        "operation": node.node_type,
+        "kind": node.kind,
+        "parameters": node.parameters,
+        "resources": node.resources,
+        "retry_policy": node.retry_policy,
+        "fallback_policy": node.fallback_policy,
+        "gate": node.gate,
+        "validators": node.validators,
+        "refiners": node.refiners,
+    });
+    let node_config_hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&node_config)?));
     let material = serde_json::to_vec(&serde_json::json!({
-        "node": node,
-        "model": model,
-        "inputs": inputs.artifacts,
-        "pipeline_inputs": inputs.pipeline_artifacts,
+        "input_artifacts": inputs.artifacts,
+        "pipeline_inputs": pipeline_inputs,
+        "model_id": node.model_binding,
+        "model_version": model.map(|model| &model.version.model_version),
+        "checkpoint_sha256": model.and_then(|model| model.version.checkpoint_sha256.as_deref()),
+        "backend_protocol_version": model.map(|model| &model.version.backend_protocol_version),
+        "model_configuration": model.map(|model| &model.configuration),
+        "node_config_hash": node_config_hash,
+        "queries": node.parameters.get("queries"),
+        "project_label_mapping": node.parameters.get("class_mapping"),
+        "target_labels": node.parameters.get("target_labels"),
         "skills": workflow.snapshot.enabled_skills,
     }))?;
     Ok(format!("{:x}", Sha256::digest(material)))

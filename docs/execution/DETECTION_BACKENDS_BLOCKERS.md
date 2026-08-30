@@ -1,14 +1,13 @@
 # Detection Backends Blockers
 
-Updated: 2026-08-30
+Updated: 2026-08-31
 
 ## In-repository blockers
 
-None at M8. Capability Skills and Worker adapters, Candidate Match, Evidence Gate,
+None after M10. Capability Skills and Worker adapters, Candidate Match, Evidence Gate,
 capability-driven Advisor, bounded Recovery Agent, persisted structured Trace, capability-bound
-RoboCup Ball hybrid policy and exact published Runtime execution are complete. Guided
-mixed-evidence UX and cache/replay release proof remain scheduled repository work, not environment
-blockers.
+RoboCup Ball hybrid policy, detector-aware Cache, sandbox Replay, durable 100-image lifecycle,
+mixed-evidence browser UX and release documentation are complete.
 
 ## Live-conditional external requirements
 
@@ -43,4 +42,5 @@ checkpoint, metadata and compatible CUDA environment are available.
 ## Manual browser requirement
 
 Native browser 200% zoom requires a browser environment where browser chrome zoom can be changed
-and observed. Automated 1024px and compact reflow tests remain required but are separate evidence.
+and observed. Automated 1024px and compact reflow tests pass but are separate evidence. This is a
+`MANUAL` product check rather than an in-repository implementation blocker.

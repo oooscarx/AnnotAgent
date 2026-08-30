@@ -74,3 +74,19 @@ Review, and then Accept. If no rule is sufficient, the safe default is Review.
 its comparable score into an Annotation. A multi-source cluster does not fabricate an aggregate
 confidence; the committed/reviewed Annotation keeps the source-model list and leaves confidence
 unset while the complete evidence remains inspectable.
+
+## Results and Review
+
+Run Results lists each source model and its own score semantic; a score-less result says
+`confidence not provided`. The Evidence Inspector exposes original boxes, capability, query/model
+label and agreement IoU or conflict. Copied downstream Artifacts are deduplicated by source-model
+and geometry identity without deleting genuinely independent evidence.
+
+Review receives a stable structured queue explanation for policy, low score, missing score,
+fallback, geometry/label conflict, validation issue or domain hard negative. `Use {model} box`
+replaces the editable rectangle and stores `selected_detection_evidence` in the revision. It does
+not bypass Save/Accept, and the selected source remains available to Correction Memory.
+
+Domain wording originates in the persisted Skill-owned `ValidationIssue.message`. The generic
+Server correlates issues by Annotation ID and renders that message without branching on a domain
+Label or reason-code substring.

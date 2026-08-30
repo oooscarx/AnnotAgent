@@ -313,3 +313,18 @@ because no field task exists.
 Hard-negative and crop-classification decisions keep the original detection/crop subject
 reference. A configured `not_football` result uses an explicit reject route; uncertainty remains
 reviewable. This prevents a correction from one Project or Label from silently changing another.
+
+## DB-033 — Detector Cache Keys are content-, model-, and request-aware
+
+Cacheable detection nodes key canonical Image content identity plus the frozen model ID, model
+version, checkpoint SHA-256, backend protocol, model configuration, complete node-configuration
+hash, queries, Project Label mapping, target labels and enabled Skills. Editing only a downstream
+Gate cannot change an upstream detector key; editing a query or an immutable model/configuration
+fact invalidates only the affected call.
+
+Published detector runners participate in this cache. Detection Recovery does not: it consumes
+live upstream evidence, budget and decision metadata and remains a separately traced Agent action.
+The executor cache is process-local; persisted checkpoints are the cross-process Replay boundary.
+Sandbox Replay preserves ancestors and never persists another Commit. Rejected: keying only by node
+ID, treating image object identity as content identity, or claiming a durable global model-output
+cache that the storage layer does not implement.

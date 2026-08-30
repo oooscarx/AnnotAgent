@@ -25,6 +25,19 @@ model
 
 Runtime, not the model, controls commit. “I validated it” in model text has no effect.
 
+## Detection Recovery Agent
+
+Published detection Workflows can use the Rust-owned `agent.detection_recovery` node. It consumes
+an Image plus primary DetectionSet, evaluates typed Evidence Gate rules and can invoke only the
+registered Open Vocabulary capability. Step, tool, fallback-call and exact-decimal cost budgets are
+checked before invocation. A high specialist score takes the zero-call fast path; empty, low-score,
+domain-risk or correction-risk evidence can request one fallback. Failure, cancellation, missing
+binding or insufficient budget preserves primary evidence and stops at Human Review.
+
+The persisted Agent Session contains structured reason codes, selected model/capability, counts,
+timing, decision and stop condition. It does not store hidden chain-of-thought, query text, image
+bytes or raw Worker responses.
+
 ## Real-provider hardening
 
 - The submit schema receives a dynamic enum of labels allowed by the current task.

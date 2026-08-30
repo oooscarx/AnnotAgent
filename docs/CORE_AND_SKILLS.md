@@ -6,7 +6,9 @@
 - A **Skill** supplies registered domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It owns neither a Dataset nor the app shell.
 - A **Workflow** belongs to a Project or reusable template and connects typed registered nodes. Published versions are intended to be immutable and pinned by Runs.
 
-The current schema supports one configured Skill and one compatibility Workflow. The broader DTO is a migration contract, not a claim that general multi-Skill graph execution already exists.
+The current schema supports zero, one, or multiple enabled Skills and an exact selected Published
+Workflow. Legacy one-Skill Projects retain a labelled compatibility path; general multi-Skill
+execution uses the typed published DAG.
 
 ## Core boundary
 
@@ -41,6 +43,10 @@ Core combines detector Artifacts through `core.match_detection_sets` and routes 
 through `core.evidence_gate`. Candidate Clusters retain each model contribution independently;
 validation issues travel as upstream node metadata, and the Gate persists an explainable decision
 report. See [Detection Evidence](DETECTION_EVIDENCE.md).
+
+Model bindings belong to Projects and published Workflow snapshots. A Domain Skill can require or
+optionally use capabilities without naming a Backend. This lets three Label Pipelines reference one
+shared specialist node while a conditional Recovery node binds a separate open-vocabulary model.
 
 Special algorithms implement object-safe Rust traits and are registered explicitly:
 

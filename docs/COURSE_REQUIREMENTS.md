@@ -43,9 +43,17 @@ usage/cost, stopping state and scoped cancellation. The GUI additionally exposes
 configuration and Correction Memory impact. See `docs/DEMO_AGENT_SKILL.md` for the stable
 five-minute path.
 
+The TUI Models panel and `/models test <id>` expose real Worker availability, capability, latency
+and missing-score semantics. `/artifacts` and `/replay [node]` inspect typed lineage and cache-aware
+sandbox Replay. The GUI adds independent detector evidence and source-box revision controls.
+
 ## R3 — Configurable model
 
 `OpenAiCompatibleConfig`, `config/default.toml`, `config/qwen3.7-flash.example.toml`, and the Settings page cover endpoint, environment key name, workspace-local write-only key, model, default run provider, protocol, output/context control, reasoning mode, temperature, timeout, capabilities, headers, extra fields, pricing, and budgets.
+
+Versioned Detection Worker entries additionally configure model ID, architecture/version,
+checkpoint SHA-256, training-data version, label space, score semantics, request cost, timeout,
+license and explicit remote opt-in. Capability discovery is checked before use.
 
 ```bash
 cargo run -p annotagent -- doctor
@@ -75,6 +83,10 @@ specializations are implemented and tested in Rust:
 The separate Workflow Advisor Agent iteratively inspects registry state, proposes a Draft, consumes
 Static Validator and Dry Run reports, revises the Draft and stops for human publication approval.
 Neither Agent can bypass the Rust-controlled publish/review/commit boundaries.
+
+The domain-neutral Detection Recovery Agent supplies the mixed-model specialization: it takes a
+specialist fast path or makes at most one Registry-bound open-vocabulary call after evidence and
+budget checks, then persists the decision and stop condition without hidden reasoning.
 
 Offline demonstration:
 

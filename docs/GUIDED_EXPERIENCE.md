@@ -31,6 +31,16 @@ Technical capability is preserved through progressive disclosure:
 - Advanced Project Details retains schemas, bindings, versions, Skill configuration, records, and usage.
 - Settings owns Provider, Models, and Capabilities.
 
+For bounding-box Projects, New Project reads the Registry instead of asking for a free-text model
+name. A compatible enabled specialist produces `Use your trained detector first`; otherwise the
+cold-start recommendation is `Find objects by description` and explicitly says that no target-class
+training data is required. Both recommendations create an editable Draft and never auto-publish.
+
+Results and Review use user language while preserving technical truth: source models, independent
+boxes, missing-score wording, agreement/conflict, fallback count and queue reason are visible.
+Review can adopt a source model box through the normal revision flow. Debug retains raw typed
+Artifacts, Cache state, lineage and Replay.
+
 ## State and recovery
 
 Server and URL state are authoritative. Refresh restores Project Guidance, Build step, Run Results/Debug Image/Node/Artifact, Review item and scope, Runs filters, active execution, and Export readiness. An SSE reconnect always resynchronizes after an interrupted connection. A failed page request explains what failed and reloads the latest server state before retrying.

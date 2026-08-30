@@ -8398,6 +8398,35 @@ export:
             "{:#?}",
             inspection.nodes
         );
+        let replay = application
+            .replay_run_from_node(
+                started.run_id,
+                "commit_evidence",
+                &load_settings(None).expect("Replay settings"),
+            )
+            .await
+            .expect("hybrid Commit Replay");
+        assert!(replay.sandbox);
+        assert_eq!(replay.reexecuted_nodes, ["commit_evidence"]);
+        for upstream in ["specialist", "validate_primary", "recovery"] {
+            assert!(
+                replay
+                    .preserved_upstream_nodes
+                    .contains(&upstream.to_owned()),
+                "Replay did not preserve {upstream}: {:#?}",
+                replay.preserved_upstream_nodes
+            );
+        }
+        assert_eq!(
+            application
+                .store
+                .history(started.run_id)
+                .expect("history after sandbox Replay")
+                .annotations
+                .len(),
+            1,
+            "sandbox Replay must not duplicate a committed Annotation"
+        );
 
         let mut fallback_draft = application
             .create_workflow_draft_with_template(
@@ -9001,10 +9030,9 @@ export:
         let temp = tempfile::tempdir().expect("temp");
         let workspace = temp.path().join("workspace");
         std::fs::create_dir(&workspace).expect("workspace");
-        let project_yaml = include_str!("../../../examples/robocup/project.yaml")
-            .replace("max_parallel_images: 2", "max_parallel_images: 4");
+        let project_yaml = include_str!("../../../examples/robocup-ball-hybrid-mock/project.yaml");
         let app = Arc::new(LocalApplication::new(&workspace).expect("app"));
-        app.create_project("batch-demo", &project_yaml)
+        app.create_project("batch-demo", project_yaml)
             .expect("project");
         let image_root = workspace.join("batch-demo/images");
         for index in 0..100 {
@@ -9019,16 +9047,45 @@ export:
             .replace("max_requests = 500", "max_requests = 10000");
         let config_path = workspace.join("batch-config.toml");
         std::fs::write(&config_path, config).expect("config");
+        let settings = load_settings(Some(&config_path)).expect("hybrid batch settings");
+        let mut draft = app
+            .create_workflow_draft_with_template(
+                "batch-demo",
+                &settings,
+                false,
+                Some("robocup.ball.specialist_with_open_vocab_fallback"),
+            )
+            .expect("hybrid batch Draft");
+        draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist")
+            .parameters
+            .insert("mock_confidence".to_owned(), json!(0.92));
+        draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "specialist")
+            .expect("specialist")
+            .parameters
+            .insert("mock_bbox".to_owned(), json!([0.55, 0.72, 0.04, 0.04]));
+        app.save_workflow_draft(draft.clone())
+            .expect("save hybrid batch Draft");
+        let published = app
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish hybrid batch Workflow");
         let coordinator = DatasetCoordinator::new(app.as_ref());
         let batch = coordinator
-            .create(
+            .create_with_workflow(
                 &workspace.join("batch-demo/project.yaml"),
                 "mock",
                 Some(&config_path),
                 None,
+                Some((&published.workflow_id, published.version)),
             )
             .expect("batch");
-        assert_eq!(batch.max_concurrency, 4);
+        assert_eq!(batch.max_concurrency, 1);
         let task_app = app.clone();
         let batch_id = batch.id;
         let execution = tokio::spawn(async move {
@@ -9037,13 +9094,16 @@ export:
                 .await
         });
         let mut observed_progress = false;
-        for _ in 0..500 {
+        for _ in 0..1_000 {
             let images = app.store.list_batch_images(batch_id).expect("batch images");
             let completed = images
                 .iter()
                 .filter(|image| image.status == BatchImageStatus::Completed)
                 .count();
-            if completed > 0 && completed < 100 {
+            let running = images
+                .iter()
+                .any(|image| image.status == BatchImageStatus::Running);
+            if running && completed < 100 {
                 observed_progress = true;
                 break;
             }
@@ -9098,6 +9158,14 @@ export:
         assert_eq!(checkpoint.batch.budget_ledger.consumed.image_count, 100);
         let runs = restarted.list_runs().expect("child runs");
         assert_eq!(runs.len(), 100, "completed images must not execute twice");
+        assert!(runs.iter().all(|run| {
+            run.workflow_snapshot_json
+                .as_deref()
+                .is_some_and(|snapshot| {
+                    snapshot.contains(&published.content_hash)
+                        && snapshot.contains("published_dag_runtime")
+                })
+        }));
         let mut persisted_usage = annotagent_core::UsageTotals::default();
         for run in &runs {
             for usage in restarted.store.history(run.id).expect("history").usage {

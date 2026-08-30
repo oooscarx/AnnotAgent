@@ -325,7 +325,7 @@ impl PublishedWorkflowRuntime {
                             request,
                             annotagent_core::VisionCapability::OpenVocabularyDetection,
                         )?,
-                        false,
+                        true,
                     )?;
                 }
                 PHRASE_GROUNDING_OPERATION => {
@@ -336,7 +336,7 @@ impl PublishedWorkflowRuntime {
                             request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
-                        false,
+                        true,
                     )?;
                 }
                 DETECTION_RECOVERY_OPERATION => {
@@ -363,7 +363,7 @@ impl PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         self.object_detection_runner(node, request)?,
-                        false,
+                        true,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {
@@ -385,7 +385,7 @@ impl PublishedWorkflowRuntime {
                                 .unwrap_or_else(|| "default-vision".to_owned()),
                             request.model_image.clone(),
                         )?),
-                        false,
+                        true,
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
@@ -405,7 +405,7 @@ impl PublishedWorkflowRuntime {
                                 .unwrap_or_else(|| "mock-detector".to_owned()),
                             request.model_image.clone(),
                         )?),
-                        false,
+                        true,
                     )?;
                 }
                 _ if !matches!(
@@ -459,10 +459,7 @@ impl PublishedWorkflowRuntime {
                     width: request.image.metadata.width,
                     height: request.image.metadata.height,
                     mime_type: request.image.metadata.mime_type.clone(),
-                    blob_ref: request.model_image.as_ref().map_or_else(
-                        || format!("workspace://{}", request.image.metadata.sha256),
-                        |image| format!("workspace://{}", image.id),
-                    ),
+                    blob_ref: format!("workspace://sha256/{}", request.image.metadata.sha256),
                 })
             })
             .into_iter()
@@ -1019,7 +1016,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             &request,
                             annotagent_core::VisionCapability::OpenVocabularyDetection,
                         )?,
-                        false,
+                        true,
                     )?;
                 }
                 PHRASE_GROUNDING_OPERATION => {
@@ -1030,7 +1027,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             &request,
                             annotagent_core::VisionCapability::PhraseGrounding,
                         )?,
-                        false,
+                        true,
                     )?;
                 }
                 DETECTION_RECOVERY_OPERATION => {
@@ -1057,7 +1054,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         self.object_detection_runner(node, &request)?,
-                        false,
+                        true,
                     )?;
                 }
                 VLM_DETECTION_OPERATION => {
@@ -1079,7 +1076,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                                 .unwrap_or_else(|| "default-vision".to_owned()),
                             request.model_image.clone(),
                         )?),
-                        false,
+                        true,
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
@@ -1099,7 +1096,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                                 .unwrap_or_else(|| "mock-detector".to_owned()),
                             request.model_image.clone(),
                         )?),
-                        false,
+                        true,
                     )?;
                 }
                 _ if !matches!(
@@ -1149,10 +1146,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     width: request.image.metadata.width,
                     height: request.image.metadata.height,
                     mime_type: request.image.metadata.mime_type.clone(),
-                    blob_ref: request.model_image.as_ref().map_or_else(
-                        || format!("workspace://{}", request.image.metadata.sha256),
-                        |image| format!("workspace://{}", image.id),
-                    ),
+                    blob_ref: format!("workspace://sha256/{}", request.image.metadata.sha256),
                 })
             })
             .into_iter()

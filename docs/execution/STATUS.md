@@ -2,6 +2,31 @@
 
 Last updated: 2026-08-31 CST
 
+## Open-Vocabulary + Specialist Detection M10 — 2026-08-31
+
+- Detector Cache Keys now include canonical image content, model/version/checkpoint/protocol,
+  model/node configuration, query, target Label mapping and enabled Skills. Tests prove identical
+  specialist/open-vocabulary calls execute once, Gate-only edits preserve both caches, and only the
+  affected detector reruns after query or immutable model/configuration edits.
+- Exact hybrid sandbox Replay preserves specialist, validation and Recovery ancestors and leaves
+  the committed Annotation count at one. The 100-image durable gate now runs the exact published
+  hybrid Workflow through pause, application restart and resume with 100 unique child Runs pinned
+  to one immutable content hash.
+- The complete 24-scenario Chromium suite covers mixed evidence, agreement/conflict, both source-box
+  revisions, unavailable/timeout Workers, Generic isolation, URL restoration, keyboard behavior and
+  compact responsive layouts. Native browser 200% zoom remains an explicit `MANUAL` check.
+- Generic Server Review now presents persisted Skill-owned Validation Issue messages without a
+  domain-string branch; the production Agent + Skill boundary scan passes while Core's concrete
+  test-fixture Labels remain available for generic contract tests.
+- Added specialist, per-version license, hybrid Workflow and five-minute demo documentation. Full
+  verification passes: 221 Rust tests and doc tests, strict Clippy/build/fmt, 35 Web tests,
+  typecheck/build, 24 E2E tests, Worker syntax and no-weight health probes, doctor, three offline
+  demos, boundary/secret scans and diff checks.
+- The detection release matrix is 88 `PASS`, zero `OPEN`, one `LIVE-CONDITIONAL`. Real
+  LocateAnything/RF-DETR GPU smokes remain conditional because this Darwin arm64 host has no NVIDIA
+  runtime or configured legal weights/immutable checkpoint metadata. No API key, model weight,
+  download, push or remote mutation was used.
+
 ## Open-Vocabulary + Specialist Detection M9 — 2026-08-31
 
 - Guided New Project recommendations now use the real Model Registry: label-compatible specialists

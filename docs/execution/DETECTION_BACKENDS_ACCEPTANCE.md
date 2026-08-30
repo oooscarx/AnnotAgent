@@ -188,18 +188,51 @@ below:
 - `cargo test --workspace --all-features` passes 220 tests and doc tests. Strict workspace Clippy,
   formatting, all 35 Web tests, Web typecheck/build and diff checks pass.
 
+## M10 Reliability and Release evidence
+
+- Detection cache material explicitly includes canonical image content identity, Registry model
+  ID/version/checkpoint/protocol/configuration, node-configuration hash, queries, Project Label
+  mapping, target labels and enabled Skills. Published detector runners are cacheable while the
+  evidence-dependent Recovery Agent remains non-cacheable.
+- `detector_cache_is_model_query_mapping_and_config_aware` proves identical specialist and
+  open-vocabulary inputs execute once, Gate-only edits reuse both, a query edit reruns only open
+  vocabulary, and model version/checkpoint/protocol/class-mapping edits rerun the specialist.
+- Exact hybrid sandbox Replay from `commit_evidence` preserves specialist, primary validation and
+  Recovery checkpoints and leaves the persisted Annotation count at one.
+- The durable 100-image test now selects the exact published hybrid Workflow, pauses while an image
+  is running, reopens the application, resumes to completion and verifies 100 unique child Runs,
+  exact frozen Workflow content hashes and no budget/image duplication.
+- Worker crash, timeout, cancellation, invalid coordinates, malformed/oversized response and
+  missing-score cases pass at the hardened v1 boundary. Both tracked model Workers start without
+  weights and truthfully report unavailable health while retaining capability discovery.
+- The complete 24-scenario Chromium suite passes. It renders two independent detector evidences,
+  agreement and geometry conflict, lets Review adopt either source rectangle as an unsaved normal
+  revision, reports offline/timeout states, excludes RoboCup from Generic routes, restores URLs,
+  remains keyboard-operable and has no horizontal overflow at compact viewports.
+- Generic Server Review explanation reads full persisted Validation Issues, scopes them to the
+  Annotation and presents the Skill-owned message. The final boundary script rejects domain terms
+  in production Core/Runtime/Server/components while permitting concrete labels inside cfg(test)
+  fixtures that prove the generic contracts.
+- `cargo test --workspace --all-features` passes 221 tests and doc tests; strict Clippy, formatting,
+  workspace build, 35 Web tests, Web typecheck/build, Worker syntax, doctor, three offline demos,
+  Core/Runtime brand scan, secret scan and diff checks pass. Native browser 200% zoom is `MANUAL`.
+- The matrix now contains 88 `PASS`, zero `OPEN`, and one `LIVE-CONDITIONAL` row. Real
+  LocateAnything/RF-DETR five-image GPU smokes were not run because this Darwin arm64 host has no
+  NVIDIA runtime or configured legal weights/immutable checkpoint metadata; no Mock is presented as
+  live model accuracy.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| A01 | LocateAnything is not a Core node type | PASS | no such type exists; M4 must preserve this |
-| A02 | RF-DETR is not a Core node type | PASS | no such type exists; M5 must preserve this |
+| A01 | LocateAnything is not a Core node type | PASS | final Core/Runtime brand scan has zero matches |
+| A02 | RF-DETR is not a Core node type | PASS | final Core/Runtime brand scan has zero matches |
 | A03 | YOLO and RF-DETR share Object Detection Capability | PASS | legacy YOLO and generic RF backend both bind ObjectDetection |
 | A04 | LocateAnything implements open-vocabulary Capability | PASS | Capability Skill + Worker adapter implement OpenVocabularyDetection and PhraseGrounding |
-| A05 | `robocup.ball` references no concrete model ID | PASS | current templates are model-agnostic; rescan at M8/M10 |
+| A05 | `robocup.ball` references no concrete model ID | PASS | final hybrid template test and boundary scan prove model-agnostic capability bindings |
 | A06 | Generic Project can use LocateAnything | PASS | generic template integration test publishes and runs without RoboCup |
 | A07 | Generic Project can use RF-DETR | PASS | generic Object Detection template/runtime path is backend-neutral |
-| A08 | Core contains no model-brand branch | PASS | M0 scan; enforce each Milestone |
+| A08 | Core contains no model-brand branch | PASS | final zero-hit production scan covers Core and generic Runtime |
 
 ## B. Detection Artifact
 
@@ -212,7 +245,7 @@ below:
 | B05 | Every candidate stores query or model label | PASS | validation rejects Detection/Evidence with neither identity |
 | B06 | Multi-model candidates retain independent evidence | PASS | CandidateCluster round-trip preserves scored and score-less members |
 | B07 | Artifact lineage is traceable | PASS | cluster envelope test retains both source DetectionSet parents |
-| B08 | Valid empty DetectionSet is not failure | PASS | empty Pipeline Artifact validates; new workers need tests |
+| B08 | Valid empty DetectionSet is not failure | PASS | typed Artifact, both capability Skills and v1 Worker contract tests pass |
 
 ## C. LocateAnything
 
@@ -270,7 +303,7 @@ below:
 | F03 | Advisor output is Draft-only | PASS | existing constrained Advisor never publishes |
 | F04 | Recovery chooses fallback from evidence | PASS | empty/low/domain/correction rules are evaluated before the only permitted call |
 | F05 | Recovery changes decision after fallback | PASS | agreeing Mock evidence changes initial Fallback to final Accept |
-| F06 | Agent has tools, budget, and stop conditions | PASS | bounded Agent Runtime baseline; mixed policy open |
+| F06 | Agent has tools, budget, and stop conditions | PASS | published Recovery is bounded to one fallback call with step/tool/cost checks and explicit stop |
 | F07 | Trace explains fallback invocation | PASS | persisted Agent session contains reason codes, call facts and stop condition |
 | F08 | Trace exposes no hidden chain-of-thought | PASS | structured visible action/event baseline |
 
@@ -278,20 +311,20 @@ below:
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| G01 | Identical RF-DETR input executes once | OPEN | backend/cache key absent |
-| G02 | Identical LocateAnything query executes once | OPEN | backend/cache key absent |
-| G03 | Gate-only edit does not rerun detectors | OPEN | detector-specific proof absent |
-| G04 | Query edit invalidates only LocateAnything | OPEN | query-aware cache absent |
-| G05 | Cache key includes model version and config | OPEN | existing node cache lacks required detection fields |
-| G06 | Replay preserves lineage | PASS | generic checkpoint Replay baseline; mixed evidence proof open |
-| G07 | Replay does not duplicate Annotation commit | PASS | generic DAG Replay baseline; mixed path proof open |
+| G01 | Identical RF-DETR input executes once | PASS | detector cache execution counter remains one for identical specialist input |
+| G02 | Identical LocateAnything query executes once | PASS | detector cache execution counter remains one and repeat trace is `Cached` |
+| G03 | Gate-only edit does not rerun detectors | PASS | both upstream detector traces remain `Cached` after downstream threshold edit |
+| G04 | Query edit invalidates only LocateAnything | PASS | open-vocabulary counter increments while specialist stays cached |
+| G05 | Cache key includes model version and config | PASS | version/checkpoint/protocol/class mapping each invalidate the affected detector; key material is explicit |
+| G06 | Replay preserves lineage | PASS | exact hybrid Commit Replay preserves specialist, primary validation and Recovery ancestors |
+| G07 | Replay does not duplicate Annotation commit | PASS | sandbox hybrid Replay leaves persisted Annotation count exactly one |
 
 ## H. Product
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
 | H01 | Global brand remains AnnotAgent | PASS | product identity tests/baseline |
-| H02 | Guided Mode uses user language | PASS | current Guided Workspace; new recommendations open |
+| H02 | Guided Mode uses user language | PASS | Registry-aware specialist-first and description-based cold-start recommendations are browser-tested |
 | H03 | Expert Mode shows real model and evidence | PASS | Run Debug Candidate Cluster payload and Evidence Decision card use persisted source/model facts |
 | H04 | Results shows source model | PASS | Results annotation rows and Evidence Inspector render persisted source model/capability facts |
 | H05 | Missing score says confidence not provided | PASS | Evidence Decision card says confidence was not provided or is not comparable |
@@ -308,7 +341,7 @@ below:
 | I01 | `robocup.ball` uses Capability Binding | PASS | hybrid template has no model ID; Project capability map resolves all three model nodes in Draft integration |
 | I02 | White-shoe risk triggers fallback or Crop Verify | PASS | hard-negative + Recovery verification route + crop classifier reject tests |
 | I03 | Penalty-mark risk never directly auto-accepts | PASS | current deterministic Ball validator test |
-| I04 | Correction Memory affects Recovery | PASS | current Application/Skill tests; hybrid policy open |
+| I04 | Correction Memory affects Recovery | PASS | exact-scope Memory changes the tested Ball recovery decision and persists structured risk |
 | I05 | Generic Project does not load RoboCup | PASS | existing generic project/runtime tests |
 | I06 | RoboCup appears only for enabled Skill | PASS | layered registry and browser baseline |
 
@@ -317,7 +350,7 @@ below:
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
 | J01 | Rust Runtime owns the Agent loop | PASS | architecture and workspace tests |
-| J02 | TUI can inspect and cancel | PASS | current commands/tests; Models commands open |
+| J02 | TUI can inspect and cancel | PASS | tested Models, model test, Artifacts, Replay and lifecycle commands |
 | J03 | GUI can inspect and cancel | PASS | current Run Debug/control E2E |
 | J04 | Models, endpoints, and cost are configurable | PASS | Detection Worker collection edits endpoint, identity, capability, cost, timeout and immutable metadata |
 | J05 | Real-time progress is visible | PASS | SSE/TUI event baseline |
@@ -329,9 +362,10 @@ below:
 
 ## Browser release checks
 
-M9 exercised the real local Models, Settings, New Project cold-start recommendation, Run Results,
-Debug URL restore, Review source-evidence edit draft and Generic Project copy. All checked pages had
-zero horizontal overflow at 1024px and 760px. Parser/unit evidence covers two-source agreement and
-model-specific source choices, but M10 must still run those states as browser fixtures along with
-offline/timeout presentation. Native 200% zoom is `MANUAL`; responsive reflow does not substitute
-for it.
+M10's complete 24-scenario Chromium suite exercised Settings/Models, New Project, Pipeline, Dry Run,
+Run Results/Debug, Review, Replay-adjacent Artifact inspection, lifecycle controls, URL restore,
+keyboard operation and Generic Project isolation. Browser fixtures rendered agreement, geometry
+conflict, independent RF-DETR/LocateAnything boxes and score semantics, both source-box choices,
+Worker unavailable and timeout states. Compact pages have no horizontal overflow; an in-app browser
+check independently confirmed the real local Models page and 1024px reflow. Native 200% browser
+zoom remains `MANUAL`; responsive viewport tests do not substitute for browser-chrome zoom.

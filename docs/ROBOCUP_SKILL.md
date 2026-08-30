@@ -6,9 +6,10 @@
 ID/version. The compatibility `RoboCupSkill` now exposes the same single ball task; field, line,
 penalty-mark, robot, person and robot-attribute annotation tasks are no longer product options.
 
-The Ball Skill owns only domain resources, correction taxonomy, one hard-negative Validator,
-review policy and two model-agnostic templates. Detection is supplied by
-`vlm-detection` or `yolo-detection`; Filter/Crop/Gates/Review/Commit are Core.
+The Ball Skill owns only domain resources, correction taxonomy, hard-negative/field-relation
+Validators, review policy and two model-agnostic templates. Detection is supplied by generic
+Object Detection, Open Vocabulary Detection or VLM capabilities;
+Filter/Crop/Gates/Review/Commit are Core.
 
 The hard-negative validator covers white footwear, penalty-mark proximity, line support, duplicate
 overlap, unusual geometry and correction-memory risk. Those concepts are evidence for deciding a
@@ -23,19 +24,21 @@ objects[ball]
 ```
 
 The only task resource is `tasks/ball.md`. The Workflow Designer exposes
-`robocup.ball.vlm-bootstrap` and `robocup.ball.detector-first` only.
+`robocup.ball.vlm-bootstrap` and `robocup.ball.specialist_with_open_vocab_fallback` only.
 
 The release hybrid path is:
 
 ```text
-Image → generic detector → ball filter
-→ RoboCup Ball hard-negative Validator
-→ Review Gate
-→ Commit
+Image → specialist Object Detection → primary validation → Detection Recovery
+  accepted → Commit
+  fallback evidence → Candidate projection → Ball validation → Crop
+                    → Classification verification → Review / Reject / Commit
 ```
 
-Detector geometry remains in its original Artifact. A VLM may verify a crop but never rewrites the
-box.
+Capability bindings live in Project configuration, not the Skill template. Detector geometry and
+each source score semantic remain in independent evidence. White-shoe, penalty-mark, field-relation
+and exact-scope Correction Memory risks can force fallback or Crop verification; a configured
+`not_football` classification takes an explicit Reject terminal.
 
 The current live Ball Project can add real boundary refinement with
 `sam_prompted_refiner`. It first uses bounded local pixels to correct an imprecise VLM prompt, then

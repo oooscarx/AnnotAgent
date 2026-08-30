@@ -4,7 +4,7 @@ Updated: 2026-08-31
 
 ## Current Milestone
 
-M9 — Guided UX, mixed-evidence Run/Review, and TUI controls (complete)
+M10 — Reliability and Release acceptance (complete)
 
 ## Completed
 
@@ -188,21 +188,41 @@ M9 — Guided UX, mixed-evidence Run/Review, and TUI controls (complete)
   at 1024px and 760px with zero horizontal overflow. Reload restored the exact Debug URL, Review
   rendered source evidence without a style discontinuity, and keyboard-operable detection boxes
   retained focus semantics. Native browser 200% zoom remains a manual M10 gate.
+- Detection node Cache Keys now bind image content identity, model/version/checkpoint/protocol,
+  model and node configuration, queries, Project Label mapping, target labels and enabled Skills.
+  Published specialist, open-vocabulary, phrase-grounding, VLM and compatibility detector runners
+  are cacheable; Recovery remains deliberately non-cacheable.
+- Executable cache tests prove identical specialist and open-vocabulary calls execute once,
+  Gate-only edits reuse both outputs, a query edit invalidates only open vocabulary, and version,
+  checkpoint, protocol or class-mapping edits invalidate the affected specialist.
+- Sandbox Replay on the exact hybrid Commit node preserves specialist/validation/Recovery lineage
+  and leaves the persisted Annotation count at one. The 100-image durable test now executes the
+  exact published hybrid Workflow through pause, application restart and resume with no duplicate
+  child Run and a frozen content hash on every image.
+- Full browser fixtures exercise two independent detector evidences, agreement, geometry conflict,
+  score-less output, both source-box revisions, offline/timeout presentation and Generic isolation.
+  All 24 Chromium scenarios pass at compact responsive layouts.
+- Review explanations now read the persisted Skill-owned Validation Issue message and correlate it
+  by Annotation ID. Generic Server code no longer branches on domain-specific reason strings; the
+  production-only boundary scan excludes concrete labels used solely by Core unit-test fixtures.
+- Added specialist, license, hybrid workflow and five-minute demo documentation. No key, download,
+  model weight, push or remote mutation was used; real GPU smokes remain explicitly conditional.
 
 ## In progress
 
-- None. M9 is ready for its independent local commit.
+- None. M0–M10 repository work is complete and M10 is ready for its independent local commit.
 
 ## Next step
 
-M10 — complete detector-aware cache/Replay reliability, 100-image and lifecycle verification,
-failure-path/browser release gates, documentation and the five-minute hybrid demo.
+No repository Release Blocker remains. Real five-image GPU smokes stay `LIVE-CONDITIONAL` until
+legal weights, immutable model metadata and a supported NVIDIA environment are explicitly supplied;
+native browser 200% zoom remains `MANUAL`.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 220 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 221 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
 | Web | `npm --prefix web test -- --run` | PASS — 12 files, 35 tests |
@@ -211,11 +231,12 @@ failure-path/browser release gates, documentation and the five-minute hybrid dem
 | Worker | parse all tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Locate worker | start without weights; request `/health` and `/v1/capabilities` | PASS — unavailable health is truthful; capabilities remain discoverable |
 | RF-DETR worker | start without checkpoint; request `/health` and `/v1/capabilities` | PASS — immutable metadata requirement is reported; no fixture inference |
-| Browser | in-app browser over the locally rebuilt server | PASS for Models/Settings/New Project/Results/Debug/Review at 1024px and 760px; zero horizontal overflow and exact Debug URL reload; native 200% remains MANUAL |
+| Browser E2E | `npm --prefix web run test:e2e` | PASS — 24/24 Chromium scenarios, including mixed evidence, source-box choice, offline/timeout, Generic isolation, URL restore, keyboard and compact reflow |
+| Browser | in-app browser over the locally rebuilt server | PASS — Models truthfully reports both Workers unavailable and 1024px has zero horizontal overflow; native 200% remains MANUAL |
 
 ## Latest local commit
 
-This document's containing M9 commit: `feat(ui): explain mixed detector evidence and fallbacks`
+Pending containing M10 commit: `test(release): validate open-vocabulary and specialist detection alpha`
 
 ## Audited baseline
 
@@ -249,9 +270,8 @@ This document's containing M9 commit: `feat(ui): explain mixed detector evidence
 
 ## Release Blocking remaining
 
-The matrix contains 83 `PASS`, 5 `OPEN`, and one `LIVE-CONDITIONAL` row after M9. The five open
-rows are the detector-aware Cache/Replay proofs scheduled for M10. Real five-image GPU smokes remain
-explicitly live-conditional and are not represented by Mock fixtures.
+The matrix contains 88 `PASS`, zero `OPEN`, and one `LIVE-CONDITIONAL` row after M10. Real
+five-image GPU smokes remain explicitly live-conditional and are not represented by Mock fixtures.
 
 ## Live-conditional items
 

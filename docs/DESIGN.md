@@ -35,9 +35,19 @@ Coordinates use private fields and checked constructors, preventing invalid norm
 
 The model cannot commit directly. It submits typed candidates. Runtime parses them, deterministic Skill code refines and validates them, and review policy selects accept, retry, review, or reject. The trace stores visible model content and structured actions, never hidden reasoning.
 
+Open-vocabulary grounding and trained Object Detection are Model capabilities behind the same
+versioned Worker boundary. Candidate Match and Evidence Gate are generic Core operations; model
+brands and RoboCup policy remain outside Core. Independent detector boxes and score semantics are
+retained, and a bounded Recovery Agent may call one configured fallback only after an observable
+evidence decision and budget check.
+
 ## Task-scoped tools and context
 
 Runtime exposes generic tools plus Skill tools applicable to the current task. Model turns, tool calls, recovery turns, Provider timeout, task timeout, and retry are separate bounded budgets. Repeated deterministic calls can reuse cached Artifacts; available actions narrow according to state without permanently forcing submit after the first tool call.
+
+Detection Cache Keys include image content identity, Registry model/version/checkpoint/protocol,
+node configuration, query text and Project Label mapping. Editing only a downstream Gate leaves
+detector keys unchanged; Replay preserves checkpointed ancestors and never persists a second Commit.
 
 ## Persistence
 

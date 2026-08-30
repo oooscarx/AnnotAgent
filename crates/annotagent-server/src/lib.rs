@@ -2206,6 +2206,7 @@ fn review_detection_evidence(
 fn review_explanation(
     annotation: &Annotation,
     issue_codes: &[String],
+    issue_details: &[String],
     evidence: &[DetectionEvidence],
     agreement: Option<&CandidateAgreement>,
     evidence_decision: Option<&Value>,
@@ -2227,14 +2228,14 @@ fn review_explanation(
         .flatten()
         .filter_map(|reason| reason.get("code").and_then(Value::as_str))
         .collect::<BTreeSet<_>>();
-    let issue_text = issue_codes.join(" ").to_ascii_lowercase();
+    let domain_validation = reason_codes.contains("domain_issue");
 
-    if issue_text.contains("white_shoe") || issue_text.contains("hard_negative") {
+    if domain_validation && !issue_codes.is_empty() {
         return json!({
-            "code": "domain_hard_negative",
+            "code": "domain_validation_issue",
             "title": "Needs review",
-            "summary": "The candidate resembles a known domain hard negative.",
-            "details": ["RoboCup Ball validation marked it as a possible white shoe or robot part."]
+            "summary": "A domain validator found evidence that needs a human decision.",
+            "details": issue_details
         });
     }
     if matches!(agreement, Some(CandidateAgreement::GeometryConflict)) {
@@ -2312,7 +2313,7 @@ fn review_explanation(
             "code": "validation_issue",
             "title": "Needs review",
             "summary": "Validation needs a human decision.",
-            "details": issue_codes
+            "details": issue_details
         });
     }
     json!({
@@ -2431,7 +2432,13 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             .store()
             .list_events(run.id)
             .map_err(ApiError::internal)?;
-        let validation_issue_codes = validation_issue_codes(&events);
+        let legacy_validation_issue_codes = validation_issue_codes(&events);
+        let persisted_validation_issues = state
+            .application
+            .store()
+            .list_validation_issues(run.id)
+            .map_err(ApiError::internal)?;
+        let has_persisted_validation_issues = !persisted_validation_issues.is_empty();
         let current_node = state
             .application
             .store()
@@ -2443,6 +2450,32 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             serde_json::from_str::<ProjectSchema>(&run.project_schema_json)
                 .map_or(0, |schema| schema.version);
         for annotation in annotations {
+            let annotation_validation_issues = persisted_validation_issues
+                .iter()
+                .filter(|issue| {
+                    issue.annotation_ids.is_empty() || issue.annotation_ids.contains(&annotation.id)
+                })
+                .collect::<Vec<_>>();
+            let mut validation_issue_codes = if has_persisted_validation_issues {
+                annotation_validation_issues
+                    .iter()
+                    .map(|issue| issue.code.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                legacy_validation_issue_codes.clone()
+            };
+            validation_issue_codes.sort();
+            validation_issue_codes.dedup();
+            let mut validation_issue_details = if has_persisted_validation_issues {
+                annotation_validation_issues
+                    .iter()
+                    .map(|issue| issue.message.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                validation_issue_codes.clone()
+            };
+            validation_issue_details.sort();
+            validation_issue_details.dedup();
             let source_artifact_id = annotation.provenance.artifact_ids.first().copied();
             let mut lineage_ids = annotation
                 .provenance
@@ -2517,6 +2550,7 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             let explanation = review_explanation(
                 &annotation,
                 &validation_issue_codes,
+                &validation_issue_details,
                 &detection_evidence,
                 candidate_agreement.as_ref(),
                 evidence_decision.as_ref(),

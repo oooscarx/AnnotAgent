@@ -28,3 +28,7 @@ Filter and Crop rather than adding crop behavior to this Skill.
 The Generic example in `examples/object-detection/` can be opened without enabling a domain Skill.
 The template begins as a Draft; edit its target labels/class mapping, Dry Run it, and publish an
 immutable version before starting a formal Run.
+
+See [Specialist Detection](SPECIALIST_DETECTION.md) for Registry/version requirements and
+[Hybrid Detection Workflows](HYBRID_DETECTION_WORKFLOWS.md) for specialist-first fallback, Cache
+and Replay behavior.

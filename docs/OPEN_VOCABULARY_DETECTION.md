@@ -29,6 +29,10 @@ The Skill owns query validation only. Model identity and endpoint come from the 
 the Provider adapter owns wire validation and coordinate conversion; Core owns typed Artifacts,
 Review, and Commit. Crop remains a separate Core node.
 
+The detection Cache Key includes the exact query array, Project Label mapping, image content
+identity, model/version/protocol and node configuration. Changing a query invalidates this model
+call without invalidating an unchanged specialist detector.
+
 ## Offline Mock
 
 Bind `mock-open-vocabulary` to exercise category detection, phrase grounding, multi-query mapping,

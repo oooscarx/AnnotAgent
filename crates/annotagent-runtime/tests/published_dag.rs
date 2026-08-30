@@ -8,10 +8,12 @@ use std::{
 };
 
 use annotagent_core::{
-    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRole, ArtifactValidationState,
-    FallbackPolicy, ImageId, NodePort, NormalizedRect, PublishedWorkflowVersion, RetryPolicy,
-    RunId, VisionArtifact, VisionArtifactValue, WORKFLOW_SCHEMA_VERSION, WorkflowDraft,
-    WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef, ArtifactRole,
+    ArtifactValidationState, FallbackPolicy, ImageArtifact, ImageId, ModelVersionMetadata,
+    NodePort, NormalizedRect, PipelineArtifact, PublishedWorkflowVersion, RetryPolicy, RunId,
+    VisionArtifact, VisionArtifactValue, VisionModelDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot,
 };
 use annotagent_runtime::{
     DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner,
@@ -20,6 +22,7 @@ use annotagent_runtime::{
 use async_trait::async_trait;
 use chrono::Utc;
 use rust_decimal::Decimal;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -121,6 +124,128 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
     }
 }
 
+fn rehash(workflow: &mut PublishedWorkflowVersion) {
+    workflow.snapshot.draft = Some(workflow.draft.clone());
+    workflow.content_hash = format!(
+        "{:x}",
+        Sha256::digest(
+            workflow
+                .snapshot
+                .content_hash_material()
+                .expect("Workflow content hash material")
+        )
+    );
+}
+
+fn image_port(id: &str) -> NodePort {
+    NodePort {
+        id: id.to_owned(),
+        artifact_type: ArtifactKind::Image,
+        required: true,
+        multiple: false,
+    }
+}
+
+fn detection_cache_workflow() -> PublishedWorkflowVersion {
+    let mut specialist = node(
+        "specialist",
+        "specialist_detector",
+        WorkflowNodeKind::VisionModel,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    specialist.model_binding = Some("specialist-v1".to_owned());
+    specialist.parameters = BTreeMap::from([
+        ("target_labels".to_owned(), json!(["ball"])),
+        ("class_mapping".to_owned(), json!({"football": "ball"})),
+    ]);
+    let mut open_vocabulary = node(
+        "open_vocabulary",
+        "open_vocab_detector",
+        WorkflowNodeKind::VisionModel,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    open_vocabulary.model_binding = Some("open-vocabulary-v1".to_owned());
+    open_vocabulary.parameters = BTreeMap::from([(
+        "queries".to_owned(),
+        json!([{"id": "ball", "text": "a football", "target_label": "ball"}]),
+    )]);
+    let mut gate = node(
+        "gate",
+        "evidence_gate",
+        WorkflowNodeKind::Gate,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    gate.parameters.insert("minimum_iou".to_owned(), json!(0.6));
+    let mut workflow = published(
+        vec![
+            node(
+                "input",
+                "input",
+                WorkflowNodeKind::ImageInput,
+                Vec::new(),
+                vec![image_port("image")],
+            ),
+            specialist,
+            open_vocabulary,
+            gate,
+        ],
+        vec![
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "specialist".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "open_vocabulary".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "open_vocabulary".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "gate".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+        ],
+    );
+    workflow.snapshot.models = vec![
+        VisionModelDescriptor {
+            id: "specialist-v1".to_owned(),
+            model_version: "1".to_owned(),
+            version: ModelVersionMetadata {
+                architecture: Some("specialist".to_owned()),
+                model_version: "1".to_owned(),
+                checkpoint_sha256: Some("a".repeat(64)),
+                training_dataset_version: Some("dataset-v1".to_owned()),
+                backend_protocol_version: "1".to_owned(),
+            },
+            ..VisionModelDescriptor::default()
+        },
+        VisionModelDescriptor {
+            id: "open-vocabulary-v1".to_owned(),
+            model_version: "1".to_owned(),
+            version: ModelVersionMetadata {
+                architecture: Some("grounding".to_owned()),
+                model_version: "1".to_owned(),
+                checkpoint_sha256: None,
+                training_dataset_version: None,
+                backend_protocol_version: "1".to_owned(),
+            },
+            ..VisionModelDescriptor::default()
+        },
+    ];
+    rehash(&mut workflow);
+    workflow
+}
+
 struct PassthroughRunner;
 
 #[async_trait]
@@ -133,6 +258,21 @@ impl DagNodeRunner for PassthroughRunner {
                 output_tokens: 2,
                 cost: Decimal::new(1, 3),
             },
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
+struct CountingPipelineRunner {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl DagNodeRunner for CountingPipelineRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(DagNodeOutput {
+            pipeline_artifacts: context.input_pipeline_artifacts,
             ..DagNodeOutput::default()
         })
     }
@@ -376,6 +516,188 @@ async fn published_dag_branches_suspends_resumes_caches_and_replays_trace() {
         resumed.checkpoint.node_statuses["commit"],
         DagNodeStatus::Succeeded
     );
+}
+
+#[tokio::test]
+async fn detector_cache_is_model_query_mapping_and_config_aware() {
+    let specialist_calls = Arc::new(AtomicUsize::new(0));
+    let open_vocabulary_calls = Arc::new(AtomicUsize::new(0));
+    let mut executor = PublishedDagExecutor::new();
+    executor
+        .register_runner(
+            "specialist_detector",
+            Arc::new(CountingPipelineRunner {
+                calls: specialist_calls.clone(),
+            }),
+            true,
+        )
+        .expect("specialist runner");
+    executor
+        .register_runner(
+            "open_vocab_detector",
+            Arc::new(CountingPipelineRunner {
+                calls: open_vocabulary_calls.clone(),
+            }),
+            true,
+        )
+        .expect("open-vocabulary runner");
+    executor
+        .register_runner("evidence_gate", Arc::new(PassthroughRunner), true)
+        .expect("gate runner");
+
+    let workflow = detection_cache_workflow();
+    let image_id = ImageId::new();
+    let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
+        run_id: RunId::new(),
+        image_id,
+        initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: vec![PipelineArtifact::Image(ImageArtifact {
+            reference: ArtifactRef {
+                artifact_id: format!("image:{image_id}"),
+                source_node: "input".to_owned(),
+                port: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                item_id: None,
+            },
+            image_id,
+            width: 640,
+            height: 480,
+            mime_type: "image/png".to_owned(),
+            blob_ref: format!("workspace://sha256/{}", "f".repeat(64)),
+        })],
+        cancellation: CancellationToken::new(),
+    };
+
+    let first = executor
+        .execute(&workflow, &request)
+        .await
+        .expect("initial detector execution");
+    assert_eq!(first.status, DagRunStatus::Completed);
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 1);
+    assert!(first.checkpoint.traces.iter().all(|trace| {
+        !matches!(trace.node_id.as_str(), "specialist" | "open_vocabulary")
+            || trace.cache_key.is_some()
+    }));
+
+    let repeated = executor
+        .execute(&workflow, &request)
+        .await
+        .expect("identical detector execution");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 1);
+    for detector in ["specialist", "open_vocabulary"] {
+        assert!(repeated.checkpoint.traces.iter().any(|trace| {
+            trace.node_id == detector && trace.status == DagNodeStatus::Cached && trace.cache_hit
+        }));
+    }
+
+    let mut gate_edit = workflow.clone();
+    gate_edit
+        .draft
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "gate")
+        .expect("gate")
+        .parameters
+        .insert("minimum_iou".to_owned(), json!(0.72));
+    rehash(&mut gate_edit);
+    let gate_result = executor
+        .execute(&gate_edit, &request)
+        .await
+        .expect("gate-only edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        gate_result.checkpoint.traces.iter().any(|trace| {
+            trace.node_id == "specialist" && trace.status == DagNodeStatus::Cached
+        })
+    );
+    assert!(gate_result.checkpoint.traces.iter().any(|trace| {
+        trace.node_id == "open_vocabulary" && trace.status == DagNodeStatus::Cached
+    }));
+
+    let mut query_edit = gate_edit.clone();
+    query_edit
+        .draft
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "open_vocabulary")
+        .expect("open-vocabulary detector")
+        .parameters
+        .insert(
+            "queries".to_owned(),
+            json!([{"id": "ball", "text": "the match football", "target_label": "ball"}]),
+        );
+    rehash(&mut query_edit);
+    let query_result = executor
+        .execute(&query_edit, &request)
+        .await
+        .expect("query edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 2);
+    assert!(
+        query_result.checkpoint.traces.iter().any(|trace| {
+            trace.node_id == "specialist" && trace.status == DagNodeStatus::Cached
+        })
+    );
+    assert!(query_result.checkpoint.traces.iter().any(|trace| {
+        trace.node_id == "open_vocabulary" && trace.status == DagNodeStatus::Succeeded
+    }));
+
+    let mut model_version_edit = query_edit.clone();
+    let specialist_model = model_version_edit
+        .snapshot
+        .models
+        .iter_mut()
+        .find(|model| model.id == "specialist-v1")
+        .expect("specialist model");
+    specialist_model.version.model_version = "2".to_owned();
+    rehash(&mut model_version_edit);
+    executor
+        .execute(&model_version_edit, &request)
+        .await
+        .expect("model version edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 2);
+
+    let mut checkpoint_edit = model_version_edit.clone();
+    checkpoint_edit.snapshot.models[0].version.checkpoint_sha256 = Some("b".repeat(64));
+    rehash(&mut checkpoint_edit);
+    executor
+        .execute(&checkpoint_edit, &request)
+        .await
+        .expect("checkpoint edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 3);
+
+    let mut protocol_edit = checkpoint_edit.clone();
+    protocol_edit.snapshot.models[0]
+        .version
+        .backend_protocol_version = "2".to_owned();
+    rehash(&mut protocol_edit);
+    executor
+        .execute(&protocol_edit, &request)
+        .await
+        .expect("protocol edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 4);
+
+    let mut mapping_edit = protocol_edit;
+    mapping_edit
+        .draft
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "specialist")
+        .expect("specialist detector")
+        .parameters
+        .insert("class_mapping".to_owned(), json!({"soccer_ball": "ball"}));
+    rehash(&mut mapping_edit);
+    executor
+        .execute(&mapping_edit, &request)
+        .await
+        .expect("Project Label mapping edit");
+    assert_eq!(specialist_calls.load(Ordering::SeqCst), 5);
+    assert_eq!(open_vocabulary_calls.load(Ordering::SeqCst), 2);
 }
 
 struct FlakyRunner {

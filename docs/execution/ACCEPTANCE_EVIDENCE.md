@@ -904,3 +904,51 @@ RoboCup Ball capability-bound hybrid status: `PASS`. Real LocateAnything/RF-DETR
 
 Guided mixed-detector evidence UX status: `PASS`. No source box, confidence, model availability or
 live inference result was fabricated; real GPU inference remains `LIVE-CONDITIONAL`.
+
+## Open-Vocabulary + Specialist Detection M10 — 2026-08-31
+
+1. `detector_cache_is_model_query_mapping_and_config_aware` executes the same specialist and
+   open-vocabulary inputs twice and observes one backend call plus `Cached` traces. A Gate-only edit
+   preserves both caches; a grounding query edit reruns only open vocabulary; specialist model
+   version, checkpoint SHA-256, backend protocol and class mapping changes each invalidate the
+   specialist key.
+2. The Cache Key is explicit production material: canonical image content reference and dimensions,
+   input Artifacts, model ID/version/checkpoint/protocol/configuration, node-configuration hash,
+   queries, Project Label mapping, target labels and enabled Skills. Product detector runners are
+   cacheable; evidence-dependent Recovery remains non-cacheable.
+3. The exact RoboCup hybrid Run is sandbox-Replayed from `commit_evidence`. Replay reports
+   specialist, primary validation and Recovery as preserved upstream nodes, re-executes only Commit
+   in the sandbox and leaves the persisted Annotation count exactly one.
+4. The durable 100-image test now publishes and pins
+   `robocup.ball.specialist_with_open_vocab_fallback`, pauses while work is active, closes and
+   rebuilds Application state, resumes to all 100 images, and verifies 100 unique child Runs, exact
+   published content hashes and exact image-budget accounting.
+5. The versioned Worker contract suite passes malformed/oversized response, invalid coordinate,
+   missing-score, timeout, runtime cancellation and forwarded cancel cases. Separate no-weight
+   LocateAnything and RF-DETR processes returned `unavailable` health plus truthful discoverable
+   capabilities; Python 3.14 parsed all four tracked Workers.
+6. The full Chromium suite passes 24/24 scenarios. It renders independent RF-DETR and
+   LocateAnything evidence, agreement, geometry conflict and no-score wording; Review can adopt
+   either source box through a normal unsaved revision; Models exposes unavailable and timeout;
+   Generic routes contain no RoboCup copy; URL restore, keyboard controls and compact reflow pass.
+   The in-app browser independently confirmed the real Models page and no 1024px overflow. Native
+   browser 200% zoom remains `MANUAL`.
+7. Server Review now loads persisted Validation Issues, correlates them by Annotation ID and renders
+   the Skill-owned message without matching a domain-specific code/string in the generic layer.
+   The final boundary script scans production sources while deliberately excluding cfg(test)
+   concrete-label fixtures; the production scan is clean.
+8. Release commands pass: `cargo fmt --all -- --check`, strict workspace Clippy, all 221 Rust tests
+   plus doc tests, workspace build, 35 Web unit tests, TypeScript, production Web build, doctor and
+   all three offline demos. Core/generic Runtime model/domain scan, repository secret scan and
+   `git diff --check` return no findings.
+9. Added `SPECIALIST_DETECTION.md`, `MODEL_LICENSE_METADATA.md`,
+   `HYBRID_DETECTION_WORKFLOWS.md`, and `DEMO_HYBRID_DETECTION.md`; required architecture,
+   product, evidence, guidance, RoboCup and limitations documentation was updated.
+10. Detection acceptance is 88 `PASS`, zero `OPEN`, one `LIVE-CONDITIONAL`. Real five-image
+   LocateAnything/RF-DETR GPU smokes were not run: the host is Darwin arm64 without NVIDIA runtime,
+   configured local model paths, or a versioned specialist checkpoint and legal weight metadata.
+   No Mock output is presented as real model accuracy, and no key, weight, download, push or remote
+   mutation was used.
+
+Open-Vocabulary + Specialist Detection Alpha repository release status: `PASS`. External real-model
+accuracy remains `LIVE-CONDITIONAL`; native 200% browser zoom remains `MANUAL`.

@@ -12,8 +12,17 @@ cd "$repo_root"
 
 run "$repo_root/scripts/check-agent-skill-boundaries.sh"
 
-if rg -n -i 'robocup|yolo|field_line|penalty_mark|team_color|\bball\b|\brobot\b' \
-  crates/annotagent-core/src; then
+core_production_sources() {
+  local source
+  for source in crates/annotagent-core/src/*.rs; do
+    # Core unit tests intentionally use concrete sample labels to prove generic behavior. The
+    # production boundary ends at each file's trailing cfg(test) module.
+    awk '/^#\[cfg\(test\)\]/{exit} {print}' "$source"
+  done
+}
+
+if core_production_sources \
+  | rg -n -i 'robocup|yolo|field_line|penalty_mark|team_color|\bball\b|\brobot\b'; then
   printf '\nCore domain-boundary scan failed.\n' >&2
   exit 1
 fi

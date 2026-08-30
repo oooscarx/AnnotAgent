@@ -9,6 +9,9 @@ const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
 const cropProjectId = `guided-crop-${stamp}`;
+const mixedProjectId = `guided-mixed-${stamp}`;
+const mixedRunId = "00000000-0000-4000-8000-000000000091";
+const mixedReviewId = "00000000-0000-4000-8000-000000000092";
 const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
 let reviewId = "";
@@ -353,7 +356,8 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   await row.click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
   await expect(page.getByRole("button", { name: "Results", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByLabel("Run result summary")).toContainText("Results found");
+  await expect(page.getByLabel("Run result summary")).toContainText("Accepted");
+  await expect(page.getByLabel("Run result summary")).toContainText("Needs review");
   await expect(page.getByText("Result Preview", { exact: true })).toBeVisible();
   await expect(page.getByText("Pipeline Steps", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Original", exact: true })).toBeVisible();
@@ -571,6 +575,264 @@ test("generic Project routes contain no RoboCup-specific copy", async ({ page })
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
 });
 
+test("mixed detector Results, Debug, and Review retain independent evidence", async ({ page, request }, testInfo) => {
+  const mixedProjectName = `Mixed Detection ${stamp}`;
+  const created = await request.post("/api/projects", { data: {
+    id: mixedProjectId,
+    yaml: `version: 1
+project:
+  name: ${mixedProjectName}
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: ball-objects
+    display_name: Ball
+    kind: bounding_box
+    labels: [ball]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.7
+export:
+  formats: [native, coco, yolo]
+`,
+  } });
+  expect(created.status()).toBe(201);
+  const imported = await request.post(`/api/projects/${mixedProjectId}/import`, {
+    data: { source: String(testInfo.config.metadata.e2eImport) },
+  });
+  expect(imported.ok()).toBeTruthy();
+  const state = await dashboard(request);
+  const mixedImageId = randomUUID();
+  const mixedRun = {
+    id: mixedRunId,
+    project_name: mixedProjectName,
+    workflow_name: "Specialist with open-vocabulary fallback",
+    workflow_version: "1",
+    skill_versions: [],
+    model_bindings: [],
+    provider: "mock",
+    model: "mixed detection",
+    status: "completed_with_review",
+    controllable: false,
+    input_tokens: 0,
+    output_tokens: 0,
+    cost: "0",
+    checkpoint_present: true,
+    review_suspended: true,
+    artifact_count: 2,
+    validation_issue_codes: ["geometry_conflict"],
+    retry_count: 0,
+    fallback_nodes: ["open_vocabulary"],
+    model_identity: "rfdetr-specialist-v1 + locate-anything-v1",
+    timed_out: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const rfdetr = {
+    source_model_id: "rfdetr-specialist-v1",
+    source_artifact_id: "rfdetr-set",
+    bbox: [0.1, 0.2, 0.2, 0.2],
+    score: { value: 0.87, semantics: "relative_confidence" },
+    model_label: "football",
+    project_label: "ball",
+    source_capability: "object_detection",
+  };
+  const locate = {
+    source_model_id: "locate-anything-v1",
+    source_artifact_id: "locate-set",
+    bbox: [0.15, 0.2, 0.2, 0.2],
+    score: { value: null, semantics: "not_provided" },
+    query_id: "target-ball",
+    project_label: "ball",
+    source_capability: "open_vocabulary_detection",
+  };
+  const clusterArtifact = {
+    kind: "candidate_cluster_set",
+    artifact: {
+      reference: { artifact_id: "clusters", source_node: "match", port: "candidates", artifact_type: "candidate_cluster_set" },
+      image_id: mixedImageId,
+      source_detection_sets: [],
+      candidates: [
+        {
+          id: "agreement",
+          target_label: "ball",
+          representative_bbox: [0.1, 0.2, 0.2, 0.2],
+          members: [rfdetr, locate],
+          agreement: { multi_source_agreement: { minimum_iou: 0.78, mean_iou: 0.78 } },
+        },
+        {
+          id: "conflict",
+          target_label: "ball",
+          representative_bbox: [0.52, 0.55, 0.12, 0.12],
+          members: [
+            { ...rfdetr, source_artifact_id: "rfdetr-conflict", bbox: [0.52, 0.55, 0.12, 0.12] },
+            { ...locate, source_artifact_id: "locate-conflict", bbox: [0.72, 0.7, 0.1, 0.1] },
+          ],
+          agreement: "geometry_conflict",
+        },
+      ],
+    },
+  };
+  const annotation = {
+    id: mixedReviewId,
+    image_id: mixedImageId,
+    task_id: "ball-objects",
+    label: "ball",
+    value: { kind: "bounding_box", rect: [0.52, 0.55, 0.12, 0.12] },
+    attributes: {},
+    source: "model",
+    review_status: "pending",
+    provenance: {},
+    created_at: new Date().toISOString(),
+  };
+  const progress = { reviewed_count: 0, total_count: 1, remaining_count: 1, current_position: 1 };
+  const review = {
+    id: mixedReviewId,
+    run_id: mixedRunId,
+    project_id: mixedProjectId,
+    project_name: mixedProjectName,
+    annotation,
+    workflow_id: "mixed-detection",
+    workflow_version: 1,
+    image_index: 0,
+    source_node: "match",
+    source_artifact_id: "clusters",
+    refinement_chain: [],
+    review_reason: "validation_issue",
+    validation_issues: ["geometry_conflict"],
+    detection_evidence: [
+      { ...rfdetr, source_artifact_id: "rfdetr-conflict", bbox: [0.52, 0.55, 0.12, 0.12] },
+      { ...locate, source_artifact_id: "locate-conflict", bbox: [0.72, 0.7, 0.1, 0.1] },
+    ],
+    candidate_agreement: "geometry_conflict",
+    review_explanation: {
+      code: "geometry_conflict",
+      title: "Needs review",
+      summary: "RF-DETR and LocateAnything disagree on the object's location.",
+      details: ["Bounding-box IoU: 0.12", "Choose one source box or merge the result manually."],
+    },
+  };
+
+  await page.route("**/api/projects", (route) => route.fulfill({
+    json: { ...state, runs: [mixedRun, ...state.runs], review_queue: 1 },
+  }));
+  await page.route(`**/api/runs/${mixedRunId}/pipeline-artifacts`, (route) => route.fulfill({ json: {
+    run_id: mixedRunId,
+    workflow_id: "mixed-detection",
+    workflow_version: 1,
+    content_hash: "fixture",
+    project_id: mixedProjectId,
+    image_index: 0,
+    nodes: [{
+      node_id: "match",
+      operation: "core.match_detection_sets",
+      status: "succeeded",
+      configuration: { id: "match", node_type: "core.match_detection_sets", kind: "candidate_merge", inputs: [], outputs: [], depends_on: [], model_binding: null, parameters: {}, validators: [], refiners: [] },
+      inputs: [],
+      outputs: [clusterArtifact],
+      latency_ms: 8,
+      attempts: 1,
+      cache_hit: false,
+      usage: { input_tokens: 0, output_tokens: 0, cost: "0" },
+      route: "review",
+      metadata: { evidence_gate: { decision: "review", candidate_count: 2, validation_issue_count: 1, reasons: [{ code: "geometry_conflict", message: "Detector boxes disagree", source_model_ids: ["rfdetr-specialist-v1", "locate-anything-v1"], metrics: { iou: 0.12 } }] } },
+    }],
+  } }));
+  await page.route(`**/api/runs/${mixedRunId}/result-summary`, (route) => route.fulfill({ json: {
+    run_id: mixedRunId, project_id: mixedProjectId, status: "completed_with_review", image_count: 1,
+    result_count: 2, ready_count: 1, needs_review_count: 1, no_target_count: 0, failed_count: 0,
+    fallback_count: 1, cache_hit_count: 2, duration_ms: 42,
+    usage: { input_tokens: 0, output_tokens: 0, estimated_cost: "0" }, image_index: 0,
+    labels: [{ label: "ball", count: 2 }],
+  } }));
+  await page.route(`**/api/runs/${mixedRunId}/debug-summary`, (route) => route.fulfill({ json: {
+    run_id: mixedRunId, workflow_id: "mixed-detection", workflow_version: 1, node_count: 1,
+    succeeded_node_count: 1, failed_node_count: 0, current_node: "match", issues: [], duration_ms: 8,
+    usage: { input_tokens: 0, output_tokens: 0, estimated_cost: "0" },
+  } }));
+  await page.route(`**/api/runs/${mixedRunId}/annotations`, (route) => route.fulfill({ json: {
+    run_id: mixedRunId, project_id: mixedProjectId, image_index: 0, annotations: [annotation],
+  } }));
+  await page.route("**/api/reviews**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith(`/${mixedReviewId}`)) return route.fulfill({ json: review });
+    if (path.endsWith(`/${mixedReviewId}/next`)) return route.fulfill({ json: { progress } });
+    return route.fulfill({ json: { reviews: [review], progress } });
+  });
+
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.goto(`/runs/${mixedRunId}`);
+  await expect(page.getByText("2 models agree · IoU 0.78", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("2 models disagree on location", { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel("Detection evidence inspector")).toContainText("RF-DETR");
+  await expect(page.getByLabel("Detection evidence inspector")).toContainText("LocateAnything");
+  await expect(page.getByLabel("Detection evidence inspector")).toContainText("No confidence");
+  await expect(page.getByText("Fallbacks")).toBeVisible();
+  await expect(page.getByText("Cache hits")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+
+  const debugUrl = `/runs/${mixedRunId}?view=debug&image=0&node=match`;
+  await page.goto(debugUrl);
+  await expect(page.getByLabel("Evidence decision")).toContainText("geometry conflict");
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`view=debug&image=0&node=match$`));
+  await expect(page.getByLabel("Evidence decision")).toContainText("Detector boxes disagree");
+
+  await page.goto(`/review/${mixedReviewId}?project_id=${mixedProjectId}`);
+  await expect(page.getByText("RF-DETR and LocateAnything disagree on the object's location.")).toBeVisible();
+  await expect(page.getByLabel("Source model evidence")).toContainText("2 detector results");
+  await page.getByRole("button", { name: "Use RF-DETR box" }).click();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+  await page.getByText("Execution details").click();
+  await expect(page.getByLabel("Annotation attributes JSON")).toContainText("rfdetr-specialist-v1");
+  await page.getByRole("button", { name: "Use LocateAnything box" }).click();
+  await expect(page.getByLabel("Annotation attributes JSON")).toContainText("locate-anything-v1");
+  await expect(page.getByLabel("Annotation attributes JSON")).toContainText("0.72");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+});
+
+test("Models exposes truthful unavailable and timeout Worker states", async ({ page }) => {
+  const models = [
+    {
+      id: "locate-worker", provider: "http_vision", model: "locate-anything-v1", role: "open_vocabulary_detection",
+      scope: "workspace_worker", health_status: "unavailable", health_detail: "weights unavailable",
+      capabilities: ["open_vocabulary_detection"], score_semantics: "not_provided", model_version: "1",
+      endpoint: "http://127.0.0.1:8791", enabled: true, license_summary: "non-commercial research/evaluation",
+      architecture: "locateanything-3b", label_space: [], cost_per_request: "0",
+    },
+    {
+      id: "rfdetr-worker", provider: "http_vision", model: "rfdetr-v1", role: "object_detection",
+      scope: "workspace_worker", health_status: "unknown", capabilities: ["object_detection"],
+      score_semantics: "relative_confidence", model_version: "1", endpoint: "http://127.0.0.1:8792",
+      enabled: true, license_summary: "checkpoint terms configured", architecture: "rfdetr-small",
+      checkpoint_sha256: "a".repeat(64), label_space: ["football"], cost_per_request: "0.001",
+    },
+  ];
+  await page.route("**/api/models", (route) => route.fulfill({ json: { models } }));
+  await page.route("**/api/models/locate-worker/test", (route) => route.fulfill({ json: {
+    model_id: "locate-anything-v1",
+    health: { status: "unavailable", detail: "weights unavailable" },
+    capabilities: { capabilities: ["open_vocabulary_detection"], score_semantics: "not_provided", supports_visual_prompt: false, supports_batch: false, label_space: [] },
+  } }));
+  await page.route("**/api/models/rfdetr-worker/test", (route) => route.fulfill({
+    status: 504,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Detection Worker request timed out after 120 seconds" }),
+  }));
+  await page.goto("/models");
+  await expect(page.getByText("Label space · football")).toBeVisible();
+  await expect(page.getByText("Checkpoint · aaaaaaaaaaaa…")).toBeVisible();
+  await page.locator("article", { hasText: "locate-worker" }).getByRole("button", { name: "Test connection" }).click();
+  await expect(page.getByRole("status")).toContainText("Live · unavailable");
+  await expect(page.getByRole("status")).toContainText("Confidence not provided");
+  await page.locator("article", { hasText: "rfdetr-worker" }).getByRole("button", { name: "Test connection" }).click();
+  await expect(page.getByRole("alert")).toContainText("request timed out");
+});
+
 test("Review behaves as a keyboard-operable decision inbox", async ({ page }) => {
   await page.goto(`/review/${reviewId}?project_id=${projectId}`);
   await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
@@ -757,8 +1019,17 @@ test("release surfaces keep one primary action and remain operable at compact vi
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
     expect(await page.locator("button.primary:visible").count(), `${route} primary actions`).toBeLessThanOrEqual(1);
     expect(await page.locator(".panel .panel").count(), `${route} nested panels`).toBe(0);
-    for (const metrics of await page.locator(".metrics-grid, .run-result-metrics, .sample-outcome-metrics, .export-readiness-metrics").all())
-      expect(await metrics.locator(":scope > *").count(), `${route} equal metrics`).toBeLessThanOrEqual(3);
+    for (const metrics of await page.locator(".metrics-grid, .run-result-metrics, .sample-outcome-metrics, .export-readiness-metrics").all()) {
+      const widestRow = await metrics.evaluate((element) => {
+        const rows = new Map<number, number>();
+        for (const child of Array.from(element.children)) {
+          const top = Math.round(child.getBoundingClientRect().top);
+          rows.set(top, (rows.get(top) ?? 0) + 1);
+        }
+        return Math.max(0, ...rows.values());
+      });
+      expect(widestRow, `${route} equal metrics per row`).toBeLessThanOrEqual(3);
+    }
   }
   await page.goto(`/projects/${projectId}`);
   await expect(page.locator(".project-context-facts > span")).toHaveCount(3);

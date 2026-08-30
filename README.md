@@ -4,6 +4,9 @@
 
 AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes geometry, registered tools gather bounded image evidence, deterministic validators and refiners check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
 
+AnnotAgent can combine open-vocabulary models, specialist detectors, domain validators, and human
+review into versioned annotation pipelines.
+
 ## Guided Project Workspace
 
 The Web product is organized around one concrete Project journey:
@@ -75,7 +78,9 @@ optional RF-DETR Worker uses an explicitly configured versioned local checkpoint
 Detector outputs can be joined with the generic `core.match_detection_sets` node and routed by
 `core.evidence_gate`. The persisted decision report explains agreement, conflicts, missing scores,
 domain issues and fallback requests without blending incomparable confidence. See
-[Detection Evidence](docs/DETECTION_EVIDENCE.md).
+[Detection Evidence](docs/DETECTION_EVIDENCE.md),
+[Specialist Detection](docs/SPECIALIST_DETECTION.md), and
+[Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md).
 
 ## 6. Review
 
@@ -106,8 +111,9 @@ cargo test -p annotagent-runtime --test skill_extension
 ```
 
 RoboCup exposes only two Ball starters: `robocup.ball.vlm-bootstrap` and
-`robocup.ball.detector-first`. Both keep detector geometry as typed Artifacts and route only risky
-ball candidates to Review.
+`robocup.ball.specialist_with_open_vocab_fallback`. Both keep detector geometry as typed Artifacts;
+the hybrid starter can accept strong specialist evidence or make one bounded open-vocabulary
+fallback before Crop verification and Review.
 
 For real SAM2.1 refinement, install the workspace-private worker once and start it before the GUI:
 
@@ -179,7 +185,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Object Detection](docs/OBJECT_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute hybrid demo](docs/DEMO_HYBRID_DETECTION.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

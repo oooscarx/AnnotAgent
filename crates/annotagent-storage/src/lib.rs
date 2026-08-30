@@ -411,6 +411,19 @@ impl SqliteStore {
         })
     }
 
+    pub fn list_validation_issues(
+        &self,
+        run_id: RunId,
+    ) -> Result<Vec<ValidationIssue>, StorageError> {
+        self.with_connection(|connection| {
+            query_json_rows::<ValidationIssue>(
+                connection,
+                "SELECT issue_json FROM validation_issues WHERE run_id = ?1 ORDER BY id",
+                run_id,
+            )
+        })
+    }
+
     pub fn list_annotations(&self, run_id: RunId) -> Result<Vec<Annotation>, StorageError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -2114,8 +2127,9 @@ fn sqlite_u64(value: u64) -> i64 {
 mod tests {
     use annotagent_core::{
         ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures,
-        DETECTION_ARTIFACT_SCHEMA_VERSION, PipelineArtifact, RunEventKind, RunEventPayload,
-        ScoreSemantics, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
+        DETECTION_ARTIFACT_SCHEMA_VERSION, IssueSeverity, PipelineArtifact, RunEventKind,
+        RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
+        WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -2405,6 +2419,26 @@ mod tests {
         );
         store.record_event(&event).await.expect("record event");
         assert_eq!(store.list_events(run_id).expect("events"), vec![event]);
+        let issue = ValidationIssue {
+            code: "skill_specific_risk".to_owned(),
+            severity: IssueSeverity::Warning,
+            annotation_ids: Vec::new(),
+            message: "The enabled Skill found a domain-specific risk.".to_owned(),
+            suggested_action: SuggestedAction::HumanReview,
+            evidence: ValidationEvidence::Rule {
+                facts: BTreeMap::new(),
+            },
+        };
+        store
+            .record_validation(run_id, std::slice::from_ref(&issue))
+            .await
+            .expect("record validation issue");
+        assert_eq!(
+            store
+                .list_validation_issues(run_id)
+                .expect("validation issues"),
+            vec![issue]
+        );
         let history = store.history(run_id).expect("history");
         assert_eq!(
             history.run.workflow_snapshot_json.as_deref(),
