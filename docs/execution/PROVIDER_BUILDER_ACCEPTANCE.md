@@ -17,12 +17,30 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | Web baseline | PASS | Typecheck, 36 Vitest tests and production build passed on 2026-08-31. |
 | E2E baseline | PASS | Isolated Chromium Playwright suite: 26 passed, 0 failed. |
 
+## M1 Provider Profile and Secret Store
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Reusable Provider Profile | PASS | Core profile owns independent identity, adapter, URL, safe headers, connection policy, enable state, health and credential reference; same-vendor identity test passes. |
+| Safe connection metadata | PASS | HTTPS/loopback policy, embedded credentials, schemes, fragments, connection limits and header allow-list are fail-closed in `provider_registry` tests. |
+| Native Keyring default | PASS | Production server routes new GUI writes to `KeyringSecretStore`; server no longer depends directly on `keyring` or writes new credential files. |
+| Environment and session sources | PASS | Read-only environment and process-local session implementations pass focused tests. |
+| CI/test secret source | PASS | Public `InMemorySecretStore` is used by server and storage tests; no desktop credential service is required. |
+| Legacy source is explicit | PASS | Legacy file store rejects writes; startup reads the exact registered old path without copying/deleting it. Server regression test verifies no implicit migration. |
+| Secret value redaction | PASS | `SecretValue` has no serialization/display contract, zeroizes on drop and its custom Debug emits only `[REDACTED]`. Store errors contain safe generic messages. |
+| SQLite stores references only | PASS | Transactional migration 6 and persistence test round-trip `CredentialReference`; raw profile JSON contains the locator and no secret value. |
+| Compatibility Settings API is write-only | PASS | Restart test sends a sentinel key, verifies no returned `api_key`, no TOML occurrence, Keyring-reference reuse and explicit deletion. |
+| M1 Rust quality gate | PASS | fmt passed; focused tests passed 5 + 4 + 1 + 2; complete affected library suites passed 113/113; strict Clippy passed for Core, Provider, Storage, Server and CLI with all targets/features. |
+| M1 Web regression | PASS | TypeScript check and all 36 Vitest tests passed after credential copy updates. |
+| M1 browser regression | PASS | Production Web build passed; isolated Chromium E2E passed 26/26 after the server credential-path change. |
+| Native desktop Keychain call | LIVE-CONDITIONAL | Requires an available unlocked OS credential service; production adapter is exercised through an injected mock backend offline. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
 |---|---|---|
-| A. Provider | OPEN | Singleton config exists; reusable Profile CRUD, health distinction and deletion protection remain. |
-| B. Secret | OPEN | API redaction exists, but new GUI secrets currently default to a plaintext workspace file and automatic reverse migration. |
+| A. Provider | OPEN | Reusable Profile contract and SQLite persistence exist; CRUD API, health operations and deletion protection remain for M3. |
+| B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
 | C. Model Profile | OPEN | Rich runtime descriptors exist; persistent revisioned Profiles and price/protocol provenance remain. |
 | D. Project Binding | OPEN | Draft binding strings and default-vision exist; persistent compatible/locked hierarchy remains. |
 | E. Node Catalog | OPEN | Typed Registry and guided projection exist; exact Alpha catalog and Resize/Tile/Projection remain. |

@@ -56,6 +56,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 walkdir = "2"
 webbrowser = "1"
+url = { version = "2", features = ["serde"] }
+zeroize = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

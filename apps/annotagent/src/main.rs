@@ -640,7 +640,7 @@ fn doctor() -> Result<()> {
 
 async fn serve_command(workspace: &Path, port: u16, open: bool) -> Result<()> {
     let application = Arc::new(LocalApplication::new(workspace)?);
-    let state = annotagent_server::ServerState::new(application)?;
+    let state = annotagent_server::ServerState::new(application).await?;
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let url = format!("http://{address}");
     println!("AnnotAgent GUI: {url}");

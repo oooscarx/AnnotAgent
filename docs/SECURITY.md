@@ -4,11 +4,12 @@
 
 - Do not commit `.env` or local provider configuration containing a key.
 - CLI providers read the configured environment variable only when making a request.
-- The Web API key is write-only and stored at `<workspace>/.annotagent/credentials/provider-api-key`. On Unix, the directory is mode `0700` and the file is mode `0600`. It is omitted from responses, the local TOML settings file, SQLite, model trace, and logs.
-- On the first startup after upgrading, AnnotAgent migrates any existing key for the same workspace out of the legacy operating-system keychain and deletes that legacy entry. New keys are never written to the keychain.
+- A GUI-entered API key is write-only and stored in the native system credential store (Keychain on macOS). It is omitted from responses, local TOML settings, SQLite, model traces, history exports, and logs.
+- Environment-variable references are read-only and session-only credentials are process-local. SQLite stores only a provider-scoped `CredentialReference`.
+- An existing `<workspace>/.annotagent/credentials/provider-api-key` is a legacy read-only source. AnnotAgent does not copy or delete it automatically; migration to the system credential store must be an explicit user action.
 - Non-secret Web settings are atomically written to `<workspace>/.annotagent/settings.toml` with owner-only permissions on Unix.
 - Provider configuration rejects credential-bearing custom headers such as `Authorization`, API-key/access-token/secret/password fields, including nested extra request metadata. Endpoint URLs cannot contain embedded user info. Authorization and image base64 are redacted from Provider errors, model messages, history, and logs.
-- The workspace credential file is plaintext protected by filesystem permissions, not encryption. Keep the workspace private and rotate any key pasted into chat or a terminal transcript after testing.
+- A legacy workspace credential file is plaintext protected only by filesystem permissions. Keep such a workspace private, migrate explicitly, and rotate any key pasted into chat or a terminal transcript after testing.
 
 ## Filesystem
 

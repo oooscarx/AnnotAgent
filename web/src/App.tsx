@@ -4220,7 +4220,7 @@ function ModelsPage({
           <span className="eyebrow">Provider catalog and bindings</span>
           <h2>Models</h2>
           <p>
-            Credentials stay in a private workspace file; Workflows refer to
+            Credentials stay in the native system credential store; Workflows refer to
             stable binding IDs.
           </p>
         </div>
@@ -6237,7 +6237,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
                 onChange={(event) => setKey(event.target.value)}
                 placeholder={
                   settings.api_key_persisted && !providerChanged
-                    ? "Stored in a private workspace file · paste to replace"
+                    ? "Stored in the system credential store · paste to replace"
                     : `Paste your ${preset.shortLabel} key once`
                 }
               />
@@ -6251,7 +6251,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               </button>
               <small>
                 {settings.api_key_persisted && !providerChanged
-                  ? "Workspace-local 0600 file · never returned by the API"
+                  ? "Native system credential store · never returned by the API"
                   : `Environment fallback: ${provider.api_key_env ?? "ANNOTAGENT_API_KEY"}`}
               </small>
             </div>
@@ -6771,7 +6771,7 @@ function CreateProject({
             {!preset.offline && <>
               <label>Vision model<select value={provider.model ?? ""} onChange={(event) => setSettings((current) => ({ ...current, provider: { ...current?.provider, model: event.target.value } }))}>{preset.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}<option value={CUSTOM_MODEL}>Another model ID…</option></select></label>
               {provider.model === CUSTOM_MODEL && <label>Model ID<input value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="provider/model-name" /></label>}
-              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored in the workspace-private credential file" /></label>}
+              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored in the system credential store" /></label>}
             </>}
             {!modelConnected && <small role="alert">Enter a key, select Mock, or choose Offline only before using the recommendation.</small>}
           </div>

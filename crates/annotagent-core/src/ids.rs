@@ -97,6 +97,7 @@ uuid_id!(RunId);
 uuid_id!(BatchId);
 uuid_id!(RunStepId);
 uuid_id!(EventId);
+uuid_id!(ProviderId);
 
 string_id!(TaskId);
 string_id!(LabelId);

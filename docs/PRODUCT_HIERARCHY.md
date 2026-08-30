@@ -23,7 +23,7 @@ A **Skill** is a reusable domain extension. It contributes namespaced nodes, Val
 
 A **Workflow** is a Project-owned strongly typed DAG. Drafts are mutable and can be invalid while edited. Publishing creates a content-addressed immutable version with frozen Skill, Model, and prompt/resource snapshots. Image Runs and Dataset Batches can select an exact version, execute it through the generic DAG Runtime, and persist the complete version plus checkpoint.
 
-A **Model** descriptor declares backend identity, capability, typed inputs/outputs, cost, health, limits, endpoint/path metadata, and a secret reference. Workflow nodes bind to descriptor IDs; GUI-managed credentials stay in the workspace-private credential file, while CLI credentials may come from the environment. Model product names and domain labels are not Core scheduling concepts.
+A **Model** descriptor declares backend identity, capability, typed inputs/outputs, cost, health, limits, endpoint/path metadata, and a secret reference. Workflow nodes bind to descriptor IDs; GUI-managed credentials use the native system credential store, while environment and session-only references remain available. Model product names and domain labels are not Core scheduling concepts.
 
 A **Run** is one image execution pinned to Project, Workflow, model identity, input, budget, state, node trace, Artifacts, validation, and usage. A **Dataset Batch** coordinates many child Runs with a durable queue, global exact budget, leases, pause/resume/cancel, and restart checkpoint. **Review** appends human revisions and correction records instead of overwriting history.
 

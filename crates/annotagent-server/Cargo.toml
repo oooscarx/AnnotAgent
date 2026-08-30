@@ -18,7 +18,6 @@ anyhow.workspace = true
 axum.workspace = true
 chrono.workspace = true
 futures.workspace = true
-keyring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

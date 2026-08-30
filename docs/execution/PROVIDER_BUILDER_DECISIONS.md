@@ -63,3 +63,17 @@ two-phase user action, because a database rollback cannot roll back an operating
 HTTP Vision Workers keep their version, checkpoint, license, score semantics and health contracts.
 They may later materialize compatible inference choices, but they do not share API Provider
 credentials or Provider CRUD semantics.
+
+## D011 — compatibility startup prefers Keyring, then legacy, without side effects
+
+Until M3 moves selection to explicit Provider Profiles, the singleton Settings compatibility path
+uses a deterministic workspace-scoped Provider ID and Keyring account. Startup checks Keyring first,
+then the one registered legacy file path. Both checks are read-only. A new write always targets
+Keyring; deleting or migrating a legacy file requires an explicit credential action.
+
+## D012 — Keyring backend errors carry no native diagnostic payload
+
+The injectable Keyring backend deliberately collapses native errors into a zero-data error marker.
+The public Secret Store maps that marker to stable operation-specific messages. This prevents an OS
+backend, account locator, or accidental native diagnostic from echoing credential material through
+API errors while keeping the operation category actionable.

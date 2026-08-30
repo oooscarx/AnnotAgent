@@ -9,10 +9,11 @@ use std::{collections::BTreeMap, path::Path, sync::Mutex};
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
     ArtifactId, ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage,
-    ProjectId, PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
-    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
-    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowDryRunReport, WorkflowSnapshot,
+    ProjectId, ProviderId, ProviderProfile, PublishedWorkflowVersion, RelationEndpoint,
+    ReviewStatus, RevisionActor, RunEvent, RunEventPayload, RunId, RunStatus, TaskId,
+    TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue, VisionArtifact,
+    VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunReport,
+    WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -27,6 +28,8 @@ const BATCH_MIGRATION: &str =
 const AGENT_SESSION_MIGRATION: &str = include_str!("../../../migrations/0004_agent_sessions.sql");
 const WORKFLOW_SAMPLE_TEST_MIGRATION: &str =
     include_str!("../../../migrations/0005_workflow_sample_tests.sql");
+const PROVIDER_REGISTRY_MIGRATION: &str =
+    include_str!("../../../migrations/0006_provider_registry.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -42,6 +45,8 @@ pub enum StorageError {
     BatchNotFound(annotagent_core::BatchId),
     #[error("dataset batch lease conflict: {0}")]
     BatchLeaseConflict(String),
+    #[error("Provider Profile {0} was not found")]
+    ProviderNotFound(ProviderId),
     #[error("unsupported history schema version {0}")]
     UnsupportedHistoryVersion(u32),
     #[error("invalid stored enum value: {0}")]
@@ -245,6 +250,96 @@ impl SqliteStore {
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (5, ?1, ?2)",
                 params!["workflow_sample_tests", Utc::now().to_rfc3339()],
             )?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(PROVIDER_REGISTRY_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (6, ?1, ?2)",
+                params!["provider_registry", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn save_provider_profile(&self, profile: &ProviderProfile) -> Result<(), StorageError> {
+        profile
+            .validate()
+            .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO provider_profiles
+                 (id, display_name, preset_id, adapter, enabled, credential_source,
+                  profile_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                   display_name = excluded.display_name,
+                   preset_id = excluded.preset_id,
+                   adapter = excluded.adapter,
+                   enabled = excluded.enabled,
+                   credential_source = excluded.credential_source,
+                   profile_json = excluded.profile_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    profile.id.to_string(),
+                    profile.display_name,
+                    profile.preset_id,
+                    enum_string(profile.adapter)?,
+                    profile.enabled,
+                    profile
+                        .credential_ref
+                        .as_ref()
+                        .map(|reference| enum_string(reference.source))
+                        .transpose()?,
+                    serde_json::to_string(profile)?,
+                    profile.created_at.to_rfc3339(),
+                    profile.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_provider_profile(
+        &self,
+        provider_id: ProviderId,
+    ) -> Result<ProviderProfile, StorageError> {
+        self.with_connection(|connection| {
+            let json = connection
+                .query_row(
+                    "SELECT profile_json FROM provider_profiles WHERE id = ?1",
+                    [provider_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or(StorageError::ProviderNotFound(provider_id))?;
+            serde_json::from_str(&json).map_err(StorageError::from)
+        })
+    }
+
+    pub fn list_provider_profiles(&self) -> Result<Vec<ProviderProfile>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT profile_json FROM provider_profiles ORDER BY updated_at DESC, id",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .map(|row| {
+                    let json = row?;
+                    serde_json::from_str(&json).map_err(StorageError::from)
+                })
+                .collect()
+        })
+    }
+
+    pub fn delete_provider_profile(&self, provider_id: ProviderId) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let deleted = connection.execute(
+                "DELETE FROM provider_profiles WHERE id = ?1",
+                [provider_id.to_string()],
+            )?;
+            if deleted == 0 {
+                return Err(StorageError::ProviderNotFound(provider_id));
+            }
             Ok(())
         })
     }
@@ -2126,10 +2221,11 @@ fn sqlite_u64(value: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures,
-        DETECTION_ARTIFACT_SCHEMA_VERSION, IssueSeverity, PipelineArtifact, RunEventKind,
-        RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
-        WorkflowDraftNode, WorkflowNodeKind,
+        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures, CredentialReference,
+        CredentialSource, DETECTION_ARTIFACT_SCHEMA_VERSION, IssueSeverity, PipelineArtifact,
+        ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+        ProviderHealthStatus, RunEventKind, RunEventPayload, ScoreSemantics, SuggestedAction,
+        ValidationEvidence, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -2169,12 +2265,65 @@ mod tests {
             "batch_events",
             "agent_sessions",
             "workflow_sample_tests",
+            "provider_profiles",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn provider_profiles_persist_references_but_never_secret_values() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let id = ProviderId::new();
+        let now = Utc::now();
+        let profile = ProviderProfile {
+            id,
+            display_name: "Qwen Lab".to_owned(),
+            preset_id: Some("dashscope".to_owned()),
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: url::Url::parse("https://dashscope.aliyuncs.com/compatible-mode/v1")
+                .expect("URL"),
+            organization: None,
+            workspace: Some("lab".to_owned()),
+            credential_ref: Some(CredentialReference {
+                provider_id: id,
+                source: CredentialSource::SystemKeyring,
+                locator: "provider-account".to_owned(),
+            }),
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Configured,
+                safe_message: None,
+                checked_at: None,
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        store.save_provider_profile(&profile).expect("save");
+        assert_eq!(store.get_provider_profile(id).expect("get"), profile);
+        assert_eq!(store.list_provider_profiles().expect("list"), vec![profile]);
+        store
+            .with_connection(|connection| {
+                let stored: String = connection.query_row(
+                    "SELECT profile_json FROM provider_profiles WHERE id = ?1",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )?;
+                assert!(stored.contains("provider-account"));
+                assert!(!stored.contains("test-secret-must-not-be-in-sqlite"));
+                Ok(())
+            })
+            .expect("inspect");
+        store.delete_provider_profile(id).expect("delete");
+        assert!(matches!(
+            store.get_provider_profile(id),
+            Err(StorageError::ProviderNotFound(missing)) if missing == id
+        ));
     }
 
     #[test]

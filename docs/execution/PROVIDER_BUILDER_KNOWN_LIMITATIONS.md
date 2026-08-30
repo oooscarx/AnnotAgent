@@ -4,12 +4,16 @@ This file records observed baseline limitations and will be narrowed as mileston
 
 ## Baseline limitations
 
-- One workspace has only one OpenAI-compatible Provider configuration and one model string.
-- Multiple accounts for the same vendor cannot be represented.
-- A GUI-entered key is written to a plaintext workspace-private file; Keyring is treated as legacy
-  and automatically emptied into that file.
+- The compatibility Settings screen still exposes one OpenAI-compatible Provider/model selection;
+  reusable Provider Profiles are persisted in Core/SQLite but do not receive CRUD UI until M3.
+- Multiple same-vendor Provider identities are representable and persistable, but cannot yet be
+  created from HTTP/Web/TUI.
+- Native Keyring calls are live-conditional on an unlocked desktop credential service; CI covers
+  the same contract through an injected backend and in-memory implementation.
+- The legacy workspace credential file is still readable to avoid breaking existing users. The M8
+  migration UI must make copy-to-Keyring and optional source deletion separate explicit actions.
 - Provider and Model are combined in Settings and in several run/history string fields.
-- No persistent Provider, Model Profile, Project Binding or Agent Binding tables exist.
+- No persistent Model Profile, Project Binding or Agent Binding tables exist yet.
 - Model capabilities are runtime descriptors rather than user-visible revisioned profile claims with
   provenance.
 - Provider health, credential state, model health and Vision Worker health are not cleanly separated.

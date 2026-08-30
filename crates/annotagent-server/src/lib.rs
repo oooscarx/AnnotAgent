@@ -18,15 +18,20 @@ use annotagent_application::{
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactValidationState, AttributeDefinition,
-    BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord, DetectionEvidence,
-    EnabledSkillConfig, LabelId, NormalizedRect, PipelineArtifact, PipelineBuilderConstraints,
-    ProjectSchema, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    ScoreSemantics, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
+    BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord, CredentialReference,
+    CredentialSource, DetectionEvidence, EnabledSkillConfig, LabelId, NormalizedRect,
+    PipelineArtifact, PipelineBuilderConstraints, ProjectSchema, ProviderId, ReviewStatus,
+    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope,
+    SecretStore, SecretStoreError, SecretValue, TaskKind, UsageTotals, WorkflowConstraints,
+    WorkflowDraft,
 };
-use annotagent_provider::HttpVisionWorkerClient;
+use annotagent_provider::{
+    EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
+    LegacyWorkspaceFileSecretStore, SecretStoreRouter, SessionSecretStore,
+};
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::HistoryRun;
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
     body::Body,
@@ -57,30 +62,63 @@ pub struct ServerState {
     api_key_persisted: Arc<RwLock<bool>>,
     credential_store_error: Arc<RwLock<Option<String>>>,
     secret_store: Arc<dyn SecretStore>,
-    secret_account: Arc<String>,
+    credential_reference: Arc<RwLock<CredentialReference>>,
+    default_keyring_reference: Arc<CredentialReference>,
 }
 
 impl ServerState {
-    pub fn new(application: Arc<LocalApplication>) -> anyhow::Result<Self> {
-        let secret_account = format!("workspace-{}", stable_project_id(application.workspace()));
-        let local_store = Arc::new(LocalSecretStore::new(
-            application
-                .workspace()
-                .join(".annotagent/credentials/provider-api-key"),
-        ));
-        let migration_error = migrate_legacy_keychain(local_store.as_ref(), &secret_account)
-            .err()
-            .map(|error| error.to_string());
-        let mut state = Self::with_secret_store(application, local_store)?;
-        if migration_error.is_some() {
-            state.credential_store_error = Arc::new(RwLock::new(migration_error));
-        }
-        Ok(state)
+    pub async fn new(application: Arc<LocalApplication>) -> anyhow::Result<Self> {
+        let provider_id = ProviderId(stable_project_id(application.workspace()).0);
+        let default_keyring_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SystemKeyring,
+            locator: format!("workspace-{provider_id}"),
+        };
+        let legacy_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::LegacyWorkspaceFile,
+            locator: "legacy-workspace-provider-api-key".to_owned(),
+        };
+        let secret_store: Arc<dyn SecretStore> = Arc::new(SecretStoreRouter {
+            keyring: Arc::new(KeyringSecretStore::new(SECRET_SERVICE)),
+            environment: Arc::new(EnvironmentSecretStore),
+            session: Arc::new(SessionSecretStore::default()),
+            legacy: Arc::new(LegacyWorkspaceFileSecretStore::single(
+                legacy_reference.locator.clone(),
+                application
+                    .workspace()
+                    .join(".annotagent/credentials/provider-api-key"),
+            )),
+        });
+        let credential_reference = if secret_store
+            .exists(&default_keyring_reference)
+            .await
+            .is_ok_and(|exists| exists)
+        {
+            default_keyring_reference.clone()
+        } else if secret_store
+            .exists(&legacy_reference)
+            .await
+            .is_ok_and(|exists| exists)
+        {
+            legacy_reference
+        } else {
+            default_keyring_reference.clone()
+        };
+        Self::with_secret_store(
+            application,
+            secret_store,
+            credential_reference,
+            default_keyring_reference,
+        )
+        .await
     }
 
-    fn with_secret_store(
+    async fn with_secret_store(
         application: Arc<LocalApplication>,
         secret_store: Arc<dyn SecretStore>,
+        credential_reference: CredentialReference,
+        default_keyring_reference: CredentialReference,
     ) -> anyhow::Result<Self> {
         let settings_path = application.workspace().join(".annotagent/settings.toml");
         let settings_persisted = settings_path.is_file();
@@ -90,13 +128,12 @@ impl ServerState {
             annotagent_application::load_settings(None)?
         };
         validate_settings(&settings)?;
-        let secret_account = format!("workspace-{}", stable_project_id(application.workspace()));
+        credential_reference.validate()?;
+        default_keyring_reference.validate()?;
         let (api_key, api_key_persisted, credential_store_error) =
-            match secret_store.load(&secret_account) {
-                Ok(value) => {
-                    let configured = value.is_some();
-                    (value, configured, None)
-                }
+            match secret_store.resolve(&credential_reference).await {
+                Ok(value) => (Some(value.expose_secret().to_owned()), true, None),
+                Err(SecretStoreError::NotFound) => (None, false, None),
                 Err(error) => (None, false, Some(error.to_string())),
             };
         Ok(Self {
@@ -108,7 +145,8 @@ impl ServerState {
             api_key_persisted: Arc::new(RwLock::new(api_key_persisted)),
             credential_store_error: Arc::new(RwLock::new(credential_store_error)),
             secret_store,
-            secret_account: Arc::new(secret_account),
+            credential_reference: Arc::new(RwLock::new(credential_reference)),
+            default_keyring_reference: Arc::new(default_keyring_reference),
         })
     }
 
@@ -119,115 +157,6 @@ impl ServerState {
 }
 
 const SECRET_SERVICE: &str = "com.annotagent.provider-api-key";
-
-trait SecretStore: Send + Sync {
-    fn load(&self, account: &str) -> anyhow::Result<Option<String>>;
-    fn save(&self, account: &str, secret: &str) -> anyhow::Result<()>;
-    fn delete(&self, account: &str) -> anyhow::Result<()>;
-}
-
-struct LocalSecretStore {
-    path: PathBuf,
-}
-
-struct LegacySystemSecretStore;
-
-impl LocalSecretStore {
-    fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-}
-
-impl SecretStore for LocalSecretStore {
-    fn load(&self, _account: &str) -> anyhow::Result<Option<String>> {
-        match std::fs::symlink_metadata(&self.path) {
-            Ok(metadata) => {
-                if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                    bail!(
-                        "local credential path must be a regular non-symlink file: {}",
-                        self.path.display()
-                    );
-                }
-                let secret = std::fs::read_to_string(&self.path).with_context(|| {
-                    format!("cannot read local credential file {}", self.path.display())
-                })?;
-                let secret = secret.trim().to_owned();
-                if secret.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(secret))
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error).with_context(|| {
-                format!(
-                    "cannot inspect local credential file {}",
-                    self.path.display()
-                )
-            }),
-        }
-    }
-
-    fn save(&self, _account: &str, secret: &str) -> anyhow::Result<()> {
-        if secret.trim().is_empty() {
-            bail!("API key cannot be empty");
-        }
-        persist_local_secret(&self.path, secret.trim())
-    }
-
-    fn delete(&self, _account: &str) -> anyhow::Result<()> {
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error).with_context(|| {
-                format!(
-                    "cannot remove local credential file {}",
-                    self.path.display()
-                )
-            }),
-        }
-    }
-}
-
-impl LegacySystemSecretStore {
-    fn entry(account: &str) -> anyhow::Result<keyring::Entry> {
-        keyring::Entry::new(SECRET_SERVICE, account)
-            .map_err(|error| anyhow!("cannot access the system credential store: {error}"))
-    }
-}
-
-impl SecretStore for LegacySystemSecretStore {
-    fn load(&self, account: &str) -> anyhow::Result<Option<String>> {
-        match Self::entry(account)?.get_password() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(anyhow!("cannot read the saved API key: {error}")),
-        }
-    }
-
-    fn save(&self, account: &str, secret: &str) -> anyhow::Result<()> {
-        Self::entry(account)?.set_password(secret).map_err(|error| {
-            anyhow!("cannot save the API key in the system credential store: {error}")
-        })
-    }
-
-    fn delete(&self, account: &str) -> anyhow::Result<()> {
-        match Self::entry(account)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(anyhow!("cannot clear the saved API key: {error}")),
-        }
-    }
-}
-
-fn migrate_legacy_keychain(local: &LocalSecretStore, account: &str) -> anyhow::Result<()> {
-    let legacy = LegacySystemSecretStore;
-    if local.load(account)?.is_none()
-        && let Some(secret) = legacy.load(account)?
-    {
-        local.save(account, &secret)?;
-    }
-    legacy.delete(account)
-}
 
 fn validate_provider_kind(provider: &str) -> anyhow::Result<()> {
     if matches!(provider, "mock" | "openai_compatible") {
@@ -267,50 +196,6 @@ fn persist_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
         file.sync_all()?;
         std::fs::rename(&temporary_path, path)
             .with_context(|| format!("cannot replace settings file {}", path.display()))?;
-        Ok(())
-    })();
-    if write_result.is_err() {
-        let _ignored = std::fs::remove_file(&temporary_path);
-    }
-    write_result
-}
-
-fn persist_local_secret(path: &Path, secret: &str) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("credential path has no parent"))?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("cannot create credential directory {}", parent.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let temporary_path = parent.join(format!(".provider-api-key.{}.tmp", uuid::Uuid::new_v4()));
-    let write_result = (|| -> anyhow::Result<()> {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary_path).with_context(|| {
-            format!(
-                "cannot create temporary credential file {}",
-                temporary_path.display()
-            )
-        })?;
-        file.write_all(secret.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
-        std::fs::rename(&temporary_path, path)
-            .with_context(|| format!("cannot replace credential file {}", path.display()))?;
         Ok(())
     })();
     if write_result.is_err() {
@@ -3255,9 +3140,18 @@ async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
             "settings_path".to_owned(),
             Value::String(state.settings_path.display().to_string()),
         );
+        let credential_source = state.credential_reference.read().await.source;
         object.insert(
             "credential_store".to_owned(),
-            Value::String("workspace_private_file".to_owned()),
+            Value::String(
+                match credential_source {
+                    CredentialSource::SystemKeyring => "system_keyring",
+                    CredentialSource::EnvironmentVariable => "environment_variable",
+                    CredentialSource::SessionOnly => "session_only",
+                    CredentialSource::LegacyWorkspaceFile => "legacy_workspace_file",
+                }
+                .to_owned(),
+            ),
         );
         if let Some(error) = state.credential_store_error.read().await.clone() {
             object.insert("credential_store_error".to_owned(), Value::String(error));
@@ -3311,24 +3205,34 @@ async fn put_settings(
     *state.settings_persisted.write().await = true;
 
     if clear_saved_api_key || api_key.is_some() {
-        let secret_store = state.secret_store.clone();
-        let secret_account = state.secret_account.clone();
-        let requested_key = api_key.clone();
-        let credential_result = tokio::task::spawn_blocking(move || {
-            if let Some(secret) = requested_key {
-                secret_store.save(&secret_account, &secret)
-            } else {
-                secret_store.delete(&secret_account)
+        let credential_result = if let Some(secret) = api_key.as_ref() {
+            let reference = state.default_keyring_reference.as_ref().clone();
+            let scope = SecretScope {
+                provider_id: reference.provider_id,
+                source: reference.source,
+                locator: reference.locator.clone(),
+            };
+            let value = SecretValue::new(secret.trim()).map_err(ApiError::bad_request)?;
+            state.secret_store.put(scope, value).await.map(Some)
+        } else {
+            let reference = state.credential_reference.read().await.clone();
+            state.secret_store.delete(&reference).await.map(|()| None)
+        };
+        let saved_reference = match credential_result {
+            Ok(reference) => reference,
+            Err(error) => {
+                *state.credential_store_error.write().await = Some(error.to_string());
+                return Err(ApiError::internal(error));
             }
-        })
-        .await
-        .map_err(ApiError::internal)?;
-        if let Err(error) = credential_result {
-            *state.credential_store_error.write().await = Some(error.to_string());
-            return Err(ApiError::internal(error));
+        };
+        if let Some(reference) = saved_reference {
+            *state.credential_reference.write().await = reference;
+        } else {
+            *state.credential_reference.write().await =
+                state.default_keyring_reference.as_ref().clone();
         }
-        *state.api_key.write().await = api_key;
-        *state.api_key_persisted.write().await = !clear_saved_api_key;
+        *state.api_key.write().await = api_key.clone();
+        *state.api_key_persisted.write().await = api_key.is_some();
         *state.credential_store_error.write().await = None;
     }
 
@@ -3372,10 +3276,9 @@ async fn events(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Mutex};
-
     use annotagent_core::RunStatus;
     use annotagent_image_tools::{generate_synthetic_inspection, generate_synthetic_robocup};
+    use annotagent_provider::InMemorySecretStore;
     use axum::body::to_bytes;
     use futures::StreamExt;
     use serde_json::json;
@@ -3383,43 +3286,19 @@ mod tests {
 
     use super::*;
 
-    #[derive(Default)]
-    struct MemorySecretStore {
-        secrets: Mutex<HashMap<String, String>>,
-    }
-
-    impl SecretStore for MemorySecretStore {
-        fn load(&self, account: &str) -> anyhow::Result<Option<String>> {
-            Ok(self
-                .secrets
-                .lock()
-                .expect("secret store lock")
-                .get(account)
-                .cloned())
-        }
-
-        fn save(&self, account: &str, secret: &str) -> anyhow::Result<()> {
-            self.secrets
-                .lock()
-                .expect("secret store lock")
-                .insert(account.to_owned(), secret.to_owned());
-            Ok(())
-        }
-
-        fn delete(&self, account: &str) -> anyhow::Result<()> {
-            self.secrets
-                .lock()
-                .expect("secret store lock")
-                .remove(account);
-            Ok(())
-        }
-    }
-
-    fn test_state(
+    async fn test_state(
         application: Arc<LocalApplication>,
-        secret_store: Arc<MemorySecretStore>,
+        secret_store: Arc<InMemorySecretStore>,
     ) -> ServerState {
-        ServerState::with_secret_store(application, secret_store).expect("state")
+        let provider_id = ProviderId(stable_project_id(application.workspace()).0);
+        let reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SystemKeyring,
+            locator: format!("test-{provider_id}"),
+        };
+        ServerState::with_secret_store(application, secret_store, reference.clone(), reference)
+            .await
+            .expect("state")
     }
 
     #[tokio::test]
@@ -3427,7 +3306,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp");
         let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
         let service = router(
-            test_state(app, Arc::new(MemorySecretStore::default())),
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
         let response = service
@@ -3473,7 +3352,7 @@ mod tests {
         )
         .expect("Project");
         let service = router(
-            test_state(app, Arc::new(MemorySecretStore::default())),
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
 
@@ -3577,7 +3456,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
         let service = router(
-            test_state(application.clone(), Arc::new(MemorySecretStore::default())),
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
             None,
         );
         let skill = application.skills().get("robocup").expect("skill");
@@ -3865,7 +3748,11 @@ mod tests {
     async fn project_sse_review_revision_and_budget_flow_works_over_http() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
-        let state = test_state(application.clone(), Arc::new(MemorySecretStore::default()));
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
         let service = router(state.clone(), None);
         let skill = application
             .skills()
@@ -4229,13 +4116,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn settings_and_local_api_key_survive_server_restart() {
+    async fn settings_and_keyring_reference_survive_server_restart() {
         let temp = tempfile::tempdir().expect("temp");
-        let credential_path = temp.path().join(".annotagent/credentials/provider-api-key");
-        let secrets = Arc::new(LocalSecretStore::new(credential_path.clone()));
+        let secrets = Arc::new(InMemorySecretStore::default());
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let provider_id = ProviderId(stable_project_id(application.workspace()).0);
+        let reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SystemKeyring,
+            locator: format!("restart-test-{provider_id}"),
+        };
         let service = router(
-            ServerState::with_secret_store(application, secrets.clone()).expect("state"),
+            ServerState::with_secret_store(
+                application,
+                secrets.clone(),
+                reference.clone(),
+                reference.clone(),
+            )
+            .await
+            .expect("state"),
             None,
         );
 
@@ -4275,7 +4174,7 @@ mod tests {
         assert_eq!(saved["settings_persisted"], json!(true));
         assert_eq!(saved["api_key_persisted"], json!(true));
         assert_eq!(saved["api_key_configured"], json!(true));
-        assert_eq!(saved["credential_store"], json!("workspace_private_file"));
+        assert_eq!(saved["credential_store"], json!("system_keyring"));
         assert!(saved.get("api_key").is_none());
 
         let settings_path = temp.path().join(".annotagent/settings.toml");
@@ -4283,28 +4182,25 @@ mod tests {
         assert!(persisted.contains("persisted-vision-model"));
         assert!(!persisted.contains("test-secret-that-must-not-reach-disk"));
         assert_eq!(
-            std::fs::read_to_string(&credential_path)
-                .expect("local credential")
-                .trim(),
+            secrets
+                .resolve(&reference)
+                .await
+                .expect("saved Keyring-style secret")
+                .expose_secret(),
             "test-secret-that-must-not-reach-disk"
         );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&credential_path)
-                    .expect("credential metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-        }
 
         let restarted_application =
             Arc::new(LocalApplication::new(temp.path()).expect("restarted application"));
         let restarted = router(
-            ServerState::with_secret_store(restarted_application, secrets.clone()).expect("state"),
+            ServerState::with_secret_store(
+                restarted_application,
+                secrets.clone(),
+                reference.clone(),
+                reference.clone(),
+            )
+            .await
+            .expect("state"),
             None,
         );
         let restored = response_json(
@@ -4332,7 +4228,56 @@ mod tests {
         .await;
         assert_eq!(cleared["api_key_configured"], json!(false));
         assert_eq!(cleared["api_key_persisted"], json!(false));
-        assert!(!credential_path.exists());
+        assert!(!secrets.exists(&reference).await.expect("secret status"));
+    }
+
+    #[tokio::test]
+    async fn legacy_workspace_key_is_read_without_automatic_migration_or_deletion() {
+        let temp = tempfile::tempdir().expect("temp");
+        let credential_path = temp.path().join(".annotagent/credentials/provider-api-key");
+        std::fs::create_dir_all(credential_path.parent().expect("credential parent"))
+            .expect("credential directory");
+        std::fs::write(&credential_path, "legacy-secret\n").expect("legacy credential");
+
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let provider_id = ProviderId(stable_project_id(application.workspace()).0);
+        let keyring_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SystemKeyring,
+            locator: format!("legacy-migration-test-{provider_id}"),
+        };
+        let legacy_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::LegacyWorkspaceFile,
+            locator: "legacy-test-file".to_owned(),
+        };
+        let keyring = Arc::new(InMemorySecretStore::default());
+        let store: Arc<dyn SecretStore> = Arc::new(SecretStoreRouter {
+            keyring: keyring.clone(),
+            environment: Arc::new(EnvironmentSecretStore),
+            session: Arc::new(SessionSecretStore::default()),
+            legacy: Arc::new(LegacyWorkspaceFileSecretStore::single(
+                legacy_reference.locator.clone(),
+                credential_path.clone(),
+            )),
+        });
+        let state = ServerState::with_secret_store(
+            application,
+            store,
+            legacy_reference,
+            keyring_reference.clone(),
+        )
+        .await
+        .expect("legacy state");
+        assert_eq!(state.api_key.read().await.as_deref(), Some("legacy-secret"));
+        assert!(credential_path.is_file(), "legacy secret remains in place");
+        assert!(
+            !keyring
+                .exists(&keyring_reference)
+                .await
+                .expect("keyring status"),
+            "legacy credential is never migrated implicitly"
+        );
     }
 
     #[tokio::test]
@@ -4355,7 +4300,7 @@ mod tests {
             .reserve_project_run(project_id, active_run_id, None)
             .expect("active reservation");
         let service = router(
-            test_state(application, Arc::new(MemorySecretStore::default())),
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
         let response = request(
@@ -4392,7 +4337,7 @@ mod tests {
             )
             .expect("batch");
         let service = router(
-            test_state(application, Arc::new(MemorySecretStore::default())),
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
         let listed =
@@ -4473,7 +4418,11 @@ mod tests {
     async fn label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
-        let state = test_state(application.clone(), Arc::new(MemorySecretStore::default()));
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
         let service = router(state, None);
         let project_yaml = r"
 version: 1
@@ -4883,7 +4832,7 @@ export:
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
         let service = router(
-            test_state(application, Arc::new(MemorySecretStore::default())),
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
         let skills =

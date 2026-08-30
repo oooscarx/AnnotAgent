@@ -28,4 +28,4 @@ If a prerequisite is missing, the server returns a blocker and repair route. Ref
 
 ## Credentials
 
-GUI keys are never returned by the API, stored in SQLite, written to logs, or placed in a keychain. The local server writes the current key to `<workspace>/.annotagent/credentials/provider-api-key` with owner-only permissions. Use Mock for the deterministic offline path.
+GUI keys are never returned by the API, stored in SQLite, or written to logs. The local server stores new GUI credentials in the native system credential store (Keychain on macOS); an old workspace credential file is read only as an explicit legacy source. Use Mock for the deterministic offline path.

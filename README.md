@@ -32,7 +32,7 @@ In the browser:
 7. Use **Review** as a decision Inbox. Edit if needed, then Accept & next or Reject & next; source Run links are bidirectional and the final item leads to Export.
 8. Open Project **Export**, resolve any readiness blocker, select a Schema-compatible format, and run the real exporter. The completion report and source fingerprint survive reload while the Project snapshot remains current.
 
-Provider settings live under **Settings -> Provider & budgets**. Non-secret settings persist in the workspace; a GUI-entered key is write-only and stored in the workspace-private `.annotagent/credentials/provider-api-key` file, never in SQLite or a keychain. The offline Mock provider is the Release baseline and needs no key.
+Provider settings live under **Settings -> Provider & budgets**. Non-secret settings persist in the workspace; a GUI-entered key is write-only and stored in the native system credential store (Keychain on macOS), never in SQLite or settings TOML. An existing `.annotagent/credentials/provider-api-key` remains readable as an explicitly labelled legacy source and is never migrated or deleted automatically. The offline Mock provider is the Release baseline and needs no key.
 
 Start with [Guided Experience](docs/GUIDED_EXPERIENCE.md), [Project setup](docs/GUIDED_PROJECT_SETUP.md), [Run and Review UX](docs/RUN_AND_REVIEW_UX.md), or the [offline demo](docs/DEMO_GUIDED_EXPERIENCE.md). Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and the current Release Matrix is [`docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md`](docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md).
 
@@ -59,7 +59,7 @@ A Workflow is a typed graph of model, tool, validator/refiner, review, and outpu
 
 ## 4. Model
 
-Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers plus optional local Detection Workers, persists non-secret configuration in the workspace, and stores the write-only key at `<workspace>/.annotagent/credentials/provider-api-key` with owner-only permissions. CLI environment-variable keys remain supported. Worker health and capabilities are discovered live; an unavailable Worker never blocks AnnotAgent startup.
+Model bindings connect Workflow nodes to configured providers and models. The Settings page offers a provider catalog for common vision providers plus optional local Detection Workers, persists non-secret configuration in the workspace, and stores write-only GUI credentials in the native system credential store. Environment-variable and session-only references remain supported. Worker health and capabilities are discovered live; an unavailable Worker never blocks AnnotAgent startup.
 
 ## 5. Skill
 

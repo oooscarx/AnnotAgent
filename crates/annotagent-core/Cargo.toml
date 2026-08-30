@@ -17,10 +17,11 @@ serde_yaml.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
+url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 proptest = "1"
 
 [lints]
 workspace = true
-
