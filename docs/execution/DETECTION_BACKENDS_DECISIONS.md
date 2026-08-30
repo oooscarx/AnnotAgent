@@ -80,3 +80,25 @@ table.
 An explicitly Disabled, Misconfigured, IncompatibleProtocol, or MissingWeights descriptor remains
 visible in the Registry but cannot be resolved for execution. Unreachable is retained as a health
 fact for later Recovery policy rather than silently deleting the configured model.
+
+## DB-011 — Detection Artifact v2 migrates at the typed JSON boundary
+
+Pipeline Artifacts already live inside durable JSON checkpoints, so M2 uses an explicit
+`DetectionSetArtifact` schema version and custom deserializer rather than adding an unrelated SQL
+column. Historical field names are accepted once, source model/evidence is reconstructed from the
+historical set binding, and current serialization emits only v2 names. Missing legacy confidence
+becomes `NotProvided`; a historical numeric confidence becomes `Unknown` because its calibration
+semantics were never recorded. Unsupported future versions are rejected rather than guessed.
+
+Filtering, mapping, refinement, and Review may create derived DetectionSet identities while source
+evidence continues to point to the original detector Artifact. Validation therefore requires the
+primary source model to appear in evidence but does not rewrite evidence to claim a transform was
+the detector.
+
+## DB-012 — Ordinary confidence is narrower than a displayed detector score
+
+Only `CalibratedProbability` and `RelativeConfidence` are eligible for ordinary threshold gates or
+the legacy Annotation confidence field. `RankingScore`, `Unknown`, and `NotProvided` remain visible
+inside the evidence-aware Artifact but cannot silently become a percentage, an auto-accept value,
+or a detection/classification combined confidence. Score-less filtering preserves candidates for
+Evidence Gate, another model, deterministic validation, or Human Review.

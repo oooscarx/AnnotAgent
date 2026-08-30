@@ -3,10 +3,11 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    ArtifactKind, ArtifactRef, CoreError, CoreResult, Detection, DetectionSetArtifact, LabelId,
-    ModelImage, NodePort, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
-    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind,
-    SkillManifest, SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
+    ArtifactKind, ArtifactRef, CoreError, CoreResult, DETECTION_ARTIFACT_SCHEMA_VERSION, Detection,
+    DetectionScore, DetectionSetArtifact, DetectionSource, LabelId, ModelImage, NodePort,
+    NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
+    PipelineInferenceResponse, PipelineModelBackend, Skill, SkillKind, SkillManifest,
+    SkillResource, SkillResourceRequest, TaskId, TaskTemplate, VisionCapability,
     VisionNodeDescriptor, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind, WorkflowTemplate,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
@@ -311,27 +312,41 @@ fn postprocess_detection_sets(
         let PipelineArtifact::DetectionSet(set) = artifact else {
             continue;
         };
-        set.detections
-            .retain(|detection| detection.confidence >= threshold);
+        // Missing or non-comparable scores must survive confidence post-processing so a later
+        // Evidence Gate or Human Review can decide their disposition.
+        set.detections.retain(|detection| {
+            detection
+                .score
+                .comparable_confidence()
+                .is_none_or(|confidence| confidence >= threshold)
+        });
         for detection in &mut set.detections {
             if let Some(label) = mapping
-                .and_then(|mapping| mapping.get(&detection.class_id))
+                .and_then(|mapping| {
+                    mapping.get(detection.model_label.as_deref().unwrap_or_default())
+                })
                 .and_then(serde_json::Value::as_str)
             {
-                detection.label = Some(LabelId::from(label));
+                detection.project_label = Some(LabelId::from(label));
             }
         }
         set.detections.sort_by(|left, right| {
-            right
-                .confidence
-                .total_cmp(&left.confidence)
-                .then_with(|| left.id.cmp(&right.id))
+            match (
+                left.score.comparable_confidence(),
+                right.score.comparable_confidence(),
+            ) {
+                (Some(left), Some(right)) => right.total_cmp(&left),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+            .then_with(|| left.detection_id.cmp(&right.detection_id))
         });
         let mut kept = Vec::<Detection>::new();
         for candidate in set.detections.drain(..) {
             let suppressed = kept.iter().any(|existing| {
-                existing.class_id == candidate.class_id
-                    && intersection_over_union(existing.rect, candidate.rect) > nms_threshold
+                existing.model_label == candidate.model_label
+                    && intersection_over_union(existing.bbox, candidate.bbox) > nms_threshold
             });
             if !suppressed {
                 kept.push(candidate);
@@ -407,22 +422,30 @@ impl PipelineModelBackend for MockYoloBackend {
             .get("mock_confidence")
             .and_then(serde_json::Value::as_f64)
             .unwrap_or(0.95) as f32;
+        let artifact_id = format!("detection-set:{}", request.request_id);
         let detections = (0..count)
             .map(|index| {
                 let offset = (index as f32 * 0.03).min(0.4);
-                Ok(Detection {
-                    id: format!("detection-{index}"),
-                    class_id: class_id.to_owned(),
-                    label: label.clone(),
-                    rect: NormalizedRect::new(0.1 + offset, 0.1 + offset, 0.25, 0.25)?,
-                    confidence,
-                    attributes: BTreeMap::new(),
-                })
+                Detection::from_source(
+                    format!("detection-{index}"),
+                    None,
+                    Some(class_id.to_owned()),
+                    label.clone(),
+                    NormalizedRect::new(0.1 + offset, 0.1 + offset, 0.25, 0.25)?,
+                    DetectionScore::relative(confidence).map_err(CoreError::Validation)?,
+                    DetectionSource {
+                        model_id: request.model_id.clone(),
+                        capability: VisionCapability::ObjectDetection,
+                        artifact_id: artifact_id.clone(),
+                    },
+                )
+                .map_err(CoreError::Validation)
             })
             .collect::<CoreResult<Vec<_>>>()?;
         let artifact = DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
             reference: ArtifactRef {
-                artifact_id: format!("detection-set:{}", request.request_id),
+                artifact_id,
                 source_node: request.node_id,
                 port: "detections".to_owned(),
                 artifact_type: ArtifactKind::DetectionSet,

@@ -3927,7 +3927,8 @@ export function artifactRects(artifacts: PipelineArtifact[]): ArtifactRect[] {
     if (!Array.isArray(detections)) return [];
     return detections.flatMap((detection) => {
       if (!detection || typeof detection !== "object") return [];
-      const rect = (detection as Record<string, unknown>).rect;
+      const record = detection as Record<string, unknown>;
+      const rect = record.bbox ?? record.rect;
       return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
     });
   });
@@ -4459,6 +4460,15 @@ function markColor(label: string, project?: ProjectSummary): string {
   return annotationColor(visual.slot);
 }
 
+function detectionScoreValue(detection: Record<string, unknown>): number | undefined {
+  const score = detection.score;
+  if (score && typeof score === "object") {
+    const value = (score as Record<string, unknown>).value;
+    return typeof value === "number" ? value : undefined;
+  }
+  return typeof detection.confidence === "number" ? detection.confidence : undefined;
+}
+
 export function artifactDetectionMarks(
   artifacts: PipelineArtifact[],
   project?: ProjectSummary,
@@ -4471,18 +4481,26 @@ export function artifactDetectionMarks(
     return detections.flatMap((value, index) => {
       if (!value || typeof value !== "object") return [];
       const detection = value as Record<string, unknown>;
-      const rect = parseArtifactRect(detection.rect);
+      const rect = parseArtifactRect(detection.bbox ?? detection.rect);
       if (!rect) return [];
-      const label = typeof detection.label === "string"
-        ? detection.label
-        : typeof detection.class_id === "string"
-          ? detection.class_id
-          : "detection";
+      const label = typeof detection.project_label === "string"
+        ? detection.project_label
+        : typeof detection.model_label === "string"
+          ? detection.model_label
+          : typeof detection.label === "string"
+            ? detection.label
+            : typeof detection.class_id === "string"
+              ? detection.class_id
+              : "detection";
       return [{
         ...rect,
-        id: typeof detection.id === "string" ? detection.id : `detection-${index}`,
+        id: typeof detection.detection_id === "string"
+          ? detection.detection_id
+          : typeof detection.id === "string"
+            ? detection.id
+            : `detection-${index}`,
         label,
-        confidence: typeof detection.confidence === "number" ? detection.confidence : undefined,
+        confidence: detectionScoreValue(detection),
         color: markColor(label, project),
         parentArtifact: typeof reference?.artifact_id === "string" ? reference.artifact_id : undefined,
         sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,

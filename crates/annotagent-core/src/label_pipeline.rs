@@ -13,16 +13,17 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId,
+    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId, ModelId,
     ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedRect, ProjectSchema,
-    ResourceRequirements, RetryPolicy, ReviewGate, RunId, TaskId, VisionArtifactValue,
-    VisionBackendError, VisionBackendTimings, VisionBackendUsage, VisionCapability,
-    WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge,
-    WorkflowNodeKind,
+    ResourceRequirements, RetryPolicy, ReviewGate, RunId, ScoreSemantics, TaskId,
+    VisionArtifactValue, VisionBackendError, VisionBackendTimings, VisionBackendUsage,
+    VisionCapability, WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode,
+    WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
 };
 
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
 pub const PIPELINE_VISION_PROTOCOL_VERSION: u32 = 1;
+pub const DETECTION_ARTIFACT_SCHEMA_VERSION: u32 = 2;
 pub const IMAGE_INPUT_NODE_ID: &str = "core.image_input";
 pub const IMAGE_INPUT_OPERATION: &str = "core.image_input";
 
@@ -58,19 +59,192 @@ pub struct ImageArtifact {
     pub blob_ref: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Detection {
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DetectionScore {
+    pub value: Option<f32>,
+    #[serde(default)]
+    pub semantics: ScoreSemantics,
+}
+
+impl Default for DetectionScore {
+    fn default() -> Self {
+        Self::not_provided()
+    }
+}
+
+impl DetectionScore {
+    pub fn new(value: Option<f32>, semantics: ScoreSemantics) -> Result<Self, String> {
+        let score = Self { value, semantics };
+        score.validate()?;
+        Ok(score)
+    }
+
+    pub fn relative(value: f32) -> Result<Self, String> {
+        Self::new(Some(value), ScoreSemantics::RelativeConfidence)
+    }
+
+    #[must_use]
+    pub const fn not_provided() -> Self {
+        Self {
+            value: None,
+            semantics: ScoreSemantics::NotProvided,
+        }
+    }
+
+    /// Returns a value only when the score can be used by a conventional confidence gate.
+    /// Ranking-only, unknown, and absent scores require evidence-aware handling instead.
+    #[must_use]
+    pub const fn comparable_confidence(self) -> Option<f32> {
+        match self.semantics {
+            ScoreSemantics::CalibratedProbability | ScoreSemantics::RelativeConfidence => {
+                self.value
+            }
+            ScoreSemantics::RankingScore
+            | ScoreSemantics::NotProvided
+            | ScoreSemantics::Unknown => None,
+        }
+    }
+
+    pub fn validate(self) -> Result<(), String> {
+        if let Some(value) = self.value {
+            validate_confidence(value)?;
+            if self.semantics == ScoreSemantics::NotProvided {
+                return Err("score marked not_provided cannot contain a value".to_owned());
+            }
+        } else if !matches!(
+            self.semantics,
+            ScoreSemantics::NotProvided | ScoreSemantics::Unknown
+        ) {
+            return Err("a scored semantics requires a numeric value".to_owned());
+        }
+        Ok(())
+    }
+}
+
+fn deserialize_detection_score<'de, D>(deserializer: D) -> Result<DetectionScore, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum WireScore {
+        Structured(DetectionScore),
+        Legacy(Option<f32>),
+    }
+    let score = match WireScore::deserialize(deserializer)? {
+        WireScore::Structured(score) => score,
+        WireScore::Legacy(Some(value)) => DetectionScore {
+            value: Some(value),
+            semantics: ScoreSemantics::Unknown,
+        },
+        WireScore::Legacy(None) => DetectionScore::not_provided(),
+    };
+    score.validate().map_err(serde::de::Error::custom)?;
+    Ok(score)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredPayloadRef {
     pub id: String,
-    pub class_id: String,
-    pub label: Option<LabelId>,
-    pub rect: NormalizedRect,
-    pub confidence: f32,
+    pub media_type: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DetectionEvidence {
+    pub source_model_id: ModelId,
+    pub source_artifact_id: String,
+    pub bbox: NormalizedRect,
+    pub score: DetectionScore,
+    pub query_id: Option<String>,
+    pub model_label: Option<String>,
+    pub raw_output_ref: Option<StoredPayloadRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectionSource {
+    pub model_id: ModelId,
+    pub capability: VisionCapability,
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DetectionArtifactItem {
+    #[serde(alias = "id")]
+    pub detection_id: DetectionId,
+    #[serde(default)]
+    pub query_id: Option<String>,
+    #[serde(default, alias = "class_id")]
+    pub model_label: Option<String>,
+    #[serde(default, alias = "label")]
+    pub project_label: Option<LabelId>,
+    #[serde(alias = "rect")]
+    pub bbox: NormalizedRect,
+    #[serde(
+        default,
+        alias = "confidence",
+        deserialize_with = "deserialize_detection_score"
+    )]
+    pub score: DetectionScore,
+    #[serde(default)]
+    pub source_model_id: ModelId,
+    #[serde(default = "default_object_detection_capability")]
+    pub source_capability: VisionCapability,
+    #[serde(default)]
+    pub evidence: Vec<DetectionEvidence>,
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Detection IDs are stable within one `DetectionSet` and intentionally opaque to Core.
+pub type DetectionId = String;
+
+impl DetectionArtifactItem {
+    pub fn from_source(
+        detection_id: impl Into<String>,
+        query_id: Option<String>,
+        model_label: Option<String>,
+        project_label: Option<LabelId>,
+        bbox: NormalizedRect,
+        score: DetectionScore,
+        source: DetectionSource,
+    ) -> Result<Self, String> {
+        score.validate()?;
+        let evidence = DetectionEvidence {
+            source_model_id: source.model_id.clone(),
+            source_artifact_id: source.artifact_id,
+            bbox,
+            score,
+            query_id: query_id.clone(),
+            model_label: model_label.clone(),
+            raw_output_ref: None,
+        };
+        Ok(Self {
+            detection_id: detection_id.into(),
+            query_id,
+            model_label,
+            project_label,
+            bbox,
+            score,
+            source_model_id: source.model_id,
+            source_capability: source.capability,
+            evidence: vec![evidence],
+            attributes: BTreeMap::new(),
+        })
+    }
+}
+
+/// Compatibility name retained while callers migrate to `DetectionArtifactItem`.
+pub type Detection = DetectionArtifactItem;
+
+const fn default_object_detection_capability() -> VisionCapability {
+    VisionCapability::ObjectDetection
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DetectionSetArtifact {
+    pub schema_version: u32,
     pub reference: ArtifactRef,
     pub image_id: ImageId,
     pub model_binding: String,
@@ -79,6 +253,94 @@ pub struct DetectionSetArtifact {
     pub detections: Vec<Detection>,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for DetectionSetArtifact {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireDetectionSet {
+            #[serde(default = "legacy_detection_artifact_schema_version")]
+            schema_version: u32,
+            reference: ArtifactRef,
+            image_id: ImageId,
+            model_binding: String,
+            #[serde(default = "default_unvalidated")]
+            validation_state: ArtifactValidationState,
+            detections: Vec<DetectionArtifactItem>,
+            #[serde(default)]
+            metadata: BTreeMap<String, serde_json::Value>,
+        }
+
+        let wire = WireDetectionSet::deserialize(deserializer)?;
+        if wire.schema_version == 0 || wire.schema_version > DETECTION_ARTIFACT_SCHEMA_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "unsupported Detection Artifact schema version {}",
+                wire.schema_version
+            )));
+        }
+        let mut detections = wire.detections;
+        for detection in &mut detections {
+            if detection.source_model_id.trim().is_empty() {
+                detection.source_model_id.clone_from(&wire.model_binding);
+            }
+            if detection.evidence.is_empty() {
+                detection.evidence.push(DetectionEvidence {
+                    source_model_id: detection.source_model_id.clone(),
+                    source_artifact_id: wire.reference.artifact_id.clone(),
+                    bbox: detection.bbox,
+                    score: detection.score,
+                    query_id: detection.query_id.clone(),
+                    model_label: detection.model_label.clone(),
+                    raw_output_ref: None,
+                });
+            }
+        }
+        Ok(Self {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+            reference: wire.reference,
+            image_id: wire.image_id,
+            model_binding: wire.model_binding,
+            validation_state: wire.validation_state,
+            detections,
+            metadata: wire.metadata,
+        })
+    }
+}
+
+const fn legacy_detection_artifact_schema_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateAgreement {
+    SingleSource,
+    MultiSourceAgreement { minimum_iou: f32, mean_iou: f32 },
+    GeometryConflict,
+    LabelConflict,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CandidateCluster {
+    pub id: CandidateClusterId,
+    pub target_label: LabelId,
+    pub representative_bbox: NormalizedRect,
+    pub members: Vec<DetectionEvidence>,
+    pub agreement: CandidateAgreement,
+}
+
+/// Candidate cluster IDs are stable within one `CandidateClusterSet`.
+pub type CandidateClusterId = String;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CandidateClusterSetArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub source_detection_sets: Vec<ArtifactRef>,
+    pub candidates: Vec<CandidateCluster>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -173,6 +435,7 @@ pub struct AnnotationCandidateSet {
 pub enum PipelineArtifact {
     Image(ImageArtifact),
     DetectionSet(DetectionSetArtifact),
+    CandidateClusterSet(CandidateClusterSetArtifact),
     CropSet(CropSetArtifact),
     ClassificationSet(ClassificationSetArtifact),
     AnnotationCandidateSet(AnnotationCandidateSet),
@@ -184,6 +447,7 @@ impl PipelineArtifact {
         match self {
             Self::Image(_) => ArtifactKind::Image,
             Self::DetectionSet(_) => ArtifactKind::DetectionSet,
+            Self::CandidateClusterSet(_) => ArtifactKind::CandidateClusterSet,
             Self::CropSet(_) => ArtifactKind::CropSet,
             Self::ClassificationSet(_) => ArtifactKind::ClassificationSet,
             Self::AnnotationCandidateSet(_) => ArtifactKind::AnnotationCandidateSet,
@@ -195,6 +459,7 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => &artifact.reference,
             Self::DetectionSet(artifact) => &artifact.reference,
+            Self::CandidateClusterSet(artifact) => &artifact.reference,
             Self::CropSet(artifact) => &artifact.reference,
             Self::ClassificationSet(artifact) => &artifact.reference,
             Self::AnnotationCandidateSet(artifact) => &artifact.reference,
@@ -206,6 +471,7 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => artifact.image_id,
             Self::DetectionSet(artifact) => artifact.image_id,
+            Self::CandidateClusterSet(artifact) => artifact.image_id,
             Self::CropSet(artifact) => artifact.image_id,
             Self::ClassificationSet(artifact) => artifact.image_id,
             Self::AnnotationCandidateSet(artifact) => artifact.image_id,
@@ -216,6 +482,7 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => artifact.validate(),
             Self::DetectionSet(artifact) => artifact.validate(),
+            Self::CandidateClusterSet(artifact) => artifact.validate(),
             Self::CropSet(artifact) => artifact.validate(),
             Self::ClassificationSet(artifact) => artifact.validate(),
             Self::AnnotationCandidateSet(artifact) => artifact.validate(),
@@ -935,16 +1202,141 @@ impl LabelWorkflowComposition {
 
 impl DetectionSetArtifact {
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != DETECTION_ARTIFACT_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported Detection Artifact schema version {}",
+                self.schema_version
+            ));
+        }
         validate_set_reference(&self.reference, ArtifactKind::DetectionSet)?;
+        if self.model_binding.trim().is_empty() {
+            return Err("DetectionSet model_binding cannot be empty".to_owned());
+        }
         let mut ids = BTreeSet::new();
         for detection in &self.detections {
-            if detection.id.trim().is_empty() || !ids.insert(detection.id.as_str()) {
+            if detection.detection_id.trim().is_empty()
+                || !ids.insert(detection.detection_id.as_str())
+            {
                 return Err("Detection ids must be non-empty and unique".to_owned());
             }
-            validate_confidence(detection.confidence)?;
+            detection.score.validate()?;
+            if detection.source_model_id.trim().is_empty() {
+                return Err("Detection source_model_id cannot be empty".to_owned());
+            }
+            if !is_detection_capability(detection.source_capability) {
+                return Err("Detection source_capability must be a detection capability".to_owned());
+            }
+            if detection.query_id.as_deref().is_none_or(str::is_empty)
+                && detection.model_label.as_deref().is_none_or(str::is_empty)
+            {
+                return Err("Detection requires a query_id or model_label".to_owned());
+            }
+            if detection.evidence.is_empty() {
+                return Err("Detection must preserve at least one source evidence item".to_owned());
+            }
+            for evidence in &detection.evidence {
+                validate_detection_evidence(evidence)?;
+            }
+            if !detection
+                .evidence
+                .iter()
+                .any(|evidence| evidence.source_model_id == detection.source_model_id)
+            {
+                return Err("Detection evidence must include its source model".to_owned());
+            }
         }
         Ok(())
     }
+}
+
+impl CandidateClusterSetArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::CandidateClusterSet)?;
+        if self.source_detection_sets.is_empty() {
+            return Err("CandidateClusterSet requires source DetectionSets".to_owned());
+        }
+        let mut source_ids = BTreeSet::new();
+        for source in &self.source_detection_sets {
+            validate_set_reference(source, ArtifactKind::DetectionSet)?;
+            if !source_ids.insert(source.artifact_id.as_str()) {
+                return Err("CandidateClusterSet sources must be unique".to_owned());
+            }
+        }
+        let mut candidate_ids = BTreeSet::new();
+        for candidate in &self.candidates {
+            if candidate.id.trim().is_empty() || !candidate_ids.insert(candidate.id.as_str()) {
+                return Err("CandidateCluster ids must be non-empty and unique".to_owned());
+            }
+            if candidate.members.is_empty() {
+                return Err("CandidateCluster must retain source evidence".to_owned());
+            }
+            if candidate.target_label.as_str().trim().is_empty() {
+                return Err("CandidateCluster target_label cannot be empty".to_owned());
+            }
+            for member in &candidate.members {
+                validate_detection_evidence(member)?;
+                if !source_ids.contains(member.source_artifact_id.as_str()) {
+                    return Err(
+                        "CandidateCluster evidence must belong to a declared source DetectionSet"
+                            .to_owned(),
+                    );
+                }
+            }
+            match candidate.agreement {
+                CandidateAgreement::MultiSourceAgreement {
+                    minimum_iou,
+                    mean_iou,
+                } => {
+                    validate_confidence(minimum_iou)?;
+                    validate_confidence(mean_iou)?;
+                    if minimum_iou > mean_iou || candidate.members.len() < 2 {
+                        return Err(
+                            "multi-source agreement requires at least two members and minimum_iou <= mean_iou"
+                                .to_owned(),
+                        );
+                    }
+                }
+                CandidateAgreement::SingleSource if candidate.members.len() != 1 => {
+                    return Err("single-source agreement requires exactly one member".to_owned());
+                }
+                CandidateAgreement::SingleSource
+                | CandidateAgreement::GeometryConflict
+                | CandidateAgreement::LabelConflict => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_detection_evidence(evidence: &DetectionEvidence) -> Result<(), String> {
+    if evidence.source_model_id.trim().is_empty() || evidence.source_artifact_id.trim().is_empty() {
+        return Err("Detection evidence requires source model and Artifact ids".to_owned());
+    }
+    if evidence.query_id.as_deref().is_none_or(str::is_empty)
+        && evidence.model_label.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("Detection evidence requires a query_id or model_label".to_owned());
+    }
+    evidence.score.validate()?;
+    if let Some(payload) = &evidence.raw_output_ref {
+        if payload.id.trim().is_empty()
+            || payload.media_type.trim().is_empty()
+            || payload.sha256.len() != 64
+            || !payload.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("raw output reference is invalid".to_owned());
+        }
+    }
+    Ok(())
+}
+
+const fn is_detection_capability(capability: VisionCapability) -> bool {
+    matches!(
+        capability,
+        VisionCapability::OpenVocabularyDetection
+            | VisionCapability::PhraseGrounding
+            | VisionCapability::ObjectDetection
+    )
 }
 
 impl ImageArtifact {
@@ -980,15 +1372,15 @@ impl CropSetArtifact {
             .detections
             .iter()
             .map(|detection| {
-                let left = (detection.rect.x() - padding).max(0.0);
-                let top = (detection.rect.y() - padding).max(0.0);
-                let right = (detection.rect.x() + detection.rect.width() + padding).min(1.0);
-                let bottom = (detection.rect.y() + detection.rect.height() + padding).min(1.0);
+                let left = (detection.bbox.x() - padding).max(0.0);
+                let top = (detection.bbox.y() - padding).max(0.0);
+                let right = (detection.bbox.x() + detection.bbox.width() + padding).min(1.0);
+                let bottom = (detection.bbox.y() + detection.bbox.height() + padding).min(1.0);
                 let rect = NormalizedRect::new(left, top, right - left, bottom - top)
                     .map_err(|error| error.to_string())?;
                 Ok(Crop {
-                    id: format!("crop:{}", detection.id),
-                    parent: detections.reference.item(&detection.id),
+                    id: format!("crop:{}", detection.detection_id),
+                    parent: detections.reference.item(&detection.detection_id),
                     rect,
                     source_width: 0,
                     source_height: 0,
@@ -1104,7 +1496,7 @@ impl AnnotationCandidateSet {
         let detections_by_id = detections
             .detections
             .iter()
-            .map(|detection| (detection.id.as_str(), detection))
+            .map(|detection| (detection.detection_id.as_str(), detection))
             .collect::<BTreeMap<_, _>>();
         let candidates = classifications
             .classifications
@@ -1138,14 +1530,17 @@ impl AnnotationCandidateSet {
                     .cloned()
                     .unwrap_or_else(|| classification.label.clone());
                 Ok(AnnotationCandidate {
-                    id: format!("candidate:{}:{}", detection.id, classification.id),
+                    id: format!("candidate:{}:{}", detection.detection_id, classification.id),
                     task_id: task_id.clone(),
                     label,
                     subject: detection_ref.clone(),
                     value: Some(VisionArtifactValue::BoundingBox {
-                        rect: detection.rect,
+                        rect: detection.bbox,
                     }),
-                    confidence: Some(detection.confidence.min(classification.confidence)),
+                    confidence: detection
+                        .score
+                        .comparable_confidence()
+                        .map(|score| score.min(classification.confidence)),
                     attributes: BTreeMap::new(),
                     evidence: vec![
                         detection_ref.clone(),
@@ -1612,18 +2007,27 @@ mod tests {
             item_id: None,
         };
         let detections = DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
             reference: detection_ref.clone(),
             image_id,
             model_binding: "detector".to_owned(),
             validation_state: ArtifactValidationState::Unvalidated,
-            detections: vec![Detection {
-                id: "d1".to_owned(),
-                class_id: "0".to_owned(),
-                label: None,
-                rect: NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("rect"),
-                confidence: 0.9,
-                attributes: BTreeMap::new(),
-            }],
+            detections: vec![
+                Detection::from_source(
+                    "d1",
+                    None,
+                    Some("0".to_owned()),
+                    None,
+                    NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("rect"),
+                    DetectionScore::relative(0.9).expect("score"),
+                    DetectionSource {
+                        model_id: "detector".to_owned(),
+                        capability: VisionCapability::ObjectDetection,
+                        artifact_id: "detections".to_owned(),
+                    },
+                )
+                .expect("detection"),
+            ],
             metadata: BTreeMap::new(),
         };
         let crop_ref = ArtifactRef {
@@ -1634,7 +2038,7 @@ mod tests {
             item_id: None,
         };
         let crops = CropSetArtifact::fan_out(crop_ref.clone(), &detections, 0.05, |detection| {
-            Some(format!("cache://{}", detection.id))
+            Some(format!("cache://{}", detection.detection_id))
         })
         .expect("fan-out");
         assert_eq!(crops.crops[0].parent, detection_ref.item("d1"));
@@ -1680,5 +2084,220 @@ mod tests {
             candidates.candidates[0].value,
             Some(VisionArtifactValue::BoundingBox { .. })
         ));
+    }
+
+    #[test]
+    fn detection_scores_preserve_unknown_and_reject_invalid_numbers() {
+        assert_eq!(DetectionScore::not_provided().comparable_confidence(), None);
+        assert_eq!(
+            DetectionScore::new(Some(0.8), ScoreSemantics::RankingScore)
+                .expect("ranking score")
+                .comparable_confidence(),
+            None
+        );
+        assert_eq!(
+            DetectionScore::relative(0.8)
+                .expect("relative confidence")
+                .comparable_confidence(),
+            Some(0.8)
+        );
+        assert!(DetectionScore::relative(f32::NAN).is_err());
+        assert!(DetectionScore::relative(f32::INFINITY).is_err());
+        assert!(DetectionScore::relative(-0.01).is_err());
+        assert!(DetectionScore::relative(1.01).is_err());
+        assert!(DetectionScore::new(Some(0.8), ScoreSemantics::NotProvided).is_err());
+    }
+
+    #[test]
+    fn legacy_detection_json_migrates_without_losing_lineage() {
+        let image_id = ImageId::new();
+        let legacy = serde_json::json!({
+            "reference": {
+                "artifact_id": "legacy-set",
+                "source_node": "legacy-detector",
+                "port": "detections",
+                "artifact_type": "detection_set",
+                "item_id": null
+            },
+            "image_id": image_id,
+            "model_binding": "legacy-model",
+            "validation_state": "unvalidated",
+            "detections": [{
+                "id": "legacy-1",
+                "class_id": "target_object",
+                "label": "ball",
+                "rect": [0.1, 0.2, 0.3, 0.4],
+                "confidence": 0.91,
+                "attributes": {"fixture": true}
+            }],
+            "metadata": {}
+        });
+        let migrated: DetectionSetArtifact =
+            serde_json::from_value(legacy).expect("legacy DetectionSet migration");
+        migrated.validate().expect("migrated artifact validates");
+        assert_eq!(migrated.schema_version, DETECTION_ARTIFACT_SCHEMA_VERSION);
+        let detection = &migrated.detections[0];
+        assert_eq!(detection.detection_id, "legacy-1");
+        assert_eq!(detection.model_label.as_deref(), Some("target_object"));
+        assert_eq!(detection.project_label, Some(LabelId::from("ball")));
+        assert_eq!(detection.score.value, Some(0.91));
+        assert_eq!(detection.score.semantics, ScoreSemantics::Unknown);
+        assert_eq!(detection.source_model_id, "legacy-model");
+        assert_eq!(detection.evidence.len(), 1);
+        assert_eq!(detection.evidence[0].source_artifact_id, "legacy-set");
+
+        let current = serde_json::to_value(&migrated).expect("current serialization");
+        assert_eq!(current["schema_version"], DETECTION_ARTIFACT_SCHEMA_VERSION);
+        assert!(current["detections"][0].get("confidence").is_none());
+        assert!(current["detections"][0].get("rect").is_none());
+        assert_eq!(current["detections"][0]["detection_id"], "legacy-1");
+
+        let mut future = current;
+        future["schema_version"] = serde_json::json!(DETECTION_ARTIFACT_SCHEMA_VERSION + 1);
+        assert!(serde_json::from_value::<DetectionSetArtifact>(future).is_err());
+    }
+
+    #[test]
+    fn missing_detector_score_stays_not_provided() {
+        let value = serde_json::json!({
+            "schema_version": DETECTION_ARTIFACT_SCHEMA_VERSION,
+            "reference": {
+                "artifact_id": "open-vocabulary-set",
+                "source_node": "open-vocabulary-detector",
+                "port": "detections",
+                "artifact_type": "detection_set",
+                "item_id": null
+            },
+            "image_id": ImageId::new(),
+            "model_binding": "open-vocabulary-model",
+            "detections": [{
+                "detection_id": "phrase-1",
+                "query_id": "query-target-object",
+                "project_label": "ball",
+                "bbox": [0.2, 0.3, 0.1, 0.1],
+                "source_model_id": "open-vocabulary-model",
+                "source_capability": "open_vocabulary_detection"
+            }]
+        });
+        let artifact: DetectionSetArtifact =
+            serde_json::from_value(value).expect("score-less DetectionSet");
+        artifact.validate().expect("valid score-less artifact");
+        assert_eq!(artifact.detections[0].score, DetectionScore::not_provided());
+        assert_eq!(
+            artifact.detections[0].evidence[0].score,
+            DetectionScore::not_provided()
+        );
+    }
+
+    #[test]
+    fn candidate_cluster_round_trip_retains_independent_model_evidence() {
+        let bbox_a = NormalizedRect::new(0.1, 0.2, 0.3, 0.3).expect("bbox A");
+        let bbox_b = NormalizedRect::new(0.11, 0.19, 0.29, 0.31).expect("bbox B");
+        let evidence = vec![
+            DetectionEvidence {
+                source_model_id: "specialist-model".to_owned(),
+                source_artifact_id: "specialist-set".to_owned(),
+                bbox: bbox_a,
+                score: DetectionScore::relative(0.87).expect("score"),
+                query_id: None,
+                model_label: Some("sports ball".to_owned()),
+                raw_output_ref: Some(StoredPayloadRef {
+                    id: "payload-1".to_owned(),
+                    media_type: "application/json".to_owned(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 128,
+                }),
+            },
+            DetectionEvidence {
+                source_model_id: "open-vocabulary-model".to_owned(),
+                source_artifact_id: "open-vocabulary-set".to_owned(),
+                bbox: bbox_b,
+                score: DetectionScore::not_provided(),
+                query_id: Some("query-target-object".to_owned()),
+                model_label: None,
+                raw_output_ref: None,
+            },
+        ];
+        let source = |artifact_id: &str, source_node: &str| ArtifactRef {
+            artifact_id: artifact_id.to_owned(),
+            source_node: source_node.to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let artifact = CandidateClusterSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "cluster-set".to_owned(),
+                source_node: "core.match_detection_sets".to_owned(),
+                port: "candidates".to_owned(),
+                artifact_type: ArtifactKind::CandidateClusterSet,
+                item_id: None,
+            },
+            image_id: ImageId::new(),
+            source_detection_sets: vec![
+                source("specialist-set", "specialist"),
+                source("open-vocabulary-set", "open-vocabulary"),
+            ],
+            candidates: vec![CandidateCluster {
+                id: "cluster-1".to_owned(),
+                target_label: LabelId::from("ball"),
+                representative_bbox: bbox_a,
+                members: evidence,
+                agreement: CandidateAgreement::MultiSourceAgreement {
+                    minimum_iou: 0.8,
+                    mean_iou: 0.84,
+                },
+            }],
+        };
+        artifact.validate().expect("valid CandidateClusterSet");
+        let json = serde_json::to_value(&artifact).expect("serialize cluster");
+        let stored: CandidateClusterSetArtifact =
+            serde_json::from_value(json).expect("deserialize cluster");
+        assert_eq!(stored, artifact);
+        assert_eq!(stored.candidates[0].members[0].score.value, Some(0.87));
+        assert_eq!(
+            stored.candidates[0].members[1].score,
+            DetectionScore::not_provided()
+        );
+    }
+
+    #[test]
+    fn invalid_raw_payload_reference_is_rejected() {
+        let mut detection = Detection::from_source(
+            "d1",
+            None,
+            Some("ball".to_owned()),
+            Some(LabelId::from("ball")),
+            NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("bbox"),
+            DetectionScore::relative(0.7).expect("score"),
+            DetectionSource {
+                model_id: "model".to_owned(),
+                capability: VisionCapability::ObjectDetection,
+                artifact_id: "set".to_owned(),
+            },
+        )
+        .expect("detection");
+        detection.evidence[0].raw_output_ref = Some(StoredPayloadRef {
+            id: "payload".to_owned(),
+            media_type: "application/json".to_owned(),
+            sha256: "not-a-sha256".to_owned(),
+            size_bytes: 1,
+        });
+        let artifact = DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+            reference: ArtifactRef {
+                artifact_id: "set".to_owned(),
+                source_node: "detector".to_owned(),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                item_id: None,
+            },
+            image_id: ImageId::new(),
+            model_binding: "model".to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            detections: vec![detection],
+            metadata: BTreeMap::new(),
+        };
+        assert!(artifact.validate().is_err());
     }
 }

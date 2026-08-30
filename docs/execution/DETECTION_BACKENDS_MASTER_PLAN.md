@@ -55,4 +55,5 @@ external model checks are explicitly `LIVE-CONDITIONAL` with an exact blocker.
 ## Progress
 
 - M0 complete — `cf2d988 docs: establish mixed detection backend baseline`
-- M1 complete — this document's containing commit
+- M1 complete — `53a7085 feat(core): model open-vocabulary and specialist detection capabilities`
+- M2 complete — this document's containing commit

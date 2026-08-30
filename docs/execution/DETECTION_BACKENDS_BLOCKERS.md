@@ -4,8 +4,9 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M0. Core, Runtime, Provider, Storage, Server, Web, TUI, Mock, protocol, and documentation
-work can proceed locally.
+None at M2. Core, Runtime, Provider, Storage, Server, Web, TUI, Mock, protocol, and documentation
+work can proceed locally. Candidate Match/Evidence Gate and model workers are scheduled work, not
+environment blockers.
 
 ## Live-conditional external requirements
 

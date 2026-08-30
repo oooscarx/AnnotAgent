@@ -2,13 +2,15 @@
 
 Updated: 2026-08-30
 
-These are honest boundaries at the M0 baseline. Open Release work remains in
+These are honest boundaries after M2. Open Release work remains in
 `DETECTION_BACKENDS_ACCEPTANCE.md`.
 
 - The current Model Settings UI manages one workspace VLM Provider, not a collection of HTTP
   detection workers.
-- Current DetectionSet items require a numeric confidence and cannot represent score semantics or
-  independent multi-model evidence.
+- DetectionSet and CandidateClusterSet now preserve optional, semantic, per-model evidence, but
+  Candidate Match and Evidence Gate do not execute that contract until M6.
+- Results/Review can read the new API shape but do not yet explain score semantics, agreement, or
+  selectable source boxes; those product surfaces remain M9 work.
 - Existing static fallback support is not an evidence-aware Recovery Agent.
 - The tracked reference worker can run an explicitly configured Ultralytics checkpoint and the SAM
   worker can run configured SAM2 weights; neither implements LocateAnything or RF-DETR.

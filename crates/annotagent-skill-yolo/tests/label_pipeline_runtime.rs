@@ -334,7 +334,10 @@ async fn detection_filter_gate_and_commit_are_typed() {
         result.committed_pipeline_artifacts.as_slice(),
         [PipelineArtifact::DetectionSet(set)]
             if set.detections.len() == 1
-                && set.detections[0].label.as_ref().is_some_and(|label| label.as_str() == "target")
+                && set.detections[0]
+                    .project_label
+                    .as_ref()
+                    .is_some_and(|label| label.as_str() == "target")
     ));
     assert!(result.checkpoint.traces.iter().all(|trace| {
         trace

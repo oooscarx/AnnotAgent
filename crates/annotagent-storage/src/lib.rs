@@ -2113,8 +2113,9 @@ fn sqlite_u64(value: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures, RunEventKind,
-        RunEventPayload, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
+        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures,
+        DETECTION_ARTIFACT_SCHEMA_VERSION, PipelineArtifact, RunEventKind, RunEventPayload,
+        ScoreSemantics, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -2436,6 +2437,71 @@ mod tests {
             store.list_artifacts(run_id).expect("artifacts"),
             vec![artifact]
         );
+    }
+
+    #[tokio::test]
+    async fn persisted_legacy_detection_artifact_migrates_on_read() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let run_id = RunId::new();
+        let snapshot = serde_json::json!({
+            "checkpoint": {
+                "pipeline_artifact": {
+                    "kind": "detection_set",
+                    "artifact": {
+                        "reference": {
+                            "artifact_id": "legacy-set",
+                            "source_node": "legacy-detector",
+                            "port": "detections",
+                            "artifact_type": "detection_set",
+                            "item_id": null
+                        },
+                        "image_id": ImageId::new(),
+                        "model_binding": "legacy-model",
+                        "detections": [{
+                            "id": "legacy-detection",
+                            "class_id": "football",
+                            "rect": [0.1, 0.2, 0.3, 0.4],
+                            "confidence": 0.75
+                        }]
+                    }
+                }
+            }
+        });
+        store
+            .create_run(&RunRecord {
+                id: run_id,
+                project_id: ProjectId::new(),
+                project_name: "migration".to_owned(),
+                skill_id: "generic".to_owned(),
+                provider: "mock".to_owned(),
+                model: "legacy-model".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json: "{}".to_owned(),
+                workflow_snapshot_json: Some(snapshot.to_string()),
+            })
+            .await
+            .expect("persist legacy snapshot");
+
+        let stored = store.history(run_id).expect("stored history");
+        let stored_snapshot: serde_json::Value = serde_json::from_str(
+            stored
+                .run
+                .workflow_snapshot_json
+                .as_deref()
+                .expect("workflow snapshot"),
+        )
+        .expect("snapshot JSON");
+        let artifact: PipelineArtifact =
+            serde_json::from_value(stored_snapshot["checkpoint"]["pipeline_artifact"].clone())
+                .expect("migrated Pipeline Artifact");
+        let PipelineArtifact::DetectionSet(set) = artifact else {
+            panic!("DetectionSet")
+        };
+        set.validate().expect("migrated DetectionSet validates");
+        assert_eq!(set.schema_version, DETECTION_ARTIFACT_SCHEMA_VERSION);
+        assert_eq!(set.detections[0].source_model_id, "legacy-model");
+        assert_eq!(set.detections[0].score.semantics, ScoreSemantics::Unknown);
+        assert_eq!(set.detections[0].evidence.len(), 1);
     }
 
     #[test]

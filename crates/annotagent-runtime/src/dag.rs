@@ -757,7 +757,9 @@ fn built_in_output(
                             candidate.validation_state = Some(ArtifactValidationState::Valid);
                         }
                     }
-                    PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                    PipelineArtifact::Image(_)
+                    | PipelineArtifact::CandidateClusterSet(_)
+                    | PipelineArtifact::CropSet(_) => {}
                 }
             }
             Ok(DagNodeOutput {
@@ -787,7 +789,9 @@ fn built_in_output(
                                 candidate.validation_state != Some(ArtifactValidationState::Valid)
                             })
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => true,
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::CandidateClusterSet(_)
+                        | PipelineArtifact::CropSet(_) => true,
                     })
             {
                 return Err(DagNodeFailure::terminal(

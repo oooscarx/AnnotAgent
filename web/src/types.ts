@@ -436,6 +436,7 @@ export interface CorrectionMemoryRecord {
 export type PipelineArtifactType =
   | "image"
   | "detection_set"
+  | "candidate_cluster_set"
   | "crop_set"
   | "classification_set"
   | "annotation_candidate_set";
@@ -600,6 +601,60 @@ export interface WorkflowCatalog {
 export interface PipelineArtifact {
   kind: PipelineArtifactType;
   artifact: Record<string, unknown>;
+}
+
+export type DetectionScoreSemantics =
+  | "calibrated_probability"
+  | "relative_confidence"
+  | "ranking_score"
+  | "not_provided"
+  | "unknown";
+
+export interface DetectionScoreDto {
+  value?: number | null;
+  semantics: DetectionScoreSemantics;
+}
+
+export interface StoredPayloadRefDto {
+  id: string;
+  media_type: string;
+  sha256: string;
+  size_bytes: number;
+}
+
+export interface DetectionEvidenceDto {
+  source_model_id: string;
+  source_artifact_id: string;
+  bbox: [number, number, number, number];
+  score: DetectionScoreDto;
+  query_id?: string | null;
+  model_label?: string | null;
+  raw_output_ref?: StoredPayloadRefDto | null;
+}
+
+export interface DetectionArtifactItemDto {
+  detection_id: string;
+  query_id?: string | null;
+  model_label?: string | null;
+  project_label?: string | null;
+  bbox: [number, number, number, number];
+  score: DetectionScoreDto;
+  source_model_id: string;
+  source_capability: string;
+  evidence: DetectionEvidenceDto[];
+  attributes: Record<string, unknown>;
+}
+
+export interface CandidateClusterDto {
+  id: string;
+  target_label: string;
+  representative_bbox: [number, number, number, number];
+  members: DetectionEvidenceDto[];
+  agreement:
+    | "single_source"
+    | "geometry_conflict"
+    | "label_conflict"
+    | { multi_source_agreement: { minimum_iou: number; mean_iou: number } };
 }
 
 export interface RunNodeArtifactInspection {

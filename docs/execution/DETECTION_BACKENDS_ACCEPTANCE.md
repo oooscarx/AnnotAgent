@@ -23,6 +23,19 @@ below:
 - `cargo test --workspace --all-features` passes 170 tests, including four new Model Registry
   migration/validation tests; strict workspace Clippy, Web typecheck, and all 32 Web tests pass.
 
+## M2 Artifact and Evidence evidence
+
+- Detection schema v2 carries optional score plus explicit semantics, source model/capability,
+  query/model/Project label separation, independent evidence, and controlled raw-payload refs.
+- Historical `id`/`class_id`/`label`/`rect`/`confidence` JSON migrates when a persisted checkpoint
+  is read. Missing scores become `NotProvided`; future unsupported versions are rejected.
+- Candidate Clusters serialize each model contribution independently and their Artifact Envelope
+  retains both source DetectionSets as parents. No score averaging exists.
+- Ordinary Confidence Gate cannot compare absent, ranking-only, or unknown scores; these route to
+  Review, while Filter retains them for evidence-aware handling.
+- `cargo test --workspace --all-features` passes 178 tests, strict workspace Clippy passes, Web
+  typecheck passes, and all 33 Web tests pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
@@ -40,13 +53,13 @@ below:
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| B01 | Detection score supports `None` | OPEN | mandatory `f32` today |
-| B02 | Score semantics are persisted | OPEN | type absent |
+| B01 | Detection score supports `None` | PASS | schema v2 + missing-score serialization/storage tests |
+| B02 | Score semantics are persisted | PASS | typed semantics round-trip in Artifact/checkpoint JSON |
 | B03 | LocateAnything confidence is never fabricated | OPEN | backend absent |
-| B04 | Every candidate stores source model | OPEN | only set-level model binding today |
-| B05 | Every candidate stores query or model label | OPEN | current detection has only class/Project label |
-| B06 | Multi-model candidates retain independent evidence | OPEN | evidence type absent |
-| B07 | Artifact lineage is traceable | PASS | typed refs/checkpoints/storage baseline; detection evidence extension open |
+| B04 | Every candidate stores source model | PASS | Detection validation requires source model and matching evidence |
+| B05 | Every candidate stores query or model label | PASS | validation rejects Detection/Evidence with neither identity |
+| B06 | Multi-model candidates retain independent evidence | PASS | CandidateCluster round-trip preserves scored and score-less members |
+| B07 | Artifact lineage is traceable | PASS | cluster envelope test retains both source DetectionSet parents |
 | B08 | Valid empty DetectionSet is not failure | PASS | empty Pipeline Artifact validates; new workers need tests |
 
 ## C. LocateAnything
@@ -60,7 +73,7 @@ below:
 | C05 | Multiple queries work | OPEN | absent |
 | C06 | No-object result works | OPEN | absent |
 | C07 | Coordinates normalize correctly | OPEN | absent |
-| C08 | Missing score remains `None` | OPEN | Artifact cannot represent it |
+| C08 | Missing score remains `None` | OPEN | generic Artifact supports it; LocateAnything adapter absent |
 | C09 | Unsupported visual prompt is blocked | OPEN | capability/validator absent |
 | C10 | Timeout and cancellation work | OPEN | model-specific contract absent |
 | C11 | Model license metadata is visible | OPEN | Registry/UI metadata absent |
@@ -76,8 +89,8 @@ below:
 | D05 | Class mapping works | OPEN | generic options exist but RF adapter absent |
 | D06 | Real finite score is preserved | OPEN | adapter absent |
 | D07 | Confidence threshold is supported | OPEN | adapter absent |
-| D08 | Checkpoint SHA-256 is saved | OPEN | descriptor field absent |
-| D09 | Training dataset version is saved | OPEN | descriptor field absent |
+| D08 | Checkpoint SHA-256 is saved | OPEN | descriptor supports it; RF-DETR adapter absent |
+| D09 | Training dataset version is saved | OPEN | descriptor supports it; RF-DETR adapter absent |
 | D10 | Timeout and cancellation work | OPEN | model-specific contract absent |
 | D11 | Model license metadata is visible | OPEN | Registry/UI metadata absent |
 
@@ -87,9 +100,9 @@ below:
 | --- | --- | --- | --- |
 | E01 | IoU matching | OPEN | node absent |
 | E02 | Unmatched candidates retained | OPEN | node absent |
-| E03 | Geometry conflict | OPEN | type absent |
-| E04 | Label conflict | OPEN | type absent |
-| E05 | Incomparable scores are not averaged | OPEN | mixed evidence absent; policy recorded |
+| E03 | Geometry conflict | OPEN | typed state exists; Candidate Match behavior absent |
+| E04 | Label conflict | OPEN | typed state exists; Candidate Match behavior absent |
+| E05 | Incomparable scores are not averaged | PASS | Cluster and fan-in tests retain/omit incomparable values without blending |
 | E06 | Evidence Gate emits explainable reason | OPEN | node absent |
 | E07 | High specialist score can skip fallback | OPEN | recovery absent |
 | E08 | Empty specialist result can trigger fallback | OPEN | recovery absent |

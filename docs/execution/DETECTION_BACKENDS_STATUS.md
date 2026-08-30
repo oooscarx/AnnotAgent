@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M1 — Capability and Model Registry refactor (complete)
+M2 — Detection Artifact and Evidence (complete)
 
 ## Completed
 
@@ -30,30 +30,44 @@ M1 — Capability and Model Registry refactor (complete)
 - Preserved JSON migration compatibility: older `http_json` values read as `http_vision`, older
   descriptor fields populate the structured contracts, and `VisionModelDescriptor` remains a
   source-compatible alias boundary for existing callers.
+- Replaced mandatory Detection confidence with `DetectionScore { value: Option<f32>, semantics }`;
+  finite range validation rejects NaN, infinity, and out-of-range values.
+- Added source model/capability, query/model-vs-Project labels, independent `DetectionEvidence`,
+  bounded raw-payload references, `CandidateClusterSet`, agreement/conflict types, and stable
+  parent lineage to both input DetectionSets.
+- Added Detection Artifact schema v2 and explicit JSON migration for v1 field names and persisted
+  checkpoints. Migration synthesizes source evidence from the historical set/model identity but
+  never invents a missing score; unsupported future schema versions fail closed.
+- Migrated Mock YOLO, VLM detection, generic HTTP Pipeline, Core transforms, refiners, Review edits,
+  Run materialization, Dry Run, and Web preview DTO parsing to the evidence-aware contract.
+- Ordinary Confidence Gate now compares only calibrated/relative scores. Missing, ranking-only,
+  and unknown scores route to Review instead of receiving a default; Filter retains such candidates
+  for Evidence Gate or Human Review.
+- Added typed Web API DTOs and legacy-compatible geometry/label/score parsing for existing history.
 
 ## In progress
 
-- None. M1 is ready for its independent local commit.
+- None. M2 is ready for its independent local commit.
 
 ## Next step
 
-M2 — make Detection scores optional and add per-model Detection Evidence, Candidate Clusters,
-lineage, persistence/API compatibility, and serialization tests.
+M3 — converge detection workers on one versioned health/capability/infer protocol with loopback
+policy, response limits, cancellation, malformed-response handling, and contract tests.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 170 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 178 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
-| Web | `npm --prefix web test -- --run` | PASS — 12 files, 32 tests |
+| Web | `npm --prefix web test -- --run` | PASS — 12 files, 33 tests |
 | Web types | `npm --prefix web run typecheck` | PASS |
 | Worker protocol | compile both tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; new mixed-detector UI not implemented |
 
 ## Latest local commit
 
-This document's containing M1 commit: `feat(core): model open-vocabulary and specialist detection capabilities`
+This document's containing M2 commit: `feat(core): preserve detection evidence and score semantics`
 
 ## Audited baseline
 
@@ -70,12 +84,8 @@ This document's containing M1 commit: `feat(core): model open-vocabulary and spe
 
 ### Confirmed gaps
 
-- `Detection.confidence` is mandatory `f32`; score absence and semantics cannot be represented.
-- There are no OpenVocabularyDetection/PhraseGrounding capabilities, DetectionEvidence,
-  CandidateClusterSet, Candidate Match, or Evidence Gate contracts.
-- `VisionModelDescriptor` lacks structured version/checkpoint/training-data/protocol metadata,
-  input/output contracts, score semantics, license metadata, runtime requirements, label space,
-  explicit availability, and measured latency/device state.
+- Candidate Match and Evidence Gate execution nodes are not implemented yet; M2 only establishes
+  their typed `CandidateClusterSet`/agreement and optional-score input contracts.
 - Generic and Label-Pipeline HTTP protocols overlap instead of sharing one detection contract.
   Remote endpoints are currently accepted without explicit opt-in and response size is not
   consistently bounded.
@@ -91,8 +101,7 @@ This document's containing M1 commit: `feat(core): model open-vocabulary and spe
 
 ## Release Blocking remaining
 
-The initial matrix contains 24 `PASS`, 64 `OPEN`, and one `LIVE-CONDITIONAL` row. Counts must be
-recalculated after each Milestone from `DETECTION_BACKENDS_ACCEPTANCE.md`.
+The matrix contains 30 `PASS`, 58 `OPEN`, and one `LIVE-CONDITIONAL` row after M2.
 
 ## Live-conditional items
 

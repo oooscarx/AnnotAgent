@@ -1192,14 +1192,14 @@ impl WorkflowRunner {
                         image_id: set.image_id,
                         task_id: task_id.clone(),
                         label: detection
-                            .label
+                            .project_label
                             .clone()
-                            .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                            .or_else(|| detection.model_label.as_deref().map(LabelId::from)),
                         value: annotagent_core::AnnotationValue::BoundingBox {
-                            rect: detection.rect,
+                            rect: detection.bbox,
                         },
                         attributes: BTreeMap::new(),
-                        confidence: Some(detection.confidence),
+                        confidence: detection.score.comparable_confidence(),
                         source: AnnotationSource::ModelAndTool,
                         review_status: ReviewStatus::Draft,
                         provenance: AnnotationProvenance::default(),
@@ -1347,14 +1347,14 @@ impl WorkflowRunner {
                         image_id: set.image_id,
                         task_id: task_id.clone(),
                         label: detection
-                            .label
+                            .project_label
                             .clone()
-                            .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                            .or_else(|| detection.model_label.as_deref().map(LabelId::from)),
                         value: annotagent_core::AnnotationValue::BoundingBox {
-                            rect: detection.rect,
+                            rect: detection.bbox,
                         },
                         attributes: BTreeMap::new(),
-                        confidence: Some(detection.confidence),
+                        confidence: detection.score.comparable_confidence(),
                         source: AnnotationSource::ModelAndTool,
                         review_status: ReviewStatus::Draft,
                         provenance: AnnotationProvenance::default(),
@@ -1404,8 +1404,13 @@ impl WorkflowRunner {
                             "DetectionSet refiner must return a bounding box",
                         ));
                     };
-                    detection.rect = rect;
-                    detection.confidence = candidate.confidence.unwrap_or(detection.confidence);
+                    detection.bbox = rect;
+                    if let Some(confidence) = candidate.confidence {
+                        detection.score = annotagent_core::DetectionScore::relative(confidence)
+                            .map_err(|error| {
+                                DagNodeFailure::terminal("refiner_output_score", error)
+                            })?;
+                    }
                 }
                 set.reference.artifact_id = format!(
                     "{}:{}:{}",
@@ -1617,6 +1622,7 @@ fn mock_artifact(
     let value = match kind {
         ArtifactKind::Image
         | ArtifactKind::DetectionSet
+        | ArtifactKind::CandidateClusterSet
         | ArtifactKind::CropSet
         | ArtifactKind::ClassificationSet
         | ArtifactKind::AnnotationCandidateSet => {
@@ -1768,7 +1774,9 @@ const fn capability_for_kind(kind: ArtifactKind) -> annotagent_core::VisionCapab
         | ArtifactKind::Polygon
         | ArtifactKind::Attributes
         | ArtifactKind::Relations => annotagent_core::VisionCapability::VisionLanguage,
-        ArtifactKind::BoundingBox => annotagent_core::VisionCapability::ObjectDetection,
+        ArtifactKind::CandidateClusterSet | ArtifactKind::BoundingBox => {
+            annotagent_core::VisionCapability::ObjectDetection
+        }
         ArtifactKind::SemanticMask => annotagent_core::VisionCapability::SemanticSegmentation,
         ArtifactKind::InstanceMask => annotagent_core::VisionCapability::InstanceSegmentation,
         ArtifactKind::Keypoints => annotagent_core::VisionCapability::KeypointDetection,
@@ -1858,23 +1866,23 @@ fn pipeline_annotations(
                             image_id: set.image_id,
                             task_id: task_id.clone(),
                             label: detection
-                                .label
+                                .project_label
                                 .clone()
-                                .or_else(|| Some(LabelId::from(detection.class_id.as_str()))),
+                                .or_else(|| detection.model_label.as_deref().map(LabelId::from)),
                             value: annotagent_core::AnnotationValue::BoundingBox {
-                                rect: detection.rect,
+                                rect: detection.bbox,
                             },
                             attributes: BTreeMap::from([
                                 (
                                     "pipeline_detection_id".to_owned(),
-                                    AttributeValue::String(detection.id.clone()),
+                                    AttributeValue::String(detection.detection_id.clone()),
                                 ),
                                 (
                                     "pipeline_artifact_ref".to_owned(),
                                     AttributeValue::String(set.reference.artifact_id.clone()),
                                 ),
                             ]),
-                            confidence: Some(detection.confidence),
+                            confidence: detection.score.comparable_confidence(),
                             source: AnnotationSource::ModelAndTool,
                             review_status: status,
                             provenance: AnnotationProvenance {
@@ -1929,7 +1937,9 @@ fn pipeline_annotations(
                         })
                     }));
                 }
-                PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                PipelineArtifact::Image(_)
+                | PipelineArtifact::CandidateClusterSet(_)
+                | PipelineArtifact::CropSet(_) => {}
             }
         }
     }

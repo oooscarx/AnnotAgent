@@ -1366,10 +1366,11 @@ fn topological_order(draft: &WorkflowDraft) -> Result<Vec<String>, String> {
 }
 
 #[must_use]
-pub const fn all_artifact_kinds() -> [ArtifactKind; 14] {
+pub const fn all_artifact_kinds() -> [ArtifactKind; 15] {
     [
         ArtifactKind::Image,
         ArtifactKind::DetectionSet,
+        ArtifactKind::CandidateClusterSet,
         ArtifactKind::CropSet,
         ArtifactKind::ClassificationSet,
         ArtifactKind::AnnotationCandidateSet,

@@ -156,6 +156,7 @@ pub enum ModelAvailabilityStatus {
 pub enum ArtifactKind {
     Image,
     DetectionSet,
+    CandidateClusterSet,
     CropSet,
     ClassificationSet,
     AnnotationCandidateSet,

@@ -2626,10 +2626,15 @@ impl LocalApplication {
                         PipelineArtifact::DetectionSet(set) => {
                             for detection in &set.detections {
                                 detections.insert(
-                                    detection.id.clone(),
+                                    detection.detection_id.clone(),
                                     (
-                                        detection.label.as_ref().map_or_else(
-                                            || detection.class_id.clone(),
+                                        detection.project_label.as_ref().map_or_else(
+                                            || {
+                                                detection
+                                                    .model_label
+                                                    .clone()
+                                                    .unwrap_or_else(|| "unlabeled".to_owned())
+                                            },
                                             ToString::to_string,
                                         ),
                                         sample_test_outcome_status(Some(set.validation_state)),
@@ -2659,7 +2664,9 @@ impl LocalApplication {
                                 );
                             }
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::CandidateClusterSet(_)
+                        | PipelineArtifact::CropSet(_) => {}
                     }
                 }
             }
@@ -3131,10 +3138,13 @@ impl LocalApplication {
                         continue;
                     }
                     for detection in &mut set.detections {
-                        if detection_id.is_none_or(|id| id == detection.id) {
-                            detection.rect = rect;
-                            detection.confidence =
-                                annotation.confidence.unwrap_or(detection.confidence);
+                        if detection_id.is_none_or(|id| id == detection.detection_id) {
+                            detection.bbox = rect;
+                            if let Some(confidence) = annotation.confidence {
+                                detection.score =
+                                    annotagent_core::DetectionScore::relative(confidence)
+                                        .map_err(anyhow::Error::msg)?;
+                            }
                         }
                     }
                 }
@@ -4578,19 +4588,24 @@ impl LocalApplication {
                             sample_detections = sample_detections.max(set.detections.len());
                             for detection in &set.detections {
                                 detection_outcomes.insert(
-                                    detection.id.clone(),
+                                    detection.detection_id.clone(),
                                     SampleTestOutcome {
-                                        id: detection.id.clone(),
-                                        label: detection.label.as_ref().map_or_else(
-                                            || detection.class_id.clone(),
+                                        id: detection.detection_id.clone(),
+                                        label: detection.project_label.as_ref().map_or_else(
+                                            || {
+                                                detection
+                                                    .model_label
+                                                    .clone()
+                                                    .unwrap_or_else(|| "unlabeled".to_owned())
+                                            },
                                             ToString::to_string,
                                         ),
-                                        confidence: Some(detection.confidence),
+                                        confidence: detection.score.comparable_confidence(),
                                         status: sample_test_outcome_status(Some(
                                             set.validation_state,
                                         )),
                                         value: Some(VisionArtifactValue::BoundingBox {
-                                            rect: detection.rect,
+                                            rect: detection.bbox,
                                         }),
                                     },
                                 );

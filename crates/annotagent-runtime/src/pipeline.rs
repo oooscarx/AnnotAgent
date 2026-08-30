@@ -105,7 +105,7 @@ fn run_crop(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
     let mut crops = CropSetArtifact::fan_out(reference, detections, padding, |detection| {
         Some(format!(
             "artifact-cache://{}/{}",
-            context.node.id, detection.id
+            context.node.id, detection.detection_id
         ))
     })
     .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
@@ -140,11 +140,18 @@ fn run_filter(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFail
     let mut filtered = source.clone();
     filtered.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
     filtered.detections.retain(|detection| {
-        detection.confidence >= minimum
-            && (class_ids.is_empty() || class_ids.contains(&detection.class_id))
+        detection
+            .score
+            .comparable_confidence()
+            .is_none_or(|confidence| confidence >= minimum)
+            && (class_ids.is_empty()
+                || detection
+                    .model_label
+                    .as_ref()
+                    .is_some_and(|model_label| class_ids.contains(model_label)))
             && (labels.is_empty()
                 || detection
-                    .label
+                    .project_label
                     .as_ref()
                     .is_some_and(|label| labels.iter().any(|item| item == label.as_str())))
     });
@@ -161,11 +168,11 @@ fn run_map_label(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeF
     mapped.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
     for detection in &mut mapped.detections {
         if let Some(label) = mapping
-            .get(&detection.class_id)
+            .get(detection.model_label.as_deref().unwrap_or_default())
             .and_then(Value::as_str)
             .filter(|label| !label.trim().is_empty())
         {
-            detection.label = Some(LabelId::from(label));
+            detection.project_label = Some(LabelId::from(label));
         }
     }
     mapped
@@ -248,9 +255,8 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
     let confidence = artifacts
         .iter()
         .flat_map(artifact_confidences)
-        .reduce(f32::min)
-        .unwrap_or(1.0);
-    let route = if confidence >= threshold {
+        .reduce(f32::min);
+    let route = if confidence.is_some_and(|confidence| confidence >= threshold) {
         set_candidate_state(&mut artifacts, ArtifactValidationState::Valid);
         "pass"
     } else {
@@ -263,6 +269,14 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         metadata: BTreeMap::from([
             ("confidence".to_owned(), serde_json::json!(confidence)),
             ("threshold".to_owned(), serde_json::json!(threshold)),
+            (
+                "score_state".to_owned(),
+                serde_json::json!(if confidence.is_some() {
+                    "comparable"
+                } else {
+                    "not_comparable"
+                }),
+            ),
         ]),
         ..DagNodeOutput::default()
     })
@@ -280,7 +294,9 @@ fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValida
                     candidate.validation_state = Some(state);
                 }
             }
-            PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+            PipelineArtifact::Image(_)
+            | PipelineArtifact::CandidateClusterSet(_)
+            | PipelineArtifact::CropSet(_) => {}
         }
     }
 }
@@ -290,7 +306,7 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
         PipelineArtifact::DetectionSet(artifact) => artifact
             .detections
             .iter()
-            .map(|detection| detection.confidence)
+            .filter_map(|detection| detection.score.comparable_confidence())
             .collect(),
         PipelineArtifact::ClassificationSet(artifact) => artifact
             .classifications
@@ -302,7 +318,9 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
             .iter()
             .filter_map(|candidate| candidate.confidence)
             .collect(),
-        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => Vec::new(),
+        PipelineArtifact::Image(_)
+        | PipelineArtifact::CandidateClusterSet(_)
+        | PipelineArtifact::CropSet(_) => Vec::new(),
     }
 }
 
@@ -492,4 +510,26 @@ fn object_parameter<'a>(
             })
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use annotagent_core::{DetectionScore, ScoreSemantics};
+
+    #[test]
+    fn ordinary_confidence_gate_cannot_compare_unknown_or_missing_scores() {
+        assert_eq!(DetectionScore::not_provided().comparable_confidence(), None);
+        assert_eq!(
+            DetectionScore::new(Some(0.99), ScoreSemantics::Unknown)
+                .expect("unknown score")
+                .comparable_confidence(),
+            None
+        );
+        assert_eq!(
+            DetectionScore::new(Some(0.99), ScoreSemantics::RankingScore)
+                .expect("ranking score")
+                .comparable_confidence(),
+            None
+        );
+    }
 }

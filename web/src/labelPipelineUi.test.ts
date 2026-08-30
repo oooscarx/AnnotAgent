@@ -42,7 +42,7 @@ describe("Label Pipeline product helpers", () => {
       kind: "detection_set",
       artifact: {
         detections: [
-          { rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
+          { bbox: [0.1, 0.2, 0.3, 0.4] },
         ],
       },
     };
@@ -56,6 +56,35 @@ describe("Label Pipeline product helpers", () => {
     expect(artifactCrops([crop])).toEqual([
       { x: 0.05, y: 0.1, width: 0.5, height: 0.6 },
     ]);
+  });
+
+  it("renders the evidence-aware Detection DTO without inventing confidence", () => {
+    const detection: PipelineArtifact = {
+      kind: "detection_set",
+      artifact: {
+        schema_version: 2,
+        reference: { artifact_id: "open-set", source_node: "open-detector" },
+        detections: [
+          {
+            detection_id: "phrase-1",
+            query_id: "query-football",
+            model_label: null,
+            project_label: "ball",
+            bbox: [0.2, 0.3, 0.1, 0.1],
+            score: { value: null, semantics: "not_provided" },
+            source_model_id: "open-model",
+            source_capability: "open_vocabulary_detection",
+            evidence: [],
+          },
+        ],
+      },
+    };
+    expect(artifactDetectionMarks([detection])[0]).toMatchObject({
+      id: "phrase-1",
+      label: "ball",
+      confidence: undefined,
+      sourceNode: "open-detector",
+    });
   });
 
   it("keeps bbox labels, confidence, and Crop parent linkage", () => {

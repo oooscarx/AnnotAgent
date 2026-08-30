@@ -4,8 +4,9 @@ use std::{collections::BTreeMap, io::Cursor, sync::Arc, time::Duration};
 
 use annotagent_core::{
     ArtifactKind, ArtifactRef, ArtifactValidationState, Classification, ClassificationSetArtifact,
-    CoreError, CoreResult, Detection, DetectionSetArtifact, LabelId, ModelMessage, ModelRequest,
-    ModelResponse, ModelRole, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
+    CoreError, CoreResult, DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionScore,
+    DetectionSetArtifact, DetectionSource, LabelId, ModelMessage, ModelRequest, ModelResponse,
+    ModelRole, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
     PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, TaskId,
     ToolDefinition, VisionCapability, VisionModelProvider,
 };
@@ -882,6 +883,7 @@ impl PipelineModelBackend for OpenAiCompatiblePipelineDetector {
                 "VLM detector exceeded max_detections={max_detections}"
             )));
         }
+        let artifact_id = format!("detection-set:{}", request.request_id);
         let mut detections = Vec::with_capacity(submitted.detections.len());
         for (index, item) in submitted.detections.into_iter().enumerate() {
             if !allowed_labels.contains(&item.label) {
@@ -920,14 +922,22 @@ impl PipelineModelBackend for OpenAiCompatiblePipelineDetector {
                 }
                 _ => unreachable!("coordinate format was validated above"),
             };
-            detections.push(Detection {
-                id: format!("detection-{index}"),
-                class_id: item.label.clone(),
-                label: Some(LabelId::from(item.label)),
-                rect,
-                confidence: item.confidence,
-                attributes: BTreeMap::new(),
-            });
+            detections.push(
+                Detection::from_source(
+                    format!("detection-{index}"),
+                    None,
+                    Some(item.label.clone()),
+                    Some(LabelId::from(item.label)),
+                    rect,
+                    DetectionScore::relative(item.confidence).map_err(CoreError::Validation)?,
+                    DetectionSource {
+                        model_id: request.model_id.clone(),
+                        capability: VisionCapability::ObjectDetection,
+                        artifact_id: artifact_id.clone(),
+                    },
+                )
+                .map_err(CoreError::Validation)?,
+            );
         }
         let mut metadata = BTreeMap::from([
             (
@@ -950,8 +960,9 @@ impl PipelineModelBackend for OpenAiCompatiblePipelineDetector {
             );
         }
         let artifact = DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
             reference: ArtifactRef {
-                artifact_id: format!("detection-set:{}", request.request_id),
+                artifact_id,
                 source_node: request.node_id,
                 port: "detections".to_owned(),
                 artifact_type: ArtifactKind::DetectionSet,
@@ -1042,19 +1053,29 @@ mod tests {
         };
         let artifact = match request.operation {
             VisionCapability::ObjectDetection => {
+                let artifact_ref = reference(ArtifactKind::DetectionSet, "detections");
                 PipelineArtifact::DetectionSet(DetectionSetArtifact {
-                    reference: reference(ArtifactKind::DetectionSet, "detections"),
+                    schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+                    reference: artifact_ref.clone(),
                     image_id: request.image_id,
                     model_binding: request.model_id.clone(),
                     validation_state: ArtifactValidationState::Unvalidated,
-                    detections: vec![Detection {
-                        id: "detection-1".to_owned(),
-                        class_id: "0".to_owned(),
-                        label: None,
-                        rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("rect"),
-                        confidence: 0.9,
-                        attributes: BTreeMap::new(),
-                    }],
+                    detections: vec![
+                        Detection::from_source(
+                            "detection-1",
+                            None,
+                            Some("0".to_owned()),
+                            None,
+                            NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("rect"),
+                            DetectionScore::relative(0.9).expect("score"),
+                            DetectionSource {
+                                model_id: request.model_id.clone(),
+                                capability: VisionCapability::ObjectDetection,
+                                artifact_id: artifact_ref.artifact_id,
+                            },
+                        )
+                        .expect("detection"),
+                    ],
                     metadata: BTreeMap::new(),
                 })
             }
@@ -1312,8 +1333,11 @@ mod tests {
             panic!("DetectionSet")
         };
         assert_eq!(set.model_binding, "default-vision");
-        assert_eq!(set.detections[0].label, Some(LabelId::from("football")));
-        assert!((set.detections[0].rect.x() - 0.25).abs() < f32::EPSILON);
+        assert_eq!(
+            set.detections[0].project_label,
+            Some(LabelId::from("football"))
+        );
+        assert!((set.detections[0].bbox.x() - 0.25).abs() < f32::EPSILON);
         assert_eq!(set.validation_state, ArtifactValidationState::Unvalidated);
     }
 
@@ -1410,7 +1434,7 @@ mod tests {
         let PipelineArtifact::DetectionSet(set) = &response.artifacts[0] else {
             panic!("DetectionSet")
         };
-        assert!((set.detections[0].rect.y() - 0.35).abs() < f32::EPSILON);
+        assert!((set.detections[0].bbox.y() - 0.35).abs() < f32::EPSILON);
     }
 
     struct QwenCoordinateDetectionProvider;
@@ -1488,9 +1512,9 @@ mod tests {
         let PipelineArtifact::DetectionSet(set) = &response.artifacts[0] else {
             panic!("DetectionSet")
         };
-        assert!((set.detections[0].rect.x() - 0.432).abs() < f32::EPSILON);
-        assert!((set.detections[0].rect.y() - 0.357).abs() < f32::EPSILON);
-        assert!((set.detections[0].rect.width() - 0.041).abs() < f32::EPSILON);
-        assert!((set.detections[0].rect.height() - 0.043).abs() < f32::EPSILON);
+        assert!((set.detections[0].bbox.x() - 0.432).abs() < f32::EPSILON);
+        assert!((set.detections[0].bbox.y() - 0.357).abs() < f32::EPSILON);
+        assert!((set.detections[0].bbox.width() - 0.041).abs() < f32::EPSILON);
+        assert!((set.detections[0].bbox.height() - 0.043).abs() < f32::EPSILON);
     }
 }

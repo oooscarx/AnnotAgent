@@ -166,6 +166,9 @@ impl ArtifactEnvelope {
 fn pipeline_parents(artifact: &PipelineArtifact) -> Vec<ArtifactEnvelopeRef> {
     let references = match artifact {
         PipelineArtifact::Image(_) | PipelineArtifact::DetectionSet(_) => Vec::new(),
+        PipelineArtifact::CandidateClusterSet(candidates) => {
+            candidates.source_detection_sets.iter().collect()
+        }
         PipelineArtifact::CropSet(crops) => vec![&crops.source_detections],
         PipelineArtifact::ClassificationSet(classifications) => classifications
             .classifications
@@ -412,6 +415,11 @@ pub struct ArtifactReference {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        ArtifactKind, CandidateAgreement, CandidateCluster, CandidateClusterSetArtifact,
+        DetectionEvidence, DetectionScore,
+    };
+
     use super::*;
 
     #[test]
@@ -540,5 +548,79 @@ mod tests {
         assert_eq!(envelope.parents[0].artifact_id, parent.to_string());
         envelope.image_id = ImageId::new();
         assert!(envelope.validate().is_err());
+    }
+
+    #[test]
+    fn candidate_cluster_envelope_retains_both_detection_set_parents() {
+        let source = |artifact_id: &str| ArtifactRef {
+            artifact_id: artifact_id.to_owned(),
+            source_node: format!("{artifact_id}-node"),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let bbox = NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("bbox");
+        let artifact = PipelineArtifact::CandidateClusterSet(CandidateClusterSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "clusters".to_owned(),
+                source_node: "matcher".to_owned(),
+                port: "candidates".to_owned(),
+                artifact_type: ArtifactKind::CandidateClusterSet,
+                item_id: None,
+            },
+            image_id: ImageId::new(),
+            source_detection_sets: vec![source("set-a"), source("set-b")],
+            candidates: vec![CandidateCluster {
+                id: "candidate".to_owned(),
+                target_label: LabelId::from("ball"),
+                representative_bbox: bbox,
+                members: vec![
+                    DetectionEvidence {
+                        source_model_id: "model-a".to_owned(),
+                        source_artifact_id: "set-a".to_owned(),
+                        bbox,
+                        score: DetectionScore::relative(0.8).expect("score"),
+                        query_id: None,
+                        model_label: Some("sports ball".to_owned()),
+                        raw_output_ref: None,
+                    },
+                    DetectionEvidence {
+                        source_model_id: "model-b".to_owned(),
+                        source_artifact_id: "set-b".to_owned(),
+                        bbox,
+                        score: DetectionScore::not_provided(),
+                        query_id: Some("target object".to_owned()),
+                        model_label: None,
+                        raw_output_ref: None,
+                    },
+                ],
+                agreement: CandidateAgreement::MultiSourceAgreement {
+                    minimum_iou: 1.0,
+                    mean_iou: 1.0,
+                },
+            }],
+        });
+        let envelope = ArtifactEnvelope::from_pipeline(
+            ProjectId::new(),
+            RunId::new(),
+            "matcher",
+            artifact,
+            ArtifactProvenance::default(),
+            None,
+        );
+        envelope.validate().expect("valid cluster envelope");
+        assert_eq!(
+            envelope.parents,
+            vec![
+                ArtifactEnvelopeRef {
+                    artifact_id: "set-a".to_owned(),
+                    item_id: None,
+                },
+                ArtifactEnvelopeRef {
+                    artifact_id: "set-b".to_owned(),
+                    item_id: None,
+                },
+            ]
+        );
     }
 }
