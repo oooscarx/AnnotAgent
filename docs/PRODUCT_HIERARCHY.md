@@ -43,6 +43,17 @@ Project Schema + Skills + Model/Node catalogs
 
 The optional LLM Advisor may reference only registered components and cannot emit or execute arbitrary code, Shell, URLs, or unknown tools. Rust validation and explicit human Publish remain authoritative.
 
+The default Web journey presents the same lifecycle in user language:
+
+```text
+Create Project → Data → Labels → Automation → Test & Activate
+→ Run Dataset → Review results → Export dataset
+```
+
+Project Overview is the navigation hub. Its server-owned Guidance chooses one primary action and explains blockers; Build owns Data, Labels, Automation, and Sample Test; Run Detail owns Results and Debug; Review owns human decisions; Export owns readiness, format compatibility, and the terminal report. Workflows, Models, Skills, and Artifacts remain real independent entities but are not competing global destinations in the guided path.
+
+Global navigation is limited to Home, Projects, Runs, Review, and Settings. Project-scoped routes carry the Project identity. Global Runs and Review are never silently filtered by a remembered Project; scope is explicit in the URL.
+
 ## Visual and domain boundary
 
 The generic Canvas consumes stable visual slots resolved from Project override, enabled Skill profiles, Schema mapping, then label hash fallback. Domain labels are not compiled into the Canvas.

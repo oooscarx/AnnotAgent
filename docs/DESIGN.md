@@ -47,6 +47,14 @@ SQLite provides local transactions and exportable audit history. Revision record
 
 CLI, TUI, and HTTP use `LocalApplication`; none duplicates the agent loop. React renders product DTOs and sends review/control requests. The server owns validation, state transitions, correction records, exports, and settings validation.
 
+## Guided product state
+
+The Project workspace is a projection over persisted product truth, not a second lifecycle. `ProjectWorkspaceSummary` combines Project facts, readiness, blockers, an ordered eight-step Journey, and exactly one recommended primary action. React renders that decision; it does not infer the next action from local UI state.
+
+The guided path is Create → Data → Labels → Automation → Test & Activate → Full Run → Review → Export. Build step, Run Results/Debug context, Review selection, explicit global filters, and Export destination are canonical URL state. Active execution, sample-test evidence, queue progress, and Export readiness are restored from SQLite/Application projections. SSE recovery performs a full resynchronization after any interrupted connection.
+
+Results are outcome-first. Technical graph JSON, IDs, node payloads, Provider request context, and Replay remain available through Expert or Debug views. Error surfaces describe the failed action, preserve server ownership of saved data, and reload the latest server state before retrying.
+
 ## Visual system
 
 AnnotAgent Core owns the mark, tokens, generic components, semantic statuses, and `annotation-1` through `annotation-8`. A Skill may add a badge and a `SkillVisualProfile`. Label resolution is deterministic: Project override, stable Skill-id order, schema mapping, then stable label hash. The generic canvas contains no domain vocabulary.

@@ -85,3 +85,11 @@ Export never chooses an arbitrary historical Run. The Application selects the ne
 ## GE-021 — Recoverable context is URL state plus a reconnect resync latch
 
 Build step, Runs Project/status filters, Run Results/Debug Image/Node/Artifact, Review item/scope, and Export destination are canonical URL state; local state may hold only transient editor interaction. Project switching preserves the current scoped task. SSE errors set a latch even before the first successful connection, and the next open re-fetches dashboard truth. Downstream Project and Export projections watch the persisted summary fields that can invalidate them. This prevents a recovered transport from being labelled connected while the visible journey still reflects pre-disconnect data.
+
+## GE-022 — Release hierarchy is executable, not a visual assertion
+
+At most one solid primary action, three equal first-screen metrics, no nested Panels, keyboard-visible focus, structured Canvas alternatives, reduced motion, and compact reflow are browser assertions across the actual journey. Usage and operational context remain visible but move to secondary inline presentation when they would create more than three equal metrics. Error retry reloads current server truth because a generic dashboard refresh cannot repair every route-owned request.
+
+## GE-023 — Detect & Crop composes a shared detector without changing Skill ownership
+
+The default bounding-box Advisor places one detector in a Shared Stage. **Apply Detect & Crop template** must therefore resolve a detection-producing Vision Model across both the selected Label Pipeline and Shared Stages. For the shared detector path it composes Filter → Core Crop → Artifact Cache while the filtered DetectionSet continues to Gate/Commit. YOLO still emits only DetectionSet, Core owns Crop, and one detector configuration still executes once per image.

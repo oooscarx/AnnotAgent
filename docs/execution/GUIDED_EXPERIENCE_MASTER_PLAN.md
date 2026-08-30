@@ -93,7 +93,7 @@ Existing DTOs include `ProjectSummary`, three-state `ProjectReadiness`, `Project
 | 9 | inbox Review | complete |
 | 10 | guided Export endpoint and completion state | complete |
 | 11 | durable URL, SSE, and server-state recovery | complete |
-| 12 | responsive, accessible, documented Release gate | in progress |
+| 12 | responsive, accessible, documented Release gate | complete |
 
 ## Verification policy
 

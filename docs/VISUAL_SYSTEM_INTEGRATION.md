@@ -22,7 +22,7 @@ Canonical sources and provenance remain under `design/annotagent-visual-system/`
 
 ## Web integration
 
-`web/src/styles.css` imports the canonical token copy in `web/src/annotagent-tokens.css`. The shell uses the Core lockup and the product navigation Dashboard, Projects, Workflows, Models, Skills, Runs, Review, and Settings. No-Project Dashboard and empty states are domain-neutral.
+`web/src/styles.css` imports the canonical token copy in `web/src/annotagent-tokens.css`. The shell uses the Core lockup and five task destinations: Home, Projects, Runs, Review, and Settings. Automation belongs to Project Build; Models and Capabilities belong to Settings. No-Project Home and empty states are domain-neutral.
 
 `AnnotationCanvas.tsx` renders geometry and accepts an `AnnotationVisualContext`. It contains no Skill label names. `annotationVisuals.ts` resolves a label through:
 
@@ -41,7 +41,9 @@ The event loop, run/control shortcuts, textual status labels, and constrained-te
 
 ## Accessibility and behavior
 
-Color never replaces a label, pattern, geometry, or status word. Buttons retain accessible names, disabled roadmap actions explain why they are unavailable, the annotation list remains a keyboard-readable equivalent to the SVG overlay, and focus-visible behavior comes from shared tokens.
+Color never replaces a label, pattern, geometry, or status word. Buttons retain accessible names, disabled actions explain why they are unavailable, and `:focus-visible` uses the shared high-contrast ring. Review and Run canvases expose a keyboard-operable structured annotation list equivalent to the SVG overlay. Motion collapses to 0.01 ms under `prefers-reduced-motion`.
+
+Release layouts use at most one solid primary button per page state, no nested `.panel` containers, and no more than three equal first-screen outcome metrics. Project Header keeps three numeric facts at equal weight and moves Automation, Active Run, and readiness into a secondary status line. The same surfaces are browser-covered at 1024 px and 720×450 without horizontal overflow.
 
 ## Historical migration note
 

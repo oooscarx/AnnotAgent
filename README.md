@@ -8,7 +8,7 @@ AnnotAgent turns model proposals into typed, auditable annotations. A vision mod
 
 The Web product is organized around one concrete Project journey:
 
-`Data -> Labels -> Pipeline -> Test & Publish -> Run -> Inspect -> Review -> Export`
+`Create -> Data -> Labels -> Automation -> Test & Activate -> Run -> Review -> Export`
 
 Start it from the repository root:
 
@@ -20,18 +20,18 @@ cargo run -p annotagent -- serve --workspace ./workspace --open
 
 In the browser:
 
-1. Open **Projects**, create or choose a Project, then use **Build**.
+1. Open **Projects** and choose **New project**. The four-step wizard asks what to annotate, where the data is, which speed/accuracy priority matters, and which registered model connection to use. Internal IDs and generated YAML stay under Advanced.
 2. In **Data**, add workspace-local images. In **Labels**, define annotation semantics such as classification or bounding box labels.
-3. In **Pipeline**, create a Draft, use the controlled Advisor or Node Catalog, configure model bindings and Core nodes, then save.
-4. In **Test & Publish**, Dry Run 1–10 images. A valid report can be published as an immutable Workflow Version.
-5. Start a single-image Run or Dataset Batch from the Project. Active work is restored from backend state and duplicate Start is locked.
-6. Open **Runs** to inspect the exact image, node timeline, inputs, outputs, configuration, usage, errors, bbox/crop lineage, and sandbox Replay. Image, node, and Artifact context is preserved in the URL.
-7. Open **Review** to edit and accept or reject queued annotations. Source Run links are bidirectional.
-8. Return to the Project **Export** section and choose a format. The report shows the written files, exported count, skips, and warnings.
+3. In **Automation**, preview a registry-bounded recommendation, apply it to the editable Draft, and adjust the readable Recipe or its node settings. The full typed graph remains in Expert mode.
+4. In **Test & Activate**, run 1–10 real images in the sandbox. Inspect image outcomes, Crops, Review workload, duration, and cost; then activate the tested Draft as an immutable Workflow Version.
+5. Return to the Project and choose the single server-recommended next action. Starting the Dataset creates real Runs; active work is restored from backend state and duplicate Start is locked.
+6. Open a Run. **Results** shows annotations, confidence, linked Crops, and attention items; **Debug** reveals node inputs, outputs, configuration, usage, errors, and Replay. URL state preserves the exact Image, Node, and Artifact.
+7. Use **Review** as a decision Inbox. Edit if needed, then Accept & next or Reject & next; source Run links are bidirectional and the final item leads to Export.
+8. Open Project **Export**, resolve any readiness blocker, select a Schema-compatible format, and run the real exporter. The completion report and source fingerprint survive reload while the Project snapshot remains current.
 
-Provider settings live under **Settings -> Provider & budgets**. Non-secret settings persist in the workspace; secrets use the operating-system credential store. The offline Mock provider is suitable for product evaluation without a key.
+Provider settings live under **Settings -> Provider & budgets**. Non-secret settings persist in the workspace; a GUI-entered key is write-only and stored in the workspace-private `.annotagent/credentials/provider-api-key` file, never in SQLite or a keychain. The offline Mock provider is the Release baseline and needs no key.
 
-Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and detailed milestone evidence is in [`docs/execution/UX_ACCEPTANCE_EVIDENCE.md`](docs/execution/UX_ACCEPTANCE_EVIDENCE.md).
+Start with [Guided Experience](docs/GUIDED_EXPERIENCE.md), [Project setup](docs/GUIDED_PROJECT_SETUP.md), [Run and Review UX](docs/RUN_AND_REVIEW_UX.md), or the [offline demo](docs/DEMO_GUIDED_EXPERIENCE.md). Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and the current Release Matrix is [`docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md`](docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md).
 
 ## 1. AnnotAgent Core
 
@@ -76,11 +76,12 @@ visual slot live outside Core.
 The deterministic demo needs no GPU or API key:
 
 ```bash
-cargo run -p annotagent -- demo generic-workflow
+cargo run -p annotagent -- demo generic-classification
+cargo run -p annotagent -- demo generic-detection-crop
 cargo run -p annotagent -- demo robocup-ball
 ```
 
-The Generic demo has no RoboCup dependency. The Ball demo covers the clean fast path, white-shoe
+The Generic demos have no RoboCup dependency. The Ball demo covers the clean fast path, white-shoe
 rejection, penalty-mark review and a Correction Memory decision change entirely offline.
 
 The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
@@ -163,7 +164,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 
@@ -177,8 +178,9 @@ npm --prefix web test -- --run
 npm --prefix web run build
 npm --prefix web run test:e2e
 cargo run -p annotagent -- doctor
-cargo run -p annotagent -- demo generic-workflow
-cargo run -p annotagent -- demo robocup-hybrid
+cargo run -p annotagent -- demo generic-classification
+cargo run -p annotagent -- demo generic-detection-crop
+cargo run -p annotagent -- demo robocup-ball
 ```
 
 Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.

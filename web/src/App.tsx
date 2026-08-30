@@ -320,13 +320,19 @@ export function App() {
         </header>
         {error && (
           <div className="error-banner" role="alert">
-            <span>{error}</span>
-            <button onClick={() => { setError(""); void refresh(); }}>
-              Retry
-            </button>
-            <button aria-label="Dismiss error" onClick={() => setError("")}>
-              Dismiss
-            </button>
+            <span className="error-message">
+              <strong>AnnotAgent couldn’t complete that action.</strong>
+              <span>{error}</span>
+              <small>Saved workspace data remains on the server. Retry reloads the latest state before you continue.</small>
+            </span>
+            <span className="error-actions">
+              <button onClick={() => window.location.reload()}>
+                Retry from latest state
+              </button>
+              <button aria-label="Dismiss error" onClick={() => setError("")}>
+                Dismiss
+              </button>
+            </span>
           </div>
         )}
         {!loaded && <div className="loading-banner" role="status">Loading workspace state…</div>}
@@ -606,11 +612,13 @@ function BuildFooter({
   previous,
   next,
   nextEnabled,
+  nextPrimary = true,
   onNavigate,
 }: {
   previous?: BuildStep;
   next?: BuildStep;
   nextEnabled: boolean;
+  nextPrimary?: boolean;
   onNavigate: (step: BuildStep) => void;
 }) {
   const name = (step: BuildStep) => step === "pipeline" ? "Automation" : step === "test" ? "Test & Activate" : step[0].toUpperCase() + step.slice(1);
@@ -618,7 +626,7 @@ function BuildFooter({
     <span>Changes in this step are saved to the Project as you complete them.</span>
     <div className="button-row">
       {previous && <button onClick={() => onNavigate(previous)}>← {name(previous)}</button>}
-      {next && <button className="primary" disabled={!nextEnabled} title={!nextEnabled ? "Complete this step before continuing" : undefined} onClick={() => onNavigate(next)}>Continue to {name(next)} →</button>}
+      {next && <button className={nextEnabled && nextPrimary ? "primary" : ""} disabled={!nextEnabled} title={!nextEnabled ? "Complete this step before continuing" : undefined} onClick={() => onNavigate(next)}>Continue to {name(next)} →</button>}
     </div>
   </footer>;
 }
@@ -1093,17 +1101,8 @@ function Dashboard({
           detail="Annotations requiring attention"
           accent={reviewQueue > 0}
         />
-        <Metric
-          label="Tokens"
-          value={tokens.toLocaleString()}
-          detail="Recorded input + output"
-        />
-        <Metric
-          label="Cost"
-          value={`$${cost.toFixed(4)}`}
-          detail="Exact persisted run totals"
-        />
       </div>
+      <p className="platform-usage-line" aria-label="Workspace model usage">Persisted model usage across {runs.length} Run{runs.length === 1 ? "" : "s"}: <strong>{tokens.toLocaleString()} tokens</strong> · <strong>${cost.toFixed(4)}</strong></p>
       <div className="platform-grid">
         <Panel title="Recent projects" eyebrow="Concrete annotation work">
           <ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} />
@@ -1485,10 +1484,12 @@ function ProjectPage({
         <div className="project-context-facts" aria-label="Project status">
           <span><b>{project.image_count}</b> Images</span>
           <span><b>{labelCount}</b> Labels</span>
-          <span><b>{project.default_workflow_version?.name ?? "Not active"}</b> Automation</span>
-          <span><b>{project.active_run?.status ?? project.active_batch?.status ?? "None"}</b> Active run</span>
           <span><b>{project.review_count}</b> Needs review</span>
-          <span><b>{guidance.stage.replaceAll("_", " ")}</b> Readiness</span>
+        </div>
+        <div className="project-context-status" aria-label="Project operational status">
+          <span>Automation <b>{project.default_workflow_version?.name ?? "Not active"}</b></span>
+          <span>Active run <b>{project.active_run?.status ?? project.active_batch?.status ?? "None"}</b></span>
+          <span>Readiness <b>{guidance.stage.replaceAll("_", " ")}</b></span>
         </div>
       </header>
 
@@ -2835,7 +2836,7 @@ function WorkflowsPage({
           )}
         </div>
       </div>
-      {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} onNavigate={onNavigate} />}
+      {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} nextPrimary={false} onNavigate={onNavigate} />}
     </section>
   );
 }
@@ -3071,13 +3072,19 @@ function LabelPipelineEditor({
   };
   const applyDetectCropTemplate = () => {
     if (!selected) return;
-    const detection = [...selected.steps]
+    const localDetection = [...selected.steps]
       .reverse()
-      .find((step) => Object.values(step.outputs).includes("detection_set"));
+      .find((step) => step.kind === "vision_model" && Object.values(step.outputs).includes("detection_set"));
+    const sharedDetection = composition.shared_stages
+      .flatMap((stage) => stage.steps)
+      .find((step) => step.kind === "vision_model" && Object.values(step.outputs).includes("detection_set"));
+    const detection = localDetection ?? sharedDetection;
+    const filter = selected.steps.find((step) => step.node_type === "core.filter");
     const gate = selected.steps.find((step) => step.node_type === "core.confidence_gate");
     const commit = selected.steps.find((step) => step.kind === "commit");
     if (!detection || !gate || !commit) return;
     const prefix = selected.id;
+    const cropSource = filter ?? detection;
     const crop: PipelineStep = {
       id: `${prefix}.crop`,
       node_type: "core.crop",
@@ -3086,8 +3093,8 @@ function LabelPipelineEditor({
         image: { source: "image" },
         detections: {
           source: "step",
-          step_id: detection.id,
-          port: Object.keys(detection.outputs)[0],
+          step_id: cropSource.id,
+          port: Object.keys(cropSource.outputs)[0],
           artifact_type: "detection_set",
         },
       },
@@ -3099,6 +3106,52 @@ function LabelPipelineEditor({
       review_gate: { required: false, allow_manual_override: false },
       resources: {},
     };
+    if (!localDetection) {
+      const cache: PipelineStep = {
+        id: `${prefix}.crop_cache`,
+        node_type: "core.artifact_cache",
+        kind: "export",
+        inputs: {
+          crops: {
+            source: "step",
+            step_id: crop.id,
+            port: "crops",
+            artifact_type: "crop_set",
+          },
+        },
+        outputs: {},
+        parameters: { purpose: "bbox_and_crop_preview" },
+        validators: [],
+        refiners: [],
+        retry_policy: { max_attempts: 1 },
+        review_gate: { required: false, allow_manual_override: false },
+        resources: {},
+      };
+      replaceComposition({
+        ...composition,
+        label_pipelines: composition.label_pipelines.map((pipeline) =>
+          pipeline.id === selected.id
+            ? {
+                ...pipeline,
+                steps: [
+                  ...pipeline.steps.filter(
+                    (step) =>
+                      step.id !== gate.id &&
+                      step.id !== commit.id &&
+                      step.node_type !== "core.crop" &&
+                      step.node_type !== "core.artifact_cache",
+                  ),
+                  crop,
+                  cache,
+                  gate,
+                  commit,
+                ],
+              }
+            : pipeline,
+        ),
+      });
+      return;
+    }
     const classifier: PipelineStep = {
       id: `${prefix}.crop_classifier`,
       node_type: "classification.classify",
@@ -3370,11 +3423,13 @@ function LabelPipelineEditor({
             onClick={applyDetectCropTemplate}
             disabled={
               immutable ||
-              !selected?.steps.some((step) =>
-                Object.values(step.outputs).includes("detection_set"),
-              )
+              !selected ||
+              ![
+                ...selected.steps,
+                ...composition.shared_stages.flatMap((stage) => stage.steps),
+              ].some((step) => step.kind === "vision_model" && Object.values(step.outputs).includes("detection_set"))
             }
-            title="Internal graph: detector → filter → Crop → classifier → Attach Result"
+            title="Internal graph: detector → filter → Core Crop; Detection remains the bbox result"
           >
             Apply Detect &amp; Crop template
           </button>
@@ -4253,8 +4308,8 @@ function RunDetailWorkspace({
       <div className="toolbar-panel run-detail-header">
         {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>}
         <div className="button-row">
-          {runReview && <button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
-          {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button className="primary" onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button>}
+          {runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
+          {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button>}
           {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
           {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
           {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
@@ -4497,16 +4552,22 @@ function sameMark(left: ArtifactMark, right: ArtifactMark): boolean {
     && Math.abs(left.height - right.height) < 0.0001;
 }
 
+function uniqueMarks(marks: ArtifactMark[]): ArtifactMark[] {
+  return marks.filter(
+    (mark, index) => !marks.slice(0, index).some((existing) => sameMark(existing, mark)),
+  );
+}
+
 function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIndex }: { projectId: string; project?: ProjectSummary; artifacts: PipelineArtifact[]; annotations: Annotation[]; imageIndex: number }) {
   const imageUrl = `/api/projects/${projectId}/images/${imageIndex}/content`;
-  const artifactDetections = artifactDetectionMarks(artifacts, project);
+  const artifactDetections = uniqueMarks(artifactDetectionMarks(artifacts, project));
   const annotationDetections = annotationDetectionMarks(annotations, project);
   const detections = [
     ...artifactDetections,
     ...annotationDetections.filter((annotation) =>
       !artifactDetections.some((artifact) => sameMark(annotation, artifact))),
   ];
-  const crops = artifactCropMarks(artifacts, detections);
+  const crops = uniqueMarks(artifactCropMarks(artifacts, detections));
   const [mode, setMode] = useState<"original" | "result" | "compare" | "crops">("result");
   const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState(detections[0]?.id ?? crops[0]?.parentId ?? "");
@@ -4536,6 +4597,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
         </label>
       </div>
       {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
+      {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>Bounding box{item.confidence === undefined ? "" : ` · ${Math.round(item.confidence * 100)}%`}</small></span></button></li>)}</ul>}
       {mode === "original" ? imageStage(false, "Original Run input") : mode === "result" ? imageStage(true, "Run result") : mode === "compare" ? <div className="run-result-compare"><section><span>Original</span>{imageStage(false, "Original Run input")}</section><section><span>Result</span>{imageStage(true, "Run result")}</section></div> : (
         <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? "Unknown"}</small><small>Source: {crop.sourceNode ?? "Unknown"}</small></span></button>)}</div>
       )}

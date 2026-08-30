@@ -8,10 +8,12 @@ const stamp = Date.now();
 const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
+const cropProjectId = `guided-crop-${stamp}`;
 const screenshots = resolve(process.cwd(), "../docs/execution/screenshots");
 let runId = "";
 let reviewId = "";
 let reviewImageId = "";
+let cropRunId = "";
 
 async function dashboard(request: APIRequestContext) {
   const response = await request.get("/api/projects");
@@ -19,16 +21,15 @@ async function dashboard(request: APIRequestContext) {
   return response.json();
 }
 
-async function findCropRun(request: APIRequestContext) {
-  const response = await request.get("http://127.0.0.1:8787/api/runs");
+async function findCropRun(request: APIRequestContext, targetProjectId: string) {
+  const response = await request.get("/api/runs");
   if (!response.ok()) return undefined;
   const { runs } = await response.json();
   for (const run of runs.filter((item: { checkpoint_present: boolean }) => item.checkpoint_present)) {
-    const artifacts = await request.get(
-      `http://127.0.0.1:8787/api/runs/${run.id}/pipeline-artifacts`,
-    );
+    const artifacts = await request.get(`/api/runs/${run.id}/pipeline-artifacts`);
     if (!artifacts.ok()) continue;
     const inspection = await artifacts.json();
+    if (inspection.project_id !== targetProjectId) continue;
     const cropNode = inspection.nodes.find((node: { outputs: { kind: string }[] }) =>
       node.outputs.some((artifact) => artifact.kind === "crop_set"),
     );
@@ -39,6 +40,86 @@ async function findCropRun(request: APIRequestContext) {
       return { run, inspection, cropNode, detectionNode };
   }
   return undefined;
+}
+
+async function createCropRun(request: APIRequestContext, page: Page, imageSource: string) {
+  const created = await request.post("/api/projects", {
+    data: {
+      id: cropProjectId,
+      yaml: `version: 1
+project:
+  name: Guided Crop Fixture ${stamp}
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: ball-objects
+    display_name: Ball
+    kind: bounding_box
+    labels: [ball]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native, coco, yolo]
+`,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const imported = await request.post(`/api/projects/${cropProjectId}/import`, {
+    data: { source: imageSource },
+  });
+  expect(imported.ok()).toBeTruthy();
+
+  const suggested = await request.post("/api/workflow-drafts/suggest", {
+    data: {
+      project_id: cropProjectId,
+      target_task_id: "ball-objects",
+      target_label: "ball",
+      advisor: "mock",
+      constraints: { require_review_gate: true },
+    },
+  });
+  expect(suggested.status()).toBe(201);
+  const suggestion = await suggested.json();
+  await page.goto(`/projects/${cropProjectId}/build/pipeline`);
+  await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
+  await page.getByText("Edit automation", { exact: true }).click();
+  const autosaved = page.waitForResponse((response) =>
+    response.request().method() === "PATCH" && response.url().includes(`/api/workflow-drafts/${suggestion.draft.id}`),
+  );
+  await page.getByRole("button", { name: "Apply Detect & Crop template" }).click();
+  const saved = await autosaved;
+  expect(saved.ok()).toBeTruthy();
+  const draft = await saved.json();
+  const steps = draft.label_pipeline.label_pipelines[0].steps;
+  expect(steps.some((step: { node_type: string }) => step.node_type === "core.crop")).toBeTruthy();
+  expect(steps.some((step: { node_type: string }) => step.node_type === "core.artifact_cache")).toBeTruthy();
+  const dryRun = await request.post(`/api/workflow-drafts/${draft.id}/dry-run`, {
+    data: { image_indices: [0] },
+  });
+  expect(dryRun.ok()).toBeTruthy();
+  expect((await dryRun.json()).validation.valid).toBeTruthy();
+  const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
+  expect(published.ok()).toBeTruthy();
+  const version = await published.json();
+  const started = await request.post(`/api/projects/${cropProjectId}/runs`, {
+    headers: { "idempotency-key": `crop-e2e-${stamp}` },
+    data: {
+      provider: "mock",
+      workflow_id: version.workflow_id,
+      version: version.version,
+    },
+  });
+  expect(started.status()).toBe(202);
+  ({ run_id: cropRunId } = await started.json());
+  await expect.poll(async () => {
+    const state = await dashboard(request);
+    return state.runs.find((run: { id: string }) => run.id === cropRunId)?.status;
+  }, { timeout: 30_000 }).toMatch(/completed|completed_with_review/);
 }
 
 async function openProject(page: Page) {
@@ -466,12 +547,13 @@ test("an active Run restores from the server and locks duplicate Start", async (
   await expect(page.getByRole("button", { name: "Open active run" })).toBeVisible();
 });
 
-test("bbox and crop selection stay linked through parent references", async ({ page, request }) => {
-  const fixture = await findCropRun(request);
-  test.skip(!fixture, "A persisted B-Human DetectionSet and CropSet fixture is required.");
+test("bbox and crop selection stay linked through parent references", async ({ page, request }, testInfo) => {
+  await createCropRun(request, page, String(testInfo.config.metadata.e2eImport));
+  const fixture = await findCropRun(request, cropProjectId);
+  expect(fixture).toBeTruthy();
   const cropNodeId = fixture!.cropNode.node_id;
   await page.goto(
-    `http://127.0.0.1:8787/runs/${fixture!.run.id}?image=${fixture!.inspection.image_index}&node=${encodeURIComponent(cropNodeId)}`,
+    `/runs/${fixture!.run.id}?image=${fixture!.inspection.image_index}&node=${encodeURIComponent(cropNodeId)}`,
   );
   const overlay = page.locator('svg[aria-label="Annotation overlay"]');
   await expect(overlay.getByRole("button").first()).toBeVisible();
@@ -651,4 +733,132 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
     },
   });
   expect(accepted.ok()).toBeTruthy();
+});
+
+test("release surfaces keep one primary action and remain operable at compact viewports", async ({ page }) => {
+  const routes = [
+    "/",
+    "/projects",
+    `/projects/${projectId}`,
+    `/projects/${projectId}/build/data`,
+    `/projects/${projectId}/build/labels`,
+    `/projects/${projectId}/build/pipeline`,
+    `/projects/${projectId}/build/test`,
+    "/runs",
+    `/runs/${runId}`,
+    `/review?project_id=${projectId}`,
+    `/projects/${projectId}/export`,
+    "/settings",
+  ];
+  await page.setViewportSize({ width: 1024, height: 768 });
+  for (const route of routes) {
+    await page.goto(route);
+    await expect(page.locator("#main-content")).toHaveAttribute("aria-busy", "false");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
+    expect(await page.locator("button.primary:visible").count(), `${route} primary actions`).toBeLessThanOrEqual(1);
+    expect(await page.locator(".panel .panel").count(), `${route} nested panels`).toBe(0);
+    for (const metrics of await page.locator(".metrics-grid, .run-result-metrics, .sample-outcome-metrics, .export-readiness-metrics").all())
+      expect(await metrics.locator(":scope > *").count(), `${route} equal metrics`).toBeLessThanOrEqual(3);
+  }
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.locator(".project-context-facts > span")).toHaveCount(3);
+  await page.screenshot({ path: `${screenshots}/12-guided-release-1024.png`, fullPage: true });
+
+  await page.setViewportSize({ width: 720, height: 450 });
+  for (const route of [
+    `/projects/${projectId}`,
+    `/projects/${projectId}/build/data`,
+    `/projects/${projectId}/build/labels`,
+    `/projects/${projectId}/build/pipeline`,
+    `/projects/${projectId}/build/test`,
+    `/runs/${runId}`,
+    `/review?project_id=${projectId}`,
+    `/projects/${projectId}/export`,
+  ]) {
+    await page.goto(route);
+    await expect(page.locator("#main-content")).toHaveAttribute("aria-busy", "false");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
+    const lastControl = page.locator("#main-content button:enabled:visible").last();
+    if (await lastControl.count()) {
+      await lastControl.scrollIntoViewIfNeeded();
+      await expect(lastControl).toBeVisible();
+    }
+  }
+});
+
+test("primary journey controls, focus, and annotation alternatives work from the keyboard", async ({ page, request }) => {
+  await page.goto(`/projects/${projectId}`);
+  const build = page.getByRole("button", { name: "Build", exact: true });
+  await build.focus();
+  expect(await build.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) >= 2;
+  })).toBeTruthy();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
+  const labelsStep = page.getByRole("button", { name: "Continue to Labels →" });
+  await expect(labelsStep).toBeEnabled();
+  await labelsStep.focus();
+  await expect(labelsStep).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
+
+  const fixture = await findCropRun(request, cropProjectId);
+  expect(fixture?.run.id).toBe(cropRunId);
+  await page.goto(`/runs/${cropRunId}?image=${fixture!.inspection.image_index}`);
+  const annotationList = page.getByRole("list", { name: "Run result annotations" });
+  await expect(annotationList).toBeVisible();
+  const annotation = annotationList.getByRole("button").first();
+  await annotation.focus();
+  await page.keyboard.press("Enter");
+  await expect(annotation).toHaveAttribute("aria-pressed", "true");
+  const cropMode = page.getByRole("button", { name: /Crop \(1\)/ });
+  await cropMode.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".crop-preview-list button.selected")).toHaveCount(1);
+
+  await page.goto(`/projects/${projectId}/export`);
+  const supportedFormat = page.locator('input[type="radio"]:enabled').first();
+  await supportedFormat.focus();
+  await page.keyboard.press("Space");
+  await expect(supportedFormat).toBeChecked();
+});
+
+test("reduced motion and server-state error recovery are explicit", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`/projects/${projectId}`);
+  const transitionMilliseconds = await page.locator(".guidance-progress i").evaluate((element) => {
+    const values = getComputedStyle(element).transitionDuration.split(",");
+    return Math.max(...values.map((value) => value.trim().endsWith("ms")
+      ? Number.parseFloat(value)
+      : Number.parseFloat(value) * 1_000));
+  });
+  expect(transitionMilliseconds).toBeLessThanOrEqual(0.01);
+
+  let failReadiness = true;
+  await page.route(`**/api/projects/${projectId}/export-readiness`, async (route) => {
+    if (failReadiness)
+      await route.fulfill({ status: 503, json: { error: "Export readiness is temporarily unavailable." } });
+    else
+      await route.continue();
+  });
+  await page.goto(`/projects/${projectId}/export`);
+  const alert = page.getByRole("alert").filter({ hasText: "Export readiness is temporarily unavailable." });
+  await expect(alert.getByText("AnnotAgent couldn’t complete that action.")).toBeVisible();
+  await expect(alert).toContainText("Saved workspace data remains on the server");
+  failReadiness = false;
+  await alert.getByRole("button", { name: "Retry from latest state" }).click();
+  await expect(page.getByRole("heading", { name: "Your dataset is ready" })).toBeVisible();
+
+  await page.unroute(`**/api/projects/${projectId}/export-readiness`);
+  let releaseProjects!: () => void;
+  const release = new Promise<void>((resolve) => { releaseProjects = resolve; });
+  await page.route("**/api/projects", async (route) => {
+    await release;
+    await route.continue();
+  });
+  await page.goto("/");
+  await expect(page.getByRole("status").filter({ hasText: "Loading workspace state" })).toBeVisible();
+  releaseProjects();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 });

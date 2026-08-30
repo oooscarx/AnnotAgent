@@ -82,7 +82,7 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | Results shows result count | PASS | Rust `RunResultSummary` aggregates formal Annotations and typed checkpoint result Artifacts without double counting. |
 | Empty result says No target found | PASS | A valid empty Run result uses the explicit non-failure outcome in Results. |
 | bbox shows Label and Confidence | PASS | Canvas marks display both. |
-| bbox and Crop link both directions | PARTIAL | Logic/unit path exists; E2E is skipped without Crop fixture. |
+| bbox and Crop link both directions | PASS | Isolated E2E creates a real generic Project, applies the shared-detector Detect & Crop template through the UI, Dry Runs, publishes, executes Mock YOLO → Filter → Core Crop → Artifact Cache, and selects bbox/Crop in both directions. |
 | Artifact Inspector lives in Run Detail | PASS | Inspector is scoped to Run. |
 | User never enters a Run ID | PASS | History/deep links open Runs. |
 | Replay starts at current node | PASS | Real Replay API and inspector action exist. |
@@ -134,9 +134,9 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 | --- | --- | --- |
 | Guided default hides ArtifactId | PASS | Results contains no Artifact or Node IDs; technical identity is available only after entering Debug. |
 | Guided default hides full DAG | PASS | Natural step cards are the default; full graph JSON and technical node editing require opening the Expert Graph. |
-| One Primary Button per page | PARTIAL | Project Overview renders exactly one server-selected solid action; remaining Build/Run/Review/Export surfaces are gated by later Milestones. |
-| No nested Cards | OPEN | Requires component/layout audit after journey refactor. |
-| At most three equal first-screen metrics | PARTIAL | Sample Test and Run Results now use exactly three equal outcome metrics; remaining milestone surfaces still require the release-wide audit. |
+| One Primary Button per page | PASS | Release E2E audits every main route and all guided Project surfaces; each rendered state has at most one visible solid primary action. |
+| No nested Cards | PASS | Release-wide DOM audit across twelve routes finds no `.panel .panel`; hierarchy is expressed with spacing, borders, and sections instead. |
+| At most three equal first-screen metrics | PASS | Home, Project Header, Data, Sample Test, Run Results, and Export use at most three equal metrics; usage and operational context moved to secondary text. |
 | Technical metadata collapsed by default | PASS | Automation hides the graph and Run Results hides the Inspector; payloads and Provider metadata require explicit Expert/Debug entry. |
 | Empty workspace contains no RoboCup | PASS | E2E passes. |
 | Generic Project contains no RoboCup | PASS | Rust and E2E pass. |
@@ -146,15 +146,15 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 
 | Requirement | Status | Baseline evidence / gap |
 | --- | --- | --- |
-| 1024px has no horizontal overflow | PASS | Existing responsive E2E/browser evidence. |
-| 720×450-equivalent viewport is operable | PARTIAL | 720-wide Review E2E exists; full journey and height need coverage. |
+| 1024px has no horizontal overflow | PASS | Release E2E audits Home, Projects, Project, all Build steps, Runs, Run Detail, Review, Export, and Settings at 1024px. |
+| 720×450-equivalent viewport is operable | PASS | Release E2E traverses Project, all Build steps, Run, Review, and Export at 720×450, checks reflow, and scrolls to a real enabled control on each surface; an independent in-app browser audit confirms Crop and annotation-list visibility. |
 | Actual 200% Zoom | MANUAL | Must be manually verified if the environment permits. |
-| Primary journey is keyboard-operable | PARTIAL | Baseline controls/focus exist; new journey needs end-to-end proof. |
+| Primary journey is keyboard-operable | PASS | Browser coverage uses Enter through Project → Build → Labels, operates the Run annotation list and Crop view, selects Export format with Space, and retains the complete Review shortcut path. |
 | Review can be completed by keyboard | PASS | The decision Inbox exposes documented A/R/E/Space/arrow shortcuts and browser coverage completes its keyboard path. |
-| Focus is visible | PARTIAL | Base focus styles exist; new components need audit. |
+| Focus is visible | PASS | E2E focuses the Project Build control and asserts the computed focus outline is solid and at least 2px; shared `:focus-visible` styles cover native controls. |
 | Status is not color-only | PASS | TUI/Web patterns and tests use text labels. |
-| Canvas has equivalent annotation list | PARTIAL | Review/Run lists exist; equivalence needs explicit accessibility proof. |
-| Reduced motion works | PASS | Existing CSS media query and prior browser verification. |
+| Canvas has equivalent annotation list | PASS | Review Canvas and Run Result Canvas expose labelled structured lists; E2E selects the Run annotation entry by keyboard and observes the same selected geometry/Crop lineage. |
+| Reduced motion works | PASS | E2E emulates `prefers-reduced-motion: reduce` and asserts the Guidance transition duration is at most 0.01ms. |
 
 ## Milestone 0 evidence
 
@@ -277,3 +277,16 @@ Milestone 0 records verified baseline behavior. `PARTIAL` means a real foundatio
 - SSE records errors that occur before either the first or a later successful connection. On the next open it re-fetches dashboard truth; this closes the failed-first-connection gap where the old code treated recovery as an initial connection and skipped synchronization.
 - Browser E2E uses native `goBack`/`goForward`, switches Project context while retaining the Build step, persists the Runs status/Project filters over reload, aborts and restores `/api/events`, mutates a real Review during interruption, and observes Export transition from completed to blocked without manual refresh.
 - Active Run restoration and duplicate Start locking remain covered by server-derived Project state; Review item selection survives Run round trips and reload; Build direct URLs remain prerequisite-gated. Web typecheck, 32 unit tests, production build, and 18 executable Chromium scenarios pass with one conditional Crop fixture skip.
+
+## Milestone 12 evidence
+
+- The formerly conditional Crop scenario is fully isolated and executable. Browser setup creates a generic bounding-box Project, imports a real image, requests a registry-bounded shared-detector Draft, applies **Detect & Crop** through the product UI, waits for real autosave, Dry Runs, publishes, starts a Mock Run, and inspects the persisted DetectionSet and CropSet checkpoint.
+- Shared YOLO detection is correctly recognized as the detector source. The template composes `shared detector → filter → Core Crop → Artifact Cache` while the filtered DetectionSet remains the bbox commit path; YOLO itself still does not own Crop.
+- Run Results de-duplicates geometrically identical pass-through Detection/Crop Artifacts without changing checkpoint history. It shows one result, one linked Crop, and one keyboard-operable structured annotation-list entry.
+- Release-wide browser audits cover twelve desktop routes at 1024px and the complete Project journey at 720×450. They assert no horizontal overflow, at most one visible primary action, no nested Panels, at most three equal metric blocks, accessible controls after reflow, visible focus, keyboard activation, structured Canvas alternatives, reduced motion, real loading, and recoverable error states.
+- Error recovery names the failed action, explains that saved data remains server-owned, and reloads the latest server state. E2E fails Export readiness, restores the endpoint, retries, and observes a valid ready page.
+- In-app browser validation against the isolated Release workspace confirms one Project primary action, three Project numeric facts, no nested Panels, no horizontal overflow, one de-duplicated ball result, one Crop, a structured annotation list, and the same controls visible at 720×450 with zero console errors.
+- `./scripts/acceptance.sh`: PASS. It includes boundary/secret scans, Rust fmt, strict workspace Clippy, 166 Rust tests, all-feature build, Web typecheck, 32 Web tests, production build, doctor, and all three offline demos.
+- `npm --prefix web run test:e2e`: PASS — 22/22 executable Chromium scenarios, 0 skipped.
+- Release documentation now includes the README journey plus `GUIDED_EXPERIENCE.md`, `PROJECT_GUIDANCE.md`, `GUIDED_PROJECT_SETUP.md`, `RUN_AND_REVIEW_UX.md`, `DEMO_GUIDED_EXPERIENCE.md`, updated design/hierarchy/visual integration, and honest Known Limitations.
+- Automated acceptance totals are `PASS 94`, `PARTIAL 0`, `OPEN 0`; native browser 200% zoom remains the one explicit `MANUAL` item allowed by the task.

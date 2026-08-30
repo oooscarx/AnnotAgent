@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## Current state
 
-- Active Milestone: 12 — Release
-- Last completed Milestone: 11 — Reliability
-- Latest Milestone commit: this document's containing Milestone 11 commit
+- Active Milestone: 12 — Release complete
+- Last completed Milestone: 12 — Release
+- Latest Milestone commit: this document's containing Milestone 12 commit
 - Push policy: local commits only; no push
 - Remote policy: unchanged
 - Live external models: not required for the offline Release gate and not used in this task
@@ -27,20 +27,23 @@ Updated: 2026-08-30
 | 9 Inbox Review | Complete | Server-owned progress and next-item decisions drive a keyboard-operable Inbox with controlled reasons, correction impact, deep links, and terminal guidance. |
 | 10 Guided Export | Complete | Server-owned readiness blocks incomplete processing and pending Review, recommends only compatible configured formats, exports the accepted Project snapshot, and persists a fingerprint-bound completion report. |
 | 11 Reliability | Complete | Build step, Runs filters, Run Debug, Review selection, and Export are URL/server restored; browser history and failed-first SSE reconnect resynchronization pass end to end. |
-| 12 Release | In progress | Full matrix, documentation, responsiveness, accessibility, and final Release gate remain. |
+| 12 Release | Complete | Offline Crop fixture, shared-detector template, result de-duplication, responsive/accessibility/error recovery audit, documentation, full acceptance script, and 22/22 browser E2E pass. |
 
 ## Latest automated tests
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all --check` | PASS |
-| `cargo test --workspace --all-features` | PASS — 159 tests, 0 failures |
-| `npm run typecheck` | PASS |
-| `npm test` | PASS — 12 files, 32 tests |
-| `npm run build` | PASS — production bundle built |
-| `npm run test:e2e` | PASS — 18 passed, 1 explicitly skipped because the isolated fixture has no Crop Artifact |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
+| `cargo test --workspace --all-features` | PASS — 166 tests, 0 failures |
+| `cargo build --workspace --all-features` | PASS |
+| `npm --prefix web run typecheck` | PASS |
+| `npm --prefix web test` | PASS — 12 files, 32 tests |
+| `npm --prefix web run build` | PASS — production bundle built |
+| `npm --prefix web run test:e2e` | PASS — 22 passed, 0 skipped |
+| `./scripts/acceptance.sh` | PASS — boundaries, secret scan, Rust/Web gates, doctor, and three offline demos |
 
-Full Clippy and all-feature build are scheduled for the Release Milestone and may also run at risky intermediate boundaries.
+The Release gate completed with no Rust, Web, browser, boundary, or secret-scan failure.
 
 Milestone 1 focused checks:
 
@@ -133,9 +136,17 @@ Milestone 11 focused checks:
 - Chromium E2E deliberately aborts the SSE endpoint, changes Review state through the real API, restores the event stream, and observes Export change from completed to blocked without reloading. Build browser back/forward, Project switching, Runs filter reload, active Run restoration, duplicate-Start lock, Review selection, and Build reload are covered in the same isolated journey.
 - Web typecheck, 32 unit tests, production build, and 18 executable Chromium E2E scenarios pass; one external Crop fixture scenario remains explicitly conditional.
 
+Milestone 12 focused checks:
+
+- The generic shared detector is now a valid source for **Apply Detect & Crop template**. UI autosave compiles and executes Core Crop plus Artifact Cache while the detector remains detection-only.
+- Results de-duplicates downstream pass-through geometry and exposes one keyboard-operable annotation list linked to one Crop.
+- Twelve-route 1024px and full-journey 720×450 audits enforce one primary action, no nested Panels, at most three equal metrics, no horizontal overflow, and an enabled reachable control.
+- Keyboard, visible focus, structured Canvas alternative, reduced motion, loading, empty, and fail/retry-from-server paths are executable browser evidence.
+- `./scripts/acceptance.sh` passes all boundaries, secret scans, Rust/Web checks, doctor, and offline demos. The independent Chromium suite passes 22/22 with no skip.
+
 ## Latest browser audit
 
-The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Project Overview, all four Build steps, Runs, Review, and Settings.
+The isolated Release product at `http://127.0.0.1:8792` was opened in the in-app browser after the automated suite created real Project, Workflow, Run, Review, and Export state.
 
 - Five global destinations are visible on every audited route.
 - Project-scoped Build routes retain the Project URL.
@@ -148,12 +159,16 @@ The running product at `http://127.0.0.1:8787` was opened at Home, Projects, Pro
 - Sample Test now leads with outcomes and Full Run impact; node statuses, timings, usage, and Artifact types are collapsed diagnostics.
 - Run defaults to outcome-first Results, Review is a fast decision Inbox, and Export is the explicit terminal Project workspace with preflight compatibility and durable completion.
 - URL/browser history now restores Build and Runs list context, and an interrupted initial or established SSE connection resynchronizes Project/Export truth after reconnect.
+- Project Overview exposes exactly three equal numeric facts and one primary action; operational Automation, Active Run, and readiness context remain visible at secondary weight.
+- A shared Mock YOLO detector can apply the real Detect & Crop template from the UI. The persisted Run displays one de-duplicated bounding box, one linked Crop, and one structured annotation-list entry.
+- The in-app browser reports no nested Panels, no horizontal overflow, and no console errors; the same Run controls remain visible at an explicit 720×450 viewport.
+- Loading, empty, and failed readiness states are actionable; retry reloads server truth and restores the ready Export state.
 
 ## Release Blocking remaining
 
-- `PASS`: 86
-- `PARTIAL`: 7
-- `OPEN`: 1
+- `PASS`: 94
+- `PARTIAL`: 0
+- `OPEN`: 0
 - `MANUAL`: 1 (actual browser 200% zoom, only if the environment permits)
 
 Counts are recalculated from `GUIDED_EXPERIENCE_ACCEPTANCE.md` after each Milestone.
