@@ -5,6 +5,7 @@ import {
   artifactDetectionMarks,
   annotationDetectionMarks,
   artifactRects,
+  evidenceGateReport,
   pipelineNodeKind,
   pipelineNodeOutput,
   pipelineNodeParameters,
@@ -29,9 +30,19 @@ describe("Label Pipeline product helpers", () => {
       port: "detections",
       type: "detection_set",
     });
+    expect(pipelineNodeOutput("core.match_detection_sets")).toEqual({
+      port: "candidates",
+      type: "candidate_cluster_set",
+    });
+    expect(pipelineNodeOutput("core.evidence_gate")).toEqual({
+      port: "candidates",
+      type: "candidate_cluster_set",
+    });
     expect(pipelineNodeKind("core.crop")).toBe("transform");
     expect(pipelineNodeKind("yolo_detection.detect")).toBe("vision_model");
     expect(pipelineNodeKind("vlm_detection.detect")).toBe("vision_model");
+    expect(pipelineNodeKind("core.match_detection_sets")).toBe("candidate_merge");
+    expect(pipelineNodeKind("core.evidence_gate")).toBe("gate");
     expect(pipelineNodeParameters("core.crop", "person")).toEqual({
       padding: 0.05,
     });
@@ -56,6 +67,44 @@ describe("Label Pipeline product helpers", () => {
     expect(artifactCrops([crop])).toEqual([
       { x: 0.05, y: 0.1, width: 0.5, height: 0.6 },
     ]);
+  });
+
+  it("previews Candidate Clusters and parses explainable Evidence Gate reports", () => {
+    const clusters: PipelineArtifact = {
+      kind: "candidate_cluster_set",
+      artifact: {
+        candidates: [
+          {
+            id: "cluster-0000",
+            target_label: "ball",
+            representative_bbox: [0.2, 0.3, 0.15, 0.2],
+          },
+        ],
+      },
+    };
+    expect(artifactRects([clusters])).toEqual([
+      { x: 0.2, y: 0.3, width: 0.15, height: 0.2 },
+    ]);
+    expect(evidenceGateReport({
+      evidence_gate: {
+        decision: "review",
+        candidate_count: 1,
+        validation_issue_count: 0,
+        reasons: [{
+          code: "score_not_comparable",
+          message: "Confidence was not provided or is not comparable",
+          candidate_id: "cluster-0000",
+          source_model_ids: ["open-model"],
+          metrics: {},
+        }],
+      },
+    })).toMatchObject({
+      decision: "review",
+      candidate_count: 1,
+      reasons: [{ code: "score_not_comparable", source_model_ids: ["open-model"] }],
+    });
+    expect(evidenceGateReport({ evidence_gate: { decision: "maybe", reasons: [] } }))
+      .toBeUndefined();
   });
 
   it("renders the evidence-aware Detection DTO without inventing confidence", () => {

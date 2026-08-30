@@ -650,6 +650,8 @@ export interface DetectionEvidenceDto {
   score: DetectionScoreDto;
   query_id?: string | null;
   model_label?: string | null;
+  project_label?: string | null;
+  source_capability: string;
   raw_output_ref?: StoredPayloadRefDto | null;
 }
 
@@ -678,6 +680,21 @@ export interface CandidateClusterDto {
     | { multi_source_agreement: { minimum_iou: number; mean_iou: number } };
 }
 
+export interface EvidenceGateReasonDto {
+  code: string;
+  message: string;
+  candidate_id?: string | null;
+  source_model_ids: string[];
+  metrics: Record<string, number>;
+}
+
+export interface EvidenceGateReportDto {
+  decision: "accept" | "fallback" | "review" | "reject";
+  reasons: EvidenceGateReasonDto[];
+  candidate_count: number;
+  validation_issue_count: number;
+}
+
 export interface RunNodeArtifactInspection {
   run_id: string;
   workflow_id: string;
@@ -696,6 +713,8 @@ export interface RunNodeArtifactInspection {
     attempts: number;
     cache_hit: boolean;
     usage: { input_tokens: number; output_tokens: number; cost: string };
+    route?: string | null;
+    metadata?: Record<string, unknown>;
     error?: { code: string; summary: string; retryable: boolean };
   }[];
 }

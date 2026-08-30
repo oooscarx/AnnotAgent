@@ -96,6 +96,26 @@ below:
 - `cargo test --workspace --all-features` passes 202 tests; strict Clippy, all 33 Web tests, Web
   typecheck/build, and Python syntax validation pass.
 
+## M6 Candidate Match and Evidence Gate evidence
+
+- `core.match_detection_sets` performs stable one-to-one Project-Label/IoU matching for exactly two
+  same-image DetectionSets. Tests cover agreement, Geometry Conflict, Label Conflict and retained
+  unmatched candidates.
+- Candidate members retain source model, detection capability, query/model/Project Label, original
+  rectangle and independent score semantics. A scored specialist result and score-less grounding
+  result remain `0.93` and `None`; neither matching nor Annotation projection averages them.
+- `core.evidence_gate` consumes Candidate Clusters, propagated validator issues and optional
+  Correction Risk, then emits exactly one `accept`, `fallback`, `review`, or `reject` route plus a
+  persisted structured explanation. Unknown/ranking/missing scores are never ordinary confidence.
+- A Generic Project integration test executes Object Detection + Open Vocabulary Detection → Match
+  → Evidence Gate through Draft, Dry Run, immutable publish and exact-version offline Run. The
+  checkpoint and inspection API retain both model contributions, route and reason code.
+- Run Debug renders Candidate Cluster representative boxes and a responsive Evidence Decision card
+  with decision, reason, source model IDs, candidate count and domain-issue count. Invalid report
+  shapes fail closed in the Web parser.
+- `cargo test --workspace --all-features` passes 207 tests; strict workspace Clippy/build, all 34 Web
+  tests, Web typecheck/build and diff checks pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
@@ -158,12 +178,12 @@ below:
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| E01 | IoU matching | OPEN | node absent |
-| E02 | Unmatched candidates retained | OPEN | node absent |
-| E03 | Geometry conflict | OPEN | typed state exists; Candidate Match behavior absent |
-| E04 | Label conflict | OPEN | typed state exists; Candidate Match behavior absent |
+| E01 | IoU matching | PASS | stable one-to-one same-Project-Label matcher with configurable minimum IoU |
+| E02 | Unmatched candidates retained | PASS | `preserve_unmatched` produces stable SingleSource clusters |
+| E03 | Geometry conflict | PASS | overlapping same-label boxes below agreement threshold become GeometryConflict |
+| E04 | Label conflict | PASS | overlapping boxes with different Project Labels retain both labeled evidence members |
 | E05 | Incomparable scores are not averaged | PASS | Cluster and fan-in tests retain/omit incomparable values without blending |
-| E06 | Evidence Gate emits explainable reason | OPEN | node absent |
+| E06 | Evidence Gate emits explainable reason | PASS | persisted decision report includes stable code, message, sources, candidate and metrics |
 | E07 | High specialist score can skip fallback | OPEN | recovery absent |
 | E08 | Empty specialist result can trigger fallback | OPEN | recovery absent |
 | E09 | Domain risk can trigger fallback | OPEN | recovery absent |
@@ -200,10 +220,10 @@ below:
 | --- | --- | --- | --- |
 | H01 | Global brand remains AnnotAgent | PASS | product identity tests/baseline |
 | H02 | Guided Mode uses user language | PASS | current Guided Workspace; new recommendations open |
-| H03 | Expert Mode shows real model and evidence | OPEN | mixed evidence DTO/UI absent |
+| H03 | Expert Mode shows real model and evidence | PASS | Run Debug Candidate Cluster payload and Evidence Decision card use persisted source/model facts |
 | H04 | Results shows source model | OPEN | mixed source evidence absent |
-| H05 | Missing score says confidence not provided | OPEN | score cannot be absent |
-| H06 | Agreement is visible | OPEN | clusters absent |
+| H05 | Missing score says confidence not provided | PASS | Evidence Decision card says confidence was not provided or is not comparable |
+| H06 | Agreement is visible | PASS | Debug card renders multi-source agreement reason and IoU from Gate report |
 | H07 | Review explains why it was queued | OPEN | generic reasons exist; mixed reasons absent |
 | H08 | Review can choose either model box | OPEN | source choices absent |
 | H09 | Settings can test a Worker | PASS | Models `Test Worker` invokes real health/capability discovery endpoint |

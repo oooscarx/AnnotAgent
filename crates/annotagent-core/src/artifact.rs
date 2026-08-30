@@ -417,7 +417,7 @@ pub struct ArtifactReference {
 mod tests {
     use crate::{
         ArtifactKind, CandidateAgreement, CandidateCluster, CandidateClusterSetArtifact,
-        DetectionEvidence, DetectionScore,
+        DetectionEvidence, DetectionScore, VisionCapability,
     };
 
     use super::*;
@@ -570,6 +570,7 @@ mod tests {
             },
             image_id: ImageId::new(),
             source_detection_sets: vec![source("set-a"), source("set-b")],
+            validation_state: ArtifactValidationState::Unvalidated,
             candidates: vec![CandidateCluster {
                 id: "candidate".to_owned(),
                 target_label: LabelId::from("ball"),
@@ -582,6 +583,8 @@ mod tests {
                         score: DetectionScore::relative(0.8).expect("score"),
                         query_id: None,
                         model_label: Some("sports ball".to_owned()),
+                        project_label: Some(LabelId::from("ball")),
+                        source_capability: VisionCapability::ObjectDetection,
                         raw_output_ref: None,
                     },
                     DetectionEvidence {
@@ -591,6 +594,8 @@ mod tests {
                         score: DetectionScore::not_provided(),
                         query_id: Some("target object".to_owned()),
                         model_label: None,
+                        project_label: Some(LabelId::from("ball")),
+                        source_capability: VisionCapability::OpenVocabularyDetection,
                         raw_output_ref: None,
                     },
                 ],

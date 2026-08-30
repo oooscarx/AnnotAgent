@@ -662,6 +662,7 @@ mod tests {
                 node: &node,
                 input_artifacts: Vec::new(),
                 input_pipeline_artifacts: vec![input],
+                input_metadata: BTreeMap::new(),
                 cancellation: CancellationToken::new(),
             })
             .await

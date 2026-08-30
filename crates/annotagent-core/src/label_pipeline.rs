@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId, ModelId,
     ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedRect, ProjectSchema,
-    ResourceRequirements, RetryPolicy, ReviewGate, RunId, ScoreSemantics, TaskId,
+    ResourceRequirements, RetryPolicy, ReviewGate, RunId, ScoreSemantics, TaskId, ValidationIssue,
     VisionArtifactValue, VisionBackendError, VisionBackendTimings, VisionBackendUsage,
     VisionCapability, WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode,
     WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
@@ -159,6 +159,10 @@ pub struct DetectionEvidence {
     pub score: DetectionScore,
     pub query_id: Option<String>,
     pub model_label: Option<String>,
+    #[serde(default)]
+    pub project_label: Option<LabelId>,
+    #[serde(default = "default_object_detection_capability")]
+    pub source_capability: VisionCapability,
     pub raw_output_ref: Option<StoredPayloadRef>,
 }
 
@@ -218,6 +222,8 @@ impl DetectionArtifactItem {
             score,
             query_id: query_id.clone(),
             model_label: model_label.clone(),
+            project_label: project_label.clone(),
+            source_capability: source.capability,
             raw_output_ref: None,
         };
         Ok(Self {
@@ -294,6 +300,8 @@ impl<'de> Deserialize<'de> for DetectionSetArtifact {
                     score: detection.score,
                     query_id: detection.query_id.clone(),
                     model_label: detection.model_label.clone(),
+                    project_label: detection.project_label.clone(),
+                    source_capability: detection.source_capability,
                     raw_output_ref: None,
                 });
             }
@@ -340,7 +348,185 @@ pub struct CandidateClusterSetArtifact {
     pub reference: ArtifactRef,
     pub image_id: ImageId,
     pub source_detection_sets: Vec<ArtifactRef>,
+    #[serde(default = "default_unvalidated")]
+    pub validation_state: ArtifactValidationState,
     pub candidates: Vec<CandidateCluster>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorrectionRisk {
+    pub score: f32,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+impl CorrectionRisk {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_confidence(self.score)?;
+        if self.reasons.iter().any(|reason| reason.trim().is_empty()) {
+            return Err("CorrectionRisk reasons cannot be empty".to_owned());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceGateInput {
+    pub candidates: Vec<CandidateCluster>,
+    #[serde(default)]
+    pub validation_issues: Vec<ValidationIssue>,
+    pub correction_risk: Option<CorrectionRisk>,
+}
+
+impl EvidenceGateInput {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(risk) = &self.correction_risk {
+            risk.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceGateDecision {
+    Accept,
+    Fallback,
+    Review,
+    Reject,
+}
+
+impl EvidenceGateDecision {
+    #[must_use]
+    pub const fn route(self) -> &'static str {
+        match self {
+            Self::Accept => "accept",
+            Self::Fallback => "fallback",
+            Self::Review => "review",
+            Self::Reject => "reject",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceGateReason {
+    pub code: String,
+    pub message: String,
+    pub candidate_id: Option<CandidateClusterId>,
+    #[serde(default)]
+    pub source_model_ids: Vec<ModelId>,
+    #[serde(default)]
+    pub metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceGateReport {
+    pub decision: EvidenceGateDecision,
+    pub reasons: Vec<EvidenceGateReason>,
+    pub candidate_count: usize,
+    pub validation_issue_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EvidenceGateConfig {
+    pub accept_when: Vec<EvidenceAcceptRule>,
+    pub fallback_when: Vec<EvidenceFallbackRule>,
+    pub review_when: Vec<EvidenceReviewRule>,
+    pub reject_when: Vec<EvidenceRejectRule>,
+}
+
+impl EvidenceGateConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        for threshold in self
+            .accept_when
+            .iter()
+            .flat_map(|rule| [rule.minimum_iou, rule.minimum_score])
+            .chain(
+                self.fallback_when
+                    .iter()
+                    .flat_map(|rule| [rule.specialist_score_below, rule.correction_risk_above]),
+            )
+            .chain(
+                self.review_when
+                    .iter()
+                    .map(|rule| rule.correction_risk_above),
+            )
+            .flatten()
+        {
+            validate_confidence(threshold)?;
+        }
+        if self
+            .accept_when
+            .iter()
+            .any(|rule| rule.minimum_sources == Some(0))
+        {
+            return Err("minimum_sources must be greater than zero".to_owned());
+        }
+        for source in self
+            .accept_when
+            .iter()
+            .filter_map(|rule| rule.source.as_deref())
+            .chain(
+                self.fallback_when
+                    .iter()
+                    .filter_map(|rule| rule.source.as_deref()),
+            )
+        {
+            if source.trim().is_empty() {
+                return Err("evidence source cannot be empty".to_owned());
+            }
+        }
+        if self
+            .reject_when
+            .iter()
+            .flat_map(|rule| &rule.domain_issue_codes)
+            .any(|code| code.trim().is_empty())
+        {
+            return Err("domain issue code cannot be empty".to_owned());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EvidenceAcceptRule {
+    pub minimum_sources: Option<usize>,
+    pub minimum_iou: Option<f32>,
+    /// Exact Model Registry id. Core does not assign semantic meaning to model brands.
+    pub source: Option<ModelId>,
+    pub minimum_score: Option<f32>,
+    pub no_domain_issue: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EvidenceFallbackRule {
+    /// Exact source Model Registry id; omitted means the first declared source.
+    pub source: Option<ModelId>,
+    pub empty_specialist_result: bool,
+    pub specialist_score_below: Option<f32>,
+    pub domain_issue: bool,
+    pub correction_risk_above: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EvidenceReviewRule {
+    pub geometry_conflict: bool,
+    pub label_conflict: bool,
+    pub open_vocab_only: bool,
+    pub score_missing: bool,
+    pub empty_result: bool,
+    pub correction_risk_above: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EvidenceRejectRule {
+    pub empty_result: bool,
+    pub domain_issue_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1335,6 +1521,18 @@ fn validate_detection_evidence(evidence: &DetectionEvidence) -> Result<(), Strin
     if evidence.source_model_id.trim().is_empty() || evidence.source_artifact_id.trim().is_empty() {
         return Err("Detection evidence requires source model and Artifact ids".to_owned());
     }
+    if !is_detection_capability(evidence.source_capability) {
+        return Err(
+            "Detection evidence source_capability must be a detection capability".to_owned(),
+        );
+    }
+    if evidence
+        .project_label
+        .as_ref()
+        .is_some_and(|label| label.as_str().trim().is_empty())
+    {
+        return Err("Detection evidence project_label cannot be empty".to_owned());
+    }
     if evidence.query_id.as_deref().is_none_or(str::is_empty)
         && evidence.model_label.as_deref().is_none_or(str::is_empty)
     {
@@ -2224,6 +2422,8 @@ mod tests {
                 score: DetectionScore::relative(0.87).expect("score"),
                 query_id: None,
                 model_label: Some("sports ball".to_owned()),
+                project_label: Some(LabelId::from("ball")),
+                source_capability: VisionCapability::ObjectDetection,
                 raw_output_ref: Some(StoredPayloadRef {
                     id: "payload-1".to_owned(),
                     media_type: "application/json".to_owned(),
@@ -2238,6 +2438,8 @@ mod tests {
                 score: DetectionScore::not_provided(),
                 query_id: Some("query-target-object".to_owned()),
                 model_label: None,
+                project_label: Some(LabelId::from("ball")),
+                source_capability: VisionCapability::OpenVocabularyDetection,
                 raw_output_ref: None,
             },
         ];
@@ -2261,6 +2463,7 @@ mod tests {
                 source("specialist-set", "specialist"),
                 source("open-vocabulary-set", "open-vocabulary"),
             ],
+            validation_state: ArtifactValidationState::Unvalidated,
             candidates: vec![CandidateCluster {
                 id: "cluster-1".to_owned(),
                 target_label: LabelId::from("ball"),

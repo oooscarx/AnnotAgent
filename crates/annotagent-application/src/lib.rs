@@ -958,6 +958,22 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             ],
             deterministic: true,
         },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_CANDIDATE_MATCH.to_owned(),
+            display_name: "Match Detection Sets".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::CandidateClusterSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_EVIDENCE_GATE.to_owned(),
+            display_name: "Evidence Gate".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::CandidateClusterSet],
+            produces: vec![ArtifactKind::CandidateClusterSet],
+            deterministic: true,
+        },
     ] {
         nodes.register(descriptor)?;
     }
@@ -1248,6 +1264,11 @@ fn node_artifact_inspection(
                 attempts: trace.attempt_count,
                 cache_hit: trace.cache_hit,
                 usage: trace.usage.clone(),
+                route: trace.route.clone(),
+                metadata: checkpoint
+                    .node_outputs
+                    .get(&trace.node_id)
+                    .map_or_else(BTreeMap::new, |output| output.metadata.clone()),
                 error: trace.error.clone(),
             })
         })
@@ -1399,6 +1420,8 @@ pub struct NodeArtifactInspection {
     pub attempts: u32,
     pub cache_hit: bool,
     pub usage: DagNodeUsage,
+    pub route: Option<String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
     pub error: Option<DagNodeFailure>,
 }
 
@@ -3001,9 +3024,18 @@ impl LocalApplication {
                                 );
                             }
                         }
-                        PipelineArtifact::Image(_)
-                        | PipelineArtifact::CandidateClusterSet(_)
-                        | PipelineArtifact::CropSet(_) => {}
+                        PipelineArtifact::CandidateClusterSet(set) => {
+                            for candidate in &set.candidates {
+                                candidates.insert(
+                                    candidate.id.clone(),
+                                    (
+                                        candidate.target_label.to_string(),
+                                        sample_test_outcome_status(Some(set.validation_state)),
+                                    ),
+                                );
+                            }
+                        }
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
                     }
                 }
             }
@@ -4983,6 +5015,36 @@ impl LocalApplication {
                                 );
                             }
                         }
+                        PipelineArtifact::CandidateClusterSet(set) => {
+                            sample_candidates = sample_candidates.max(set.candidates.len());
+                            for candidate in &set.candidates {
+                                let source_models = candidate
+                                    .members
+                                    .iter()
+                                    .map(|member| &member.source_model_id)
+                                    .collect::<BTreeSet<_>>();
+                                candidate_outcomes.insert(
+                                    candidate.id.clone(),
+                                    SampleTestOutcome {
+                                        id: candidate.id.clone(),
+                                        label: candidate.target_label.to_string(),
+                                        confidence: (source_models.len() == 1)
+                                            .then(|| {
+                                                candidate.members.first().and_then(|member| {
+                                                    member.score.comparable_confidence()
+                                                })
+                                            })
+                                            .flatten(),
+                                        status: sample_test_outcome_status(Some(
+                                            set.validation_state,
+                                        )),
+                                        value: Some(VisionArtifactValue::BoundingBox {
+                                            rect: candidate.representative_bbox,
+                                        }),
+                                    },
+                                );
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -6531,7 +6593,9 @@ impl TerminalEvent for RunEvent {
 
 #[cfg(test)]
 mod tests {
-    use annotagent_core::{LabelId, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind};
+    use annotagent_core::{
+        LabelId, NodePort, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+    };
 
     use super::*;
 
@@ -6621,6 +6685,31 @@ project:
   language: en
   enabled_skills:
     - id: annotagent.object_detection
+      version: "1"
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [ball]
+    required: false
+review:
+  auto_accept_confidence: 0.95
+  force_review_below: 0.5
+export:
+  formats: [native]
+"#;
+
+    const MIXED_DETECTION_PROJECT: &str = r#"
+version: 1
+project:
+  name: Generic mixed evidence demo
+  language: en
+  enabled_skills:
+    - id: annotagent.object_detection
+      version: "1"
+    - id: annotagent.open_vocabulary_grounding
       version: "1"
 dataset:
   root: images
@@ -6873,6 +6962,202 @@ export:
         assert!(serialized.contains("football"));
         assert!(serialized.contains("ball"));
         assert!(serialized.contains("relative_confidence"));
+    }
+
+    #[tokio::test]
+    async fn mixed_detection_nodes_execute_and_persist_explainable_evidence_offline() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("mixed-evidence", MIXED_DETECTION_PROJECT)
+            .expect("Generic Project");
+        generate_synthetic_robocup(&temporary.path().join("mixed-evidence/images/sample.png"))
+            .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let mut draft = application
+            .create_workflow_draft("mixed-evidence", &settings, false)
+            .expect("blank Draft");
+        let port = |id: &str, artifact_type, multiple| NodePort {
+            id: id.to_owned(),
+            artifact_type,
+            required: true,
+            multiple,
+        };
+        let node =
+            |id: &str, node_type: &str, kind, inputs, outputs, parameters| WorkflowDraftNode {
+                id: id.to_owned(),
+                node_type: node_type.to_owned(),
+                kind,
+                inputs,
+                outputs,
+                parameters,
+                ..WorkflowDraftNode::default()
+            };
+        let mut specialist = node(
+            "specialist",
+            annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION,
+            WorkflowNodeKind::VisionModel,
+            vec![port("image", ArtifactKind::Image, false)],
+            vec![port("detections", ArtifactKind::DetectionSet, false)],
+            BTreeMap::from([
+                ("target_labels".to_owned(), json!(["ball"])),
+                ("class_mapping".to_owned(), json!({"football": "ball"})),
+                ("mock_model_label".to_owned(), json!("football")),
+                ("mock_confidence".to_owned(), json!(0.93)),
+            ]),
+        );
+        specialist.model_binding = Some("mock-object-detector".to_owned());
+        specialist.required_skills = vec!["annotagent.object_detection".to_owned()];
+        let mut grounding = node(
+            "grounding",
+            annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION,
+            WorkflowNodeKind::VisionModel,
+            vec![port("image", ArtifactKind::Image, false)],
+            vec![port("detections", ArtifactKind::DetectionSet, false)],
+            BTreeMap::from([(
+                "queries".to_owned(),
+                json!([{"id": "ball-query", "text": "ball", "target_label": "ball"}]),
+            )]),
+        );
+        grounding.model_binding = Some("mock-open-vocabulary".to_owned());
+        grounding.required_skills = vec!["annotagent.open_vocabulary_grounding".to_owned()];
+        let image = node(
+            "image",
+            annotagent_core::IMAGE_INPUT_OPERATION,
+            WorkflowNodeKind::ImageInput,
+            Vec::new(),
+            vec![port("image", ArtifactKind::Image, false)],
+            BTreeMap::new(),
+        );
+        let matcher = node(
+            "match",
+            annotagent_runtime::CORE_CANDIDATE_MATCH,
+            WorkflowNodeKind::CandidateMerge,
+            vec![
+                port("left", ArtifactKind::DetectionSet, false),
+                port("right", ArtifactKind::DetectionSet, false),
+            ],
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            BTreeMap::from([
+                ("method".to_owned(), json!("iou")),
+                ("minimum_iou".to_owned(), json!(0.6)),
+                ("preserve_unmatched".to_owned(), json!(true)),
+            ]),
+        );
+        let gate = node(
+            "evidence",
+            annotagent_runtime::CORE_EVIDENCE_GATE,
+            WorkflowNodeKind::Gate,
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            BTreeMap::from([
+                (
+                    "accept_when".to_owned(),
+                    json!([{"minimum_sources": 2, "minimum_iou": 0.6}]),
+                ),
+                ("review_when".to_owned(), json!([{"score_missing": true}])),
+            ]),
+        );
+        let review = node(
+            "review",
+            "review_gate",
+            WorkflowNodeKind::HumanReview,
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            BTreeMap::from([("task_id".to_owned(), json!("objects"))]),
+        );
+        let commit = node(
+            "commit",
+            "commit",
+            WorkflowNodeKind::Commit,
+            vec![port("candidates", ArtifactKind::CandidateClusterSet, false)],
+            Vec::new(),
+            BTreeMap::from([("task_id".to_owned(), json!("objects"))]),
+        );
+        let edge = |from_node: &str,
+                    from_port: &str,
+                    to_node: &str,
+                    to_port: &str,
+                    route: Option<&str>| WorkflowEdge {
+            from_node: from_node.to_owned(),
+            from_port: from_port.to_owned(),
+            to_node: to_node.to_owned(),
+            to_port: to_port.to_owned(),
+            route: route.map(ToOwned::to_owned),
+        };
+        draft.nodes = vec![image, specialist, grounding, matcher, gate, review, commit];
+        draft.edges = vec![
+            edge("image", "image", "specialist", "image", None),
+            edge("image", "image", "grounding", "image", None),
+            edge("specialist", "detections", "match", "left", None),
+            edge("grounding", "detections", "match", "right", None),
+            edge("match", "candidates", "evidence", "candidates", None),
+            edge(
+                "evidence",
+                "candidates",
+                "review",
+                "candidates",
+                Some("review"),
+            ),
+            edge("review", "candidates", "commit", "candidates", None),
+        ];
+        let draft = application
+            .save_workflow_draft(draft)
+            .expect("save mixed-evidence Draft");
+        let dry_run = application
+            .dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .expect("mixed-evidence Dry Run");
+        assert!(dry_run.validation.valid, "{:#?}", dry_run.validation.issues);
+        assert_eq!(dry_run.summary.failed_count, 0);
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("publish mixed-evidence Workflow");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("mixed-evidence/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("mixed-evidence-offline"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start mixed-evidence Run");
+        let result = application
+            .wait_run(started.run_id)
+            .await
+            .expect("complete mixed-evidence Run");
+        assert_eq!(result.status, RunStatus::CompletedWithReview);
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("persisted evidence inspection");
+        let match_inspection = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "match")
+            .expect("match inspection");
+        let PipelineArtifact::CandidateClusterSet(clusters) = &match_inspection.outputs[0] else {
+            panic!("CandidateClusterSet")
+        };
+        assert_eq!(clusters.candidates.len(), 1);
+        assert_eq!(clusters.candidates[0].members.len(), 2);
+        assert!(clusters.candidates[0].members.iter().any(|member| {
+            member.source_model_id == "mock-object-detector" && member.score.value == Some(0.93)
+        }));
+        assert!(clusters.candidates[0].members.iter().any(|member| {
+            member.source_model_id == "mock-open-vocabulary" && member.score.value.is_none()
+        }));
+        let evidence = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "evidence")
+            .expect("Evidence Gate inspection");
+        assert_eq!(evidence.route.as_deref(), Some("review"));
+        assert_eq!(evidence.metadata["evidence_gate"]["decision"], "review");
+        assert_eq!(
+            evidence.metadata["evidence_gate"]["reasons"][0]["code"],
+            "score_not_comparable"
+        );
     }
 
     #[test]

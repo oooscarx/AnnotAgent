@@ -770,6 +770,7 @@ mod tests {
                 node: &node,
                 input_artifacts: Vec::new(),
                 input_pipeline_artifacts: vec![image],
+                input_metadata: BTreeMap::new(),
                 cancellation: CancellationToken::new(),
             })
             .await
@@ -820,6 +821,7 @@ mod tests {
                 node: &node,
                 input_artifacts: Vec::new(),
                 input_pipeline_artifacts: vec![image.clone()],
+                input_metadata: BTreeMap::new(),
                 cancellation: CancellationToken::new(),
             })
             .await
@@ -841,6 +843,7 @@ mod tests {
                 node: &node,
                 input_artifacts: Vec::new(),
                 input_pipeline_artifacts: vec![image],
+                input_metadata: BTreeMap::new(),
                 cancellation: CancellationToken::new(),
             })
             .await

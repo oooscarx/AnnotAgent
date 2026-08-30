@@ -21,10 +21,11 @@ use annotagent_provider::{
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
-    CORE_CONFIDENCE_GATE, CORE_CROP, CORE_FILTER, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL,
-    CorePipelineRunner, DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure,
-    DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus,
-    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_CANDIDATE_MATCH, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_EVIDENCE_GATE, CORE_FILTER,
+    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CorePipelineRunner, DagCheckpoint, DagExecutionRequest,
+    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
+    DagRunResult, DagRunStatus, ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl,
+    RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -262,6 +263,8 @@ impl PublishedWorkflowRuntime {
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
                 | CORE_CONFIDENCE_GATE
+                | CORE_CANDIDATE_MATCH
+                | CORE_EVIDENCE_GATE
                 | CORE_IMAGE_STATISTICS => {
                     executor.register_runner(
                         node.node_type.clone(),
@@ -920,6 +923,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
                 | CORE_CONFIDENCE_GATE
+                | CORE_CANDIDATE_MATCH
+                | CORE_EVIDENCE_GATE
                 | CORE_IMAGE_STATISTICS => {
                     executor.register_runner(
                         node.node_type.clone(),
@@ -2083,9 +2088,58 @@ fn pipeline_annotations(
                         })
                     }));
                 }
-                PipelineArtifact::Image(_)
-                | PipelineArtifact::CandidateClusterSet(_)
-                | PipelineArtifact::CropSet(_) => {}
+                PipelineArtifact::CandidateClusterSet(set) => {
+                    annotations.extend(set.candidates.iter().map(|candidate| {
+                        let source_models = candidate
+                            .members
+                            .iter()
+                            .map(|member| member.source_model_id.clone())
+                            .collect::<BTreeSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        let confidence = (source_models.len() == 1)
+                            .then(|| {
+                                candidate
+                                    .members
+                                    .first()
+                                    .and_then(|member| member.score.comparable_confidence())
+                            })
+                            .flatten();
+                        Annotation {
+                            id: AnnotationId::new(),
+                            image_id: set.image_id,
+                            task_id: task_id.clone(),
+                            label: Some(candidate.target_label.clone()),
+                            value: annotagent_core::AnnotationValue::BoundingBox {
+                                rect: candidate.representative_bbox,
+                            },
+                            attributes: BTreeMap::from([
+                                (
+                                    "candidate_cluster_id".to_owned(),
+                                    AttributeValue::String(candidate.id.clone()),
+                                ),
+                                (
+                                    "candidate_cluster_artifact_ref".to_owned(),
+                                    AttributeValue::String(set.reference.artifact_id.clone()),
+                                ),
+                                (
+                                    "evidence_source_models".to_owned(),
+                                    AttributeValue::StringList(source_models.clone()),
+                                ),
+                            ]),
+                            confidence,
+                            source: AnnotationSource::ModelAndTool,
+                            review_status: status,
+                            provenance: AnnotationProvenance {
+                                model: (source_models.len() == 1).then(|| source_models[0].clone()),
+                                tool_names: vec![set.reference.source_node.clone()],
+                                ..AnnotationProvenance::default()
+                            },
+                            created_at: Utc::now(),
+                        }
+                    }));
+                }
+                PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
             }
         }
     }

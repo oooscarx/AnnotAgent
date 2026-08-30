@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current Milestone
 
-M5 — Generic Object Detection Skill and RF-DETR specialist backend (complete)
+M6 — Candidate Match, Evidence Gate and explainable evidence UI (complete)
 
 ## Completed
 
@@ -99,34 +99,50 @@ M5 — Generic Object Detection Skill and RF-DETR specialist backend (complete)
 - Added protocol and integration evidence for discovered label space, finite relative score,
   normalized coordinates, class mapping, no-object success, metadata persistence and unavailable
   Worker startup.
+- Added generic `core.match_detection_sets` execution for exactly two same-image DetectionSets.
+  Matching is stable and one-to-one by Project Label/IoU, retains unmatched candidates, and emits
+  explicit MultiSourceAgreement, GeometryConflict, LabelConflict or SingleSource clusters.
+- Extended Detection Evidence with migrated Project Label and source Capability facts so conflicts
+  remain explainable without consulting a model brand. Candidate Cluster validation state now
+  travels through Review/Commit and persisted Artifact lineage.
+- Added generic `core.evidence_gate` with typed input/config/report contracts and exact `accept`,
+  `fallback`, `review`, and `reject` routes. It consumes propagated validator issues and optional
+  Correction Risk, treats missing/ranking/unknown scores as incomparable, and emits observable
+  reasons rather than hidden reasoning.
+- Added a Generic Project integration test for offline specialist + open-vocabulary fan-in through
+  Draft, Dry Run, immutable publish, exact-version Run and persisted inspection. The scored and
+  score-less contributions remain independent.
+- Added inspection API route/metadata fields, Candidate Cluster bbox preview, and a responsive Run
+  Debug Evidence Decision card showing decision, reasons, source models, candidates and domain
+  issue count. Multi-source Annotation projection leaves aggregate confidence unset.
 
 ## In progress
 
-- None. M5 is ready for its independent local commit.
+- None. M6 is ready for its independent local commit.
 
 ## Next step
 
-M6 — implement generic Candidate Match and Evidence Gate execution nodes, explanation contracts,
-tests, Runtime wiring, and evidence presentation DTO/UI.
+M7 — implement Registry-bounded cold-start/specialist Workflow Advisor strategy and the bounded,
+evidence-driven Recovery Agent with budget and stop conditions.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 202 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 207 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
-| Web | `npm --prefix web test -- --run` | PASS — 12 files, 33 tests |
+| Web | `npm --prefix web test -- --run` | PASS — 12 files, 34 tests |
 | Web types | `npm --prefix web run typecheck` | PASS |
 | Web build | `npm --prefix web run build` | PASS |
 | Worker | parse all tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Locate worker | start without weights; request `/health` and `/v1/capabilities` | PASS — unavailable health is truthful; capabilities remain discoverable |
 | RF-DETR worker | start without checkpoint; request `/health` and `/v1/capabilities` | PASS — immutable metadata requirement is reported; no fixture inference |
-| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M5 Settings/Models code is built/tested, full mixed-evidence browser gate remains M9/M10 |
+| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M6 evidence card is built/parser-tested, full mixed-evidence visual browser gate remains M9/M10 |
 
 ## Latest local commit
 
-This document's containing M5 commit: `feat(models): integrate rfdetr detection backend`
+This document's containing M6 commit: `feat(runtime): combine detector evidence without fabricating scores`
 
 ## Audited baseline
 
@@ -160,9 +176,10 @@ This document's containing M5 commit: `feat(models): integrate rfdetr detection 
 
 ## Release Blocking remaining
 
-The matrix contains 59 `PASS`, 29 `OPEN`, and one `LIVE-CONDITIONAL` row after M5. Both model
-families' Mock/contract/startup requirements pass; real five-image GPU smokes remain explicitly
-live-conditional and are not represented by Mock or local protocol fixtures.
+The matrix contains 67 `PASS`, 21 `OPEN`, and one `LIVE-CONDITIONAL` row after M6. Matching,
+evidence-aware decisions and the minimum Expert inspection surface now pass; Advisor/Recovery,
+cache-specific proof, Guided Results/Review and RoboCup hybrid policy remain scheduled work. Real
+five-image GPU smokes remain explicitly live-conditional and are not represented by Mock fixtures.
 
 ## Live-conditional items
 

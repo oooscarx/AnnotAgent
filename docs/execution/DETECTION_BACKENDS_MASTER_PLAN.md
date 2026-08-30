@@ -59,4 +59,5 @@ external model checks are explicitly `LIVE-CONDITIONAL` with an exact blocker.
 - M2 complete — `1017146 feat(core): preserve detection evidence and score semantics`
 - M3 complete — `333098a feat(provider): add versioned detection worker protocol`
 - M4 complete — `a3ff9c2 feat(models): integrate locateanything grounding backend`
-- M5 complete — this document's containing commit
+- M5 complete — `e372d02 feat(models): integrate rfdetr detection backend`
+- M6 complete — this document's containing commit

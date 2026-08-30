@@ -4,9 +4,9 @@ Updated: 2026-08-30
 
 ## In-repository blockers
 
-None at M5. Both Capability Skills, both optional Worker adapters, Mock paths, Settings,
-Model discovery/test surfaces, validators, examples, and docs are complete. Candidate Match and
-Evidence Gate are scheduled M6 implementation work, not environment blockers.
+None at M6. Both Capability Skills and Worker adapters, Candidate Match, Evidence Gate, persisted
+explanations and the minimum Run Debug evidence surface are complete. Advisor/Recovery policy is
+scheduled M7 implementation work, not an environment blocker.
 
 ## Live-conditional external requirements
 

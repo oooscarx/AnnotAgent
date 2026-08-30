@@ -4,9 +4,12 @@ use std::{collections::BTreeMap, sync::OnceLock};
 
 use annotagent_core::{
     AnnotationCandidateSet, ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef,
-    ArtifactRole, ArtifactValidationState, AttributeValue, ClassificationSetArtifact,
-    CropSetArtifact, DetectionSetArtifact, LabelId, PipelineArtifact, TaskId, VisionArtifact,
-    VisionArtifactValue,
+    ArtifactRole, ArtifactValidationState, AttributeValue, CandidateAgreement, CandidateCluster,
+    CandidateClusterSetArtifact, ClassificationSetArtifact, CorrectionRisk, CropSetArtifact,
+    Detection, DetectionEvidence, DetectionSetArtifact, EvidenceAcceptRule, EvidenceFallbackRule,
+    EvidenceGateConfig, EvidenceGateDecision, EvidenceGateInput, EvidenceGateReason,
+    EvidenceGateReport, EvidenceRejectRule, EvidenceReviewRule, LabelId, PipelineArtifact, TaskId,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -21,6 +24,8 @@ pub const CORE_MAP_LABEL: &str = "core.map_label";
 pub const CORE_ATTACH_RESULT: &str = "core.attach_result";
 pub const CORE_ATTACH_ATTRIBUTE: &str = "core.attach_attribute";
 pub const CORE_CONFIDENCE_GATE: &str = "core.confidence_gate";
+pub const CORE_CANDIDATE_MATCH: &str = "core.match_detection_sets";
+pub const CORE_EVIDENCE_GATE: &str = "core.evidence_gate";
 pub const CORE_ARTIFACT_CACHE: &str = "core.artifact_cache";
 pub const CORE_IMAGE_STATISTICS: &str = "core.compute_image_statistics";
 
@@ -37,6 +42,8 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_ATTACH_RESULT => run_attach_result(&context),
             CORE_ATTACH_ATTRIBUTE => run_attach_attribute(&context),
             CORE_CONFIDENCE_GATE => run_confidence_gate(&context),
+            CORE_CANDIDATE_MATCH => run_candidate_match(&context),
+            CORE_EVIDENCE_GATE => run_evidence_gate(&context),
             CORE_IMAGE_STATISTICS => run_image_statistics(&context),
             CORE_ARTIFACT_CACHE => Ok(DagNodeOutput {
                 pipeline_artifacts: context.input_pipeline_artifacts,
@@ -243,6 +250,889 @@ fn run_attach_attribute(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, D
     Ok(output(PipelineArtifact::AnnotationCandidateSet(candidates)))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MatchKind {
+    Agreement,
+    GeometryConflict,
+    LabelConflict,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MatchPair {
+    left: usize,
+    right: usize,
+    iou: f32,
+    kind: MatchKind,
+}
+
+fn run_candidate_match(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let sets = detection_sets(context)?;
+    if sets.len() != 2 {
+        return Err(DagNodeFailure::terminal(
+            "invalid_match_input",
+            "Match Detection Sets requires exactly two DetectionSet Artifacts",
+        ));
+    }
+    for set in &sets {
+        set.validate()
+            .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
+    }
+    if sets[0].image_id != sets[1].image_id {
+        return Err(DagNodeFailure::terminal(
+            "image_scope_mismatch",
+            "DetectionSets must belong to the same image",
+        ));
+    }
+    let method = string_parameter(context, "method", "iou")?;
+    if method != "iou" {
+        return Err(DagNodeFailure::terminal(
+            "unsupported_match_method",
+            "Match Detection Sets currently supports only method=iou",
+        ));
+    }
+    let minimum_iou = number_parameter(context, "minimum_iou", 0.5)? as f32;
+    if !(0.0..=1.0).contains(&minimum_iou) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_minimum_iou",
+            "minimum_iou must be within [0,1]",
+        ));
+    }
+    let preserve_unmatched = boolean_parameter(context, "preserve_unmatched", true)?;
+    let left_labels = project_labels(sets[0])?;
+    let right_labels = project_labels(sets[1])?;
+    let mut left_matched = vec![false; sets[0].detections.len()];
+    let mut right_matched = vec![false; sets[1].detections.len()];
+    let mut selected = Vec::new();
+
+    select_pairs(
+        pair_candidates(
+            sets[0],
+            sets[1],
+            &left_labels,
+            &right_labels,
+            |same, iou| same && iou >= minimum_iou,
+            MatchKind::Agreement,
+        ),
+        &mut left_matched,
+        &mut right_matched,
+        &mut selected,
+    );
+    select_pairs(
+        pair_candidates(
+            sets[0],
+            sets[1],
+            &left_labels,
+            &right_labels,
+            |same, iou| !same && iou > 0.0,
+            MatchKind::LabelConflict,
+        ),
+        &mut left_matched,
+        &mut right_matched,
+        &mut selected,
+    );
+    select_pairs(
+        pair_candidates(
+            sets[0],
+            sets[1],
+            &left_labels,
+            &right_labels,
+            |same, iou| same && iou > 0.0 && iou < minimum_iou,
+            MatchKind::GeometryConflict,
+        ),
+        &mut left_matched,
+        &mut right_matched,
+        &mut selected,
+    );
+
+    selected.sort_by_key(|pair| (pair.left, pair.right, pair.kind));
+    let mut pending = selected
+        .into_iter()
+        .map(|pair| {
+            let left = &sets[0].detections[pair.left];
+            let right = &sets[1].detections[pair.right];
+            let mut members = detection_evidence(sets[0], left);
+            members.extend(detection_evidence(sets[1], right));
+            let agreement = match pair.kind {
+                MatchKind::Agreement => CandidateAgreement::MultiSourceAgreement {
+                    minimum_iou: pair.iou,
+                    mean_iou: pair.iou,
+                },
+                MatchKind::GeometryConflict => CandidateAgreement::GeometryConflict,
+                MatchKind::LabelConflict => CandidateAgreement::LabelConflict,
+            };
+            (
+                pair.left,
+                pair.right,
+                left_labels[pair.left].clone(),
+                left.bbox,
+                members,
+                agreement,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if preserve_unmatched {
+        pending.extend(
+            sets[0]
+                .detections
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !left_matched[*index])
+                .map(|(index, detection)| {
+                    (
+                        index,
+                        usize::MAX,
+                        left_labels[index].clone(),
+                        detection.bbox,
+                        detection_evidence(sets[0], detection),
+                        CandidateAgreement::SingleSource,
+                    )
+                }),
+        );
+        pending.extend(
+            sets[1]
+                .detections
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !right_matched[*index])
+                .map(|(index, detection)| {
+                    (
+                        usize::MAX,
+                        index,
+                        right_labels[index].clone(),
+                        detection.bbox,
+                        detection_evidence(sets[1], detection),
+                        CandidateAgreement::SingleSource,
+                    )
+                }),
+        );
+    }
+    pending.sort_by_key(|(left, right, ..)| (*left, *right));
+    let candidates = pending
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (_, _, target_label, representative_bbox, members, agreement))| {
+                CandidateCluster {
+                    id: format!("cluster-{index:04}"),
+                    target_label,
+                    representative_bbox,
+                    members,
+                    agreement,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    let artifact = CandidateClusterSetArtifact {
+        reference: output_reference(context, "candidates", ArtifactKind::CandidateClusterSet)?,
+        image_id: sets[0].image_id,
+        source_detection_sets: sets.iter().map(|set| set.reference.clone()).collect(),
+        validation_state: ArtifactValidationState::Unvalidated,
+        candidates,
+    };
+    artifact
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("candidate_match_output_invalid", error))?;
+    let mut metadata = propagated_evidence_metadata(context)?;
+    metadata.insert(
+        "source_summaries".to_owned(),
+        serde_json::json!(
+            sets.iter()
+                .map(|set| serde_json::json!({
+                    "artifact_id": set.reference.artifact_id,
+                    "model_id": set.model_binding,
+                    "detection_count": set.detections.len(),
+                }))
+                .collect::<Vec<_>>()
+        ),
+    );
+    metadata.insert(
+        "candidate_match".to_owned(),
+        serde_json::json!({
+            "method": method,
+            "minimum_iou": minimum_iou,
+            "preserve_unmatched": preserve_unmatched,
+            "candidate_count": artifact.candidates.len(),
+        }),
+    );
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::CandidateClusterSet(artifact)],
+        metadata,
+        ..DagNodeOutput::default()
+    })
+}
+
+fn project_labels(set: &DetectionSetArtifact) -> Result<Vec<LabelId>, DagNodeFailure> {
+    set.detections
+        .iter()
+        .map(|detection| {
+            detection.project_label.clone().ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "unmapped_detection_label",
+                    "Match Detection Sets requires every Detection to carry a Project Label",
+                )
+            })
+        })
+        .collect()
+}
+
+fn pair_candidates(
+    left: &DetectionSetArtifact,
+    right: &DetectionSetArtifact,
+    left_labels: &[LabelId],
+    right_labels: &[LabelId],
+    include: impl Fn(bool, f32) -> bool + Copy,
+    kind: MatchKind,
+) -> Vec<MatchPair> {
+    let mut pairs =
+        left.detections
+            .iter()
+            .enumerate()
+            .flat_map(|(left_index, left_detection)| {
+                right.detections.iter().enumerate().filter_map(
+                    move |(right_index, right_detection)| {
+                        let iou = rect_iou(left_detection.bbox, right_detection.bbox);
+                        include(left_labels[left_index] == right_labels[right_index], iou)
+                            .then_some(MatchPair {
+                                left: left_index,
+                                right: right_index,
+                                iou,
+                                kind,
+                            })
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+    pairs.sort_by(|left, right| {
+        right
+            .iou
+            .total_cmp(&left.iou)
+            .then_with(|| left.left.cmp(&right.left))
+            .then_with(|| left.right.cmp(&right.right))
+    });
+    pairs
+}
+
+fn select_pairs(
+    pairs: Vec<MatchPair>,
+    left_matched: &mut [bool],
+    right_matched: &mut [bool],
+    selected: &mut Vec<MatchPair>,
+) {
+    for pair in pairs {
+        if left_matched[pair.left] || right_matched[pair.right] {
+            continue;
+        }
+        left_matched[pair.left] = true;
+        right_matched[pair.right] = true;
+        selected.push(pair);
+    }
+}
+
+fn rect_iou(left: annotagent_core::NormalizedRect, right: annotagent_core::NormalizedRect) -> f32 {
+    let intersection = left.intersection_area(right);
+    let union = left.area() + right.area() - intersection;
+    if union <= 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn detection_evidence(set: &DetectionSetArtifact, detection: &Detection) -> Vec<DetectionEvidence> {
+    let mut evidence = detection.evidence.clone();
+    for member in &mut evidence {
+        member
+            .source_artifact_id
+            .clone_from(&set.reference.artifact_id);
+        if member.project_label.is_none() {
+            member.project_label.clone_from(&detection.project_label);
+        }
+        if member.source_model_id == detection.source_model_id {
+            member.source_capability = detection.source_capability;
+        }
+    }
+    evidence
+}
+
+fn run_evidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let mut artifact = one_candidate_cluster_set(context)?.clone();
+    artifact
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_candidate_clusters", error))?;
+    let config: EvidenceGateConfig =
+        serde_json::from_value(serde_json::to_value(&context.node.parameters).map_err(
+            |error| DagNodeFailure::terminal("invalid_evidence_config", error.to_string()),
+        )?)
+        .map_err(|error| DagNodeFailure::terminal("invalid_evidence_config", error.to_string()))?;
+    config
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_evidence_config", error))?;
+    let input = EvidenceGateInput {
+        candidates: artifact.candidates.clone(),
+        validation_issues: collected_validation_issues(context)?,
+        correction_risk: collected_correction_risk(context)?,
+    };
+    input
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_evidence_input", error))?;
+    let source_summaries = collected_source_summaries(context);
+    let report = decide_evidence(&input, &config, &source_summaries);
+    artifact.validation_state = match report.decision {
+        EvidenceGateDecision::Accept => ArtifactValidationState::Valid,
+        EvidenceGateDecision::Fallback => ArtifactValidationState::Unvalidated,
+        EvidenceGateDecision::Review => ArtifactValidationState::NeedsReview,
+        EvidenceGateDecision::Reject => ArtifactValidationState::Invalid,
+    };
+    let route = report.decision.route().to_owned();
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::CandidateClusterSet(artifact)],
+        route: Some(route),
+        metadata: BTreeMap::from([
+            (
+                "evidence_gate".to_owned(),
+                serde_json::to_value(&report).unwrap_or_else(|_| serde_json::json!({})),
+            ),
+            (
+                "validation_issues".to_owned(),
+                serde_json::to_value(&input.validation_issues)
+                    .unwrap_or_else(|_| serde_json::json!([])),
+            ),
+            (
+                "correction_risk".to_owned(),
+                serde_json::to_value(&input.correction_risk).unwrap_or(serde_json::Value::Null),
+            ),
+        ]),
+        ..DagNodeOutput::default()
+    })
+}
+
+#[derive(Debug, Clone)]
+struct EvidenceSourceSummary {
+    model_id: String,
+    detection_count: usize,
+}
+
+fn propagated_evidence_metadata(
+    context: &DagNodeContext<'_>,
+) -> Result<BTreeMap<String, serde_json::Value>, DagNodeFailure> {
+    let issues = collected_validation_issues(context)?;
+    let risk = collected_correction_risk(context)?;
+    let mut metadata = BTreeMap::new();
+    if !issues.is_empty() {
+        metadata.insert(
+            "validation_issues".to_owned(),
+            serde_json::to_value(issues).unwrap_or_else(|_| serde_json::json!([])),
+        );
+    }
+    if risk.is_some() {
+        metadata.insert(
+            "correction_risk".to_owned(),
+            serde_json::to_value(risk).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    Ok(metadata)
+}
+
+fn collected_validation_issues(
+    context: &DagNodeContext<'_>,
+) -> Result<Vec<ValidationIssue>, DagNodeFailure> {
+    let values = context
+        .input_metadata
+        .values()
+        .filter_map(|metadata| metadata.get("validation_issues"))
+        .chain(context.node.parameters.get("validation_issues"));
+    let mut issues = Vec::new();
+    for value in values {
+        let next =
+            serde_json::from_value::<Vec<ValidationIssue>>(value.clone()).map_err(|error| {
+                DagNodeFailure::terminal(
+                    "invalid_validation_evidence",
+                    format!("validation_issues metadata is invalid: {error}"),
+                )
+            })?;
+        issues.extend(next);
+    }
+    let mut identities = std::collections::BTreeSet::new();
+    issues.retain(|issue| identities.insert((issue.code.clone(), issue.message.clone())));
+    Ok(issues)
+}
+
+fn collected_correction_risk(
+    context: &DagNodeContext<'_>,
+) -> Result<Option<CorrectionRisk>, DagNodeFailure> {
+    let value = context.node.parameters.get("correction_risk").or_else(|| {
+        context
+            .input_metadata
+            .values()
+            .find_map(|metadata| metadata.get("correction_risk"))
+    });
+    value
+        .map(|value| {
+            if let Some(score) = value.as_f64() {
+                Ok(CorrectionRisk {
+                    score: score as f32,
+                    reasons: Vec::new(),
+                })
+            } else {
+                serde_json::from_value::<CorrectionRisk>(value.clone()).map_err(|error| {
+                    DagNodeFailure::terminal(
+                        "invalid_correction_risk",
+                        format!("correction_risk metadata is invalid: {error}"),
+                    )
+                })
+            }
+        })
+        .transpose()
+}
+
+fn collected_source_summaries(context: &DagNodeContext<'_>) -> Vec<EvidenceSourceSummary> {
+    let summaries = context
+        .input_metadata
+        .values()
+        .filter_map(|metadata| metadata.get("source_summaries"))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter_map(|value| {
+            Some(EvidenceSourceSummary {
+                model_id: value.get("model_id")?.as_str()?.to_owned(),
+                detection_count: value.get("detection_count")?.as_u64()?.try_into().ok()?,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut seen = std::collections::BTreeSet::new();
+    summaries
+        .into_iter()
+        .filter(|summary| seen.insert(summary.model_id.clone()))
+        .collect()
+}
+
+fn decide_evidence(
+    input: &EvidenceGateInput,
+    config: &EvidenceGateConfig,
+    source_summaries: &[EvidenceSourceSummary],
+) -> EvidenceGateReport {
+    if let Some(reason) = config
+        .reject_when
+        .iter()
+        .find_map(|rule| reject_reason(input, rule))
+    {
+        return evidence_report(EvidenceGateDecision::Reject, vec![reason], input);
+    }
+    if let Some(reason) = config
+        .fallback_when
+        .iter()
+        .find_map(|rule| fallback_reason(input, rule, source_summaries))
+    {
+        return evidence_report(EvidenceGateDecision::Fallback, vec![reason], input);
+    }
+    if let Some(candidate) = input.candidates.iter().find(|candidate| {
+        matches!(
+            candidate.agreement,
+            CandidateAgreement::GeometryConflict | CandidateAgreement::LabelConflict
+        )
+    }) {
+        let (code, message) = match candidate.agreement {
+            CandidateAgreement::GeometryConflict => (
+                "geometry_conflict",
+                "Detector boxes overlap but do not meet the configured agreement threshold",
+            ),
+            CandidateAgreement::LabelConflict => (
+                "label_conflict",
+                "Detectors assigned different Project Labels to overlapping boxes",
+            ),
+            CandidateAgreement::SingleSource | CandidateAgreement::MultiSourceAgreement { .. } => {
+                unreachable!("candidate was selected as a conflict")
+            }
+        };
+        return evidence_report(
+            EvidenceGateDecision::Review,
+            vec![candidate_reason(code, message, candidate)],
+            input,
+        );
+    }
+    if let Some(reason) = config
+        .review_when
+        .iter()
+        .find_map(|rule| review_reason(input, rule))
+    {
+        return evidence_report(EvidenceGateDecision::Review, vec![reason], input);
+    }
+    if !input.candidates.is_empty()
+        && !config.accept_when.is_empty()
+        && input.candidates.iter().all(|candidate| {
+            config.accept_when.iter().any(|rule| {
+                accept_rule_matches(candidate, rule, input.validation_issues.is_empty())
+            })
+        })
+    {
+        let reasons = input
+            .candidates
+            .iter()
+            .map(accepted_candidate_reason)
+            .collect();
+        return evidence_report(EvidenceGateDecision::Accept, reasons, input);
+    }
+    let reason = if input.candidates.is_empty() {
+        simple_reason(
+            "empty_result",
+            "No detection candidates were produced; human review is required",
+        )
+    } else {
+        simple_reason(
+            "insufficient_evidence",
+            "Candidates did not satisfy an explicit accept rule",
+        )
+    };
+    evidence_report(EvidenceGateDecision::Review, vec![reason], input)
+}
+
+fn reject_reason(
+    input: &EvidenceGateInput,
+    rule: &EvidenceRejectRule,
+) -> Option<EvidenceGateReason> {
+    let mut checks = Vec::new();
+    if rule.empty_result {
+        checks.push(input.candidates.is_empty());
+    }
+    if !rule.domain_issue_codes.is_empty() {
+        checks.push(input.validation_issues.iter().any(|issue| {
+            rule.domain_issue_codes
+                .iter()
+                .any(|code| code == &issue.code)
+        }));
+    }
+    (!checks.is_empty() && checks.into_iter().all(|matched| matched)).then(|| {
+        simple_reason(
+            "reject_rule_matched",
+            "Evidence matched an explicit reject rule",
+        )
+    })
+}
+
+fn fallback_reason(
+    input: &EvidenceGateInput,
+    rule: &EvidenceFallbackRule,
+    source_summaries: &[EvidenceSourceSummary],
+) -> Option<EvidenceGateReason> {
+    let source = rule.source.as_deref().or_else(|| {
+        source_summaries
+            .first()
+            .map(|summary| summary.model_id.as_str())
+    });
+    let source_members = source.map(|source| {
+        input
+            .candidates
+            .iter()
+            .flat_map(|candidate| &candidate.members)
+            .filter(|member| member.source_model_id == source)
+            .collect::<Vec<_>>()
+    });
+    let mut checks = Vec::new();
+    if rule.empty_specialist_result {
+        let empty = source.map_or(input.candidates.is_empty(), |source| {
+            source_summaries
+                .iter()
+                .find(|summary| summary.model_id == source)
+                .is_some_and(|summary| summary.detection_count == 0)
+                || source_members.as_ref().is_some_and(Vec::is_empty)
+        });
+        checks.push(empty);
+    }
+    if let Some(threshold) = rule.specialist_score_below {
+        let comparable = source_members
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter_map(|member| member.score.comparable_confidence())
+            .collect::<Vec<_>>();
+        checks.push(!comparable.is_empty() && comparable.iter().any(|score| *score < threshold));
+    }
+    if rule.domain_issue {
+        checks.push(!input.validation_issues.is_empty());
+    }
+    if let Some(threshold) = rule.correction_risk_above {
+        checks.push(
+            input
+                .correction_risk
+                .as_ref()
+                .is_some_and(|risk| risk.score >= threshold),
+        );
+    }
+    if checks.is_empty() || !checks.into_iter().all(|matched| matched) {
+        return None;
+    }
+    let source_ids = source
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let (code, message, metrics) = if rule.empty_specialist_result {
+        (
+            "empty_source_result",
+            format!(
+                "{} returned no candidates; fallback requested",
+                source.unwrap_or("configured source")
+            ),
+            BTreeMap::new(),
+        )
+    } else if let Some(threshold) = rule.specialist_score_below {
+        let score = source_members
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter_map(|member| member.score.comparable_confidence())
+            .fold(1.0_f32, f32::min);
+        (
+            "source_score_below_threshold",
+            format!(
+                "{} score {score:.2} is below {threshold:.2}; fallback requested",
+                source.unwrap_or("configured source")
+            ),
+            BTreeMap::from([
+                ("score".to_owned(), f64::from(score)),
+                ("threshold".to_owned(), f64::from(threshold)),
+            ]),
+        )
+    } else if rule.domain_issue {
+        (
+            "domain_issue",
+            "Domain validation reported an issue; fallback requested".to_owned(),
+            BTreeMap::new(),
+        )
+    } else {
+        let risk = input
+            .correction_risk
+            .as_ref()
+            .map_or(0.0, |risk| risk.score);
+        (
+            "correction_risk",
+            format!("Correction risk {risk:.2} requires fallback evidence"),
+            BTreeMap::from([("correction_risk".to_owned(), f64::from(risk))]),
+        )
+    };
+    Some(EvidenceGateReason {
+        code: code.to_owned(),
+        message,
+        candidate_id: None,
+        source_model_ids: source_ids,
+        metrics,
+    })
+}
+
+fn review_reason(
+    input: &EvidenceGateInput,
+    rule: &EvidenceReviewRule,
+) -> Option<EvidenceGateReason> {
+    let mut checks = Vec::new();
+    if rule.geometry_conflict {
+        checks.push(
+            input
+                .candidates
+                .iter()
+                .any(|candidate| candidate.agreement == CandidateAgreement::GeometryConflict),
+        );
+    }
+    if rule.label_conflict {
+        checks.push(
+            input
+                .candidates
+                .iter()
+                .any(|candidate| candidate.agreement == CandidateAgreement::LabelConflict),
+        );
+    }
+    if rule.open_vocab_only {
+        checks.push(
+            !input.candidates.is_empty()
+                && input.candidates.iter().all(|candidate| {
+                    candidate.members.iter().all(|member| {
+                        matches!(
+                            member.source_capability,
+                            VisionCapability::OpenVocabularyDetection
+                                | VisionCapability::PhraseGrounding
+                        )
+                    })
+                }),
+        );
+    }
+    if rule.score_missing {
+        checks.push(input.candidates.iter().any(|candidate| {
+            candidate
+                .members
+                .iter()
+                .any(|member| member.score.comparable_confidence().is_none())
+        }));
+    }
+    if rule.empty_result {
+        checks.push(input.candidates.is_empty());
+    }
+    if let Some(threshold) = rule.correction_risk_above {
+        checks.push(
+            input
+                .correction_risk
+                .as_ref()
+                .is_some_and(|risk| risk.score >= threshold),
+        );
+    }
+    if checks.is_empty() || !checks.into_iter().all(|matched| matched) {
+        return None;
+    }
+    if rule.score_missing {
+        Some(simple_reason(
+            "score_not_comparable",
+            "Confidence was not provided or is not comparable; human review is required",
+        ))
+    } else if rule.open_vocab_only {
+        Some(simple_reason(
+            "open_vocabulary_only",
+            "Only open-vocabulary evidence is available; human review is required",
+        ))
+    } else if rule.empty_result {
+        Some(simple_reason(
+            "empty_result",
+            "No candidates were produced; human review is required",
+        ))
+    } else if rule.correction_risk_above.is_some() {
+        Some(simple_reason(
+            "correction_risk",
+            "Correction history requires human review",
+        ))
+    } else {
+        Some(simple_reason(
+            "evidence_conflict",
+            "Detector evidence conflicts; human review is required",
+        ))
+    }
+}
+
+fn accept_rule_matches(
+    candidate: &CandidateCluster,
+    rule: &EvidenceAcceptRule,
+    no_domain_issue: bool,
+) -> bool {
+    let mut checks = Vec::new();
+    if let Some(minimum_sources) = rule.minimum_sources {
+        checks.push(
+            candidate
+                .members
+                .iter()
+                .map(|member| &member.source_model_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                >= minimum_sources,
+        );
+    }
+    if let Some(minimum_iou) = rule.minimum_iou {
+        checks.push(matches!(
+            candidate.agreement,
+            CandidateAgreement::MultiSourceAgreement {
+                minimum_iou: actual,
+                ..
+            } if actual >= minimum_iou
+        ));
+    }
+    if let Some(source) = rule.source.as_deref() {
+        checks.push(
+            candidate
+                .members
+                .iter()
+                .any(|member| member.source_model_id == source),
+        );
+        if let Some(minimum_score) = rule.minimum_score {
+            checks.push(candidate.members.iter().any(|member| {
+                member.source_model_id == source
+                    && member
+                        .score
+                        .comparable_confidence()
+                        .is_some_and(|score| score >= minimum_score)
+            }));
+        }
+    } else if let Some(minimum_score) = rule.minimum_score {
+        checks.push(candidate.members.iter().any(|member| {
+            member
+                .score
+                .comparable_confidence()
+                .is_some_and(|score| score >= minimum_score)
+        }));
+    }
+    if rule.no_domain_issue {
+        checks.push(no_domain_issue);
+    }
+    !checks.is_empty() && checks.into_iter().all(|matched| matched)
+}
+
+fn accepted_candidate_reason(candidate: &CandidateCluster) -> EvidenceGateReason {
+    match candidate.agreement {
+        CandidateAgreement::MultiSourceAgreement { minimum_iou, .. } => {
+            let source_count = candidate
+                .members
+                .iter()
+                .map(|member| &member.source_model_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            let mut reason = candidate_reason(
+                "multi_source_agreement",
+                format!("{source_count} detector sources agree at IoU {minimum_iou:.2}"),
+                candidate,
+            );
+            reason
+                .metrics
+                .insert("minimum_iou".to_owned(), f64::from(minimum_iou));
+            reason
+        }
+        CandidateAgreement::SingleSource => candidate_reason(
+            "source_rule_matched",
+            "Single-source candidate satisfied an explicit score rule",
+            candidate,
+        ),
+        CandidateAgreement::GeometryConflict | CandidateAgreement::LabelConflict => {
+            unreachable!("conflicts are routed to review before acceptance")
+        }
+    }
+}
+
+fn evidence_report(
+    decision: EvidenceGateDecision,
+    reasons: Vec<EvidenceGateReason>,
+    input: &EvidenceGateInput,
+) -> EvidenceGateReport {
+    EvidenceGateReport {
+        decision,
+        reasons,
+        candidate_count: input.candidates.len(),
+        validation_issue_count: input.validation_issues.len(),
+    }
+}
+
+fn candidate_reason(
+    code: impl Into<String>,
+    message: impl Into<String>,
+    candidate: &CandidateCluster,
+) -> EvidenceGateReason {
+    EvidenceGateReason {
+        code: code.into(),
+        message: message.into(),
+        candidate_id: Some(candidate.id.clone()),
+        source_model_ids: candidate
+            .members
+            .iter()
+            .map(|member| member.source_model_id.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        metrics: BTreeMap::new(),
+    }
+}
+
+fn simple_reason(code: impl Into<String>, message: impl Into<String>) -> EvidenceGateReason {
+    EvidenceGateReason {
+        code: code.into(),
+        message: message.into(),
+        candidate_id: None,
+        source_model_ids: Vec::new(),
+        metrics: BTreeMap::new(),
+    }
+}
+
 fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
     let threshold = number_parameter(context, "threshold", 0.5)? as f32;
     if !(0.0..=1.0).contains(&threshold) {
@@ -289,14 +1179,15 @@ fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValida
             PipelineArtifact::ClassificationSet(classifications) => {
                 classifications.validation_state = state;
             }
+            PipelineArtifact::CandidateClusterSet(candidates) => {
+                candidates.validation_state = state;
+            }
             PipelineArtifact::AnnotationCandidateSet(candidates) => {
                 for candidate in &mut candidates.candidates {
                     candidate.validation_state = Some(state);
                 }
             }
-            PipelineArtifact::Image(_)
-            | PipelineArtifact::CandidateClusterSet(_)
-            | PipelineArtifact::CropSet(_) => {}
+            PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
         }
     }
 }
@@ -347,6 +1238,39 @@ fn one_detection_set<'a>(
             _ => None,
         },
         "DetectionSet",
+    )
+}
+
+fn detection_sets<'a>(
+    context: &'a DagNodeContext<'_>,
+) -> Result<Vec<&'a DetectionSetArtifact>, DagNodeFailure> {
+    let sets = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::DetectionSet(value) => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if sets.is_empty() {
+        return Err(DagNodeFailure::terminal(
+            "missing_pipeline_input",
+            "node requires DetectionSet Artifacts",
+        ));
+    }
+    Ok(sets)
+}
+
+fn one_candidate_cluster_set<'a>(
+    context: &'a DagNodeContext<'_>,
+) -> Result<&'a CandidateClusterSetArtifact, DagNodeFailure> {
+    exactly_one(
+        context,
+        |artifact| match artifact {
+            PipelineArtifact::CandidateClusterSet(value) => Some(value),
+            _ => None,
+        },
+        "CandidateClusterSet",
     )
 }
 
@@ -465,6 +1389,47 @@ fn number_parameter(
         })
 }
 
+fn boolean_parameter(
+    context: &DagNodeContext<'_>,
+    name: &str,
+    default: bool,
+) -> Result<bool, DagNodeFailure> {
+    context
+        .node
+        .parameters
+        .get(name)
+        .map_or(Ok(default), |value| {
+            value.as_bool().ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "invalid_node_parameter",
+                    format!("parameter {name:?} must be a boolean"),
+                )
+            })
+        })
+}
+
+fn string_parameter(
+    context: &DagNodeContext<'_>,
+    name: &str,
+    default: &str,
+) -> Result<String, DagNodeFailure> {
+    context.node.parameters.get(name).map_or_else(
+        || Ok(default.to_owned()),
+        |value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "invalid_node_parameter",
+                        format!("parameter {name:?} must be a non-empty string"),
+                    )
+                })
+        },
+    )
+}
+
 fn string_list_parameter(
     context: &DagNodeContext<'_>,
     name: &str,
@@ -514,7 +1479,14 @@ fn object_parameter<'a>(
 
 #[cfg(test)]
 mod tests {
-    use annotagent_core::{DetectionScore, ScoreSemantics};
+    use annotagent_core::{
+        DETECTION_ARTIFACT_SCHEMA_VERSION, DetectionScore, DetectionSource, ImageId, IssueSeverity,
+        NodePort, NormalizedRect, ProjectId, RunId, ScoreSemantics, SuggestedAction,
+        ValidationEvidence, WorkflowDraftNode, WorkflowNodeKind,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
 
     #[test]
     fn ordinary_confidence_gate_cannot_compare_unknown_or_missing_scores() {
@@ -531,5 +1503,421 @@ mod tests {
                 .comparable_confidence(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn candidate_match_is_one_to_one_stable_and_preserves_conflicts_and_scores() {
+        let image_id = ImageId::new();
+        let left = detection_set(
+            image_id,
+            "set-a",
+            "specialist",
+            vec![
+                detection(
+                    "set-a",
+                    "a1",
+                    "ball",
+                    [0.10, 0.10, 0.20, 0.20],
+                    Some(0.91),
+                    "specialist",
+                    VisionCapability::ObjectDetection,
+                ),
+                detection(
+                    "set-a",
+                    "a2",
+                    "ball",
+                    [0.55, 0.55, 0.20, 0.20],
+                    Some(0.72),
+                    "specialist",
+                    VisionCapability::ObjectDetection,
+                ),
+                detection(
+                    "set-a",
+                    "a3",
+                    "robot",
+                    [0.30, 0.60, 0.15, 0.20],
+                    Some(0.88),
+                    "specialist",
+                    VisionCapability::ObjectDetection,
+                ),
+            ],
+        );
+        let right = detection_set(
+            image_id,
+            "set-b",
+            "open",
+            vec![
+                detection(
+                    "set-b",
+                    "b1",
+                    "ball",
+                    [0.11, 0.11, 0.20, 0.20],
+                    None,
+                    "open",
+                    VisionCapability::OpenVocabularyDetection,
+                ),
+                detection(
+                    "set-b",
+                    "b2",
+                    "ball",
+                    [0.62, 0.62, 0.20, 0.20],
+                    None,
+                    "open",
+                    VisionCapability::OpenVocabularyDetection,
+                ),
+                detection(
+                    "set-b",
+                    "b3",
+                    "person",
+                    [0.31, 0.61, 0.15, 0.20],
+                    None,
+                    "open",
+                    VisionCapability::OpenVocabularyDetection,
+                ),
+                detection(
+                    "set-b",
+                    "b4",
+                    "ball",
+                    [0.80, 0.10, 0.10, 0.10],
+                    None,
+                    "open",
+                    VisionCapability::OpenVocabularyDetection,
+                ),
+            ],
+        );
+        let node = match_node(0.6);
+        let first = CorePipelineRunner
+            .run(node_context(
+                &node,
+                vec![left.clone(), right.clone()],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("candidate match");
+        let second = CorePipelineRunner
+            .run(node_context(&node, vec![left, right], BTreeMap::new()))
+            .await
+            .expect("stable candidate match");
+        let PipelineArtifact::CandidateClusterSet(clusters) = &first.pipeline_artifacts[0] else {
+            panic!("expected CandidateClusterSet")
+        };
+        let PipelineArtifact::CandidateClusterSet(second_clusters) = &second.pipeline_artifacts[0]
+        else {
+            panic!("expected CandidateClusterSet")
+        };
+        assert_eq!(clusters.candidates, second_clusters.candidates);
+        assert_eq!(clusters.candidates.len(), 4);
+        assert!(
+            matches!(clusters.candidates[0].agreement, CandidateAgreement::MultiSourceAgreement { minimum_iou, .. } if minimum_iou > 0.8)
+        );
+        assert_eq!(clusters.candidates[0].members[0].score.value, Some(0.91));
+        assert_eq!(
+            clusters.candidates[0].members[1].score,
+            DetectionScore::not_provided()
+        );
+        assert_eq!(
+            clusters.candidates[1].agreement,
+            CandidateAgreement::GeometryConflict
+        );
+        assert_eq!(
+            clusters.candidates[2].agreement,
+            CandidateAgreement::LabelConflict
+        );
+        assert_eq!(
+            clusters.candidates[2].members[0].project_label,
+            Some(LabelId::from("robot"))
+        );
+        assert_eq!(
+            clusters.candidates[2].members[1].project_label,
+            Some(LabelId::from("person"))
+        );
+        assert_eq!(
+            clusters.candidates[3].agreement,
+            CandidateAgreement::SingleSource
+        );
+        assert_eq!(
+            clusters.candidates[3].members[0].model_label.as_deref(),
+            Some("ball")
+        );
+    }
+
+    #[tokio::test]
+    async fn evidence_gate_accepts_agreement_without_averaging_scores() {
+        let image_id = ImageId::new();
+        let left = detection_set(
+            image_id,
+            "set-a",
+            "specialist",
+            vec![detection(
+                "set-a",
+                "a1",
+                "ball",
+                [0.1, 0.1, 0.2, 0.2],
+                Some(0.93),
+                "specialist",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let right = detection_set(
+            image_id,
+            "set-b",
+            "open",
+            vec![detection(
+                "set-b",
+                "b1",
+                "ball",
+                [0.11, 0.11, 0.2, 0.2],
+                None,
+                "open",
+                VisionCapability::OpenVocabularyDetection,
+            )],
+        );
+        let match_node = match_node(0.6);
+        let matched = CorePipelineRunner
+            .run(node_context(
+                &match_node,
+                vec![left, right],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("candidate match");
+        let gate = gate_node(&serde_json::json!({
+            "accept_when": [{"minimum_sources": 2, "minimum_iou": 0.6}],
+            "review_when": [{"score_missing": true}]
+        }));
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                matched.pipeline_artifacts,
+                BTreeMap::from([("match".to_owned(), matched.metadata)]),
+            ))
+            .await
+            .expect("evidence gate");
+        assert_eq!(
+            output.route.as_deref(),
+            Some("review"),
+            "explicit score-missing review precedes acceptance"
+        );
+        let report: EvidenceGateReport =
+            serde_json::from_value(output.metadata["evidence_gate"].clone()).expect("report");
+        assert_eq!(report.reasons[0].code, "score_not_comparable");
+
+        let gate = gate_node(&serde_json::json!({
+            "accept_when": [{"minimum_sources": 2, "minimum_iou": 0.6}]
+        }));
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                output.pipeline_artifacts,
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("agreement accepts");
+        assert_eq!(output.route.as_deref(), Some("accept"));
+        let PipelineArtifact::CandidateClusterSet(clusters) = &output.pipeline_artifacts[0] else {
+            panic!("clusters")
+        };
+        assert_eq!(clusters.validation_state, ArtifactValidationState::Valid);
+        assert_eq!(clusters.candidates[0].members[0].score.value, Some(0.93));
+        assert_eq!(clusters.candidates[0].members[1].score.value, None);
+        let report: EvidenceGateReport =
+            serde_json::from_value(output.metadata["evidence_gate"].clone()).expect("report");
+        assert_eq!(report.decision, EvidenceGateDecision::Accept);
+        assert_eq!(report.reasons[0].code, "multi_source_agreement");
+    }
+
+    #[tokio::test]
+    async fn evidence_gate_requests_fallback_for_empty_source_and_domain_issue() {
+        let image_id = ImageId::new();
+        let specialist = detection_set(image_id, "set-a", "specialist", Vec::new());
+        let open = detection_set(
+            image_id,
+            "set-b",
+            "open",
+            vec![detection(
+                "set-b",
+                "b1",
+                "ball",
+                [0.1, 0.1, 0.2, 0.2],
+                None,
+                "open",
+                VisionCapability::OpenVocabularyDetection,
+            )],
+        );
+        let match_node = match_node(0.5);
+        let matched = CorePipelineRunner
+            .run(node_context(
+                &match_node,
+                vec![specialist, open],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("candidate match");
+        let issue = ValidationIssue {
+            code: "domain-risk".to_owned(),
+            severity: IssueSeverity::Warning,
+            annotation_ids: Vec::new(),
+            message: "domain validator requested more evidence".to_owned(),
+            suggested_action: SuggestedAction::Refine,
+            evidence: ValidationEvidence::Rule {
+                facts: BTreeMap::new(),
+            },
+        };
+        let mut match_metadata = matched.metadata;
+        match_metadata.insert("validation_issues".to_owned(), serde_json::json!([issue]));
+        let gate = gate_node(&serde_json::json!({
+            "fallback_when": [
+                {"source": "specialist", "empty_specialist_result": true},
+                {"domain_issue": true}
+            ]
+        }));
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                matched.pipeline_artifacts,
+                BTreeMap::from([("match".to_owned(), match_metadata)]),
+            ))
+            .await
+            .expect("fallback decision");
+        assert_eq!(output.route.as_deref(), Some("fallback"));
+        let report: EvidenceGateReport =
+            serde_json::from_value(output.metadata["evidence_gate"].clone()).expect("report");
+        assert_eq!(report.reasons[0].code, "empty_source_result");
+        assert_eq!(report.validation_issue_count, 1);
+    }
+
+    #[tokio::test]
+    async fn evidence_gate_rejects_only_from_an_explicit_rule() {
+        let image_id = ImageId::new();
+        let empty_a = detection_set(image_id, "set-a", "a", Vec::new());
+        let empty_b = detection_set(image_id, "set-b", "b", Vec::new());
+        let match_step = match_node(0.5);
+        let matched = CorePipelineRunner
+            .run(node_context(
+                &match_step,
+                vec![empty_a, empty_b],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("valid empty match");
+        let gate = gate_node(&serde_json::json!({"reject_when": [{"empty_result": true}]}));
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                matched.pipeline_artifacts,
+                BTreeMap::from([("match".to_owned(), matched.metadata)]),
+            ))
+            .await
+            .expect("reject decision");
+        assert_eq!(output.route.as_deref(), Some("reject"));
+        let PipelineArtifact::CandidateClusterSet(clusters) = &output.pipeline_artifacts[0] else {
+            panic!("clusters")
+        };
+        assert_eq!(clusters.validation_state, ArtifactValidationState::Invalid);
+    }
+
+    fn detection_set(
+        image_id: ImageId,
+        artifact_id: &str,
+        model_id: &str,
+        detections: Vec<Detection>,
+    ) -> PipelineArtifact {
+        PipelineArtifact::DetectionSet(DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+            reference: ArtifactRef {
+                artifact_id: artifact_id.to_owned(),
+                source_node: format!("{model_id}-node"),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                item_id: None,
+            },
+            image_id,
+            model_binding: model_id.to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            detections,
+            metadata: BTreeMap::new(),
+        })
+    }
+
+    fn detection(
+        artifact_id: &str,
+        id: &str,
+        label: &str,
+        bbox: [f32; 4],
+        score: Option<f32>,
+        model_id: &str,
+        capability: VisionCapability,
+    ) -> Detection {
+        Detection::from_source(
+            id,
+            (capability != VisionCapability::ObjectDetection).then(|| format!("query-{label}")),
+            Some(label.to_owned()),
+            Some(LabelId::from(label)),
+            NormalizedRect::new(bbox[0], bbox[1], bbox[2], bbox[3]).expect("bbox"),
+            score.map_or_else(DetectionScore::not_provided, |score| {
+                DetectionScore::relative(score).expect("score")
+            }),
+            DetectionSource {
+                model_id: model_id.to_owned(),
+                capability,
+                artifact_id: artifact_id.to_owned(),
+            },
+        )
+        .expect("detection")
+    }
+
+    fn match_node(minimum_iou: f32) -> WorkflowDraftNode {
+        WorkflowDraftNode {
+            id: "match".to_owned(),
+            node_type: CORE_CANDIDATE_MATCH.to_owned(),
+            kind: WorkflowNodeKind::CandidateMerge,
+            outputs: vec![NodePort {
+                id: "candidates".to_owned(),
+                artifact_type: ArtifactKind::CandidateClusterSet,
+                required: true,
+                multiple: false,
+            }],
+            parameters: BTreeMap::from([
+                ("method".to_owned(), serde_json::json!("iou")),
+                ("minimum_iou".to_owned(), serde_json::json!(minimum_iou)),
+                ("preserve_unmatched".to_owned(), serde_json::json!(true)),
+            ]),
+            ..WorkflowDraftNode::default()
+        }
+    }
+
+    fn gate_node(parameters: &serde_json::Value) -> WorkflowDraftNode {
+        WorkflowDraftNode {
+            id: "evidence".to_owned(),
+            node_type: CORE_EVIDENCE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            parameters: parameters
+                .as_object()
+                .expect("gate config")
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            ..WorkflowDraftNode::default()
+        }
+    }
+
+    fn node_context(
+        node: &WorkflowDraftNode,
+        input_pipeline_artifacts: Vec<PipelineArtifact>,
+        input_metadata: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    ) -> DagNodeContext<'_> {
+        let image_id = input_pipeline_artifacts
+            .first()
+            .map_or_else(ImageId::new, PipelineArtifact::image_id);
+        DagNodeContext {
+            project_id: ProjectId::new(),
+            run_id: RunId::new(),
+            image_id,
+            node,
+            input_artifacts: Vec::new(),
+            input_pipeline_artifacts,
+            input_metadata,
+            cancellation: CancellationToken::new(),
+        }
     }
 }

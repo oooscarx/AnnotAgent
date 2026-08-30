@@ -199,3 +199,43 @@ model's declared vocabulary.
 
 Rejected: trusting only a frontend label list, accepting undeclared response labels, or silently
 mapping an unknown class to a Project Label.
+
+## DB-023 — Candidate matching uses Project Labels and deterministic geometry
+
+`core.match_detection_sets` accepts two same-image DetectionSets and performs stable one-to-one
+matching. Sufficient IoU between equal Project Labels is agreement; overlapping equal labels below
+the threshold are Geometry Conflict; overlapping different Project Labels are Label Conflict.
+Unmatched candidates remain SingleSource when configured. Model-native labels must be mapped before
+this node because only Project Labels define annotation semantics.
+
+Representative geometry is selected deterministically from one source contribution. All member
+boxes remain inspectable, and no score or rectangle is averaged into fabricated evidence.
+
+## DB-024 — Evidence Gate is a fact-based four-route policy
+
+`core.evidence_gate` evaluates typed Candidate Clusters, upstream Validation Issues and optional
+Correction Risk against explicit rule lists. Precedence is explicit Reject, Fallback, conflict
+safety Review, configured Review, Accept, then safe-default Review. It emits one `accept`,
+`fallback`, `review`, or `reject` route for the image and a structured report with stable reason
+codes, messages, source IDs and metrics.
+
+Only calibrated probability and relative confidence satisfy numeric score rules. Ranking, Unknown
+and NotProvided scores are incomparable. Rejected: filling a missing score, averaging two model
+scores, or using model brands as Core policy branches.
+
+## DB-025 — Validator facts travel as DAG metadata
+
+Active upstream node metadata is keyed by source node and supplied to deterministic runners.
+Candidate Match propagates Validation Issues and Correction Risk; Evidence Gate validates and
+consumes them. This keeps domain issues attached to the real execution graph without turning them
+into fake annotation Artifacts or copying frontend-authored state into Runtime decisions.
+
+The persisted `evidence_gate` report is observable decision evidence, not chain-of-thought. Run
+inspection exposes output metadata and selected route; the UI renders only those structured facts.
+
+## DB-026 — Multi-source Annotations have no aggregate confidence
+
+An accepted/reviewed Candidate Cluster may project its deterministic representative rectangle into
+an Annotation. A single-source candidate may carry that source's comparable confidence. A
+multi-source candidate records all source model IDs but leaves Annotation confidence absent; the
+complete Candidate Cluster remains the authoritative evidence Artifact.

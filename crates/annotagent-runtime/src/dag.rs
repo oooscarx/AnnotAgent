@@ -139,6 +139,9 @@ pub struct DagNodeContext<'a> {
     pub node: &'a WorkflowDraftNode,
     pub input_artifacts: Vec<VisionArtifact>,
     pub input_pipeline_artifacts: Vec<PipelineArtifact>,
+    /// Structured metadata emitted by active upstream nodes, keyed by source node id. This lets
+    /// generic gates consume validator facts without turning them into annotation Artifacts.
+    pub input_metadata: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
     pub cancellation: CancellationToken,
 }
 
@@ -652,6 +655,7 @@ impl PublishedDagExecutor {
                             node,
                             input_artifacts: inputs.artifacts.clone(),
                             input_pipeline_artifacts: inputs.pipeline_artifacts.clone(),
+                            input_metadata: inputs.metadata.clone(),
                             cancellation: request.cancellation.clone(),
                         })
                         .await
@@ -752,14 +756,15 @@ fn built_in_output(
                     PipelineArtifact::ClassificationSet(classifications) => {
                         classifications.validation_state = ArtifactValidationState::Valid;
                     }
+                    PipelineArtifact::CandidateClusterSet(candidates) => {
+                        candidates.validation_state = ArtifactValidationState::Valid;
+                    }
                     PipelineArtifact::AnnotationCandidateSet(candidates) => {
                         for candidate in &mut candidates.candidates {
                             candidate.validation_state = Some(ArtifactValidationState::Valid);
                         }
                     }
-                    PipelineArtifact::Image(_)
-                    | PipelineArtifact::CandidateClusterSet(_)
-                    | PipelineArtifact::CropSet(_) => {}
+                    PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
                 }
             }
             Ok(DagNodeOutput {
@@ -784,14 +789,15 @@ fn built_in_output(
                         PipelineArtifact::ClassificationSet(classifications) => {
                             classifications.validation_state != ArtifactValidationState::Valid
                         }
+                        PipelineArtifact::CandidateClusterSet(candidates) => {
+                            candidates.validation_state != ArtifactValidationState::Valid
+                        }
                         PipelineArtifact::AnnotationCandidateSet(candidates) => {
                             candidates.candidates.iter().any(|candidate| {
                                 candidate.validation_state != Some(ArtifactValidationState::Valid)
                             })
                         }
-                        PipelineArtifact::Image(_)
-                        | PipelineArtifact::CandidateClusterSet(_)
-                        | PipelineArtifact::CropSet(_) => true,
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => true,
                     })
             {
                 return Err(DagNodeFailure::terminal(
@@ -832,6 +838,7 @@ enum NodeExecution {
 struct DagInputs {
     artifacts: Vec<VisionArtifact>,
     pipeline_artifacts: Vec<PipelineArtifact>,
+    metadata: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug)]
@@ -926,9 +933,20 @@ fn readiness(
             artifact.reference().item_id.clone(),
         ))
     });
+    let metadata = incoming
+        .iter()
+        .filter(|edge| edge_active(edge, checkpoint))
+        .filter_map(|edge| {
+            checkpoint
+                .node_outputs
+                .get(&edge.from_node)
+                .map(|output| (edge.from_node.clone(), output.metadata.clone()))
+        })
+        .collect();
     Readiness::Ready(DagInputs {
         artifacts,
         pipeline_artifacts,
+        metadata,
     })
 }
 

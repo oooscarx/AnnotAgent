@@ -78,6 +78,7 @@ async fn generic_classification() -> Result<()> {
             node: &node,
             input_artifacts: Vec::new(),
             input_pipeline_artifacts: vec![image],
+            input_metadata: BTreeMap::new(),
             cancellation: CancellationToken::new(),
         })
         .await
@@ -141,6 +142,7 @@ async fn generic_detection_crop() -> Result<()> {
             node: &detector_node,
             input_artifacts: Vec::new(),
             input_pipeline_artifacts: vec![image.clone()],
+            input_metadata: BTreeMap::new(),
             cancellation: CancellationToken::new(),
         })
         .await
@@ -169,6 +171,7 @@ async fn generic_detection_crop() -> Result<()> {
             node: &crop_node,
             input_artifacts: Vec::new(),
             input_pipeline_artifacts: vec![image, detection_set],
+            input_metadata: BTreeMap::new(),
             cancellation: CancellationToken::new(),
         })
         .await

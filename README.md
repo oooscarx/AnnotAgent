@@ -72,6 +72,11 @@ to the same Image → DetectionSet contract. `mock-object-detector` is the offli
 optional RF-DETR Worker uses an explicitly configured versioned local checkpoint. See
 [Object Detection](docs/OBJECT_DETECTION.md) and [RF-DETR Backend](docs/RFDETR_BACKEND.md).
 
+Detector outputs can be joined with the generic `core.match_detection_sets` node and routed by
+`core.evidence_gate`. The persisted decision report explains agreement, conflicts, missing scores,
+domain issues and fallback requests without blending incomparable confidence. See
+[Detection Evidence](docs/DETECTION_EVIDENCE.md).
+
 ## 6. Review
 
 Models select registered actions and may submit candidates or operate on stable Artifact references. Rust validation and review policy determine whether a candidate is committed, retried, completed empty, or queued. Human edits append revisions instead of overwriting history, and the trace exposes model/tool/Artifact events without hidden chain-of-thought.
@@ -174,7 +179,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Object Detection](docs/OBJECT_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Object Detection](docs/OBJECT_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

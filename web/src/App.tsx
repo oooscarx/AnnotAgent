@@ -32,6 +32,7 @@ import type {
   Annotation,
   CorrectionMemoryRecord,
   DetectionWorkerTestResult,
+  EvidenceGateReportDto,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -3777,14 +3778,18 @@ export function pipelineNodeOutput(nodeType: string): {
     return { port: "candidates", type: "annotation_candidate_set" };
   if (nodeType === "core.confidence_gate")
     return { port: "candidates", type: "annotation_candidate_set" };
+  if (nodeType === "core.match_detection_sets" || nodeType === "core.evidence_gate")
+    return { port: "candidates", type: "candidate_cluster_set" };
   return { port: "detections", type: "detection_set" };
 }
 
 export function pipelineNodeKind(nodeType: string): NonNullable<PipelineStep["kind"]> {
+  if (nodeType === "core.attach_result" || nodeType === "core.match_detection_sets")
+    return "candidate_merge";
+  if (nodeType === "core.confidence_gate" || nodeType === "core.evidence_gate")
+    return "gate";
   if (nodeType.includes("classify") || nodeType.includes("detect"))
     return "vision_model";
-  if (nodeType === "core.attach_result") return "candidate_merge";
-  if (nodeType === "core.confidence_gate") return "gate";
   return "transform";
 }
 
@@ -3794,6 +3799,15 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
     return { labels: [label], minimum_confidence: 0.5 };
   if (nodeType === "core.map_label") return { class_mapping: {} };
   if (nodeType === "core.confidence_gate") return { threshold: 0.9 };
+  if (nodeType === "core.match_detection_sets")
+    return { method: "iou", minimum_iou: 0.5, preserve_unmatched: true };
+  if (nodeType === "core.evidence_gate")
+    return {
+      accept_when: [{ minimum_sources: 2, minimum_iou: 0.6 }],
+      fallback_when: [],
+      review_when: [{ geometry_conflict: true, label_conflict: true, score_missing: true }],
+      reject_when: [],
+    };
   if (nodeType === "classification.classify")
     return { labels: [label], mock_label: label };
   if (nodeType === "vlm_detection.detect")
@@ -3927,13 +3941,16 @@ type ArtifactRect = { x: number; y: number; width: number; height: number };
 
 export function artifactRects(artifacts: PipelineArtifact[]): ArtifactRect[] {
   return artifacts.flatMap((artifact) => {
-    if (artifact.kind !== "detection_set") return [];
-    const detections = artifact.artifact.detections;
+    const detections = artifact.kind === "detection_set"
+      ? artifact.artifact.detections
+      : artifact.kind === "candidate_cluster_set"
+        ? artifact.artifact.candidates
+        : undefined;
     if (!Array.isArray(detections)) return [];
     return detections.flatMap((detection) => {
       if (!detection || typeof detection !== "object") return [];
       const record = detection as Record<string, unknown>;
-      const rect = record.bbox ?? record.rect;
+      const rect = record.representative_bbox ?? record.bbox ?? record.rect;
       return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
     });
   });
@@ -4405,6 +4422,7 @@ function RunDetailWorkspace({
             <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}><span>{artifact.kind.replaceAll("_", " ")}</span><code>{id.slice(0, 8)}</code></button>; })}</div>
             {selectedNode.outputs.length === 0 && <p className="node-payload-empty">This node did not produce an Artifact.</p>}
           </section>
+          <EvidenceDecisionCard metadata={selectedNode.metadata ?? {}} route={selectedNode.route} />
           {selectedNode.error && <div className="run-repair-card"><div><strong>{selectedNode.error.code}</strong><p>{selectedNode.error.summary}</p></div><div className="button-row">{selectedNode.error.retryable && <button className="primary" disabled={busy} onClick={replayNode}>Replay failed step</button>}{project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Fix automation</button>}</div></div>}
           <div className="node-payload-sections">
             <NodePayloadSection title="Input" description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
@@ -4417,6 +4435,80 @@ function RunDetailWorkspace({
         </section>
       )}
       </>}
+    </section>
+  );
+}
+
+export function evidenceGateReport(
+  metadata: Record<string, unknown>,
+): EvidenceGateReportDto | undefined {
+  const value = metadata.evidence_gate;
+  if (!value || typeof value !== "object") return undefined;
+  const report = value as Record<string, unknown>;
+  if (!(["accept", "fallback", "review", "reject"] as const).includes(
+    report.decision as "accept" | "fallback" | "review" | "reject",
+  )) return undefined;
+  if (!Array.isArray(report.reasons)) return undefined;
+  const reasons = report.reasons.flatMap((reason) => {
+    if (!reason || typeof reason !== "object") return [];
+    const item = reason as Record<string, unknown>;
+    if (typeof item.code !== "string" || typeof item.message !== "string") return [];
+    return [{
+      code: item.code,
+      message: item.message,
+      candidate_id: typeof item.candidate_id === "string" ? item.candidate_id : undefined,
+      source_model_ids: Array.isArray(item.source_model_ids)
+        ? item.source_model_ids.filter((source): source is string => typeof source === "string")
+        : [],
+      metrics: item.metrics && typeof item.metrics === "object"
+        ? Object.fromEntries(
+          Object.entries(item.metrics as Record<string, unknown>)
+            .filter((entry): entry is [string, number] =>
+              typeof entry[1] === "number" && Number.isFinite(entry[1]),
+            ),
+        )
+        : {},
+    }];
+  });
+  return {
+    decision: report.decision as EvidenceGateReportDto["decision"],
+    reasons,
+    candidate_count: typeof report.candidate_count === "number" ? report.candidate_count : 0,
+    validation_issue_count:
+      typeof report.validation_issue_count === "number" ? report.validation_issue_count : 0,
+  };
+}
+
+function EvidenceDecisionCard({
+  metadata,
+  route,
+}: {
+  metadata: Record<string, unknown>;
+  route?: string | null;
+}) {
+  const report = evidenceGateReport(metadata);
+  if (!report) return null;
+  return (
+    <section className={`evidence-decision-card decision-${report.decision}`} aria-label="Evidence decision">
+      <header>
+        <div><span className="eyebrow">Evidence decision</span><h3>{report.decision}</h3></div>
+        <span>{report.candidate_count} candidate{report.candidate_count === 1 ? "" : "s"}</span>
+      </header>
+      <ul>
+        {report.reasons.map((reason, index) => (
+          <li key={`${reason.code}-${reason.candidate_id ?? index}`}>
+            <strong>{reason.message}</strong>
+            <small>
+              {reason.code.replaceAll("_", " ")}
+              {reason.source_model_ids.length ? ` · ${reason.source_model_ids.join(" + ")}` : ""}
+            </small>
+          </li>
+        ))}
+      </ul>
+      <footer>
+        <span>Route · {route ?? report.decision}</span>
+        <span>Domain issues · {report.validation_issue_count}</span>
+      </footer>
     </section>
   );
 }

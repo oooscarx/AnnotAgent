@@ -230,6 +230,17 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .run-node-artifacts .artifact-choice button { min-width: 150px; display: grid; justify-items: start; gap: 3px; text-align: left; }
 .run-node-artifacts .artifact-choice button span { text-transform: capitalize; }
 .run-node-artifacts .artifact-choice code { color: var(--aa-text-muted); font-size: 9px; }
+.evidence-decision-card { display: grid; gap: 12px; margin-inline: 24px; padding: 16px; border: 1px solid var(--aa-border); border-left: 4px solid var(--aa-primary); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.evidence-decision-card.decision-accept { border-left-color: var(--aa-success); }
+.evidence-decision-card.decision-review, .evidence-decision-card.decision-fallback { border-left-color: var(--aa-warning); }
+.evidence-decision-card.decision-reject { border-left-color: var(--aa-danger); }
+.evidence-decision-card > header, .evidence-decision-card > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.evidence-decision-card h3 { margin: 4px 0 0; font-size: 18px; text-transform: capitalize; }
+.evidence-decision-card > header > span, .evidence-decision-card > footer span { color: var(--aa-text-muted); font-size: 10px; font-weight: 700; }
+.evidence-decision-card ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.evidence-decision-card li { min-width: 0; display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface); }
+.evidence-decision-card li strong, .evidence-decision-card li small { min-width: 0; overflow-wrap: anywhere; }
+.evidence-decision-card li small { color: var(--aa-text-muted); }
 .run-repair-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-inline: 24px; padding: 14px 16px; border: 1px solid var(--aa-danger); border-radius: var(--aa-radius-md); background: var(--aa-danger-soft); }
 .run-repair-card p { margin: 4px 0 0; color: var(--aa-danger-text); }
 .node-payload-sections { display: grid; gap: 10px; padding: 0 24px 24px; }

@@ -37,6 +37,11 @@ plus target Labels, class mapping and bounded detection options, and produces a 
 RF-DETR or another trained detector can implement the same Model capability; none is a Core node
 kind. The Skill does not own Crop, Review, Commit, or domain policy.
 
+Core combines detector Artifacts through `core.match_detection_sets` and routes structured facts
+through `core.evidence_gate`. Candidate Clusters retain each model contribution independently;
+validation issues travel as upstream node metadata, and the Gate persists an explainable decision
+report. See [Detection Evidence](DETECTION_EVIDENCE.md).
+
 Special algorithms implement object-safe Rust traits and are registered explicitly:
 
 ```rust
