@@ -32,6 +32,7 @@ import type {
   Annotation,
   CorrectionMemoryRecord,
   DetectionWorkerTestResult,
+  DetectionEvidenceDto,
   EvidenceGateReportDto,
   HistoryRun,
   ImageItem,
@@ -925,6 +926,8 @@ function BuildTestPublish({
             </dl>
             <div className="sample-test-context">
               <span>{summary.empty_count} no-target result{summary.empty_count === 1 ? "" : "s"}</span>
+              <span>{summary.fallback_count} fallback{summary.fallback_count === 1 ? "" : "s"}</span>
+              <span>{summary.cache_hit_count} cache hit{summary.cache_hit_count === 1 ? "" : "s"}</span>
               <span>{formatSampleDuration(summary.duration_ms)}</span>
               <span>${summary.usage.estimated_cost} sample cost</span>
             </div>
@@ -2868,6 +2871,8 @@ function workflowNodeTitle(nodeType: string): string {
 
 function pipelineStepTitle(step: PipelineStep, targetLabel?: string): string {
   const label = targetLabel || (Array.isArray(step.parameters.labels) ? step.parameters.labels.join(", ") : "targets");
+  if (step.node_type.includes("detect") && step.model_binding?.capability === "open_vocabulary_detection") return `Find ${label} by description`;
+  if (step.node_type.includes("detect") && step.model_binding?.capability === "object_detection") return `Use trained detector for ${label}`;
   if (step.node_type.includes("detect")) return `Find ${label} candidates`;
   if (step.node_type === "core.filter") return `Keep detections labeled ${label}`;
   if (step.node_type === "core.crop") return "Crop each candidate";
@@ -3536,6 +3541,7 @@ function PipelineStepCard({
         <span>Input <strong>{pipelineInputSummary(step)}</strong></span>
         <span>Output <strong>{Object.values(step.outputs).join(", ").replaceAll("_", " ") || "Annotation"}</strong></span>
         <span>Threshold <strong>{String(step.parameters.threshold ?? step.parameters.minimum_confidence ?? "—")}</strong></span>
+        {step.fallback && <span>When uncertain <strong>continue at {step.fallback}</strong></span>}
         <Status status={immutable ? "published" : "valid"} />
       </div>
       <button onClick={onConfigure}>{immutable ? "Inspect node" : "Configure node"}</button>
@@ -4093,7 +4099,12 @@ function ModelsPage({
                     >{`Health · ${binding.health_status}`}</small>
                     {binding.capabilities?.length ? <small>Configured contract · {binding.capabilities.join(" · ")}</small> : null}
                     {binding.score_semantics && <small>Score · {binding.score_semantics.replaceAll("_", " ")}</small>}
+                    {binding.architecture && <small>Architecture · {binding.architecture}</small>}
                     {binding.model_version && <small>Version · {binding.model_version}</small>}
+                    {binding.checkpoint_sha256 && <small title={binding.checkpoint_sha256}>Checkpoint · {binding.checkpoint_sha256.slice(0, 12)}…</small>}
+                    {binding.label_space?.length ? <small>Label space · {binding.label_space.join(" · ")}</small> : null}
+                    {binding.endpoint && <small>Endpoint · {binding.endpoint}</small>}
+                    {binding.cost_per_request !== undefined && <small>Estimated cost · ${binding.cost_per_request} / request</small>}
                     {binding.license_summary && <small>License · {binding.license_summary}</small>}
                     {binding.scope === "workspace_worker" && <div className="worker-actions">
                       <button
@@ -4101,8 +4112,13 @@ function ModelsPage({
                         disabled={!binding.enabled || testingModel === binding.id}
                         title={binding.enabled ? "Read live health and capabilities from the Worker" : "Enable this Worker in Provider & budgets first"}
                       >
-                        {testingModel === binding.id ? "Testing…" : "Test Worker"}
+                        {testingModel === binding.id ? "Testing…" : "Test connection"}
                       </button>
+                      <button
+                        onClick={() => testWorker(binding.id)}
+                        disabled={!binding.enabled || testingModel === binding.id}
+                        title="Refresh live capability, score, batch, and label-space metadata"
+                      >Refresh capabilities</button>
                       <button
                         disabled
                         title={testResults[binding.id]
@@ -4118,6 +4134,11 @@ function ModelsPage({
                       <small>Confidence {testResults[binding.id].capabilities.score_semantics.replaceAll("_", " ")}</small>
                       {!testResults[binding.id].capabilities.supports_visual_prompt && <small>Visual prompt unavailable in this Worker</small>}
                     </div>}
+                    {binding.scope === "workspace_worker" && <details className="worker-setup-instructions">
+                      <summary>View setup instructions</summary>
+                      <p>Start a protocol v1 HTTP Vision Worker at this endpoint, then enable and test it. AnnotAgent never downloads model weights during Server startup.</p>
+                      <code>{binding.endpoint ?? "Configure a Worker URL in Settings"}</code>
+                    </details>}
                   </div>
                 </article>
               ))}
@@ -4383,8 +4404,11 @@ function RunDetailWorkspace({
       {view === "results" ? <>
         <dl className="run-result-metrics" aria-label="Run result summary">
           <div><dt>Images</dt><dd>{resultSummary?.image_count ?? 1}</dd><small>processed</small></div>
-          <div><dt>Results found</dt><dd>{resultSummary?.result_count ?? runAnnotations.length}</dd><small>{resultSummary?.ready_count ?? 0} ready</small></div>
-          <div><dt>Needs review</dt><dd>{resultSummary?.needs_review_count ?? (runReview ? 1 : 0)}</dd><small>{resultSummary?.no_target_count ?? 0} no-target · {resultSummary?.failed_count ?? 0} failed</small></div>
+          <div><dt>Accepted</dt><dd>{resultSummary?.ready_count ?? 0}</dd><small>{resultSummary?.result_count ?? runAnnotations.length} detections</small></div>
+          <div><dt>Needs review</dt><dd>{resultSummary?.needs_review_count ?? (runReview ? 1 : 0)}</dd><small>human decision</small></div>
+          <div><dt>Fallbacks</dt><dd>{resultSummary?.fallback_count ?? run.fallback_nodes.length}</dd><small>open-vocabulary</small></div>
+          <div><dt>Cache hits</dt><dd>{resultSummary?.cache_hit_count ?? 0}</dd><small>model calls reused</small></div>
+          <div><dt>Failed</dt><dd>{resultSummary?.failed_count ?? 0}</dd><small>{resultSummary?.no_target_count ?? 0} no-target</small></div>
         </dl>
         <div className="run-results-workspace">
           <aside className="panel run-image-browser"><span className="eyebrow">Images</span><input aria-label="Search run images" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search images" /><select aria-label="Image status filter" defaultValue="all"><option value="all">All statuses</option><option value={run.status}>{run.status.replaceAll("_", " ")}</option></select>
@@ -4564,6 +4588,8 @@ type ArtifactMark = ArtifactRect & {
   parentId?: string;
   parentArtifact?: string;
   sourceNode?: string;
+  evidence: DetectionEvidenceDto[];
+  agreement?: "single_source" | "geometry_conflict" | "label_conflict" | { multi_source_agreement: { minimum_iou: number; mean_iou: number } };
 };
 
 function artifactVisualContext(project?: ProjectSummary) {
@@ -4608,21 +4634,80 @@ function detectionScoreValue(detection: Record<string, unknown>): number | undef
   return typeof detection.confidence === "number" ? detection.confidence : undefined;
 }
 
+function parseDetectionEvidence(value: unknown): DetectionEvidenceDto[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const evidence = item as Record<string, unknown>;
+    const rect = parseArtifactRect(evidence.bbox);
+    if (!rect || typeof evidence.source_model_id !== "string") return [];
+    const score = evidence.score && typeof evidence.score === "object"
+      ? evidence.score as Record<string, unknown>
+      : {};
+    return [{
+      source_model_id: evidence.source_model_id,
+      source_artifact_id: typeof evidence.source_artifact_id === "string" ? evidence.source_artifact_id : "unknown",
+      bbox: [rect.x, rect.y, rect.width, rect.height],
+      score: {
+        value: typeof score.value === "number" ? score.value : undefined,
+        semantics: typeof score.semantics === "string" ? score.semantics as DetectionEvidenceDto["score"]["semantics"] : "unknown",
+      },
+      query_id: typeof evidence.query_id === "string" ? evidence.query_id : undefined,
+      model_label: typeof evidence.model_label === "string" ? evidence.model_label : undefined,
+      project_label: typeof evidence.project_label === "string" ? evidence.project_label : undefined,
+      source_capability: typeof evidence.source_capability === "string" ? evidence.source_capability : "object_detection",
+      raw_output_ref: evidence.raw_output_ref as DetectionEvidenceDto["raw_output_ref"],
+    }];
+  });
+}
+
+function sourceModelLabel(modelId: string): string {
+  if (modelId.toLowerCase().includes("rfdetr")) return "RF-DETR";
+  if (modelId.toLowerCase().includes("locate")) return "LocateAnything";
+  return modelId;
+}
+
+function evidenceIdentity(item: DetectionEvidenceDto): string {
+  return `${item.source_model_id}:${item.bbox.join(",")}`;
+}
+
+function uniqueEvidence(items: DetectionEvidenceDto[]): DetectionEvidenceDto[] {
+  return items.filter((item, index) =>
+    items.findIndex((candidate) => evidenceIdentity(candidate) === evidenceIdentity(item)) === index,
+  );
+}
+
+function artifactMarkSummary(mark: ArtifactMark): string {
+  const sources = uniqueEvidence(mark.evidence);
+  if (typeof mark.agreement === "object")
+    return `${sources.length} models agree · IoU ${mark.agreement.multi_source_agreement.minimum_iou.toFixed(2)}`;
+  if (mark.agreement === "geometry_conflict") return `${sources.length} models disagree on location`;
+  if (mark.agreement === "label_conflict") return `${sources.length} models disagree on label`;
+  const source = sources[0];
+  if (!source) return mark.confidence === undefined ? "Bounding box" : `Bounding box · ${Math.round(mark.confidence * 100)}%`;
+  return source.score.value == null
+    ? `${sourceModelLabel(source.source_model_id)} · confidence not provided`
+    : `${sourceModelLabel(source.source_model_id)} · ${source.score.value.toFixed(2)}`;
+}
+
 export function artifactDetectionMarks(
   artifacts: PipelineArtifact[],
   project?: ProjectSummary,
 ): ArtifactMark[] {
   return artifacts.flatMap((artifact) => {
-    if (artifact.kind !== "detection_set") return [];
-    const detections = artifact.artifact.detections;
+    if (artifact.kind !== "detection_set" && artifact.kind !== "candidate_cluster_set") return [];
+    const clusterSet = artifact.kind === "candidate_cluster_set";
+    const detections = clusterSet ? artifact.artifact.candidates : artifact.artifact.detections;
     const reference = artifact.artifact.reference as Record<string, unknown> | undefined;
     if (!Array.isArray(detections)) return [];
     return detections.flatMap((value, index) => {
       if (!value || typeof value !== "object") return [];
       const detection = value as Record<string, unknown>;
-      const rect = parseArtifactRect(detection.bbox ?? detection.rect);
+      const rect = parseArtifactRect(detection.representative_bbox ?? detection.bbox ?? detection.rect);
       if (!rect) return [];
-      const label = typeof detection.project_label === "string"
+      const label = typeof detection.target_label === "string"
+        ? detection.target_label
+        : typeof detection.project_label === "string"
         ? detection.project_label
         : typeof detection.model_label === "string"
           ? detection.model_label
@@ -4631,6 +4716,25 @@ export function artifactDetectionMarks(
             : typeof detection.class_id === "string"
               ? detection.class_id
               : "detection";
+      const evidence = parseDetectionEvidence(detection.members ?? detection.evidence);
+      if (!evidence.length && typeof detection.source_model_id === "string") {
+        evidence.push({
+          source_model_id: detection.source_model_id,
+          source_artifact_id: typeof reference?.artifact_id === "string" ? reference.artifact_id : "unknown",
+          bbox: [rect.x, rect.y, rect.width, rect.height],
+          score: {
+            value: detectionScoreValue(detection),
+            semantics: detection.score && typeof detection.score === "object" &&
+              typeof (detection.score as Record<string, unknown>).semantics === "string"
+              ? (detection.score as Record<string, unknown>).semantics as DetectionEvidenceDto["score"]["semantics"]
+              : "unknown",
+          },
+          query_id: typeof detection.query_id === "string" ? detection.query_id : undefined,
+          model_label: typeof detection.model_label === "string" ? detection.model_label : undefined,
+          project_label: label,
+          source_capability: typeof detection.source_capability === "string" ? detection.source_capability : "object_detection",
+        });
+      }
       return [{
         ...rect,
         id: typeof detection.detection_id === "string"
@@ -4643,6 +4747,8 @@ export function artifactDetectionMarks(
         color: markColor(label, project),
         parentArtifact: typeof reference?.artifact_id === "string" ? reference.artifact_id : undefined,
         sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,
+        evidence,
+        agreement: clusterSet ? detection.agreement as ArtifactMark["agreement"] : undefined,
       }];
     });
   });
@@ -4674,6 +4780,8 @@ export function artifactCropMarks(
         color: detection?.color ?? markColor("crop"),
         parentArtifact: typeof parent?.artifact_id === "string" ? parent.artifact_id : undefined,
         sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,
+        evidence: detection?.evidence ?? [],
+        agreement: detection?.agreement,
       }];
     });
   });
@@ -4697,6 +4805,7 @@ export function annotationDetectionMarks(
       confidence: annotation.confidence,
       color: markColor(label, project),
       sourceNode: "committed annotation",
+      evidence: [],
     }];
   });
 }
@@ -4710,9 +4819,13 @@ function sameMark(left: ArtifactMark, right: ArtifactMark): boolean {
 }
 
 function uniqueMarks(marks: ArtifactMark[]): ArtifactMark[] {
-  return marks.filter(
-    (mark, index) => !marks.slice(0, index).some((existing) => sameMark(existing, mark)),
-  );
+  return marks.reduce<ArtifactMark[]>((items, mark) => {
+    const existing = items.find((candidate) => sameMark(candidate, mark));
+    if (!existing) return [...items, mark];
+    existing.evidence = uniqueEvidence([...existing.evidence, ...mark.evidence]);
+    existing.agreement = existing.agreement ?? mark.agreement;
+    return items;
+  }, []);
 }
 
 function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIndex }: { projectId: string; project?: ProjectSummary; artifacts: PipelineArtifact[]; annotations: Annotation[]; imageIndex: number }) {
@@ -4739,7 +4852,8 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
     setSelectedId(ids[(current + offset + ids.length) % ids.length]);
   };
   const legend = [...new Map(detections.map((item) => [item.label, item])).values()];
-  const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label} ${rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)} percent`}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label} {rect.confidence === undefined ? "" : `${Math.round(rect.confidence * 100)}%`}</text></g>)}</svg>}</div></div>;
+  const selectedMark = detections.find((item) => item.id === selectedId);
+  const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Annotation overlay">{detections.map((rect) => <g key={rect.id} role="button" tabIndex={0} aria-label={`${rect.label}. ${artifactMarkSummary(rect)}`} className={rect.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(rect.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(rect.id); } }}><rect style={{ stroke: rect.color }} x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label}</text></g>)}</svg>}</div></div>;
   return (
     <div className="run-artifact-canvas" tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle">
@@ -4754,7 +4868,16 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
         </label>
       </div>
       {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
-      {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>Bounding box{item.confidence === undefined ? "" : ` · ${Math.round(item.confidence * 100)}%`}</small></span></button></li>)}</ul>}
+      {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>{artifactMarkSummary(item)}</small></span></button></li>)}</ul>}
+      {selectedMark?.evidence.length ? <section className="evidence-inspector" aria-label="Detection evidence inspector">
+        <header><span className="eyebrow">Evidence inspector</span><strong>{artifactMarkSummary(selectedMark)}</strong></header>
+        <div>{uniqueEvidence(selectedMark.evidence).map((item) => <article key={evidenceIdentity(item)}>
+          <span><strong>{sourceModelLabel(item.source_model_id)}</strong><small>{item.source_capability.replaceAll("_", " ")}</small></span>
+          <span><strong>{item.score.value == null ? "No confidence" : item.score.value.toFixed(2)}</strong><small>{item.score.semantics.replaceAll("_", " ")}</small></span>
+          <code>[{item.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
+          {(item.query_id || item.model_label) && <small>{item.query_id ? `Query · ${item.query_id}` : ""}{item.query_id && item.model_label ? " · " : ""}{item.model_label ? `Model label · ${item.model_label}` : ""}</small>}
+        </article>)}</div>
+      </section> : null}
       {mode === "original" ? imageStage(false, "Original Run input") : mode === "result" ? imageStage(true, "Run result") : mode === "compare" ? <div className="run-result-compare"><section><span>Original</span>{imageStage(false, "Original Run input")}</section><section><span>Result</span>{imageStage(true, "Run result")}</section></div> : (
         <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? "Unknown"}</small><small>Source: {crop.sourceNode ?? "Unknown"}</small></span></button>)}</div>
       )}
@@ -4771,6 +4894,7 @@ const GENERIC_REVIEW_REASONS = [
 ] as const;
 
 function reviewReasonExplanation(item: ReviewItem) {
+  if (item.review_explanation) return item.review_explanation.summary;
   if (item.review_reason === "low_confidence")
     return "The model confidence is below this Automation's acceptance threshold.";
   if (item.review_reason === "validation_issue")
@@ -4929,6 +5053,25 @@ function ReviewPage({
   const edit = (next: Annotation) => {
     beginEdit();
     setDraft(next);
+  };
+  const useEvidenceBox = (evidence: DetectionEvidenceDto) => {
+    if (!draft || draft.value.kind !== "bounding_box") return;
+    edit({
+      ...draft,
+      value: { kind: "bounding_box", rect: evidence.bbox },
+      confidence: evidence.score.value ?? undefined,
+      attributes: {
+        ...draft.attributes,
+        selected_detection_evidence: evidence,
+      },
+    });
+    setAttributesText(JSON.stringify({
+      ...draft.attributes,
+      selected_detection_evidence: evidence,
+    }, null, 2));
+    setEditing(true);
+    setReason("wrong_box");
+    if (!note.trim()) setNote(`Used the ${sourceModelLabel(evidence.source_model_id)} source box.`);
   };
   const undo = () => {
     const previous = past.at(-1);
@@ -5179,7 +5322,7 @@ function ReviewPage({
                 <small>
                   {!project && `${review.project_name} · `}
                   Image {review.image_index === undefined ? "?" : review.image_index + 1} ·{" "}
-                  {Math.round((review.annotation.confidence ?? 0) * 100)}%
+                  {review.annotation.confidence === undefined ? "No confidence" : `${Math.round(review.annotation.confidence * 100)}%`}
                 </small>
               </span>
             </button>
@@ -5349,14 +5492,26 @@ function ReviewPage({
           <>
             <div className="review-reason-summary">
               <span className="eyebrow">Why this needs review</span>
+              <h3>{selected.review_explanation?.title ?? "Needs review"}</h3>
               <p>{reviewReasonExplanation(selected)}</p>
+              {selected.review_explanation?.details.length ? <ul>{selected.review_explanation.details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
             </div>
             <dl className="review-essential-facts">
-              <div><dt>Confidence</dt><dd>{Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%</dd></div>
+              <div><dt>Confidence</dt><dd>{(selected.confidence ?? draft.confidence) === undefined ? "Not provided" : `${Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%`}</dd></div>
               <div><dt>Source Run</dt><dd>{selected.run_id.slice(0, 8)}</dd></div>
               <div><dt>Automation Version</dt><dd>{selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`}</dd></div>
               <div><dt>Source Step</dt><dd>{selected.source_node ?? "Unknown"}</dd></div>
             </dl>
+            {selected.detection_evidence?.length ? <section className="review-evidence" aria-label="Source model evidence">
+              <header><span className="eyebrow">Source evidence</span><strong>{uniqueEvidence(selected.detection_evidence).length} detector result{uniqueEvidence(selected.detection_evidence).length === 1 ? "" : "s"}</strong></header>
+              <div>{uniqueEvidence(selected.detection_evidence).map((evidence) => <article key={evidenceIdentity(evidence)}>
+                <span><strong>{sourceModelLabel(evidence.source_model_id)}</strong><small>{evidence.source_capability.replaceAll("_", " ")}</small></span>
+                <span><strong>{evidence.score.value == null ? "Confidence not provided" : evidence.score.value.toFixed(2)}</strong><small>{evidence.score.semantics.replaceAll("_", " ")}</small></span>
+                <code>[{evidence.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
+                <button onClick={() => useEvidenceBox(evidence)}>Use {sourceModelLabel(evidence.source_model_id)} box</button>
+              </article>)}</div>
+              {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
+            </section> : null}
             <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
             {editing && <section className="review-edit-details" aria-label="Annotation edit details">
               <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
@@ -5697,6 +5852,50 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
           : worker,
       ),
     });
+  const addDetectionWorker = () => {
+    const suffix = detectionWorkers.length + 1;
+    setSettings({
+      ...settings,
+      detection_workers: [...detectionWorkers, {
+        id: `http-detection-worker-${suffix}`,
+        display_name: `Detection Worker ${suffix}`,
+        model_id: `detection-model-${suffix}`,
+        base_url: `http://127.0.0.1:${8792 + suffix}`,
+        enabled: false,
+        allow_remote: false,
+        requires_checkpoint_metadata: false,
+        expected_capabilities: ["object_detection"],
+        score_semantics: "unknown",
+        version: {
+          architecture: null,
+          model_version: "unversioned",
+          checkpoint_sha256: null,
+          training_dataset_version: null,
+          backend_protocol_version: "1",
+        },
+        label_space: [],
+        runtime_requirements: { devices: [], dependencies: [], supports_batch: false },
+        license: {
+          code_license: null,
+          weight_license: null,
+          source_url: null,
+          commercial_use: "unknown",
+          redistribution: "unknown",
+          usage_notes: [],
+          verified_from_official_source: false,
+        },
+        timeout_seconds: 120,
+        max_request_bytes: 44_000_000,
+        max_response_bytes: 2_000_000,
+        max_retries: 0,
+        cost_per_request: "0",
+      }],
+    });
+  };
+  const removeDetectionWorker = (index: number) => setSettings({
+    ...settings,
+    detection_workers: detectionWorkers.filter((_: unknown, workerIndex: number) => workerIndex !== index),
+  });
   const chooseProvider = (id: string) => {
     setPresetId(id);
     setSettings(applyProviderPreset(settings, id));
@@ -5969,18 +6168,35 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
         )}
       </Panel>
       <Panel title="Detection Workers" eyebrow="Optional local model processes">
+        <div className="worker-collection-actions">
+          <p>Register any protocol v1 detection process. Workers stay disabled until their contract is complete.</p>
+          <button onClick={addDetectionWorker}>Add Worker</button>
+        </div>
         {detectionWorkers.length ? <div className="detection-worker-settings">
           {detectionWorkers.map((worker: Record<string, any>, index: number) => <article key={String(worker.id)}>
             <div className="worker-setting-heading">
               <span><strong>{String(worker.display_name)}</strong><small>{String(worker.model_id)}</small></span>
-              <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.enabled)} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
+              <div className="worker-setting-actions">
+                <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.enabled)} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
+                <button className="text-button" onClick={() => removeDetectionWorker(index)}>Remove</button>
+              </div>
             </div>
-            <label>Worker URL<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setDetectionWorker(index, "base_url", event.target.value)} /></label>
+            <div className="form-grid">
+              <label>Display name<input value={String(worker.display_name ?? "")} onChange={(event) => setDetectionWorker(index, "display_name", event.target.value)} /></label>
+              <label>Registry ID<input value={String(worker.id ?? "")} onChange={(event) => setDetectionWorker(index, "id", event.target.value)} /></label>
+              <label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setDetectionWorker(index, "model_id", event.target.value)} /></label>
+              <label>Worker URL<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setDetectionWorker(index, "base_url", event.target.value)} /></label>
+              <label>Capability<select value={String(worker.expected_capabilities?.[0] ?? "object_detection")} onChange={(event) => setDetectionWorker(index, "expected_capabilities", [event.target.value])}><option value="object_detection">Object detection</option><option value="open_vocabulary_detection">Open-vocabulary detection</option><option value="phrase_grounding">Phrase grounding</option></select></label>
+              <label>Score semantics<select value={String(worker.score_semantics ?? "unknown")} onChange={(event) => setDetectionWorker(index, "score_semantics", event.target.value)}><option value="calibrated_probability">Calibrated probability</option><option value="relative_confidence">Relative confidence</option><option value="ranking_score">Ranking score</option><option value="not_provided">Not provided</option><option value="unknown">Unknown</option></select></label>
+              <label>Estimated cost / request<input inputMode="decimal" value={String(worker.cost_per_request ?? "0")} onChange={(event) => setDetectionWorker(index, "cost_per_request", event.target.value)} /></label>
+              <label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setDetectionWorker(index, "timeout_seconds", Number(event.target.value))} /></label>
+            </div>
             <div className="worker-contract-summary">
               <small>Expected contract · {(worker.expected_capabilities ?? []).join(" · ")}</small>
               <small>Score · {String(worker.score_semantics ?? "unknown").replaceAll("_", " ")}</small>
               <small>Version · {String(worker.version?.model_version ?? "unversioned")}</small>
             </div>
+            <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.requires_checkpoint_metadata)} onChange={(event) => setDetectionWorker(index, "requires_checkpoint_metadata", event.target.checked)} /><span>Require specialist checkpoint identity</span></label>
             {Boolean(worker.requires_checkpoint_metadata) && <details className="advanced-settings" open>
               <summary>Required model identity</summary>
               <div className="form-grid">
@@ -6148,7 +6364,7 @@ function CreateProject({
   const [maximumCost, setMaximumCost] = useState("");
   const [targetReviewRate, setTargetReviewRate] = useState("10");
   const [offlineOnly, setOfflineOnly] = useState(false);
-  const [localModels, setLocalModels] = useState("");
+  const [modelRegistry, setModelRegistry] = useState<ModelBinding[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>();
   const [providerId, setProviderId] = useState("mock");
   const [customModel, setCustomModel] = useState("");
@@ -6168,6 +6384,9 @@ function CreateProject({
         setSettings(value);
         setProviderId(inferProviderPreset(value).id);
       })
+      .catch((error: Error) => onError(error.message));
+    void api.models()
+      .then((value) => setModelRegistry(value.models))
       .catch((error: Error) => onError(error.message));
   }, []);
   const resolvedWorkspaceId = workspaceId || guidedId(projectName, "vision-project");
@@ -6189,6 +6408,14 @@ function CreateProject({
   const modelConnected =
     preset.offline ||
     (Boolean(selectedModel) && (settings?.api_key_persisted || Boolean(apiKey.trim())));
+  const specialistModel = modelRegistry.find((model) =>
+    model.enabled && model.capabilities?.includes("object_detection") &&
+    (model.label_space?.length ?? 0) > 0 &&
+    model.label_space?.some((label) => label.toLowerCase() === resolvedLabelId.toLowerCase()),
+  );
+  const openVocabularyModel = modelRegistry.find((model) =>
+    model.enabled && model.capabilities?.includes("open_vocabulary_detection"),
+  );
   const chooseProvider = (id: string) => {
     setProviderId(id);
     setSettings((current) => {
@@ -6332,7 +6559,7 @@ function CreateProject({
           <details className="advanced-settings"><summary>Cost, review, and local constraints</summary><div className="form-grid">
             <label>Maximum expected cost<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder="Optional" /></label>
             <label>Target human review rate (%)<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
-            <label>Available local models<input value={localModels} onChange={(event) => setLocalModels(event.target.value)} placeholder="Optional model IDs" /></label>
+            <div className="wizard-fact"><span>Registered detection models</span><strong>{modelRegistry.filter((model) => model.enabled && model.role === "detection").length || "None enabled"}</strong></div>
             <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} /> Offline only</label>
           </div></details>
         </div>}
@@ -6340,9 +6567,18 @@ function CreateProject({
         {step === 4 && <div className="wizard-step">
           <div className="recommendation-card">
             <span className="status status-auto-accepted">Recommended</span>
-            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : `Find ${labelName} candidates`}</h3>
+            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? "Use your trained detector first" : "Find objects by description"}</h3>
             <ol>
-              <li>Use <strong>{preset.offline ? "the deterministic Mock model" : selectedModel || preset.models[0]?.label}</strong> through the registered model binding.</li>
+              {kind === "bounding_box" && specialistModel ? <>
+                <li>Use <strong>{specialistModel.model}</strong> for repeated {labelName} labeling.</li>
+                <li>{openVocabularyModel ? <>Ask <strong>{openVocabularyModel.model}</strong> only when the specialist result is uncertain.</> : "Route uncertain detector results to Review until an open-vocabulary fallback is configured."}</li>
+              </> : kind === "bounding_box" && openVocabularyModel ? <>
+                <li>Use <strong>{openVocabularyModel.model}</strong> to find {labelName} from a text description.</li>
+                <li>No training data is required.</li>
+              </> : kind === "bounding_box" ? <>
+                <li>Use a registered open-vocabulary detector to find {labelName} from its description.</li>
+                <li>No training data is required. Configure the Worker before a live Run.</li>
+              </> : <li>Use <strong>{preset.offline ? "the deterministic Mock model" : selectedModel || preset.models[0]?.label}</strong> through the registered model binding.</li>}
               {kind === "bounding_box" && <li>Keep the detector output as editable bounding boxes.</li>}
               <li>Automatically accept high-confidence results.</li>
               <li>Send uncertain results to Review.</li>

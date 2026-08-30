@@ -113,6 +113,9 @@ pub struct DetectionWorkerSettings {
     pub max_response_bytes: usize,
     #[serde(default)]
     pub max_retries: u32,
+    /// User-configured estimate used for planning and display. Runtime usage remains actual-first.
+    #[serde(default)]
+    pub cost_per_request: rust_decimal::Decimal,
 }
 
 impl DetectionWorkerSettings {
@@ -138,54 +141,60 @@ impl DetectionWorkerSettings {
 fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
     vec![
         DetectionWorkerSettings {
-        id: "annotagent-locate-anything".to_owned(),
-        display_name: "LocateAnything Local".to_owned(),
-        model_id: "locate-anything-local".to_owned(),
-        base_url: "http://127.0.0.1:8791".to_owned(),
-        enabled: false,
-        allow_remote: false,
-        requires_checkpoint_metadata: false,
-        expected_capabilities: vec![
-            VisionCapability::OpenVocabularyDetection,
-            VisionCapability::PhraseGrounding,
-        ],
-        score_semantics: ScoreSemantics::NotProvided,
-        version: ModelVersionMetadata {
-            architecture: Some("locateanything-3b".to_owned()),
-            model_version: "local-unpinned".to_owned(),
-            checkpoint_sha256: None,
-            training_dataset_version: None,
-            backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION.to_string(),
-        },
-        label_space: Vec::new(),
-        runtime_requirements: RuntimeRequirements {
-            devices: vec!["cuda".to_owned()],
-            minimum_gpu_memory_mb: None,
-            dependencies: vec![
-                "official LocateAnything worker source".to_owned(),
-                "PyTorch CUDA".to_owned(),
-                "Transformers 4.57.1".to_owned(),
+            id: "annotagent-locate-anything".to_owned(),
+            display_name: "LocateAnything Local".to_owned(),
+            model_id: "locate-anything-local".to_owned(),
+            base_url: "http://127.0.0.1:8791".to_owned(),
+            enabled: false,
+            allow_remote: false,
+            requires_checkpoint_metadata: false,
+            expected_capabilities: vec![
+                VisionCapability::OpenVocabularyDetection,
+                VisionCapability::PhraseGrounding,
             ],
-            supports_batch: false,
-        },
-        license: LicenseMetadata {
-            code_license: Some("NVIDIA source notice; verify the configured checkout".to_owned()),
-            weight_license: Some("NVIDIA License — non-commercial research/evaluation".to_owned()),
-            source_url: Some(
-                "https://huggingface.co/nvidia/LocateAnything-3B/blob/main/LICENSE".to_owned(),
-            ),
-            commercial_use: LicensePermission::Restricted,
-            redistribution: LicensePermission::Restricted,
-            usage_notes: vec![
-                "Use only in a setting permitted by the concrete model license.".to_owned(),
-                "This metadata is informational and is not legal advice.".to_owned(),
-            ],
-            verified_from_official_source: true,
-        },
-        timeout_seconds: 120,
-        max_request_bytes: 44_000_000,
-        max_response_bytes: 2_000_000,
-        max_retries: 0,
+            score_semantics: ScoreSemantics::NotProvided,
+            version: ModelVersionMetadata {
+                architecture: Some("locateanything-3b".to_owned()),
+                model_version: "local-unpinned".to_owned(),
+                checkpoint_sha256: None,
+                training_dataset_version: None,
+                backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION
+                    .to_string(),
+            },
+            label_space: Vec::new(),
+            runtime_requirements: RuntimeRequirements {
+                devices: vec!["cuda".to_owned()],
+                minimum_gpu_memory_mb: None,
+                dependencies: vec![
+                    "official LocateAnything worker source".to_owned(),
+                    "PyTorch CUDA".to_owned(),
+                    "Transformers 4.57.1".to_owned(),
+                ],
+                supports_batch: false,
+            },
+            license: LicenseMetadata {
+                code_license: Some(
+                    "NVIDIA source notice; verify the configured checkout".to_owned(),
+                ),
+                weight_license: Some(
+                    "NVIDIA License — non-commercial research/evaluation".to_owned(),
+                ),
+                source_url: Some(
+                    "https://huggingface.co/nvidia/LocateAnything-3B/blob/main/LICENSE".to_owned(),
+                ),
+                commercial_use: LicensePermission::Restricted,
+                redistribution: LicensePermission::Restricted,
+                usage_notes: vec![
+                    "Use only in a setting permitted by the concrete model license.".to_owned(),
+                    "This metadata is informational and is not legal advice.".to_owned(),
+                ],
+                verified_from_official_source: true,
+            },
+            timeout_seconds: 120,
+            max_request_bytes: 44_000_000,
+            max_response_bytes: 2_000_000,
+            max_retries: 0,
+            cost_per_request: rust_decimal::Decimal::ZERO,
         },
         DetectionWorkerSettings {
             id: "annotagent-rfdetr".to_owned(),
@@ -234,6 +243,7 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             max_request_bytes: 44_000_000,
             max_response_bytes: 2_000_000,
             max_retries: 0,
+            cost_per_request: rust_decimal::Decimal::ZERO,
         },
     ]
 }
@@ -436,6 +446,14 @@ pub struct ModelBinding {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label_space: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_per_request: Option<rust_decimal::Decimal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1349,6 +1367,8 @@ pub struct RunResultSummary {
     pub needs_review_count: usize,
     pub no_target_count: usize,
     pub failed_count: usize,
+    pub fallback_count: usize,
+    pub cache_hit_count: usize,
     pub duration_ms: u64,
     pub usage: UsageSummary,
     pub image_index: Option<usize>,
@@ -2680,6 +2700,10 @@ impl LocalApplication {
                     endpoint: None,
                     enabled: None,
                     license_summary: None,
+                    architecture: None,
+                    checkpoint_sha256: None,
+                    label_space: Vec::new(),
+                    cost_per_request: None,
                 }]
             })
             .unwrap_or_default();
@@ -2969,6 +2993,7 @@ impl LocalApplication {
     pub fn run_result_summary(&self, run_id: RunId) -> Result<RunResultSummary> {
         let history = self.store.history(run_id)?;
         let inspection = self.inspect_run_annotations(run_id)?;
+        let pipeline_inspection = self.inspect_run_pipeline_artifacts(run_id).ok();
         let results = inspection
             .annotations
             .iter()
@@ -3007,7 +3032,7 @@ impl LocalApplication {
             let mut detections = BTreeMap::new();
             let mut classifications = BTreeMap::new();
             let mut candidates = BTreeMap::new();
-            if let Ok(pipeline) = self.inspect_run_pipeline_artifacts(run_id) {
+            if let Some(pipeline) = pipeline_inspection.as_ref() {
                 for artifact in pipeline.nodes.iter().flat_map(|node| &node.outputs) {
                     match artifact {
                         PipelineArtifact::DetectionSet(set) => {
@@ -3094,6 +3119,21 @@ impl LocalApplication {
                     RunStatus::Completed | RunStatus::CompletedWithReview
                 ),
         );
+        let fallback_count = history
+            .run
+            .workflow_snapshot_json
+            .as_deref()
+            .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(snapshot).ok())
+            .and_then(|snapshot| {
+                snapshot
+                    .pointer("/checkpoint/activated_fallbacks")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::len)
+            })
+            .unwrap_or(0);
+        let cache_hit_count = pipeline_inspection.as_ref().map_or(0, |pipeline| {
+            pipeline.nodes.iter().filter(|node| node.cache_hit).count()
+        });
         Ok(RunResultSummary {
             run_id,
             project_id: inspection.project_id,
@@ -3104,6 +3144,8 @@ impl LocalApplication {
             needs_review_count,
             no_target_count,
             failed_count,
+            fallback_count,
+            cache_hit_count,
             duration_ms: history_run_duration_ms(&history.run),
             usage: history_usage_summary(&history),
             image_index: inspection.image_index,
@@ -4922,6 +4964,13 @@ impl LocalApplication {
             };
             let result = runtime.execute_sandbox(&request).await?;
             summary.image_count += 1;
+            summary.fallback_count += result.checkpoint.activated_fallbacks.len();
+            summary.cache_hit_count += result
+                .checkpoint
+                .traces
+                .iter()
+                .filter(|trace| trace.cache_hit)
+                .count();
             let mut sample_detections = 0;
             let mut sample_candidates = 0;
             let mut sample_failed = false;

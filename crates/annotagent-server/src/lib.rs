@@ -17,10 +17,11 @@ use annotagent_application::{
     validate_settings,
 };
 use annotagent_core::{
-    AgentBudget, Annotation, AnnotationId, ArtifactValidationState, AttributeDefinition, BatchId,
-    CorrectionFeatures, CorrectionRecord, EnabledSkillConfig, LabelId, ProjectSchema, ReviewStatus,
-    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, TaskKind, UsageTotals,
-    WorkflowConstraints, WorkflowDraft,
+    AgentBudget, Annotation, AnnotationId, AnnotationValue, ArtifactValidationState,
+    AttributeDefinition, BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord,
+    DetectionEvidence, EnabledSkillConfig, LabelId, NormalizedRect, PipelineArtifact,
+    ProjectSchema, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    ScoreSemantics, TaskKind, UsageTotals, WorkflowConstraints, WorkflowDraft,
 };
 use annotagent_provider::HttpVisionWorkerClient;
 use annotagent_runtime::RuntimeStore;
@@ -771,6 +772,10 @@ fn workspace_model_binding(settings: &Settings) -> ModelBinding {
         endpoint: None,
         enabled: Some(true),
         license_summary: None,
+        architecture: None,
+        checkpoint_sha256: None,
+        label_space: Vec::new(),
+        cost_per_request: Some(settings.pricing.per_request),
     }
 }
 
@@ -815,6 +820,10 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
             .clone()
             .or_else(|| worker.license.code_license.clone())
             .or_else(|| Some("License metadata not configured".to_owned())),
+        architecture: worker.version.architecture.clone(),
+        checkpoint_sha256: worker.version.checkpoint_sha256.clone(),
+        label_space: worker.label_space.clone(),
+        cost_per_request: Some(worker.cost_per_request),
     }
 }
 
@@ -1055,6 +1064,10 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
             endpoint: None,
             enabled: None,
             license_summary: None,
+            architecture: None,
+            checkpoint_sha256: None,
+            label_space: Vec::new(),
+            cost_per_request: None,
         }],
         provider: run.provider,
         model: run.model,
@@ -2105,6 +2118,211 @@ async fn run_events(
     Ok(Json(json!({"events": events})))
 }
 
+fn rect_iou(left: NormalizedRect, right: NormalizedRect) -> f32 {
+    let intersection = left.intersection_area(right);
+    let union = left.area() + right.area() - intersection;
+    if union > 0.0 {
+        intersection / union
+    } else {
+        0.0
+    }
+}
+
+fn review_detection_evidence(
+    inspection: Option<&annotagent_application::RunNodeArtifactInspection>,
+    annotation: &Annotation,
+) -> (
+    Vec<DetectionEvidence>,
+    Option<CandidateAgreement>,
+    Option<Value>,
+) {
+    let AnnotationValue::BoundingBox { rect } = &annotation.value else {
+        return (Vec::new(), None, None);
+    };
+    let Some(inspection) = inspection else {
+        return (Vec::new(), None, None);
+    };
+    let decision = inspection.nodes.iter().rev().find_map(|node| {
+        node.metadata
+            .get("evidence_gate")
+            .or_else(|| node.metadata.get("recovery_agent"))
+            .cloned()
+    });
+    let target_label = annotation.label.as_ref();
+    let mut best_cluster: Option<(f32, Vec<DetectionEvidence>, CandidateAgreement)> = None;
+    for set in inspection
+        .nodes
+        .iter()
+        .flat_map(|node| &node.outputs)
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::CandidateClusterSet(set) => Some(set),
+            _ => None,
+        })
+    {
+        for candidate in &set.candidates {
+            if target_label.is_some_and(|label| label != &candidate.target_label) {
+                continue;
+            }
+            let iou = rect_iou(*rect, candidate.representative_bbox);
+            if best_cluster
+                .as_ref()
+                .is_none_or(|(best_iou, _, _)| iou > *best_iou)
+            {
+                best_cluster = Some((iou, candidate.members.clone(), candidate.agreement.clone()));
+            }
+        }
+    }
+    if let Some((_, evidence, agreement)) = best_cluster {
+        return (evidence, Some(agreement), decision);
+    }
+    let mut best_detection: Option<(f32, Vec<DetectionEvidence>)> = None;
+    for set in inspection
+        .nodes
+        .iter()
+        .flat_map(|node| &node.outputs)
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::DetectionSet(set) => Some(set),
+            _ => None,
+        })
+    {
+        for detection in &set.detections {
+            if target_label.is_some_and(|label| detection.project_label.as_ref() != Some(label)) {
+                continue;
+            }
+            let iou = rect_iou(*rect, detection.bbox);
+            if best_detection
+                .as_ref()
+                .is_none_or(|(best_iou, _)| iou > *best_iou)
+            {
+                best_detection = Some((iou, detection.evidence.clone()));
+            }
+        }
+    }
+    best_detection.map_or((Vec::new(), None, decision.clone()), |(_, evidence)| {
+        (evidence, Some(CandidateAgreement::SingleSource), decision)
+    })
+}
+
+fn review_explanation(
+    annotation: &Annotation,
+    issue_codes: &[String],
+    evidence: &[DetectionEvidence],
+    agreement: Option<&CandidateAgreement>,
+    evidence_decision: Option<&Value>,
+) -> Value {
+    let source_models = evidence
+        .iter()
+        .map(|item| item.source_model_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let no_score = evidence
+        .iter()
+        .any(|item| item.score.semantics == ScoreSemantics::NotProvided);
+    let decision_text = evidence_decision
+        .and_then(|value| value.get("decision"))
+        .and_then(Value::as_str);
+    let reason_codes = evidence_decision
+        .and_then(|value| value.get("reasons"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|reason| reason.get("code").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let issue_text = issue_codes.join(" ").to_ascii_lowercase();
+
+    if issue_text.contains("white_shoe") || issue_text.contains("hard_negative") {
+        return json!({
+            "code": "domain_hard_negative",
+            "title": "Needs review",
+            "summary": "The candidate resembles a known domain hard negative.",
+            "details": ["RoboCup Ball validation marked it as a possible white shoe or robot part."]
+        });
+    }
+    if matches!(agreement, Some(CandidateAgreement::GeometryConflict)) {
+        let minimum_iou = evidence
+            .iter()
+            .enumerate()
+            .flat_map(|(index, left)| {
+                evidence
+                    .iter()
+                    .skip(index + 1)
+                    .map(move |right| rect_iou(left.bbox, right.bbox))
+            })
+            .reduce(f32::min);
+        return json!({
+            "code": "geometry_conflict",
+            "title": "Needs review",
+            "summary": format!("{} disagree on the object's location.", source_models.into_iter().collect::<Vec<_>>().join(" and ")),
+            "details": minimum_iou.map_or_else(
+                || vec!["Choose one source box or merge the result manually.".to_owned()],
+                |iou| vec![format!("Bounding-box IoU: {iou:.2}"), "Choose one source box or merge the result manually.".to_owned()],
+            )
+        });
+    }
+    if matches!(agreement, Some(CandidateAgreement::LabelConflict)) {
+        return json!({
+            "code": "label_conflict",
+            "title": "Needs review",
+            "summary": "The detectors disagree on the candidate label.",
+            "details": ["Inspect each model's original label before accepting."]
+        });
+    }
+    if decision_text == Some("fallback")
+        || reason_codes
+            .iter()
+            .any(|code| code.contains("empty") || code.contains("fallback"))
+        || (source_models.len() == 1 && no_score)
+    {
+        let source = source_models
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or("The fallback detector");
+        let mut details = vec![
+            "The primary detector did not produce evidence that could be accepted.".to_owned(),
+            format!("{source} found this candidate as fallback evidence."),
+        ];
+        if no_score {
+            details.push("This model does not provide a confidence score.".to_owned());
+        }
+        return json!({
+            "code": "fallback_evidence",
+            "title": "Needs review",
+            "summary": "A fallback detector found a candidate after the primary path was uncertain.",
+            "details": details
+        });
+    }
+    if no_score {
+        return json!({
+            "code": "score_not_provided",
+            "title": "Needs review",
+            "summary": "The detector found a candidate without a comparable confidence score.",
+            "details": ["Review the source evidence and geometry before accepting."]
+        });
+    }
+    if annotation.confidence.is_some_and(|value| value < 0.8) {
+        return json!({
+            "code": "low_confidence",
+            "title": "Needs review",
+            "summary": "The model confidence is below this Automation's acceptance threshold.",
+            "details": [format!("Recorded confidence: {:.0}%", annotation.confidence.unwrap_or_default() * 100.0)]
+        });
+    }
+    if !issue_codes.is_empty() {
+        return json!({
+            "code": "validation_issue",
+            "title": "Needs review",
+            "summary": "Validation needs a human decision.",
+            "details": issue_codes
+        });
+    }
+    json!({
+        "code": "review_policy",
+        "title": "Needs review",
+        "summary": "This Automation routes the result through a Human Review gate.",
+        "details": []
+    })
+}
+
 fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<Value>> {
     let mut reviews = Vec::new();
     let target_annotation = target
@@ -2294,6 +2512,15 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                         .map(String::as_str)
                 })
             });
+            let (detection_evidence, candidate_agreement, evidence_decision) =
+                review_detection_evidence(inspection.as_ref(), &annotation);
+            let explanation = review_explanation(
+                &annotation,
+                &validation_issue_codes,
+                &detection_evidence,
+                candidate_agreement.as_ref(),
+                evidence_decision.as_ref(),
+            );
             reviews.push(json!({
                     "id": annotation.id,
                     "run_id": run.id,
@@ -2313,6 +2540,10 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                     "review_reason": if annotation.confidence.is_some_and(|value| value < 0.8) { "low_confidence" } else if !validation_issue_codes.is_empty() { "validation_issue" } else { "review_policy" },
                     "confidence": annotation.confidence,
                     "validation_issues": validation_issue_codes.clone(),
+                    "detection_evidence": detection_evidence,
+                    "candidate_agreement": candidate_agreement,
+                    "evidence_decision": evidence_decision,
+                    "review_explanation": explanation,
                 }));
         }
     }
@@ -3596,6 +3827,8 @@ mod tests {
         assert_eq!(reviews["reviews"][0]["run_id"], json!(run_id));
         assert!(reviews["reviews"][0]["workflow_version"].is_number());
         assert!(reviews["reviews"][0]["review_reason"].is_string());
+        assert!(reviews["reviews"][0]["review_explanation"].is_object());
+        assert!(reviews["reviews"][0]["detection_evidence"].is_array());
         assert!(reviews["reviews"][0]["refinement_chain"].is_array());
         assert!(reviews["reviews"][0]["validation_issues"].is_array());
         assert_eq!(reviews["progress"]["reviewed_count"], json!(0));

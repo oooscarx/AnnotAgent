@@ -1,6 +1,6 @@
 # Detection Backends Acceptance Matrix
 
-Updated: 2026-08-30
+Updated: 2026-08-31
 
 Status vocabulary: `PASS` has executable repository evidence; `OPEN` requires implementation;
 `LIVE-CONDITIONAL` needs an external legal model/runtime; `MANUAL` cannot be truthfully automated
@@ -164,6 +164,30 @@ below:
   build, formatting, Core/Runtime brand scan, all 34 Web tests, Web typecheck/build and diff checks
   pass.
 
+## M9 Guided UX, Run and Review evidence
+
+- New Project recommendations are derived from enabled Registry capabilities and specialist label
+  space. They distinguish `Find objects by description` cold start from `Use your trained detector
+  first`; the Advisor still creates only an editable Draft.
+- Settings can add/remove versioned Detection Workers and edit endpoint, capability, model/version,
+  score semantics, cost, timeout, label space, checkpoint, license and remote opt-in. Models exposes
+  those real persisted facts plus connection/capability actions; unsupported visual prompt remains
+  disabled.
+- Run and Dry Run summaries expose fallback/cache counts. Results and Debug render source models,
+  original boxes, independent scores/semantics and candidate agreement. Missing scores use explicit
+  `confidence not provided` language and duplicate copied evidence is identity-deduplicated.
+- Review API/UI presents a stable queue explanation and independent source evidence. A reviewer may
+  replace the editable rectangle with a source model box; this records `selected_detection_evidence`
+  in the revision and still requires the normal Save/Accept flow.
+- TUI exposes Registry availability and missing-score semantics, can test a model endpoint, inspect
+  artifacts and request cache-aware Replay. Run pause/resume/cancel and GUI navigation remain intact.
+- Real browser checks over the rebuilt local server covered Models, Settings, New Project, Results,
+  Debug and Review at 1024px and 760px with zero horizontal overflow. The exact Run/Debug/image/node
+  URL survived reload. Native 200% zoom remains `MANUAL`, and model-specific conflict/source-choice
+  browser fixtures remain M10 release work rather than being inferred from unit tests.
+- `cargo test --workspace --all-features` passes 220 tests and doc tests. Strict workspace Clippy,
+  formatting, all 35 Web tests, Web typecheck/build and diff checks pass.
+
 ## A. Architecture
 
 | ID | Requirement | Status | Evidence |
@@ -269,11 +293,11 @@ below:
 | H01 | Global brand remains AnnotAgent | PASS | product identity tests/baseline |
 | H02 | Guided Mode uses user language | PASS | current Guided Workspace; new recommendations open |
 | H03 | Expert Mode shows real model and evidence | PASS | Run Debug Candidate Cluster payload and Evidence Decision card use persisted source/model facts |
-| H04 | Results shows source model | OPEN | mixed source evidence absent |
+| H04 | Results shows source model | PASS | Results annotation rows and Evidence Inspector render persisted source model/capability facts |
 | H05 | Missing score says confidence not provided | PASS | Evidence Decision card says confidence was not provided or is not comparable |
 | H06 | Agreement is visible | PASS | Debug card renders multi-source agreement reason and IoU from Gate report |
-| H07 | Review explains why it was queued | OPEN | generic reasons exist; mixed reasons absent |
-| H08 | Review can choose either model box | OPEN | source choices absent |
+| H07 | Review explains why it was queued | PASS | server emits stable policy/fallback/score/conflict explanations consumed by Review |
+| H08 | Review can choose either model box | PASS | source Evidence cards replace the editable box and persist the chosen evidence in a normal revision |
 | H09 | Settings can test a Worker | PASS | Models `Test Worker` invokes real health/capability discovery endpoint |
 | H10 | Unavailable Worker does not block AnnotAgent startup | PASS | disabled default descriptor + offline startup/catalog integration test |
 
@@ -295,15 +319,19 @@ below:
 | J01 | Rust Runtime owns the Agent loop | PASS | architecture and workspace tests |
 | J02 | TUI can inspect and cancel | PASS | current commands/tests; Models commands open |
 | J03 | GUI can inspect and cancel | PASS | current Run Debug/control E2E |
-| J04 | Models, endpoints, and cost are configurable | OPEN | arbitrary worker collection absent |
+| J04 | Models, endpoints, and cost are configurable | PASS | Detection Worker collection edits endpoint, identity, capability, cost, timeout and immutable metadata |
 | J05 | Real-time progress is visible | PASS | SSE/TUI event baseline |
 | J06 | Run history and Artifacts are inspectable | PASS | SQLite/API/Run Debug baseline |
-| J07 | Every model call records usage and latency | OPEN | token/cost exists; worker call timing contract incomplete |
+| J07 | Every model call records usage and latency | PASS | node traces expose duration/cache state and model summaries include request/token/cost facts without fabricated usage |
 | J08 | RoboCup customization is real | PASS | validators/refiners/recovery/correction tests |
 | J09 | Mock demo needs no key | PASS | three offline demos and acceptance baseline |
 | J10 | Live smoke executes or is explicitly conditional | LIVE-CONDITIONAL | no GPU/weights configured; exact blockers recorded |
 
 ## Browser release checks
 
-All twenty mixed-detection browser scenarios remain `OPEN` until M9/M10. Native 200% zoom is
-`MANUAL`; 1024px/reflow checks will be automated independently and cannot substitute for it.
+M9 exercised the real local Models, Settings, New Project cold-start recommendation, Run Results,
+Debug URL restore, Review source-evidence edit draft and Generic Project copy. All checked pages had
+zero horizontal overflow at 1024px and 760px. Parser/unit evidence covers two-source agreement and
+model-specific source choices, but M10 must still run those states as browser fixtures along with
+offline/timeout presentation. Native 200% zoom is `MANUAL`; responsive reflow does not substitute
+for it.

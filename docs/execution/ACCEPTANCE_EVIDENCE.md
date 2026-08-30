@@ -877,3 +877,30 @@ remains `LIVE-CONDITIONAL`; no API key, model weight, download or remote mutatio
 
 RoboCup Ball capability-bound hybrid status: `PASS`. Real LocateAnything/RF-DETR inference remains
 `LIVE-CONDITIONAL`; no push, API key, model weight, download or remote mutation was used.
+
+## Open-Vocabulary + Specialist Detection M9 — 2026-08-31
+
+1. New Project queries the real Model Registry and recommends a label-space-compatible specialist
+   first or an open-vocabulary cold-start recipe when no specialist exists. Both routes still become
+   editable Advisor Drafts; unavailable live bindings are explained rather than simulated.
+2. Detection Worker Settings now supports an arbitrary local collection and persists capability,
+   endpoint, registry/model identity, version, score semantics, request cost, timeout, checkpoint,
+   label-space, license and remote-opt-in facts. Models exposes matching metadata and real health /
+   capability actions.
+3. Run Results, Debug and Dry Run summaries show fallback/cache counts and source evidence. A
+   score-less source is rendered as `confidence not provided`; multi-source agreement retains IoU
+   and each original box rather than manufacturing an aggregate score.
+4. Review API returns structured queue explanations plus source Detection Evidence. Choosing a source
+   box changes only the editable revision until Save/Accept and persists the selected evidence in
+   annotation attributes so Correction Memory can retain the reviewer decision.
+5. TUI renders model availability and score semantics and provides real model-test, Artifact and
+   cache-aware Replay commands alongside existing lifecycle controls.
+6. In-app browser verification against a locally rebuilt server covered Models, Settings, New
+   Project, Results, Debug and Review at 1024px and 760px. There was no horizontal overflow; the
+   exact Debug query restored after reload; source-box selection created an unsaved edit and reload
+   correctly discarded it. Native 200% zoom remains an explicit manual M10 check.
+7. `cargo test --workspace --all-features` passes 220 Rust tests and doc tests. Strict workspace
+   Clippy, formatting, Web typecheck, all 35 Web tests, production build and diff checks pass.
+
+Guided mixed-detector evidence UX status: `PASS`. No source box, confidence, model availability or
+live inference result was fabricated; real GPU inference remains `LIVE-CONDITIONAL`.

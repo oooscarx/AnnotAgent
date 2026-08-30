@@ -5,10 +5,13 @@ use std::{
     time::Duration,
 };
 
-use annotagent_application::{AnnotAgentApplication, LocalApplication, load_settings};
+use annotagent_application::{
+    AnnotAgentApplication, DetectionWorkerSettings, LocalApplication, Settings, load_settings,
+};
 use annotagent_core::{
     AgentBudget, AgentSessionStatus, ProjectSchema, RunEvent, RunEventPayload, RunStatus,
 };
+use annotagent_provider::HttpVisionWorkerClient;
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -83,6 +86,7 @@ struct TuiState {
     current_task: String,
     usage: String,
     active: Option<ActiveRun>,
+    model_lines: Vec<String>,
     quit: bool,
 }
 
@@ -94,6 +98,7 @@ impl TuiState {
         } else {
             "No project opened. Use /open <project.yaml> or /init for setup help."
         };
+        let model_lines = model_lines(&workspace_settings(application.as_ref())?);
         Ok(Self {
             project,
             project_context,
@@ -104,6 +109,7 @@ impl TuiState {
             current_task: "-".to_owned(),
             usage: "input 0 · output 0 · cost 0".to_owned(),
             active: None,
+            model_lines,
             quit: false,
         })
     }
@@ -365,6 +371,130 @@ impl TuiState {
         Ok(())
     }
 
+    fn latest_run_id(&self) -> Option<annotagent_core::RunId> {
+        self.active
+            .as_ref()
+            .map(|active| active.run_id)
+            .or_else(|| {
+                self.application
+                    .store()
+                    .list_runs()
+                    .ok()
+                    .and_then(|runs| runs.into_iter().next().map(|run| run.id))
+            })
+    }
+
+    fn list_artifacts(&mut self) -> Result<()> {
+        let run_id = self
+            .latest_run_id()
+            .context("No Run history is available.")?;
+        let inspection = self.application.inspect_run_pipeline_artifacts(run_id)?;
+        self.push(format!("Artifacts for Run {run_id}"));
+        for node in inspection.nodes {
+            let kinds = node
+                .outputs
+                .iter()
+                .map(|artifact| {
+                    format!(
+                        "{:?}",
+                        annotagent_core::PipelineArtifact::artifact_type(artifact)
+                    )
+                    .to_ascii_lowercase()
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.push(format!(
+                "{} · {:?} · {} · cache {}",
+                node.node_id,
+                node.status,
+                if kinds.is_empty() {
+                    "no output"
+                } else {
+                    &kinds
+                },
+                if node.cache_hit { "hit" } else { "miss" }
+            ));
+        }
+        Ok(())
+    }
+
+    async fn replay(&mut self, requested_node: Option<&str>) -> Result<()> {
+        let run_id = self
+            .latest_run_id()
+            .context("No Run history is available.")?;
+        let inspection = self.application.inspect_run_pipeline_artifacts(run_id)?;
+        let node_id = requested_node
+            .map(str::to_owned)
+            .or_else(|| inspection.nodes.last().map(|node| node.node_id.clone()))
+            .context("This Run has no replayable node.")?;
+        self.push(format!("Sandbox Replay started from {node_id}"));
+        let report = self
+            .application
+            .replay_run_from_node(
+                run_id,
+                &node_id,
+                &workspace_settings(self.application.as_ref())?,
+            )
+            .await?;
+        self.push(format!(
+            "Replay completed · preserved {} · re-executed {}",
+            report.preserved_upstream_nodes.join(", "),
+            report.reexecuted_nodes.join(", ")
+        ));
+        Ok(())
+    }
+
+    async fn models(&mut self, action: Option<&str>, id: Option<&str>) -> Result<()> {
+        let settings = workspace_settings(self.application.as_ref())?;
+        if action != Some("test") {
+            self.model_lines = model_lines(&settings);
+            for line in self.model_lines.clone() {
+                self.push(format!("model · {line}"));
+            }
+            return Ok(());
+        }
+        let id = id.context("usage: /models test <id>")?;
+        let worker = settings
+            .detection_workers
+            .iter()
+            .find(|worker| worker.id == id || worker.model_id == id)
+            .context("unknown Detection Worker id")?;
+        if !worker.enabled {
+            self.push(format!(
+                "{} is disabled; enable it in Settings before testing.",
+                worker.display_name
+            ));
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let client = HttpVisionWorkerClient::new(worker.http_config())?;
+        match client.health().await {
+            Ok(health) => {
+                let latency = started.elapsed().as_millis();
+                let capability = worker_capability(worker);
+                let no_score =
+                    if worker.score_semantics == annotagent_core::ScoreSemantics::NotProvided {
+                        " · No confidence score"
+                    } else {
+                        ""
+                    };
+                let line = format!(
+                    "{} · {} · {:?} · {latency} ms{no_score}",
+                    worker.display_name, capability, health.status
+                );
+                self.model_lines
+                    .retain(|item| !item.starts_with(&worker.display_name));
+                self.model_lines.push(line.clone());
+                self.push(format!("model test · {line}"));
+            }
+            Err(error) => self.push(format!(
+                "model test · {} unavailable · {error}",
+                worker.display_name
+            )),
+        }
+        Ok(())
+    }
+
     async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
@@ -432,6 +562,9 @@ impl TuiState {
                 Ok(())
             }
             "/inspect" => self.inspect_latest(),
+            "/artifacts" => self.list_artifacts(),
+            "/replay" => self.replay(parts.next()).await,
+            "/models" => self.models(parts.next(), parts.next()).await,
             "/skills" => {
                 if parts.next() == Some("show") {
                     let id = parts.next().context("usage: /skills show <skill-id>")?;
@@ -550,7 +683,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /skills show <id> /advisor /advisor cancel /run /pause /resume /cancel /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /models /models test <id> /advisor /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -563,6 +696,48 @@ impl TuiState {
             }
         }
     }
+}
+
+fn workspace_settings(application: &LocalApplication) -> Result<Settings> {
+    let path = application.workspace().join(".annotagent/settings.toml");
+    load_settings(path.is_file().then_some(path.as_path()))
+}
+
+fn worker_capability(worker: &DetectionWorkerSettings) -> String {
+    worker.expected_capabilities.first().map_or_else(
+        || "unknown".to_owned(),
+        |capability| {
+            serde_json::to_value(capability)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "unknown".to_owned())
+        },
+    )
+}
+
+fn model_lines(settings: &Settings) -> Vec<String> {
+    settings
+        .detection_workers
+        .iter()
+        .map(|worker| {
+            let status = if worker.enabled {
+                "Configured"
+            } else {
+                "Disabled"
+            };
+            let no_score = if worker.score_semantics == annotagent_core::ScoreSemantics::NotProvided
+            {
+                " · No confidence score"
+            } else {
+                ""
+            };
+            format!(
+                "{} · {} · {status}{no_score}",
+                worker.display_name,
+                worker_capability(worker)
+            )
+        })
+        .collect()
 }
 
 pub async fn run(project: Option<PathBuf>) -> Result<()> {
@@ -731,7 +906,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
         );
     }
 
-    let visible = usize::from(rows[2].height.saturating_sub(2));
+    let body = if area.width >= 110 {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .split(rows[2])
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(100)])
+            .split(rows[2])
+    };
+    let visible = usize::from(body[0].height.saturating_sub(2));
     let trace = state
         .trace
         .iter()
@@ -748,8 +934,22 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
                 theme,
             ))
             .wrap(Wrap { trim: false }),
-        rows[2],
+        body[0],
     );
+    if area.width >= 110 {
+        let models = state
+            .model_lines
+            .iter()
+            .flat_map(|entry| [Line::from(entry.as_str()), Line::default()])
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(models)
+                .style(theme.panel())
+                .block(themed_block("Models · /models test <id>", theme))
+                .wrap(Wrap { trim: true }),
+            body[1],
+        );
+    }
     frame.render_widget(
         Paragraph::new(format!("> {}", state.input))
             .style(theme.command())
@@ -920,6 +1120,22 @@ mod tests {
         );
         assert_eq!(status_label(RunStatus::Completed), "Completed");
         assert_eq!(status_label(RunStatus::Failed), "Failed");
+    }
+
+    #[test]
+    fn models_panel_explains_capability_availability_and_missing_scores() {
+        let settings = load_settings(None).expect("default Settings");
+        let lines = model_lines(&settings);
+        assert!(lines.iter().any(|line| {
+            line.contains("LocateAnything")
+                && line.contains("open_vocabulary_detection")
+                && line.contains("No confidence score")
+        }));
+        assert!(
+            lines
+                .iter()
+                .any(|line| { line.contains("RF-DETR") && line.contains("object_detection") })
+        );
     }
 
     #[tokio::test]

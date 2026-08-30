@@ -1,6 +1,23 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-30 CST
+Last updated: 2026-08-31 CST
+
+## Open-Vocabulary + Specialist Detection M9 — 2026-08-31
+
+- Guided New Project recommendations now use the real Model Registry: label-compatible specialists
+  are recommended first, while cold-start Projects are offered description-based detection without
+  a training-data claim or hidden live availability claim.
+- Models and Settings expose an editable Detection Worker collection, immutable model/license facts,
+  score semantics, per-request cost and real health/capability actions. Unsupported visual prompt is
+  visibly disabled.
+- Run/Dry Run summaries show fallback and cache counts. Results, Debug and Review preserve every
+  independent source box and score semantic, explain missing confidence/agreement/conflict, and let
+  reviewers adopt a source box through the normal revision/acceptance path.
+- TUI adds model, endpoint-test, Artifact and Replay inspection. Real browser verification covered
+  the core pages at 1024px/760px without horizontal overflow and confirmed exact Debug URL reload.
+- Full verification passes: 220 Rust tests and doc tests, strict Clippy, 35 Web tests, Web
+  typecheck/build, formatting and diff checks. M10 remains responsible for detector-cache proofs,
+  complete failure-path browser fixtures, release documentation and live-conditional smoke records.
 
 ## Open-Vocabulary + Specialist Detection M8 — 2026-08-30
 

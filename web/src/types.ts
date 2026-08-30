@@ -138,6 +138,10 @@ export interface ModelBinding {
   endpoint?: string;
   enabled?: boolean;
   license_summary?: string;
+  architecture?: string;
+  checkpoint_sha256?: string;
+  label_space?: string[];
+  cost_per_request?: string;
 }
 
 export interface DetectionWorkerTestResult {
@@ -557,6 +561,8 @@ export interface WorkflowDryRunReport {
     needs_review_count: number;
     failed_count: number;
     empty_count: number;
+    fallback_count: number;
+    cache_hit_count: number;
     duration_ms: number;
     input_tokens: number;
     output_tokens: number;
@@ -753,6 +759,8 @@ export interface RunResultSummary {
   needs_review_count: number;
   no_target_count: number;
   failed_count: number;
+  fallback_count: number;
+  cache_hit_count: number;
   duration_ms: number;
   usage: { input_tokens: number; output_tokens: number; estimated_cost: string };
   image_index?: number;
@@ -869,6 +877,15 @@ export interface ReviewItem {
   review_reason: string;
   confidence?: number;
   validation_issues: string[];
+  detection_evidence: DetectionEvidenceDto[];
+  candidate_agreement?: CandidateClusterDto["agreement"];
+  evidence_decision?: EvidenceGateReportDto | Record<string, unknown>;
+  review_explanation?: {
+    code: string;
+    title: string;
+    summary: string;
+    details: string[];
+  };
 }
 
 export interface ReviewQueueProgress {

@@ -133,6 +133,48 @@ describe("Label Pipeline product helpers", () => {
       label: "ball",
       confidence: undefined,
       sourceNode: "open-detector",
+      evidence: [{
+        source_model_id: "open-model",
+        score: { value: undefined, semantics: "not_provided" },
+      }],
+    });
+  });
+
+  it("keeps every detector box and agreement metric in Candidate Cluster previews", () => {
+    const clusters: PipelineArtifact = {
+      kind: "candidate_cluster_set",
+      artifact: {
+        reference: { artifact_id: "clusters", source_node: "candidate-match" },
+        candidates: [{
+          id: "cluster-1",
+          target_label: "football",
+          representative_bbox: [0.2, 0.3, 0.1, 0.12],
+          agreement: { multi_source_agreement: { minimum_iou: 0.74, mean_iou: 0.81 } },
+          members: [{
+            source_model_id: "rfdetr-specialist-local",
+            source_artifact_id: "specialist-set",
+            bbox: [0.2, 0.3, 0.1, 0.12],
+            score: { value: 0.87, semantics: "relative_confidence" },
+            source_capability: "object_detection",
+          }, {
+            source_model_id: "locate-anything-local",
+            source_artifact_id: "open-set",
+            bbox: [0.205, 0.305, 0.095, 0.115],
+            score: { value: null, semantics: "not_provided" },
+            source_capability: "open_vocabulary_detection",
+          }],
+        }],
+      },
+    };
+
+    expect(artifactDetectionMarks([clusters])[0]).toMatchObject({
+      id: "cluster-1",
+      label: "football",
+      agreement: { multi_source_agreement: { minimum_iou: 0.74 } },
+      evidence: [
+        { source_model_id: "rfdetr-specialist-local", score: { value: 0.87 } },
+        { source_model_id: "locate-anything-local", score: { value: undefined } },
+      ],
     });
   });
 

@@ -1,10 +1,10 @@
 # Detection Backends Status
 
-Updated: 2026-08-30
+Updated: 2026-08-31
 
 ## Current Milestone
 
-M8 — Capability-bound RoboCup Ball hybrid Workflow (complete)
+M9 — Guided UX, mixed-evidence Run/Review, and TUI controls (complete)
 
 ## Completed
 
@@ -168,34 +168,54 @@ M8 — Capability-bound RoboCup Ball hybrid Workflow (complete)
   creates a Crop, classifies it and ends in review without failing the Run. The same frozen graph
   proves `not_football` reaches only the explicit Reject terminal and an opted-in specialist Worker
   error remains structured, invokes fallback and finishes in Review rather than Failed.
+- Replaced free-text detector setup in New Project with Registry-aware recommendations. A matching,
+  enabled specialist is recommended first; otherwise Guided Mode explains open-vocabulary cold
+  start without claiming that unconfigured live inference is available.
+- Expanded Detection Worker Settings into an editable collection with capability, endpoint, model
+  identity, score semantics, timeout, cost, checkpoint, label-space, license and remote-opt-in
+  fields. Models exposes the same facts, real connection/capability actions and a truthfully disabled
+  visual-prompt action.
+- Run and Dry Run summaries now report fallback and cache-hit counts. Results and Debug expose each
+  independent detector contribution, its original box and score semantics; missing scores say
+  `confidence not provided`, and agreement/conflict facts are not collapsed into a synthetic score.
+- Review returns a stable structured queue explanation plus source Detection Evidence. Choosing a
+  source box creates an ordinary editable revision, records the selected evidence in annotation
+  attributes and still requires explicit Save/Accept, preserving correction lineage.
+- Added a wide-screen TUI Models panel and real `/models`, `/models test`, `/artifacts`, and
+  `/replay` commands. The existing run control commands remain available and the model panel states
+  availability and missing-score semantics rather than inventing confidence.
+- Responsive browser verification covered Models, Settings, New Project, Results, Debug and Review
+  at 1024px and 760px with zero horizontal overflow. Reload restored the exact Debug URL, Review
+  rendered source evidence without a style discontinuity, and keyboard-operable detection boxes
+  retained focus semantics. Native browser 200% zoom remains a manual M10 gate.
 
 ## In progress
 
-- None. M8 is ready for its independent local commit.
+- None. M9 is ready for its independent local commit.
 
 ## Next step
 
-M9 — expose Guided recommendations, Worker setup, mixed-evidence Results/Review explanations,
-source-box choice, TUI model controls, URL restoration and responsive accessibility evidence.
+M10 — complete detector-aware cache/Replay reliability, 100-image and lifecycle verification,
+failure-path/browser release gates, documentation and the five-minute hybrid demo.
 
 ## Latest tests
 
 | Area | Command | Result |
 | --- | --- | --- |
-| Rust | `cargo test --workspace --all-features` | PASS — 219 tests, 0 failed; doc tests pass |
+| Rust | `cargo test --workspace --all-features` | PASS — 220 tests, 0 failed; doc tests pass |
 | Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS |
 | Rust build | `cargo build --workspace --all-features` | PASS |
-| Web | `npm --prefix web test -- --run` | PASS — 12 files, 34 tests |
+| Web | `npm --prefix web test -- --run` | PASS — 12 files, 35 tests |
 | Web types | `npm --prefix web run typecheck` | PASS |
 | Web build | `npm --prefix web run build` | PASS |
 | Worker | parse all tracked Python workers with Python 3.14 | PASS — syntax only; no model loaded |
 | Locate worker | start without weights; request `/health` and `/v1/capabilities` | PASS — unavailable health is truthful; capabilities remain discoverable |
 | RF-DETR worker | start without checkpoint; request `/health` and `/v1/capabilities` | PASS — immutable metadata requirement is reported; no fixture inference |
-| Browser | prior Guided Release browser evidence | PASS at 1024px and 720×450; M6 evidence card is built/parser-tested, full mixed-evidence visual browser gate remains M9/M10 |
+| Browser | in-app browser over the locally rebuilt server | PASS for Models/Settings/New Project/Results/Debug/Review at 1024px and 760px; zero horizontal overflow and exact Debug URL reload; native 200% remains MANUAL |
 
 ## Latest local commit
 
-This document's containing M8 commit: `feat(robocup): add specialist and open-vocabulary ball workflow`
+This document's containing M9 commit: `feat(ui): explain mixed detector evidence and fallbacks`
 
 ## Audited baseline
 
@@ -229,10 +249,9 @@ This document's containing M8 commit: `feat(robocup): add specialist and open-vo
 
 ## Release Blocking remaining
 
-The matrix contains 78 `PASS`, 10 `OPEN`, and one `LIVE-CONDITIONAL` row after M8. Capability-bound
-RoboCup hybrid policy, Correction Memory, hard-negative and Crop verification now pass;
-cache-specific proof and Guided Results/Review remain scheduled work. Real five-image GPU smokes remain explicitly
-live-conditional and are not represented by Mock fixtures.
+The matrix contains 83 `PASS`, 5 `OPEN`, and one `LIVE-CONDITIONAL` row after M9. The five open
+rows are the detector-aware Cache/Replay proofs scheduled for M10. Real five-image GPU smokes remain
+explicitly live-conditional and are not represented by Mock fixtures.
 
 ## Live-conditional items
 

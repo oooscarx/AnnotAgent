@@ -385,6 +385,10 @@ pub struct SampleTestSummary {
     #[serde(default)]
     pub empty_count: usize,
     #[serde(default)]
+    pub fallback_count: usize,
+    #[serde(default)]
+    pub cache_hit_count: usize,
+    #[serde(default)]
     pub duration_ms: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
