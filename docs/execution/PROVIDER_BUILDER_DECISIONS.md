@@ -77,3 +77,24 @@ The injectable Keyring backend deliberately collapses native errors into a zero-
 The public Secret Store maps that marker to stable operation-specific messages. This prevents an OS
 backend, account locator, or accidental native diagnostic from echoing credential material through
 API errors while keeping the operation category actionable.
+
+## D013 — Model Profile revision is a semantic sequence, not an edit counter
+
+Revision starts at one and advances only when Provider identity, remote model identity, modalities,
+protocol features, task capabilities, limits, or generation defaults change. Display label, status,
+enable/lock state, pricing, and credential rotation update metadata without creating a semantic
+revision. Skipped and redundant revisions are rejected at the SQLite boundary.
+
+## D014 — Draft binding and runtime descriptor coexist during migration
+
+New Workflow nodes can carry a typed `WorkflowModelBinding` containing a Profile ID and lock state.
+The legacy `model_binding` string remains temporarily as the runtime-registry projection so current
+Projects keep executing. Publication resolves the typed Profile to a runtime descriptor and freezes
+the semantic Profile snapshot; M8 removes reliance on vendor/model guessing, not compatibility data.
+
+## D015 — compatibility returns reasons and never ranks an invalid candidate
+
+Compatibility first removes disabled/unhealthy Providers, missing credentials, unavailable Models,
+missing modalities, missing protocol features and missing task capabilities. Ranking happens only
+after this filter. An empty result becomes `unresolved model binding`; no Provider name, preset, or
+remote model string is used as an implicit choice.

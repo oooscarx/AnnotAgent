@@ -8,12 +8,13 @@ use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
-    ArtifactId, ArtifactValidationState, CorrectionRecord, ImageId, LabelId, ModelMessage,
-    ProjectId, ProviderId, ProviderProfile, PublishedWorkflowVersion, RelationEndpoint,
-    ReviewStatus, RevisionActor, RunEvent, RunEventPayload, RunId, RunStatus, TaskId,
-    TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue, VisionArtifact,
-    VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunReport,
-    WorkflowSnapshot,
+    ArtifactId, ArtifactValidationState, BindingMutationActor, CorrectionRecord,
+    GlobalModelDefaults, ImageId, LabelId, ModelBindingId, ModelBindingMatch, ModelMessage,
+    ModelProfile, ModelProfileId, ProjectId, ProjectModelBinding, ProviderId, ProviderProfile,
+    PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
+    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
+    WorkflowDryRunReport, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -30,6 +31,7 @@ const WORKFLOW_SAMPLE_TEST_MIGRATION: &str =
     include_str!("../../../migrations/0005_workflow_sample_tests.sql");
 const PROVIDER_REGISTRY_MIGRATION: &str =
     include_str!("../../../migrations/0006_provider_registry.sql");
+const MODEL_PROFILE_MIGRATION: &str = include_str!("../../../migrations/0007_model_profiles.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -47,6 +49,18 @@ pub enum StorageError {
     BatchLeaseConflict(String),
     #[error("Provider Profile {0} was not found")]
     ProviderNotFound(ProviderId),
+    #[error("Model Profile {0} revision {1} was not found")]
+    ModelProfileNotFound(ModelProfileId, u64),
+    #[error("invalid Model Profile revision: {0}")]
+    InvalidModelRevision(String),
+    #[error("semantic Model Profile changes require a new revision")]
+    ModelSemanticChangeRequiresRevision,
+    #[error("a new Model Profile revision requires a semantic change")]
+    ModelRevisionRequiresSemanticChange,
+    #[error("Project Model Binding {0} was not found")]
+    ModelBindingNotFound(ModelBindingId),
+    #[error("Agent cannot modify a locked Project Model Binding")]
+    ModelBindingLocked,
     #[error("unsupported history schema version {0}")]
     UnsupportedHistoryVersion(u32),
     #[error("invalid stored enum value: {0}")]
@@ -257,6 +271,13 @@ impl SqliteStore {
                 params!["provider_registry", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(MODEL_PROFILE_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (7, ?1, ?2)",
+                params!["model_profiles", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -341,6 +362,361 @@ impl SqliteStore {
                 return Err(StorageError::ProviderNotFound(provider_id));
             }
             Ok(())
+        })
+    }
+
+    pub fn save_model_profile(&self, profile: &ModelProfile) -> Result<(), StorageError> {
+        profile
+            .validate()
+            .map_err(|error| StorageError::InvalidModelRevision(error.to_string()))?;
+        self.with_connection(|connection| {
+            let provider_exists = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM provider_profiles WHERE id = ?1)",
+                [profile.provider_id.to_string()],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !provider_exists {
+                return Err(StorageError::ProviderNotFound(profile.provider_id));
+            }
+            let latest = connection
+                .query_row(
+                    "SELECT revision, profile_json FROM model_profiles
+                     WHERE id = ?1 ORDER BY revision DESC LIMIT 1",
+                    [profile.id.to_string()],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+                .map(|(revision, json)| {
+                    let revision = u64::try_from(revision).map_err(|_| {
+                        StorageError::InvalidModelRevision(
+                            "stored revision must be a positive integer".to_owned(),
+                        )
+                    })?;
+                    serde_json::from_str::<ModelProfile>(&json)
+                        .map(|profile| (revision, profile))
+                        .map_err(StorageError::from)
+                })
+                .transpose()?;
+            match latest {
+                None if profile.revision != 1 => {
+                    return Err(StorageError::InvalidModelRevision(
+                        "the first revision must be 1".to_owned(),
+                    ));
+                }
+                Some((latest_revision, ref latest_profile))
+                    if profile.revision == latest_revision =>
+                {
+                    if !profile.has_same_semantics(latest_profile) {
+                        return Err(StorageError::ModelSemanticChangeRequiresRevision);
+                    }
+                }
+                Some((latest_revision, ref latest_profile))
+                    if profile.revision == latest_revision.saturating_add(1) =>
+                {
+                    if profile.has_same_semantics(latest_profile) {
+                        return Err(StorageError::ModelRevisionRequiresSemanticChange);
+                    }
+                }
+                Some((latest_revision, _)) => {
+                    return Err(StorageError::InvalidModelRevision(format!(
+                        "expected revision {latest_revision} for metadata-only update or {} for a semantic change",
+                        latest_revision.saturating_add(1)
+                    )));
+                }
+                None => {}
+            }
+            connection.execute(
+                "INSERT INTO model_profiles
+                 (id, revision, provider_id, display_name, remote_model_id, status, enabled,
+                  locked, profile_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id, revision) DO UPDATE SET
+                   display_name = excluded.display_name,
+                   status = excluded.status,
+                   enabled = excluded.enabled,
+                   locked = excluded.locked,
+                   profile_json = excluded.profile_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    profile.id.to_string(),
+                    i64::try_from(profile.revision).map_err(|_| {
+                        StorageError::InvalidModelRevision(
+                            "revision exceeds SQLite integer range".to_owned(),
+                        )
+                    })?,
+                    profile.provider_id.to_string(),
+                    profile.display_name,
+                    profile.remote_model_id,
+                    enum_string(profile.status)?,
+                    profile.enabled,
+                    profile.locked,
+                    serde_json::to_string(profile)?,
+                    profile.created_at.to_rfc3339(),
+                    profile.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_model_profile(
+        &self,
+        model_profile_id: ModelProfileId,
+        revision: Option<u64>,
+    ) -> Result<ModelProfile, StorageError> {
+        self.with_connection(|connection| {
+            let json = if let Some(revision) = revision {
+                let revision = i64::try_from(revision).map_err(|_| {
+                    StorageError::InvalidModelRevision(
+                        "revision exceeds SQLite integer range".to_owned(),
+                    )
+                })?;
+                connection
+                    .query_row(
+                        "SELECT profile_json FROM model_profiles WHERE id = ?1 AND revision = ?2",
+                        params![model_profile_id.to_string(), revision],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+            } else {
+                connection
+                    .query_row(
+                        "SELECT profile_json FROM model_profiles
+                         WHERE id = ?1 ORDER BY revision DESC LIMIT 1",
+                        [model_profile_id.to_string()],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+            }
+            .ok_or(StorageError::ModelProfileNotFound(
+                model_profile_id,
+                revision.unwrap_or(0),
+            ))?;
+            serde_json::from_str(&json).map_err(StorageError::from)
+        })
+    }
+
+    pub fn list_model_profiles(
+        &self,
+        provider_id: Option<ProviderId>,
+        include_all_revisions: bool,
+    ) -> Result<Vec<ModelProfile>, StorageError> {
+        self.with_connection(|connection| {
+            let sql = match (provider_id.is_some(), include_all_revisions) {
+                (false, false) => {
+                    "SELECT current.profile_json FROM model_profiles current
+                     WHERE current.revision = (SELECT MAX(revision) FROM model_profiles
+                       WHERE id = current.id)
+                     ORDER BY current.display_name, current.id"
+                }
+                (true, false) => {
+                    "SELECT current.profile_json FROM model_profiles current
+                     WHERE current.provider_id = ?1
+                       AND current.revision = (SELECT MAX(revision) FROM model_profiles
+                         WHERE id = current.id)
+                     ORDER BY current.display_name, current.id"
+                }
+                (false, true) => {
+                    "SELECT profile_json FROM model_profiles ORDER BY display_name, id, revision"
+                }
+                (true, true) => {
+                    "SELECT profile_json FROM model_profiles WHERE provider_id = ?1
+                     ORDER BY display_name, id, revision"
+                }
+            };
+            let mut statement = connection.prepare(sql)?;
+            let rows = if let Some(provider_id) = provider_id {
+                statement
+                    .query_map([provider_id.to_string()], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.into_iter()
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    pub fn save_project_model_binding(
+        &self,
+        binding: &ProjectModelBinding,
+        actor: BindingMutationActor,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let match_value = binding_match_value(binding)?;
+            let existing = connection
+                .query_row(
+                    "SELECT binding_json FROM project_model_bindings
+                     WHERE project_id = ?1 AND match_kind = ?2 AND match_value = ?3",
+                    params![
+                        binding.project_id.to_string(),
+                        enum_string(binding.match_kind)?,
+                        match_value,
+                    ],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|json| serde_json::from_str::<ProjectModelBinding>(&json))
+                .transpose()?;
+            if existing
+                .as_ref()
+                .is_some_and(|existing| existing.locked && actor == BindingMutationActor::Agent)
+            {
+                return Err(StorageError::ModelBindingLocked);
+            }
+            let model_json = connection
+                .query_row(
+                    "SELECT profile_json FROM model_profiles WHERE id = ?1
+                     ORDER BY revision DESC LIMIT 1",
+                    [binding.model_profile_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or(StorageError::ModelProfileNotFound(
+                    binding.model_profile_id,
+                    0,
+                ))?;
+            let model: ModelProfile = serde_json::from_str(&model_json)?;
+            binding
+                .validate_for_model(&model)
+                .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+            if let Some(existing) = existing
+                && existing.id != binding.id
+            {
+                connection.execute(
+                    "DELETE FROM project_model_bindings WHERE id = ?1",
+                    [existing.id.to_string()],
+                )?;
+            }
+            connection.execute(
+                "INSERT INTO project_model_bindings
+                 (id, project_id, match_kind, match_value, capability, role, model_profile_id,
+                  locked, binding_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(id) DO UPDATE SET
+                   project_id = excluded.project_id,
+                   match_kind = excluded.match_kind,
+                   match_value = excluded.match_value,
+                   capability = excluded.capability,
+                   role = excluded.role,
+                   model_profile_id = excluded.model_profile_id,
+                   locked = excluded.locked,
+                   binding_json = excluded.binding_json",
+                params![
+                    binding.id.to_string(),
+                    binding.project_id.to_string(),
+                    enum_string(binding.match_kind)?,
+                    binding_match_value(binding)?,
+                    enum_string(binding.capability)?,
+                    enum_string(binding.role)?,
+                    binding.model_profile_id.to_string(),
+                    binding.locked,
+                    serde_json::to_string(binding)?,
+                    binding.created_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_model_bindings(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<ProjectModelBinding>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT binding_json FROM project_model_bindings
+                 WHERE project_id = ?1 ORDER BY match_kind, match_value, id",
+            )?;
+            statement
+                .query_map([project_id.to_string()], |row| row.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect()
+        })
+    }
+
+    pub fn delete_project_model_binding(
+        &self,
+        binding_id: ModelBindingId,
+        actor: BindingMutationActor,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let existing = connection
+                .query_row(
+                    "SELECT binding_json FROM project_model_bindings WHERE id = ?1",
+                    [binding_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or(StorageError::ModelBindingNotFound(binding_id))?;
+            let existing: ProjectModelBinding = serde_json::from_str(&existing)?;
+            if existing.locked && actor == BindingMutationActor::Agent {
+                return Err(StorageError::ModelBindingLocked);
+            }
+            connection.execute(
+                "DELETE FROM project_model_bindings WHERE id = ?1",
+                [binding_id.to_string()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn save_global_model_defaults(
+        &self,
+        defaults: &GlobalModelDefaults,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let mut models = BTreeMap::new();
+            for model_profile_id in [
+                defaults.pipeline_builder,
+                defaults.vision_language,
+                defaults.text_generation,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let json = connection
+                    .query_row(
+                        "SELECT profile_json FROM model_profiles WHERE id = ?1
+                         ORDER BY revision DESC LIMIT 1",
+                        [model_profile_id.to_string()],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                    .ok_or(StorageError::ModelProfileNotFound(model_profile_id, 0))?;
+                models.insert(model_profile_id, serde_json::from_str(&json)?);
+            }
+            defaults
+                .validate(&models)
+                .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+            connection.execute(
+                "INSERT INTO global_model_defaults(singleton, defaults_json, updated_at)
+                 VALUES (1, ?1, ?2)
+                 ON CONFLICT(singleton) DO UPDATE SET
+                   defaults_json = excluded.defaults_json,
+                   updated_at = excluded.updated_at",
+                params![serde_json::to_string(defaults)?, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_global_model_defaults(&self) -> Result<GlobalModelDefaults, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT defaults_json FROM global_model_defaults WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map_or_else(
+                    || Ok(GlobalModelDefaults::default()),
+                    |json| serde_json::from_str(&json).map_err(StorageError::from),
+                )
         })
     }
 
@@ -1627,6 +2003,13 @@ fn enum_string<T: serde::Serialize>(value: T) -> Result<String, StorageError> {
         .ok_or_else(|| StorageError::InvalidEnum("enum did not serialize as a string".to_owned()))
 }
 
+fn binding_match_value(binding: &ProjectModelBinding) -> Result<String, StorageError> {
+    match binding.match_kind {
+        ModelBindingMatch::Capability => enum_string(binding.capability),
+        ModelBindingMatch::Role => enum_string(binding.role),
+    }
+}
+
 fn parse_run_id(value: &str) -> Result<RunId, StorageError> {
     value
         .parse()
@@ -2220,12 +2603,17 @@ fn sqlite_u64(value: u64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, AttributeValue, CorrectionFeatures, CredentialReference,
-        CredentialSource, DETECTION_ARTIFACT_SCHEMA_VERSION, IssueSeverity, PipelineArtifact,
-        ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
-        ProviderHealthStatus, RunEventKind, RunEventPayload, ScoreSemantics, SuggestedAction,
-        ValidationEvidence, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
+        ArtifactProvenance, ArtifactRole, AttributeValue, CapabilityDeclarationSource,
+        CorrectionFeatures, CredentialReference, CredentialSource,
+        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, InputModality, IssueSeverity,
+        ModelBindingRole, ModelCapability, ModelLimits, ModelPricing, ModelProfileStatus,
+        PipelineArtifact, PricingSource, ProtocolFeatures, ProviderAdapterKind,
+        ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus, RunEventKind,
+        RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
+        WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -2266,6 +2654,9 @@ mod tests {
             "agent_sessions",
             "workflow_sample_tests",
             "provider_profiles",
+            "model_profiles",
+            "project_model_bindings",
+            "global_model_defaults",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
@@ -2324,6 +2715,159 @@ mod tests {
             store.get_provider_profile(id),
             Err(StorageError::ProviderNotFound(missing)) if missing == id
         ));
+    }
+
+    #[test]
+    fn model_revisions_bindings_and_agent_lock_are_persistent_and_fail_closed() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let provider_id = ProviderId::new();
+        let now = Utc::now();
+        store
+            .save_provider_profile(&ProviderProfile {
+                id: provider_id,
+                display_name: "Mock Lab".to_owned(),
+                preset_id: Some("mock".to_owned()),
+                adapter: ProviderAdapterKind::Mock,
+                base_url: url::Url::parse("http://127.0.0.1:8791/v1").expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: None,
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("provider");
+        let model_id = ModelProfileId::new();
+        let profile = ModelProfile {
+            id: model_id,
+            revision: 1,
+            provider_id,
+            display_name: "Vision Builder".to_owned(),
+            remote_model_id: "vision-builder-v1".to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                json_schema: true,
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([
+                ModelCapability::VisionLanguage,
+                ModelCapability::ImageClassification,
+            ]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits {
+                context_tokens: Some(32_768),
+                maximum_output_tokens: Some(4_096),
+                maximum_images_per_request: Some(4),
+                maximum_image_pixels: Some(12_000_000),
+            },
+            generation_defaults: GenerationDefaults {
+                temperature: Some(rust_decimal::Decimal::new(1, 1)),
+                ..GenerationDefaults::default()
+            },
+            pricing: ModelPricing {
+                currency: "USD".to_owned(),
+                per_request: Some(rust_decimal::Decimal::new(1, 3)),
+                source: PricingSource::UserConfigured,
+                updated_at: Some(now),
+                ..ModelPricing::default()
+            },
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        store.save_model_profile(&profile).expect("revision 1");
+
+        let mut price_update = profile.clone();
+        price_update.pricing.per_request = Some(rust_decimal::Decimal::new(2, 3));
+        store
+            .save_model_profile(&price_update)
+            .expect("price update keeps revision");
+        let mut invalid_same_revision = price_update.clone();
+        invalid_same_revision.remote_model_id = "vision-builder-v2".to_owned();
+        assert!(matches!(
+            store.save_model_profile(&invalid_same_revision),
+            Err(StorageError::ModelSemanticChangeRequiresRevision)
+        ));
+        invalid_same_revision.revision = 2;
+        store
+            .save_model_profile(&invalid_same_revision)
+            .expect("semantic revision 2");
+        let mut unnecessary_revision = invalid_same_revision.clone();
+        unnecessary_revision.revision = 3;
+        assert!(matches!(
+            store.save_model_profile(&unnecessary_revision),
+            Err(StorageError::ModelRevisionRequiresSemanticChange)
+        ));
+        assert_eq!(
+            store
+                .get_model_profile(model_id, None)
+                .expect("latest")
+                .revision,
+            2
+        );
+        assert_eq!(
+            store
+                .list_model_profiles(Some(provider_id), true)
+                .expect("history")
+                .len(),
+            2
+        );
+
+        let project_id = ProjectId::new();
+        let binding = ProjectModelBinding {
+            id: ModelBindingId::new(),
+            project_id,
+            capability: ModelCapability::VisionLanguage,
+            role: ModelBindingRole::PipelineBuilder,
+            match_kind: ModelBindingMatch::Role,
+            model_profile_id: model_id,
+            locked: true,
+            created_at: now,
+        };
+        store
+            .save_project_model_binding(&binding, BindingMutationActor::User)
+            .expect("binding");
+        let mut agent_replacement = binding.clone();
+        agent_replacement.model_profile_id = ModelProfileId::new();
+        assert!(matches!(
+            store.save_project_model_binding(&agent_replacement, BindingMutationActor::Agent),
+            Err(StorageError::ModelBindingLocked)
+        ));
+        assert!(matches!(
+            store.delete_project_model_binding(binding.id, BindingMutationActor::Agent),
+            Err(StorageError::ModelBindingLocked)
+        ));
+        assert_eq!(
+            store
+                .list_project_model_bindings(project_id)
+                .expect("bindings"),
+            vec![binding]
+        );
+
+        let defaults = GlobalModelDefaults {
+            pipeline_builder: Some(model_id),
+            vision_language: Some(model_id),
+            text_generation: None,
+        };
+        store
+            .save_global_model_defaults(&defaults)
+            .expect("defaults");
+        assert_eq!(
+            store.get_global_model_defaults().expect("defaults"),
+            defaults
+        );
     }
 
     #[test]

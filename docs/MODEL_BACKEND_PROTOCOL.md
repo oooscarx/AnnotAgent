@@ -1,6 +1,6 @@
 # Model Backend Protocol
 
-The Model Registry describes backend kind, model/version identity, capabilities, accepted inputs, produced Artifact types, price metadata, health, limits, endpoint or local path, and a secret reference. Plaintext credential-like configuration is rejected recursively; persisted secrets must be `env:` or `keychain:` references.
+The runtime Model Registry describes executable backend kind, model/version identity, capabilities, accepted inputs, produced Artifact types, price metadata, health, limits, and endpoint or local path. Durable Provider and revisioned Model Profiles live above this runtime registry; only opaque credential references may cross that boundary. Plaintext credential-like configuration is rejected recursively.
 
 Implemented backend classes are:
 
@@ -15,4 +15,3 @@ An HTTP worker exposes `GET /health`, `GET /v1/capabilities`, and `POST /v1/infe
 The reference Python worker in `examples/http_vision_worker.py` is honest about capability. Without configured local weights it reports degraded health and `weights_unavailable`; with compatible Ultralytics weights it converts real detections to normalized bbox Artifacts. Detector, prompted-segmentation, and semantic-segmentation workers use the same contract.
 
 See [VISION_WORKER_PROTOCOL.md](VISION_WORKER_PROTOCOL.md) for the wire-level fields and worker example.
-

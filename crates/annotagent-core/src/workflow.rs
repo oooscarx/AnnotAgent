@@ -126,6 +126,10 @@ pub struct WorkflowDraftNode {
     #[serde(default)]
     pub outputs: Vec<NodePort>,
     pub model_binding: Option<String>,
+    /// Durable user-facing binding. `model_binding` remains the runtime-registry compatibility
+    /// projection until legacy Projects are migrated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_profile_binding: Option<crate::WorkflowModelBinding>,
     #[serde(default)]
     pub required_skills: Vec<String>,
     #[serde(default)]
@@ -472,6 +476,8 @@ pub struct WorkflowSnapshot {
     #[serde(default)]
     pub models: Vec<VisionModelDescriptor>,
     #[serde(default)]
+    pub model_profiles: Vec<crate::ModelProfileSnapshot>,
+    #[serde(default)]
     pub prompt_resources: BTreeMap<String, String>,
 }
 
@@ -498,8 +504,21 @@ impl WorkflowSnapshot {
             draft: Some(draft.clone()),
             enabled_skills,
             models: model_snapshots,
+            model_profiles: Vec::new(),
             prompt_resources: draft.resource_versions.clone(),
         }
+    }
+
+    #[must_use]
+    pub fn with_model_profiles(mut self, mut profiles: Vec<crate::ModelProfileSnapshot>) -> Self {
+        profiles.sort_by(|left, right| {
+            left.model_profile_id
+                .cmp(&right.model_profile_id)
+                .then_with(|| left.revision.cmp(&right.revision))
+        });
+        profiles.dedup_by_key(|profile| (profile.model_profile_id, profile.revision));
+        self.model_profiles = profiles;
+        self
     }
 
     pub fn stable_json(&self) -> Result<Vec<u8>, serde_json::Error> {
@@ -520,6 +539,7 @@ impl WorkflowSnapshot {
             allow_unvalidated_commit: bool,
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
+            model_profiles: &'a [crate::ModelProfileSnapshot],
             prompt_resources: &'a BTreeMap<String, String>,
         }
         let Some(draft) = self.draft.as_ref() else {
@@ -535,6 +555,7 @@ impl WorkflowSnapshot {
             allow_unvalidated_commit: draft.allow_unvalidated_commit,
             label_pipeline: &draft.label_pipeline,
             models: &self.models,
+            model_profiles: &self.model_profiles,
             prompt_resources: &self.prompt_resources,
         })
     }
@@ -653,6 +674,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                     multiple: true,
                 }],
                 model_binding: preferred.clone(),
+                model_profile_binding: None,
                 required_skills: enabled_skills.to_vec(),
                 validators: task.validators.clone(),
                 refiners: task.refiners.clone(),
@@ -1452,6 +1474,7 @@ fn system_node(
         inputs,
         outputs,
         model_binding: None,
+        model_profile_binding: None,
         required_skills: Vec::new(),
         validators: Vec::new(),
         refiners: Vec::new(),

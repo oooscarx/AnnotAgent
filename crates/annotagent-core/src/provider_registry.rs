@@ -9,7 +9,7 @@ use thiserror::Error;
 use url::Url;
 use zeroize::Zeroizing;
 
-use crate::ProviderId;
+use crate::{ModelProfileId, ProviderId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -328,7 +328,7 @@ pub enum ProviderErrorCode {
 pub struct ProviderErrorDetails {
     pub code: ProviderErrorCode,
     pub provider_id: ProviderId,
-    pub model_profile_id: Option<String>,
+    pub model_profile_id: Option<ModelProfileId>,
     pub operation: String,
     pub recoverable: bool,
     pub retry_after_ms: Option<u64>,

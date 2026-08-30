@@ -106,6 +106,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         draft: Some(draft.clone()),
         enabled_skills: draft.enabled_skills.clone(),
         models: Vec::new(),
+        model_profiles: Vec::new(),
         prompt_resources: draft.resource_versions.clone(),
     };
     let content_hash = format!(

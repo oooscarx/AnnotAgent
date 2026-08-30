@@ -123,6 +123,7 @@ fn workflow(
         draft: Some(draft.clone()),
         enabled_skills: BTreeMap::new(),
         models: Vec::new(),
+        model_profiles: Vec::new(),
         prompt_resources: BTreeMap::new(),
     };
     let content_hash = format!(

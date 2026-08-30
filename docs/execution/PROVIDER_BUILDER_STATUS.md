@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 2 — Model Profile and Project Binding.
+Milestone 3 — Provider/Model lifecycle API and Settings GUI.
 
 ## 已完成内容
 
@@ -28,16 +28,32 @@ Milestone 2 — Model Profile and Project Binding.
   keeping secret values out of responses, settings TOML and SQLite.
 - Updated security/product/API documentation and current Web copy from the superseded plaintext
   workspace-file behavior to the system credential-store boundary.
+- Added revisioned `ModelProfile` contracts for input modalities, protocol features, task
+  capabilities/provenance, limits, semantic generation defaults, pricing/provenance, health state,
+  enable state and lock state.
+- Added semantic revision enforcement: semantic changes require the next revision, while pricing,
+  health, display metadata and credential rotation keep the current revision.
+- Added `ProjectModelBinding`, Pipeline Builder/Inference role bindings, explicit Node Profile
+  binding, deterministic Node > capability > role > global resolution and Agent lock enforcement.
+- Added fail-closed compatibility queries covering Provider enable/health, credential state, Model
+  enable/status, modalities, protocol features and task capabilities.
+- Added bounded infrastructure-only `ProviderRoute`; semantic fallback remains a Workflow Decision.
+- Extended immutable Workflow snapshots with Model Profile revision and Provider endpoint/adapter
+  semantic snapshots that exclude credentials and pricing.
+- Added transactional migration 7 and persistence for all Model Profile revisions, Project/Agent
+  bindings and global defaults, with revision and lock enforcement at the storage boundary.
+- Documented the Provider/Profile/runtime descriptor/Skill/Node/Agent Tool boundaries in
+  `docs/PROVIDER_MODEL_REGISTRY.md`.
 
 ## 正在进行内容
 
-- Closing the M1 local commit, then implementing revisioned Model Profiles and hierarchical,
-  compatibility-checked Project bindings.
+- Closing the M2 local commit, then exposing Provider/Model lifecycle operations through safe HTTP
+  APIs and the Settings information architecture.
 
 ## 下一步
 
-- Milestone 2: introduce revisioned Model Profiles, protocol/task capabilities, pricing and limits;
-  persist global/Project/Node bindings and immutable semantic snapshots.
+- Milestone 3: Provider presets and Provider/Profile CRUD, credential actions, passive checks,
+  explicit billable probes, reference-safe deletion, and Providers/Models/Vision Workers UI.
 
 ## 最近 Rust 测试
 
@@ -48,29 +64,36 @@ Milestone 2 — Model Profile and Project Binding.
 - Provider Profile SQLite persistence test: 1 passed.
 - Server Keyring-reference restart and legacy no-auto-migration tests: 2 passed.
 - Full affected library suites: Core 55, Provider 38, Server 10 and Storage 10 passed (113 total).
+- M2 focused Core tests: 5 passed; complete Core suite: 60 passed.
+- M2 Storage revision/binding test: PASS; complete Storage suite: 11 passed.
+- `cargo check --workspace --all-features`: PASS after M2.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M2.
+- `cargo test --workspace --all-features`: 255 passed, 0 failed after M2; doc-test groups passed.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
 
-- `npm --prefix web run typecheck`: PASS after M1.
-- `npm --prefix web test -- --run`: 36 passed after M1.
-- `npm --prefix web run build`: PASS after M1.
+- `npm --prefix web run typecheck`: PASS after M2.
+- `npm --prefix web test -- --run`: 36 passed after M2.
+- `npm --prefix web run build`: PASS after M2.
 
 ## 最近 E2E 测试
 
-- `npm --prefix web run test:e2e`: 26 passed, 0 failed after M1 in an isolated workspace.
+- `npm --prefix web run test:e2e`: 26 passed, 0 failed after M2 in an isolated workspace.
 
 ## 最近本地提交
 
 - Before M0: `5c63a6c fix(web): preserve hero heading spacing on narrow screens`.
 - M0: `39af089 docs: establish provider registry and builder baseline`.
-- M1 commit pending at this status write; its hash is filled by the next milestone.
+- M1: `5be1bf3 feat(provider): add reusable provider profiles and secure credentials`.
+- M2 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
-- Provider lifecycle/API/GUI work in A remains open even though the Profile contract and storage
-  landed. Secret area B is implemented offline and covered by focused tests; its complete release
-  status remains open until API/E2E/security regression evidence is rerun in M8. C–I remain open.
+- A remains open for lifecycle API/UI. B is implemented offline but awaits final M8 security/E2E
+  evidence. C and D now have contracts, persistence, revision/compatibility/lock tests and snapshot
+  support, but remain open until API/UI, publication/runtime integration and migration are proven.
+  E–I remain open.
 
 ## Live-conditional 项
 
