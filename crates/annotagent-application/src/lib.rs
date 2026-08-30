@@ -3391,7 +3391,7 @@ impl LocalApplication {
             .into_iter()
             .filter(|draft| draft.status != WorkflowDraftStatus::Archived)
             .collect::<Vec<_>>();
-        drafts.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        drafts.sort_by_key(|draft| std::cmp::Reverse(draft.updated_at));
         if let Some(draft) = drafts.first() {
             updated_at = updated_at.max(draft.updated_at);
         }

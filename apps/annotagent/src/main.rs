@@ -593,9 +593,7 @@ fn doctor() -> Result<()> {
     let skill = RoboCupSkill::new().map_err(|error| anyhow::anyhow!(error))?;
     let project = Path::new("examples/robocup/project.yaml");
     let project_status = if project.exists() {
-        runner::load_project(project)
-            .map(|_| "ok")
-            .unwrap_or("invalid")
+        runner::load_project(project).map_or("invalid", |_| "ok")
     } else {
         "missing"
     };

@@ -622,6 +622,7 @@ fn truncate(value: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::{MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider};
     use annotagent_core::{
         AttributeValue, ImageId, Keypoint, ModelImage, NormalizedPoint, RelationEndpoint,
         RelationValue, RunId, TaskId, VisionBackendError, VisionInputType, VisionModelLimits,
@@ -631,9 +632,6 @@ mod tests {
         Json, Router,
         routing::{get, post},
     };
-    use base64::Engine as _;
-
-    use crate::{MockResponseSpec, MockScript, MockStep, MockUsage, MockVisionProvider};
 
     use super::*;
 
