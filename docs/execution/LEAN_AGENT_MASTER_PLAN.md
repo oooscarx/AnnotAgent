@@ -13,7 +13,7 @@ through M0–M8 with one local commit per milestone and no push.
 | M5 | Static-validation and Dry-Run revision loop with human boundary | Complete |
 | M6 | Project Automation GUI/TUI, progress, Diff, selective apply and undo | Complete |
 | M7 | Capability-aware minimal RoboCup Ball Domain experience | Complete |
-| M8 | Full regression, course demo, evidence and release matrix | In progress |
+| M8 | Full regression, course demo, evidence and release matrix | Complete |
 
 Every milestone updates Status, Decisions, Acceptance, Blockers and Known Limitations before its
 local commit. Published Runtime behavior is preserved unless a regression fix is required.

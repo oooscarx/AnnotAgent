@@ -44,5 +44,6 @@ run cargo run -p annotagent -- doctor
 run cargo run -p annotagent -- demo generic-classification
 run cargo run -p annotagent -- demo generic-detection-crop
 run cargo run -p annotagent -- demo robocup-ball
+run cargo run -p annotagent -- demo lean-agent-robocup
 
-printf '\nAnnotAgent Agent + Skill Alpha acceptance checks completed successfully.\n'
+printf '\nAnnotAgent Lean Agent Alpha acceptance checks completed successfully.\n'

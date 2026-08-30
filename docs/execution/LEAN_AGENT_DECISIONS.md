@@ -149,3 +149,18 @@ The server may prefer the configured workspace VLM only when the user enabled ex
 the local secret store contains a credential. A conversation credential is never copied into that
 store. Therefore the M7 external Qwen request is recorded as live-conditional, while the no-key
 ScriptedMock demo is labelled as mock evidence and exercises the same Rust Tool boundaries.
+
+## D024 — Provider turns and Tool actions have independent budgets
+
+`maximum_agent_turns` bounds calls back to an LLM Provider. `maximum_tool_calls` bounds registered
+actions and persisted audit steps. `AgentSession` records one step per Tool Call, so its step limit
+maps to the Tool limit while the live Pipeline Builder loop enforces turns directly. A budget stop
+is persisted before every early return; increasing the turn limit is not used to hide a Tool-loop
+protocol defect.
+
+## D025 — Release evidence is layered and truth-labelled
+
+The fail-fast acceptance script owns formatting, boundary/secret scans, strict Rust checks, Web
+checks, doctor and offline demos. Playwright is a separate full browser gate so its server lifecycle
+and screenshots remain diagnosable. ScriptedMock and synthetic results are named as such. External
+Qwen and local-weight workers cannot inherit PASS from their protocol adapters or Mock fixtures.

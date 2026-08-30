@@ -104,10 +104,13 @@ The deterministic demo needs no GPU or API key:
 cargo run -p annotagent -- demo generic-classification
 cargo run -p annotagent -- demo generic-detection-crop
 cargo run -p annotagent -- demo robocup-ball
+cargo run -p annotagent -- demo lean-agent-robocup
 ```
 
 The Generic demos have no RoboCup dependency. The Ball demo covers the clean fast path, white-shoe
-rejection, penalty-mark review and a Correction Memory decision change entirely offline.
+rejection, penalty-mark review and a Correction Memory decision change entirely offline. The Lean
+Agent demo runs an audited invalid-Draft repair and two three-image sandbox Dry Runs, adds Crop
+Classification from measured Review evidence, and stops for human approval without publishing.
 
 The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
 
@@ -115,23 +118,15 @@ The Runtime extension test also registers an independent `DummySkill` without ch
 cargo test -p annotagent-runtime --test skill_extension
 ```
 
-RoboCup exposes only two Ball starters: `robocup.ball.vlm-bootstrap` and
-`robocup.ball.specialist_with_open_vocab_fallback`. Both keep detector geometry as typed Artifacts;
-the hybrid starter can accept strong specialist evidence or make one bounded open-vocabulary
-fallback before Crop verification and Review.
+RoboCup exposes one default Ball starter: `robocup.ball.vlm-bootstrap`. It binds one ready Detection
+backend, selects football candidates, applies Domain Validators, and routes through Decision to
+Commit or Human Review. The explicit specialist/fallback template remains a compatibility and
+advanced-deployment option, not a default recommendation.
 
-For real SAM2.1 refinement, install the workspace-private worker once and start it before the GUI:
-
-```bash
-./scripts/setup-sam2.sh
-./scripts/start-sam2-worker.sh
-```
-
-In a second terminal, start AnnotAgent normally. A RoboCup Ball Project configured with
-`refiners: [sam_prompted_refiner]` runs VLM box proposal → local foreground prompt tightening →
-SAM instance mask → tight bounding box. The mask and both boxes are persisted as separate Run
-Artifacts. The tracked offline example keeps `ball_foreground_refiner`, so Mock acceptance never
-depends on a model service.
+SAM, RF-DETR, LocateAnything and YOLO remain Model Backends in Labs until their separate Worker,
+weights, health and capabilities are configured. They are not RoboCup Skill actions and are never
+injected into the default Draft. See the [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md)
+for the current course path.
 
 Run the ground-truth-backed synthetic evaluation (no key or external weights required):
 
@@ -190,7 +185,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute hybrid demo](docs/DEMO_HYBRID_DETECTION.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 
@@ -207,6 +202,7 @@ cargo run -p annotagent -- doctor
 cargo run -p annotagent -- demo generic-classification
 cargo run -p annotagent -- demo generic-detection-crop
 cargo run -p annotagent -- demo robocup-ball
+cargo run -p annotagent -- demo lean-agent-robocup
 ```
 
 Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.

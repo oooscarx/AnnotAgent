@@ -4599,6 +4599,7 @@ impl LocalApplication {
                       result: serde_json::Value| {
             if PipelineBuilderToolRegistry.resolve(name).is_err() {
                 session.fail(format!("unregistered Pipeline Builder tool {name:?}"));
+                let _ignored = self.store.save_agent_session(session);
                 return false;
             }
             let result =
@@ -4613,7 +4614,7 @@ impl LocalApplication {
                     true,
                 )
                 .is_ok();
-            if recorded && self.store.save_agent_session(session).is_err() {
+            if self.store.save_agent_session(session).is_err() {
                 session.fail("could not persist Pipeline Builder progress");
                 return false;
             }
@@ -4807,14 +4808,16 @@ impl LocalApplication {
             });
         }
         self.store.save_workflow_draft(&revised.draft)?;
+        let dry_run_image_indices =
+            (0..self.list_project_images(project_id)?.len().min(3)).collect::<Vec<_>>();
         let mut dry_run = self
-            .dry_run_workflow_samples(&revised.draft.id, settings, &[0])
+            .dry_run_workflow_samples(&revised.draft.id, settings, &dry_run_image_indices)
             .await?;
         let first_observation = agent_dry_run_summary(&dry_run, &revised.draft);
         if !record(
             &mut session,
             "dry_run_pipeline",
-            json!({"draft_id": revised.draft.id, "image_limit": 1}),
+            json!({"draft_id": revised.draft.id, "image_limit": dry_run_image_indices.len()}),
             json!({"sandbox": dry_run.sandbox, "summary": first_observation}),
         ) || !record(
             &mut session,
@@ -4908,13 +4911,13 @@ impl LocalApplication {
             }
             self.store.save_workflow_draft(&revised.draft)?;
             dry_run = self
-                .dry_run_workflow_samples(&revised.draft.id, settings, &[0])
+                .dry_run_workflow_samples(&revised.draft.id, settings, &dry_run_image_indices)
                 .await?;
             let second_observation = agent_dry_run_summary(&dry_run, &revised.draft);
             if !record(
                 &mut session,
                 "dry_run_pipeline",
-                json!({"draft_id": revised.draft.id, "image_limit": 1, "revision": 3}),
+                json!({"draft_id": revised.draft.id, "image_limit": dry_run_image_indices.len(), "revision": 3}),
                 json!({
                     "sandbox": dry_run.sandbox,
                     "summary": second_observation,
@@ -10557,6 +10560,45 @@ export:
                 .is_empty()
         );
         assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn pipeline_builder_budget_stop_is_persisted_for_refresh_recovery() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "builder-budget",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Ball Project");
+        generate_synthetic_robocup(&temporary.path().join("builder-budget/images/synthetic.png"))
+            .expect("synthetic image");
+        let report = application
+            .run_workflow_advisor_agent(
+                "builder-budget",
+                &load_settings(None).expect("settings"),
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints {
+                    maximum_tool_calls: 1,
+                    ..PipelineBuilderConstraints::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bounded Pipeline Builder");
+
+        assert_eq!(report.session.status, AgentSessionStatus::BudgetExceeded);
+        let persisted = application
+            .list_agent_sessions("builder-budget")
+            .expect("persisted sessions");
+        assert_eq!(persisted[0].id, report.session.id);
+        assert_eq!(persisted[0].status, AgentSessionStatus::BudgetExceeded);
+        assert_eq!(
+            persisted[0].stop_reason.as_deref(),
+            Some("step or tool-call budget exhausted")
+        );
     }
 
     #[test]

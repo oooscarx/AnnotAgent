@@ -23,13 +23,14 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
   audited invalid→repair→Dry Run→evidence revision→human approval loop through real Rust tools.
 - C. Pipeline safety: PASS. Tool allow-list, Registry-bound mutations and Builder Grammar pass;
   Label Pipeline validation and publish both enforce the same grammar at the Application boundary.
-- D. Offline capability: PARTIAL. ScriptedMock, Registry RuleBased and the lean RoboCup Agent demo
-  are available; the full offline demo/release matrix is finalized in M8.
+- D. Offline capability: PASS. ScriptedMock, Registry RuleBased, generic Classification/Detection
+  demos, RoboCup Domain demo and the three-image Lean Agent revision demo pass without a key.
 - E. UX: PASS. The Agent is project-local, its persisted stages/Tools/validation/Dry Run/usage are
   observable and cancellable, and structured Diff Apply selected/Undo never publishes.
 - F. RoboCup Domain boundary: PASS. The Domain owns advice and Validators, the default recipe uses
   one availability-qualified Detection backend, and unavailable Labs bindings are not selected.
-- G. Course requirements: OPEN.
+- G. Course requirements: PASS. The five-minute guide, labelled three-image Mock demonstration,
+  full regression evidence and explicit live-conditional boundary are complete.
 
 Evidence is added per milestone; an item is not marked PASS merely because a type or button exists.
 
@@ -134,6 +135,23 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | Domain Validators remain domain-owned | PASS | Hard-negative and field-relation Validators are registered by RoboCup; generic Core/Application contains no football-label branching. |
 | Model availability affects selection | PASS | Application test selects ready `default-vision` for VLM Detection and rejects an enabled but Unknown LocateAnything Labs binding as not ready. |
 | Labs are not default recommendations | PASS | The default Draft test rejects SAM, recovery, Crop and multiple model nodes; explicit specialist/hybrid templates remain compatibility-only alternatives. |
-| Offline Agent demonstration | PASS | `cargo run -p annotagent -- demo lean-agent-robocup` loads advice, repairs/validates/Dry Runs and stops `waiting_for_human`; it prints `offline ScriptedMock` and `labelled_mock_evidence`, with zero Publish/formal Run. |
+| Offline Agent demonstration | PASS | `cargo run -p annotagent -- demo lean-agent-robocup` loads advice, repairs/validates, Dry Runs three labelled images, revises with Crop Classification, Dry Runs again and stops `waiting_for_human`; it prints `offline ScriptedMock` and `labelled_mock_evidence`, with zero Publish/formal Run. |
 | External Qwen request | LIVE-CONDITIONAL | No operator credential was available under the task's credential restrictions; no conversation API Key was read or used. |
 | M7 Rust regression | PASS | Application 34, Runtime 35, Server 9 and RoboCup 17 tests passed with zero failures after the lean one-template expectation was updated. |
+
+## M8 release and course evidence
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Full Rust checks and build | PASS | `./scripts/acceptance.sh` passed `cargo fmt --all -- --check`, strict all-target/all-feature Clippy, 238 Rust unit/integration tests plus doc tests, and the all-feature workspace build. |
+| 100-image Batch and Pause/Resume | PASS | `persistent_batch_pauses_restarts_and_resumes_one_hundred_images` completed 100 unique children after pause, application reopen and resume; storage lease/budget/cancel tests also passed. |
+| Replay and checkpoint | PASS | Published DAG branch/cache/replay tests and `crop_classification_replay_keeps_shared_detector_checkpoint` passed; classifier Replay preserves the shared detector checkpoint. |
+| Review | PASS | Runtime suspension/resume, server review revision/budget flow and keyboard-operable Review browser journey passed. |
+| Export | PASS | Native, COCO, LabelMe and YOLO round trips plus the unresolved-Review → acceptance → durable Export E2E passed. |
+| Web checks | PASS | TypeScript, 36 Vitest tests and the production Vite build passed. |
+| Required browser journeys | PASS | 26/26 Chromium scenarios passed, covering all 14 required Agent/immutability/generic/Run-Review-Export paths, responsive states and server error recovery. |
+| Budget refresh recovery | PASS | New Application test persists `budget_exceeded`; browser test reloads Project activity and still shows `Stopped at budget`. |
+| Three-image evidence revision | PASS | Offline Lean demo reports two `dry_run_pipeline` calls over three labelled synthetic images, a registered `add_pipeline_node` revision, valid final Draft and explicit human stop. |
+| Course demonstration | PASS | `docs/DEMO_LEAN_AGENT_ALPHA.md` provides the timed five-minute script, preflight command, human boundary and Mock/live truth labels. |
+| Unified release command | PASS | `./scripts/acceptance.sh` passed boundary and secret scans, doctor and all four offline demos, ending `AnnotAgent Lean Agent Alpha acceptance checks completed successfully.` |
+| Real external inference | LIVE-CONDITIONAL | Qwen and external/local-weight Workers require operator-supplied credentials/services. No conversation key or weight was used. |

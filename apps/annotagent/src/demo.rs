@@ -53,15 +53,16 @@ pub async fn run(name: &str) -> Result<()> {
 async fn lean_agent_robocup() -> Result<()> {
     let workspace = tempfile::tempdir()?;
     let application = LocalApplication::new(workspace.path())?;
-    application.create_project(
-        "robocup-ball-agent",
-        include_str!("../../../examples/robocup/project.yaml"),
-    )?;
-    annotagent_image_tools::generate_synthetic_robocup(
-        &workspace
-            .path()
-            .join("robocup-ball-agent/images/synthetic.png"),
-    )?;
+    let project_yaml = include_str!("../../../examples/robocup/project.yaml").replace(
+        "auto_accept_confidence: 0.92",
+        "auto_accept_confidence: 0.99",
+    );
+    application.create_project("robocup-ball-agent", &project_yaml)?;
+    for index in 1..=3 {
+        annotagent_image_tools::generate_synthetic_robocup(&workspace.path().join(format!(
+            "robocup-ball-agent/images/synthetic-{index:02}.png"
+        )))?;
+    }
     let settings = annotagent_application::load_settings(None)?;
     let report = application
         .run_workflow_advisor_agent(
@@ -70,14 +71,18 @@ async fn lean_agent_robocup() -> Result<()> {
             &WorkflowConstraints::default(),
             Some(("objects", "ball")),
             PipelineBuilderConstraints {
-                target_review_rate: Some(1.0),
+                target_review_rate: Some(0.0),
                 ..PipelineBuilderConstraints::default()
             },
             CancellationToken::new(),
         )
         .await?;
     if report.session.status != AgentSessionStatus::WaitingForHuman || !report.approval_required {
-        bail!("Pipeline Builder did not stop at human approval");
+        bail!(
+            "Pipeline Builder did not stop at human approval: status={:?}, reason={}",
+            report.session.status,
+            report.session.stop_reason.as_deref().unwrap_or("none")
+        );
     }
     let suggestion = report
         .suggestion

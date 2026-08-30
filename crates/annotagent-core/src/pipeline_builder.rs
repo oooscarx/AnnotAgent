@@ -476,7 +476,10 @@ impl PipelineBuilderConstraints {
     #[must_use]
     pub fn agent_budget(&self) -> AgentBudget {
         AgentBudget {
-            max_steps: self.maximum_agent_turns,
+            // `AgentSession` records one step per Tool Call. Provider turns are enforced by the
+            // Pipeline Builder loop itself, so mapping them onto `max_steps` would accidentally
+            // stop a valid multi-tool turn before the independent Tool Call budget is exhausted.
+            max_steps: self.maximum_tool_calls,
             max_tool_calls: self.maximum_tool_calls,
             max_tokens: None,
             max_cost: Some(self.maximum_agent_cost),
@@ -1875,17 +1878,19 @@ mod tests {
 
     #[test]
     fn builder_session_enforces_turn_tool_dry_run_and_human_boundaries() {
+        let bounded = PipelineBuilderConstraints {
+            maximum_agent_turns: 1,
+            maximum_tool_calls: 2,
+            maximum_dry_runs: 1,
+            ..PipelineBuilderConstraints::default()
+        };
+        assert_eq!(bounded.agent_budget().max_steps, 2);
         let mut session = PipelineBuilderSession::start(
             "project",
             "draft",
             "scripted-mock",
             PipelineAdvisorBackend::ScriptedMock,
-            PipelineBuilderConstraints {
-                maximum_agent_turns: 1,
-                maximum_tool_calls: 2,
-                maximum_dry_runs: 1,
-                ..PipelineBuilderConstraints::default()
-            },
+            bounded,
         )
         .expect("session");
         session.begin_turn().expect("first turn");

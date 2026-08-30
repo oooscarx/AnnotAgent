@@ -9,6 +9,7 @@ const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
 const agentDiffProjectId = `guided-agent-diff-${stamp}`;
+const robocupAgentProjectId = `guided-robocup-agent-${stamp}`;
 const cropProjectId = `guided-crop-${stamp}`;
 const mixedProjectId = `guided-mixed-${stamp}`;
 const mixedRunId = "00000000-0000-4000-8000-000000000091";
@@ -345,7 +346,17 @@ export:
   expect(base.nodes.some((node: { node_type: string }) => node.node_type === "core.crop")).toBeFalsy();
 
   await page.goto(`/projects/${agentDiffProjectId}/build/pipeline`);
+  const proposalResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" && response.url().endsWith("/api/workflow-drafts/suggest"),
+  );
   await page.getByRole("button", { name: "Ask AnnotAgent" }).click();
+  const proposal = await (await proposalResponse).json();
+  const toolNames = proposal.agent_session.steps.map((step: { tool_name: string }) => step.tool_name);
+  expect(toolNames.filter((name: string) => name === "validate_pipeline")).toHaveLength(3);
+  expect(toolNames.filter((name: string) => name === "dry_run_pipeline")).toHaveLength(2);
+  expect(toolNames.indexOf("disconnect_pipeline_nodes")).toBeLessThan(toolNames.indexOf("connect_pipeline_nodes"));
+  expect(toolNames).toContain("add_pipeline_node");
+  expect(proposal.agent_session.status).toBe("waiting_for_human");
   const diff = page.getByLabel("Draft Diff");
   await expect(diff).toBeVisible({ timeout: 30_000 });
   await expect(diff.getByRole("checkbox").first()).toBeVisible();
@@ -364,6 +375,115 @@ export:
     const current = (await response.json()).drafts.find((draft: { id: string }) => draft.id === base.id);
     return current.nodes.some((node: { node_type: string }) => node.node_type === "core.crop");
   }).toBeFalsy();
+});
+
+test("RoboCup Agent loads Domain advice, avoids unavailable Labs, and restores bounded stops", async ({ page, request }, testInfo) => {
+  const created = await request.post("/api/projects", {
+    data: {
+      id: robocupAgentProjectId,
+      yaml: `version: 1
+project:
+  name: Lean RoboCup Agent ${stamp}
+  skill: robocup
+  skill_version: "1"
+  language: en
+dataset:
+  root: images
+runtime:
+  max_parallel_images: 1
+tasks:
+  - id: objects
+    display_name: Football
+    kind: bounding_box
+    labels: [ball]
+    required: true
+    validators: [ball_hard_negative, robocup_ball_field_relation]
+review:
+  auto_accept_confidence: 0.92
+  force_review_below: 0.72
+export:
+  formats: [native, coco, yolo]
+`,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const imported = await request.post(`/api/projects/${robocupAgentProjectId}/import`, {
+    data: { source: String(testInfo.config.metadata.e2eImport) },
+  });
+  expect(imported.ok()).toBeTruthy();
+
+  const advised = await request.post("/api/workflow-drafts/suggest", {
+    data: {
+      project_id: robocupAgentProjectId,
+      target_task_id: "objects",
+      target_label: "ball",
+      advisor: "mock",
+      constraints: { require_review_gate: true },
+      builder_constraints: {
+        priority: "balanced",
+        target_review_rate: 1,
+        allow_external_models: false,
+        allow_human_review: true,
+        maximum_agent_turns: 16,
+        maximum_tool_calls: 48,
+        maximum_dry_runs: 3,
+        maximum_agent_cost: "1",
+      },
+    },
+  });
+  expect(advised.status()).toBe(201);
+  const suggestion = await advised.json();
+  const tools = suggestion.agent_session.steps.map((step: { tool_name: string }) => step.tool_name);
+  expect(tools).toContain("load_skill_resource");
+  expect(tools.indexOf("load_skill_resource")).toBeLessThan(tools.indexOf("create_draft_from_template"));
+  expect(suggestion.agent_session.status).toBe("waiting_for_human");
+  expect(suggestion.draft.nodes.filter((node: { model_binding?: string }) => node.model_binding)).toHaveLength(1);
+  expect(suggestion.draft.nodes.some((node: { node_type: string }) => /sam|recovery|crop/i.test(node.node_type))).toBeFalsy();
+
+  const registry = await (await request.get("/api/models")).json();
+  const unavailableModelIds = new Set(
+    registry.models
+      .filter((model: { availability_group: string }) => ["configured_unavailable", "labs", "disabled"].includes(model.availability_group))
+      .map((model: { id: string }) => model.id),
+  );
+  expect(unavailableModelIds.size).toBeGreaterThan(0);
+  expect(suggestion.draft.nodes.some((node: { model_binding?: string }) =>
+    node.model_binding ? unavailableModelIds.has(node.model_binding) : false,
+  )).toBeFalsy();
+
+  const cancelled = await request.post(`/api/agent-sessions/${suggestion.agent_session.id}/cancel`);
+  expect(cancelled.ok()).toBeTruthy();
+  expect((await cancelled.json()).session.status).toBe("cancelled");
+
+  const budgetLimited = await request.post("/api/workflow-drafts/suggest", {
+    data: {
+      project_id: robocupAgentProjectId,
+      target_task_id: "objects",
+      target_label: "ball",
+      advisor: "mock",
+      constraints: { require_review_gate: true },
+      builder_constraints: {
+        priority: "balanced",
+        target_review_rate: 1,
+        allow_external_models: false,
+        allow_human_review: true,
+        maximum_agent_turns: 16,
+        maximum_tool_calls: 1,
+        maximum_dry_runs: 3,
+        maximum_agent_cost: "1",
+      },
+    },
+  });
+  expect(budgetLimited.status()).toBe(400);
+  const sessions = await (await request.get(`/api/projects/${robocupAgentProjectId}/agent-sessions`)).json();
+  expect(sessions.sessions[0].status).toBe("budget_exceeded");
+  expect(sessions.sessions.some((session: { status: string }) => session.status === "cancelled")).toBeTruthy();
+
+  await page.goto(`/projects/${robocupAgentProjectId}`);
+  await expect(page.getByRole("heading", { name: `Lean RoboCup Agent ${stamp}` })).toBeVisible();
+  await expect(page.getByLabel("pipeline_builder Agent trace").first()).toContainText("Stopped at budget");
+  await page.reload();
+  await expect(page.getByLabel("pipeline_builder Agent trace").first()).toContainText("Stopped at budget");
 });
 
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {

@@ -2,9 +2,9 @@
 
 ## Offline release blockers
 
-None through M7. The real Rust validation/Dry Run revision loop, Guided Diff/apply/undo path and lean
-RoboCup Agent demo pass with offline Model Backends; external models are not required for M8 release
-validation.
+None through M8. The real Rust validation/Dry Run revision loop, Guided Diff/apply/undo path,
+three-image RoboCup revision demo, 100-image durable Batch, Web/browser journeys and unified release
+gate pass with offline Model Backends.
 
 ## Live-conditional
 

@@ -31,6 +31,9 @@ Baseline limitations before implementation:
 - Live Agent progress uses 250 ms polling of persisted Sessions rather than SSE. Very fast offline
   ScriptedMock work may complete before an intermediate frame is painted; the complete persisted
   Tool trace is still shown with the proposal.
+- Project Overview restores persisted Agent terminal state after refresh. The Automation page does
+  not reconstruct an unapplied proposal comparison panel after a full reload; users can inspect the
+  durable Suggested Draft and Agent activity, then explicitly start or apply a new comparison.
 - SAM, LocateAnything and RF-DETR workers are not running in the audited environment. YOLO has no
   repository weight. Real inference is not claimed.
 - The legacy explicit `robocup.ball` hybrid template and SAM adapter remain executable for stored
