@@ -27,8 +27,8 @@ use annotagent_core::{
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
     ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
     ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineBuilderConstraints,
-    PipelineBuilderToolRegistry, PipelineDraftTools, PipelineGrammarValidator, PipelineSource,
-    PipelineStep, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot,
+    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftTools, PipelineGrammarValidator,
+    PipelineSource, PipelineStep, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot,
     PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
     ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
     RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
@@ -250,31 +250,297 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
     ]
 }
 
-#[derive(Debug, Deserialize)]
-struct LiveWorkflowAdvice {
-    name: String,
-    #[serde(default)]
-    model_bindings: Vec<LiveWorkflowBinding>,
-    #[serde(default)]
-    review_gate_node_ids: Vec<String>,
-    #[serde(default)]
-    rationale: Vec<String>,
-    #[serde(default)]
-    unresolved_model_bindings: Vec<String>,
-    #[serde(default)]
-    warnings: Vec<String>,
-    #[serde(default)]
-    alternatives: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LiveWorkflowBinding {
-    node_id: String,
-    model_id: String,
-}
-
 fn default_provider_kind() -> String {
     "mock".to_owned()
+}
+
+fn pipeline_builder_live_tools(
+    input: &WorkflowAdvisorInput,
+    suggestion: &WorkflowSuggestion,
+) -> Vec<ToolDefinition> {
+    let node_ids = suggestion
+        .draft
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    let model_ids = input
+        .model_registry
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>();
+    let no_arguments = || {
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+        })
+    };
+    let read = |tool: PipelineBuilderTool, description: &str, parameters| ToolDefinition {
+        name: tool.as_str().to_owned(),
+        description: description.to_owned(),
+        parameters,
+        read_only: true,
+    };
+    let mutate = |tool: PipelineBuilderTool, description: &str, parameters| ToolDefinition {
+        name: tool.as_str().to_owned(),
+        description: description.to_owned(),
+        parameters,
+        read_only: false,
+    };
+    vec![
+        read(
+            PipelineBuilderTool::InspectProject,
+            "Read a bounded Project summary without file paths or image bytes.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectLabelSchema,
+            "Read Project task kinds and declared Labels.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectLabel,
+            "Inspect the exact target Label for this session.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::SampleImages,
+            "Read bounded dataset dimensions and MIME types; no image bytes are returned.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListEnabledSkills,
+            "List only Skills enabled by the Project.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListAvailableCapabilities,
+            "List registered capability-bound Pipeline nodes.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListAvailableNodes,
+            "List registered node IDs and typed input/output contracts.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListAvailableModels,
+            "List registered Models with capability, health, backend, and price metadata.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectModel,
+            "Inspect one Model selected from the Registry.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["model_id"],
+                "properties": {"model_id": {"type": "string", "enum": model_ids.clone()}}
+            }),
+        ),
+        read(
+            PipelineBuilderTool::ListPipelineTemplates,
+            "List compatible Registry templates and the safe default template.",
+            no_arguments(),
+        ),
+        mutate(
+            PipelineBuilderTool::CreateDraftFromTemplate,
+            "Create a new editable Draft from the safe Registry template. Never publishes.",
+            no_arguments(),
+        ),
+        mutate(
+            PipelineBuilderTool::SetNodeParameter,
+            "Set one allowed parameter on a node in the current Draft.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_id", "parameter", "value"],
+                "properties": {
+                    "node_id": {"type": "string", "enum": node_ids.clone()},
+                    "parameter": {"type": "string", "enum": ["threshold", "minimum_confidence", "padding", "max_detections", "grounding_assist"]},
+                    "value": {}
+                }
+            }),
+        ),
+        mutate(
+            PipelineBuilderTool::BindModel,
+            "Bind one Registry Model to an existing model node. Rust validates capability and availability.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_id", "model_id"],
+                "properties": {
+                    "node_id": {"type": "string", "enum": node_ids.clone()},
+                    "model_id": {"type": "string", "enum": model_ids}
+                }
+            }),
+        ),
+        mutate(
+            PipelineBuilderTool::SetLabelMapping,
+            "Set a bounded class-to-Label mapping on an existing selection node.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_id", "class_mapping"],
+                "properties": {
+                    "node_id": {"type": "string", "enum": node_ids.clone()},
+                    "class_mapping": {"type": "object", "additionalProperties": {"type": "string"}}
+                }
+            }),
+        ),
+        mutate(
+            PipelineBuilderTool::SetDecisionPolicy,
+            "Set the confidence threshold of an existing Decision node.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["node_id", "threshold"],
+                "properties": {
+                    "node_id": {"type": "string", "enum": node_ids},
+                    "threshold": {"type": "number", "minimum": 0, "maximum": 1}
+                }
+            }),
+        ),
+        read(
+            PipelineBuilderTool::ValidatePipeline,
+            "Run Rust Pipeline Grammar and static validation on the current Draft.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::DryRunPipeline,
+            "Run the validated Draft in a non-committing sandbox on 1 to 10 images.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "image_indices": {"type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}}
+                }
+            }),
+        ),
+        read(
+            PipelineBuilderTool::InspectDryRunSummary,
+            "Read bounded review rate, failures, empty results, cost, and latency from the latest Dry Run.",
+            no_arguments(),
+        ),
+        mutate(
+            PipelineBuilderTool::SubmitDraftForHumanApproval,
+            "Stop with a validated and Dry-Run-tested editable Draft. Never publishes or starts a formal Run.",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "rationale": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
+                    "warnings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}},
+                    "alternatives": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 400}}
+                }
+            }),
+        ),
+    ]
+}
+
+fn pipeline_builder_constraints(
+    constraints: &WorkflowConstraints,
+    budget: &AgentBudget,
+) -> PipelineBuilderConstraints {
+    PipelineBuilderConstraints {
+        max_cost_per_image: constraints
+            .max_cost_per_image
+            .as_deref()
+            .and_then(|value| value.parse().ok()),
+        max_expected_latency_ms: constraints.max_latency_ms,
+        allow_external_models: true,
+        maximum_agent_turns: budget.max_steps,
+        maximum_tool_calls: budget.max_tool_calls,
+        maximum_agent_cost: budget.max_cost.unwrap_or(rust_decimal::Decimal::ONE),
+        ..PipelineBuilderConstraints::default()
+    }
+}
+
+fn required_string_argument(arguments: &serde_json::Value, name: &str) -> Result<String> {
+    arguments
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("Tool argument {name:?} must be a non-empty string"))
+}
+
+fn string_array_argument(arguments: &serde_json::Value, name: &str) -> Vec<String> {
+    arguments
+        .get(name)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .take(8)
+        .map(|value| value.chars().take(400).collect())
+        .collect()
+}
+
+fn bounded_image_indices(arguments: &serde_json::Value) -> Result<Vec<usize>> {
+    let values = arguments
+        .get("image_indices")
+        .and_then(serde_json::Value::as_array);
+    let Some(values) = values else {
+        return Ok(vec![0]);
+    };
+    if values.is_empty() || values.len() > 10 {
+        bail!("Dry Run image_indices must contain 1 to 10 entries");
+    }
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| anyhow!("Dry Run image index must be a non-negative integer"))
+        })
+        .collect()
+}
+
+fn sync_label_step_parameter(
+    draft: &mut WorkflowDraft,
+    node_id: &str,
+    parameter: &str,
+    value: serde_json::Value,
+) {
+    if let Some(composition) = draft.label_pipeline.as_mut()
+        && let Some(step) = composition
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| stage.steps.iter_mut())
+            .chain(
+                composition
+                    .label_pipelines
+                    .iter_mut()
+                    .flat_map(|pipeline| pipeline.steps.iter_mut()),
+            )
+            .find(|step| step.id == node_id)
+    {
+        step.parameters.insert(parameter.to_owned(), value);
+    }
+}
+
+fn sync_label_step_model(draft: &mut WorkflowDraft, node_id: &str, model_id: &str) {
+    if let Some(composition) = draft.label_pipeline.as_mut()
+        && let Some(binding) = composition
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| stage.steps.iter_mut())
+            .chain(
+                composition
+                    .label_pipelines
+                    .iter_mut()
+                    .flat_map(|pipeline| pipeline.steps.iter_mut()),
+            )
+            .find(|step| step.id == node_id)
+            .and_then(|step| step.model_binding.as_mut())
+    {
+        model_id.clone_into(&mut binding.model_id);
+    }
 }
 
 pub fn validate_settings(settings: &Settings) -> Result<()> {
@@ -4433,14 +4699,18 @@ impl LocalApplication {
         temporary_api_key: Option<String>,
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
-        self.suggest_workflow_live_for_label(
+        self.run_workflow_advisor_live_agent(
             project_id,
             settings,
             temporary_api_key,
             constraints,
             None,
+            AgentBudget::default(),
+            CancellationToken::new(),
         )
-        .await
+        .await?
+        .suggestion
+        .ok_or_else(|| anyhow!("Pipeline Builder stopped without an editable Draft"))
     }
 
     pub async fn suggest_label_pipeline_live(
@@ -4452,24 +4722,31 @@ impl LocalApplication {
         target_label: &str,
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
-        self.suggest_workflow_live_for_label(
+        self.run_workflow_advisor_live_agent(
             project_id,
             settings,
             temporary_api_key,
             constraints,
             Some((target_task_id, target_label)),
+            AgentBudget::default(),
+            CancellationToken::new(),
         )
-        .await
+        .await?
+        .suggestion
+        .ok_or_else(|| anyhow!("Pipeline Builder stopped without an editable Draft"))
     }
 
-    async fn suggest_workflow_live_for_label(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_workflow_advisor_live_agent(
         &self,
         project_id: &str,
         settings: &Settings,
         temporary_api_key: Option<String>,
         constraints: &WorkflowConstraints,
         target: Option<(&str, &str)>,
-    ) -> Result<WorkflowSuggestion> {
+        budget: AgentBudget,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
         let input = self.workflow_advisor_input_for_label(
             project_id,
             settings,
@@ -4477,180 +4754,491 @@ impl LocalApplication {
             target.map(|value| value.0),
             target.map(|value| value.1),
         )?;
-        let mut suggestion = if let Some((task_id, label)) = target {
+        let suggestion = if let Some((task_id, label)) = target {
             self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
         } else {
             self.suggest_workflow_preview(project_id, settings, constraints)?
         };
-        let node_ids = suggestion
-            .draft
-            .nodes
-            .iter()
-            .map(|node| node.id.clone())
-            .collect::<Vec<_>>();
-        let model_ids = input
-            .model_registry
-            .iter()
-            .map(|model| model.id.clone())
-            .collect::<Vec<_>>();
         let provider = OpenAiCompatibleProvider::new_with_api_key(
             settings.provider.clone(),
             temporary_api_key,
         )
         .map_err(|error| anyhow!(error))?;
-        let response = provider
-            .complete(
-                ModelRequest {
-                    model: settings.provider.model.clone(),
-                    task_id: "workflow_advisor".into(),
-                    messages: vec![
-                        ModelMessage {
-                            role: ModelRole::System,
-                            content: "You are the AnnotAgent Workflow Advisor. Return only the registered submit_workflow_advice action. Never emit code, shell commands, URLs, or unknown resource IDs. The result is always a Draft and is never executed automatically.".to_owned(),
-                            tool_call_id: None,
-                            tool_calls: Vec::new(),
-                        },
-                        ModelMessage {
-                            role: ModelRole::User,
-                            content: serde_json::to_string(&json!({
-                                "advisor_input": input,
-                                "safe_base_draft": &suggestion.draft,
-                            }))?,
-                            tool_call_id: None,
-                            tool_calls: Vec::new(),
-                        },
-                    ],
-                    images: Vec::new(),
-                    tools: vec![ToolDefinition {
-                        name: "submit_workflow_advice".to_owned(),
-                        description: "Adjust only registered model bindings and review gates on the supplied safe base Draft.".to_owned(),
-                        parameters: json!({
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["name", "model_bindings", "review_gate_node_ids", "rationale", "unresolved_model_bindings", "warnings", "alternatives"],
-                            "properties": {
-                                "name": {"type": "string", "minLength": 1, "maxLength": 160},
-                                "model_bindings": {
-                                    "type": "array",
-                                    "uniqueItems": true,
-                                    "items": {
-                                        "type": "object",
-                                        "additionalProperties": false,
-                                        "required": ["node_id", "model_id"],
-                                        "properties": {
-                                            "node_id": {"type": "string", "enum": node_ids.clone()},
-                                            "model_id": {"type": "string", "enum": model_ids.clone()}
-                                        }
-                                    }
-                                },
-                                "review_gate_node_ids": {"type": "array", "items": {"type": "string", "enum": node_ids.clone()}, "uniqueItems": true},
-                                "rationale": {"type": "array", "items": {"type": "string"}},
-                                "unresolved_model_bindings": {"type": "array", "items": {"type": "string", "enum": node_ids.clone()}, "uniqueItems": true},
-                                "warnings": {"type": "array", "items": {"type": "string"}},
-                                "alternatives": {"type": "array", "items": {"type": "string"}}
-                            }
-                        }),
-                        read_only: true,
-                    }],
-                    max_output_tokens: settings.provider.max_output_tokens,
-                    temperature: 0.0,
-                    extra: BTreeMap::new(),
-                },
-                CancellationToken::new(),
-            )
-            .await
-            .map_err(|error| anyhow!(error))?;
-        let call = response
-            .tool_calls
-            .into_iter()
-            .find(|call| call.name == "submit_workflow_advice")
-            .ok_or_else(|| anyhow!("Workflow Advisor did not submit a constrained Draft"))?;
-        let advice: LiveWorkflowAdvice = serde_json::from_value(call.arguments)?;
-        let known_nodes = node_ids.into_iter().collect::<BTreeSet<_>>();
-        let known_models = model_ids.into_iter().collect::<BTreeSet<_>>();
-        for binding in &advice.model_bindings {
-            if !known_nodes.contains(&binding.node_id) || !known_models.contains(&binding.model_id)
-            {
-                bail!("Workflow Advisor referenced an unregistered node or model");
-            }
-        }
-        if advice
-            .review_gate_node_ids
-            .iter()
-            .any(|node_id| !known_nodes.contains(node_id))
-        {
-            bail!("Workflow Advisor referenced an unregistered review-gate node");
-        }
-        suggestion.draft.id = uuid::Uuid::new_v4().to_string();
-        suggestion.draft.name = advice.name;
-        suggestion.draft.status = WorkflowDraftStatus::Suggested;
-        suggestion.draft.created_at = chrono::Utc::now();
-        suggestion.draft.updated_at = suggestion.draft.created_at;
-        for node in &mut suggestion.draft.nodes {
-            if let Some(binding) = advice
-                .model_bindings
-                .iter()
-                .find(|binding| binding.node_id == node.id)
-            {
-                node.model_binding = Some(binding.model_id.clone());
-            }
-            if advice.review_gate_node_ids.contains(&node.id) {
-                node.review_gate = true;
-                node.gate.required = true;
-            }
-        }
-        if let Some(composition) = suggestion.draft.label_pipeline.as_mut() {
-            for step in composition
-                .shared_stages
-                .iter_mut()
-                .flat_map(|stage| stage.steps.iter_mut())
-                .chain(
-                    composition
-                        .label_pipelines
-                        .iter_mut()
-                        .flat_map(|pipeline| pipeline.steps.iter_mut()),
-                )
-            {
-                if let Some(binding) = advice
-                    .model_bindings
-                    .iter()
-                    .find(|binding| binding.node_id == step.id)
-                    && let Some(model_binding) = step.model_binding.as_mut()
-                {
-                    model_binding.model_id.clone_from(&binding.model_id);
-                }
-                if advice.review_gate_node_ids.contains(&step.id) {
-                    step.review_gate.required = true;
-                }
-            }
-        }
-        suggestion.rationale = advice.rationale;
-        suggestion.unresolved_model_bindings = advice.unresolved_model_bindings;
-        suggestion.warnings = advice.warnings;
-        suggestion.alternatives = advice.alternatives;
+        self.run_workflow_advisor_with_provider(
+            project_id,
+            settings,
+            constraints,
+            target,
+            input,
+            suggestion,
+            &provider,
+            budget,
+            cancellation,
+        )
+        .await
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn run_workflow_advisor_with_provider(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        input: WorkflowAdvisorInput,
+        safe_suggestion: WorkflowSuggestion,
+        provider: &dyn VisionModelProvider,
+        budget: AgentBudget,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
+        let mut session =
+            AgentSession::start(AgentKind::PipelineBuilder, budget).with_project(project_id);
+        let mut messages = vec![
+            ModelMessage {
+                role: ModelRole::System,
+                content: "You are AnnotAgent's constrained Pipeline Builder. Call exactly one registered tool at a time. Inspect the Project and Registry before creating a Draft. You may modify only the current editable Draft through tools, must validate it, must run a sandbox Dry Run, and may finish only with submit_draft_for_human_approval. Never publish, start a formal Run, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+            ModelMessage {
+                role: ModelRole::User,
+                content: serde_json::to_string(&json!({
+                    "project": {
+                        "id": project_id,
+                        "name": input.project_schema.project.name,
+                        "task_count": input.project_schema.tasks.len(),
+                        "image_count": input.data_profile.image_count,
+                    },
+                    "target": {"task_id": input.target_task_id, "label": input.target_label},
+                    "constraints": constraints,
+                    "enabled_skill_summaries": input.enabled_skills,
+                    "rule": "Inspect details with tools; do not assume Registry identities."
+                }))?,
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+        ];
+        let tools = pipeline_builder_live_tools(&input, &safe_suggestion);
         let (nodes, models) = workflow_catalog(settings)?;
-        let enabled_skills = suggestion
+        let enabled_skills = safe_suggestion
             .draft
             .enabled_skills
             .keys()
             .cloned()
             .collect::<BTreeSet<_>>();
-        let extension_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
-        let extensions = self.skills.validation_catalog_for(&extension_ids)?;
-        let report = WorkflowStaticValidator.validate_for_publish(
-            &suggestion.draft,
-            &nodes,
-            &models,
-            &extensions,
-            &enabled_skills,
-            false,
-        );
-        if !report.valid {
-            bail!("Workflow Advisor output failed registry validation");
+        let extensions = self
+            .skills
+            .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
+        let builder_constraints = pipeline_builder_constraints(constraints, &session.budget);
+        let mut current: Option<WorkflowSuggestion> = None;
+        let mut validation: Option<WorkflowValidationReport> = None;
+        let mut dry_run: Option<WorkflowDryRunReport> = None;
+        let mut inspected_project = false;
+        let mut inspected_label = false;
+        let mut inspected_skills = false;
+        let mut inspected_nodes = false;
+        let mut inspected_models = false;
+
+        while session.status == AgentSessionStatus::Running {
+            if cancellation.is_cancelled() {
+                session.cancel();
+                break;
+            }
+            if session.usage.steps >= session.budget.max_steps {
+                session.fail("maximum Pipeline Builder turns reached");
+                break;
+            }
+            let response = match provider
+                .complete(
+                    ModelRequest {
+                        model: settings.provider.model.clone(),
+                        task_id: "pipeline_builder".into(),
+                        messages: messages.clone(),
+                        images: Vec::new(),
+                        tools: tools.clone(),
+                        max_output_tokens: settings.provider.max_output_tokens,
+                        temperature: 0.0,
+                        extra: BTreeMap::new(),
+                    },
+                    cancellation.clone(),
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    session.fail(format!("Pipeline Builder provider error: {error}"));
+                    break;
+                }
+            };
+            session.add_model_usage(
+                response.usage.input_tokens.unwrap_or_default(),
+                response.usage.output_tokens.unwrap_or_default(),
+                rust_decimal::Decimal::ZERO,
+            );
+            if session.status != AgentSessionStatus::Running {
+                break;
+            }
+            if response.tool_calls.is_empty() {
+                session.fail("Pipeline Builder provider returned no registered Tool Call");
+                break;
+            }
+            messages.push(ModelMessage {
+                role: ModelRole::Assistant,
+                content: response.content.unwrap_or_default(),
+                tool_call_id: None,
+                tool_calls: response.tool_calls.clone(),
+            });
+
+            for call in response.tool_calls {
+                if cancellation.is_cancelled() {
+                    session.cancel();
+                    break;
+                }
+                let resolved = PipelineBuilderToolRegistry.resolve(&call.name);
+                let outcome: Result<annotagent_core::AgentToolResult> = async {
+                    match resolved {
+                    Ok(PipelineBuilderTool::InspectProject) => {
+                        inspected_project = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected Project",
+                            json!({
+                                "project_id": project_id,
+                                "name": input.project_schema.project.name,
+                                "task_count": input.project_schema.tasks.len(),
+                                "image_count": input.data_profile.image_count,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectLabelSchema) => {
+                        inspected_label = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected Label Schema",
+                            json!({"tasks": input.project_schema.tasks.iter().map(|task| json!({"id": task.id, "kind": task.kind, "labels": task.labels})).collect::<Vec<_>>() }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectLabel) => {
+                        let (task_id, label) = target.ok_or_else(|| {
+                            anyhow!("inspect_label requires a target Label session")
+                        })?;
+                        let task = input
+                            .project_schema
+                            .tasks
+                            .iter()
+                            .find(|task| task.id.as_str() == task_id)
+                            .ok_or_else(|| anyhow!("target task is no longer in Project Schema"))?;
+                        inspected_label = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Label {label}"),
+                            json!({"task_id": task_id, "kind": task.kind, "label": label, "declared": task.labels.iter().any(|candidate| candidate == label)}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::SampleImages) => Ok(
+                        annotagent_core::AgentToolResult::summary(
+                            "Inspected bounded image sample metadata",
+                            json!({"image_count": input.data_profile.image_count, "sample_width": input.data_profile.sample_width, "sample_height": input.data_profile.sample_height, "mime_types": input.data_profile.mime_types}),
+                        ),
+                    ),
+                    Ok(PipelineBuilderTool::ListEnabledSkills) => {
+                        inspected_skills = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed enabled Skills",
+                            json!({"skill_ids": input.enabled_skills}),
+                        ))
+                    }
+                    Ok(
+                        PipelineBuilderTool::ListAvailableCapabilities
+                        | PipelineBuilderTool::ListAvailableNodes,
+                    ) => {
+                        inspected_nodes = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed available Pipeline nodes",
+                            json!({"nodes": input.node_catalog.iter().map(|node| json!({"id": node.id, "name": node.display_name, "required_capabilities": node.required_capabilities, "accepts": node.accepts, "produces": node.produces})).collect::<Vec<_>>() }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ListAvailableModels) => {
+                        inspected_models = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed registered Models",
+                            json!({"models": input.model_registry.iter().map(|model| json!({"id": model.id, "name": model.display_name, "capabilities": model.capabilities, "status": model.status, "backend": model.backend.kind, "pricing": model.pricing})).collect::<Vec<_>>() }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModel) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let model = input
+                            .model_registry
+                            .iter()
+                            .find(|model| model.id == model_id)
+                            .ok_or_else(|| anyhow!("model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Model {model_id}"),
+                            json!({"id": model.id, "capabilities": model.capabilities, "status": model.status, "input_contract": model.input_contract, "output_contract": model.output_contract, "pricing": model.pricing}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ListPipelineTemplates) => Ok(
+                        annotagent_core::AgentToolResult::summary(
+                            "Listed compatible Pipeline templates",
+                            json!({"templates": input.workflow_templates.iter().map(|template| json!({"id": template.id, "name": template.name, "description": template.description})).collect::<Vec<_>>(), "safe_default_available": true}),
+                        ),
+                    ),
+                    Ok(PipelineBuilderTool::CreateDraftFromTemplate) => {
+                        if !inspected_project
+                            || !inspected_label
+                            || !inspected_skills
+                            || !inspected_nodes
+                            || !inspected_models
+                        {
+                            bail!("inspect Project, target Label, enabled Skills, available nodes, and Models before creating a Draft");
+                        }
+                        let mut created = safe_suggestion.clone();
+                        created.draft.id = uuid::Uuid::new_v4().to_string();
+                        created.draft.status = WorkflowDraftStatus::Suggested;
+                        created.draft.created_at = chrono::Utc::now();
+                        created.draft.updated_at = created.draft.created_at;
+                        validation = None;
+                        dry_run = None;
+                        self.store.save_workflow_draft(&created.draft)?;
+                        let result = annotagent_core::AgentToolResult::summary(
+                            "Created an editable Draft from a Registry template",
+                            json!({"draft_id": created.draft.id, "node_count": created.draft.nodes.len(), "published": false}),
+                        );
+                        current = Some(created);
+                        Ok(result)
+                    }
+                    Ok(
+                        tool @ (PipelineBuilderTool::SetNodeParameter
+                        | PipelineBuilderTool::SetDecisionPolicy
+                        | PipelineBuilderTool::SetLabelMapping),
+                    ) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let (parameter, value) = match tool {
+                            PipelineBuilderTool::SetDecisionPolicy => (
+                                "threshold".to_owned(),
+                                call.arguments
+                                    .get("threshold")
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("threshold is required"))?,
+                            ),
+                            PipelineBuilderTool::SetLabelMapping => (
+                                "class_mapping".to_owned(),
+                                call.arguments
+                                    .get("class_mapping")
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("class_mapping is required"))?,
+                            ),
+                            _ => (
+                                required_string_argument(&call.arguments, "parameter")?,
+                                call.arguments
+                                    .get("value")
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("value is required"))?,
+                            ),
+                        };
+                        if !matches!(
+                            parameter.as_str(),
+                            "threshold"
+                                | "minimum_confidence"
+                                | "padding"
+                                | "max_detections"
+                                | "grounding_assist"
+                                | "class_mapping"
+                        ) {
+                            bail!("Pipeline Builder parameter {parameter:?} is not mutable");
+                        }
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before editing it"))?;
+                        PipelineDraftTools.set_parameter(
+                            &mut suggestion.draft,
+                            &node_id,
+                            parameter.clone(),
+                            value.clone(),
+                        )?;
+                        sync_label_step_parameter(
+                            &mut suggestion.draft,
+                            &node_id,
+                            &parameter,
+                            value,
+                        );
+                        validation = None;
+                        dry_run = None;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Updated {parameter} on {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "parameter": parameter}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::BindModel) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before binding a Model"))?;
+                        PipelineDraftTools.bind_model(
+                            &mut suggestion.draft,
+                            &node_id,
+                            &model_id,
+                            &nodes,
+                            &models,
+                            &enabled_skills,
+                        )?;
+                        sync_label_step_model(&mut suggestion.draft, &node_id, &model_id);
+                        validation = None;
+                        dry_run = None;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Bound {model_id} to {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "model_id": model_id}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ValidatePipeline) => {
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a Draft before validating it"))?;
+                        let report = if target.is_some() {
+                            PipelineGrammarValidator.validate(
+                                &suggestion.draft,
+                                &nodes,
+                                &models,
+                                &extensions,
+                                &enabled_skills,
+                                &builder_constraints,
+                            )
+                        } else {
+                            WorkflowStaticValidator.validate_for_publish(
+                                &suggestion.draft,
+                                &nodes,
+                                &models,
+                                &extensions,
+                                &enabled_skills,
+                                false,
+                            )
+                        };
+                        let result = annotagent_core::AgentToolResult::summary(
+                            if report.valid {
+                                "Draft passed Rust static validation"
+                            } else {
+                                "Draft has blocking validation issues"
+                            },
+                            json!({"valid": report.valid, "issues": report.issues, "execution_order": report.execution_order}),
+                        );
+                        validation = Some(report);
+                        Ok(result)
+                    }
+                    Ok(PipelineBuilderTool::DryRunPipeline) => {
+                        if !validation.as_ref().is_some_and(|report| report.valid) {
+                            bail!("validate_pipeline must pass before Dry Run");
+                        }
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a Draft before Dry Run"))?;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        let image_indices = bounded_image_indices(&call.arguments)?;
+                        let report = self
+                            .dry_run_workflow_samples(
+                                &suggestion.draft.id,
+                                settings,
+                                &image_indices,
+                            )
+                            .await?;
+                        let result = annotagent_core::AgentToolResult::summary(
+                            "Completed sandbox Dry Run",
+                            json!({"sandbox": report.sandbox, "summary": report.summary, "estimated_cost": report.estimated_cost, "total_latency_ms": report.total_latency_ms}),
+                        );
+                        dry_run = Some(report);
+                        Ok(result)
+                    }
+                    Ok(PipelineBuilderTool::InspectDryRunSummary) => {
+                        let report = dry_run
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("run dry_run_pipeline before inspecting it"))?;
+                        let total = report.summary.candidate_count.max(1);
+                        let review_rate = report.summary.needs_review_count as f64 / total as f64;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected Dry Run quality, cost, and latency",
+                            json!({"review_rate": review_rate, "failed_count": report.summary.failed_count, "empty_count": report.summary.empty_count, "candidate_count": report.summary.candidate_count, "latency_ms": report.total_latency_ms, "estimated_cost": report.estimated_cost}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::SubmitDraftForHumanApproval) => {
+                        if !validation.as_ref().is_some_and(|report| report.valid) {
+                            bail!("a valid static report is required before human approval");
+                        }
+                        if dry_run.is_none() {
+                            bail!("a sandbox Dry Run is required before human approval");
+                        }
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before submission"))?;
+                        if let Some(name) = call.arguments.get("name").and_then(|value| value.as_str())
+                            && !name.trim().is_empty()
+                            && name.len() <= 160
+                        {
+                            name.clone_into(&mut suggestion.draft.name);
+                        }
+                        suggestion.rationale = string_array_argument(&call.arguments, "rationale");
+                        suggestion.warnings = string_array_argument(&call.arguments, "warnings");
+                        suggestion.alternatives = string_array_argument(&call.arguments, "alternatives");
+                        suggestion.draft.status = WorkflowDraftStatus::Suggested;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Draft is ready for explicit human approval",
+                            json!({"draft_id": suggestion.draft.id, "published": false, "formal_run_started": false, "requires_human": true}),
+                        ))
+                    }
+                    Ok(other) => Err(anyhow!(
+                        "registered tool {:?} is unavailable in the current bounded live context",
+                        other.as_str()
+                    )),
+                        Err(error) => Err(anyhow!(error)),
+                    }
+                }
+                .await;
+
+                let (result, success) = match outcome {
+                    Ok(result) => (result, true),
+                    Err(error) => (
+                        annotagent_core::AgentToolResult::summary(
+                            format!("{} failed", call.name),
+                            json!({"error": error.to_string(), "retryable": true}),
+                        ),
+                        false,
+                    ),
+                };
+                let model_payload = result.model_payload.clone();
+                if session
+                    .record_tool(
+                        &call.name,
+                        call.arguments.clone(),
+                        serde_json::to_value(&result)?,
+                        success,
+                    )
+                    .is_err()
+                {
+                    break;
+                }
+                messages.push(ModelMessage {
+                    role: ModelRole::Tool,
+                    content: serde_json::to_string(&model_payload)?,
+                    tool_call_id: Some(call.id),
+                    tool_calls: Vec::new(),
+                });
+                if success && call.name == PipelineBuilderTool::SubmitDraftForHumanApproval.as_str()
+                {
+                    session.wait_for_human("approve_pipeline_draft");
+                    break;
+                }
+            }
         }
-        self.store.save_workflow_draft(&suggestion.draft)?;
-        Ok(suggestion)
+        if session.status == AgentSessionStatus::Running {
+            session.fail("Pipeline Builder stopped without requesting human approval");
+        }
+        self.store.save_agent_session(&session)?;
+        Ok(WorkflowAdvisorAgentReport {
+            approval_required: session.status == AgentSessionStatus::WaitingForHuman,
+            session,
+            suggestion: current,
+            validation,
+            dry_run,
+        })
     }
 
     fn suggest_workflow_preview(
@@ -8037,6 +8625,133 @@ export:
         assert_eq!(
             cancelled_report.session.status,
             AgentSessionStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn live_pipeline_builder_uses_multi_turn_tool_results_and_never_publishes() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("live-builder", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("live-builder/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let constraints = WorkflowConstraints::default();
+        let input = application
+            .workflow_advisor_input_for_label(
+                "live-builder",
+                &settings,
+                constraints.clone(),
+                Some("scene"),
+                Some("day"),
+            )
+            .expect("Advisor input");
+        let safe = application
+            .suggest_label_pipeline_preview("live-builder", &settings, "scene", "day", &constraints)
+            .expect("safe Draft");
+        let scripted_step =
+            |name: &str, arguments: serde_json::Value, expect_message_contains: Option<&str>| {
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: expect_message_contains.map(ToOwned::to_owned),
+                    response: MockResponseSpec::ToolCall {
+                        name: name.to_owned(),
+                        arguments,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                }
+            };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                scripted_step("create_draft_from_template", json!({}), None),
+                scripted_step("inspect_project", json!({}), Some("inspect Project")),
+                scripted_step("inspect_label", json!({}), Some("project_id")),
+                scripted_step("list_enabled_skills", json!({}), Some("declared")),
+                scripted_step("list_available_nodes", json!({}), Some("skill_ids")),
+                scripted_step("list_available_models", json!({}), Some("nodes")),
+                scripted_step("create_draft_from_template", json!({}), Some("models")),
+                scripted_step("validate_pipeline", json!({}), Some("draft_id")),
+                scripted_step(
+                    "dry_run_pipeline",
+                    json!({"image_indices": [0]}),
+                    Some("valid"),
+                ),
+                scripted_step("inspect_dry_run_summary", json!({}), Some("sandbox")),
+                scripted_step(
+                    "submit_draft_for_human_approval",
+                    json!({
+                        "name": "Day classification proposal",
+                        "rationale": ["The registered mock classifier proves the offline path."],
+                        "warnings": ["Replace Mock before claiming live inference."],
+                        "alternatives": []
+                    }),
+                    Some("review_rate"),
+                ),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_provider(
+                "live-builder",
+                &settings,
+                &constraints,
+                Some(("scene", "day")),
+                input,
+                safe,
+                &provider,
+                AgentBudget::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("multi-turn Pipeline Builder");
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(report.approval_required);
+        assert!(report.validation.as_ref().is_some_and(|value| value.valid));
+        assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
+        assert_eq!(report.session.usage.input_tokens, 110);
+        assert_eq!(report.session.usage.output_tokens, 55);
+        assert!(!report.session.steps[0].success);
+        assert!(
+            report.session.steps[0].result["model_payload"]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("inspect Project"))
+        );
+        assert_eq!(
+            report
+                .session
+                .steps
+                .iter()
+                .map(|step| step.tool_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "create_draft_from_template",
+                "inspect_project",
+                "inspect_label",
+                "list_enabled_skills",
+                "list_available_nodes",
+                "list_available_models",
+                "create_draft_from_template",
+                "validate_pipeline",
+                "dry_run_pipeline",
+                "inspect_dry_run_summary",
+                "submit_draft_for_human_approval",
+            ]
+        );
+        assert_eq!(
+            application
+                .store
+                .list_published_workflow_versions(Some("live-builder"))
+                .expect("published versions")
+                .len(),
+            0
         );
     }
 

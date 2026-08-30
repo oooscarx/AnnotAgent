@@ -77,3 +77,16 @@ real connection through the same bounded mutation service, not by inventing a fa
 ScriptedMock deterministically chooses the full tool sequence and supplies labelled mock evaluation
 observations for CI/course demonstrations. Rust still validates and records every tool. It is never
 presented as a real visual-model result; M5 binds the same phases to real sandbox summaries.
+
+## D014 — Provider output selects actions, never owns state
+
+The live provider sees bounded Tool schemas and model-facing Tool results. It cannot submit a whole
+Workflow document. Application services own the current Draft, Registry checks, validation, Dry
+Run, persistence and stop state. A provider-requested unknown or out-of-order action becomes a
+failed auditable Tool result that the next turn can repair.
+
+## D015 — Context is loaded by need
+
+The initial live prompt contains no full Registry, Workflow JSON, image bytes, Run history or
+Artifact history. Explicit read tools reveal only the requested bounded subset. Assistant text is
+transient conversation context and is not persisted, avoiding hidden chain-of-thought storage.

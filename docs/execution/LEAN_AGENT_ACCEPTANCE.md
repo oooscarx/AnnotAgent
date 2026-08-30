@@ -73,3 +73,20 @@ Evidence is added per milestone; an item is not marked PASS merely because a typ
 | Core M3 regression | PASS | 48 Core tests passed, 0 failed. |
 | Application/HTTP/persistence M3 regression | PASS | Application 28, Server 9, Storage unit 9 and Storage integration 16 tests passed; 0 failed. |
 | M3 lint gate | PASS | Clippy passed for Core, Application and Server all targets with warnings denied. |
+
+## M4 OpenAI-compatible multi-turn provider
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Live Advisor is a real Tool Loop | PASS | `run_workflow_advisor_with_provider` repeatedly sends assistant Tool Calls and Rust Tool Results until approval/stop; the old `submit_workflow_advice` one-shot path was removed. |
+| Context is progressively loaded | PASS | Initial prompt has only bounded Project/target/constraints/Skill summaries; Models, nodes, Label Schema and image metadata require explicit read tools. No image library, Run history or Artifact corpus is injected. |
+| Required inspection precedes Draft creation | PASS | Application state rejects `create_draft_from_template` until Project, target Label, enabled Skills, available nodes and Models were inspected. Integration test starts with an early rejected create and then recovers from the Tool error. |
+| Provider can mutate only through Rust tools | PASS | Exposed schemas contain Registry-enumerated node/model IDs and bounded parameters; `PipelineDraftTools` and Pipeline Grammar own changes and validation. |
+| Validation and Dry Run are real tools | PASS | Live integration persists a real Draft, runs Rust validation and the sandbox Runtime, then returns bounded summary metrics to the next provider turn. |
+| Human boundary is explicit | PASS | Submission requires a valid report and a completed Dry Run; session stops `waiting_for_human`. Integration test asserts zero Published Versions. |
+| Usage and audit persist per call | PASS | Mock-provider integration verifies 11 provider turns, 110 input/55 output tokens, rejected/successful Tool actions and persisted Agent Session. |
+| Hidden reasoning is not stored | PASS | Assistant prose is retained only in the transient provider context; persisted history contains Tool name, arguments, structured result, timestamps, success and aggregate usage. |
+| HTTP LLM response exposes Agent envelope | PASS | Server `llm` branch now returns `agent_session`, validation, Dry Run and approval state just like ScriptedMock. |
+| Provider retry/cancellation boundary | PASS | OpenAI-compatible Provider owns bounded transport retries; loop checks cancellation before every provider and Tool step and reports Provider failures as terminal session reasons. |
+| Real external request | LIVE-CONDITIONAL | Requires an operator-provided configured credential; no conversation key was read or used. |
+| M4 regression/lint | PASS | Application 29 and Server 9 tests passed; focused 11-turn integration and Clippy with warnings denied passed. |

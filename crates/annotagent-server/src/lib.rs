@@ -1347,33 +1347,28 @@ async fn suggest_workflow(
                     })?;
                 (suggestion, Some(report))
             }
-            "llm" => (
-                match target {
-                    Some((task_id, label)) => state
-                        .application
-                        .suggest_label_pipeline_live(
-                            &request.project_id,
-                            &settings,
-                            state.api_key.read().await.clone(),
-                            task_id,
-                            label,
-                            &request.constraints,
-                        )
-                        .await
-                        .map_err(ApiError::bad_request)?,
-                    None => state
-                        .application
-                        .suggest_workflow_live(
-                            &request.project_id,
-                            &settings,
-                            state.api_key.read().await.clone(),
-                            &request.constraints,
-                        )
-                        .await
-                        .map_err(ApiError::bad_request)?,
-                },
-                None,
-            ),
+            "llm" => {
+                let report = state
+                    .application
+                    .run_workflow_advisor_live_agent(
+                        &request.project_id,
+                        &settings,
+                        state.api_key.read().await.clone(),
+                        &request.constraints,
+                        target,
+                        AgentBudget::default(),
+                        CancellationToken::default(),
+                    )
+                    .await
+                    .map_err(ApiError::bad_request)?;
+                let suggestion =
+                    report.suggestion.clone().ok_or_else(|| {
+                        ApiError::bad_request(report.session.stop_reason.clone().unwrap_or_else(
+                            || "Pipeline Builder stopped without a Draft".to_owned(),
+                        ))
+                    })?;
+                (suggestion, Some(report))
+            }
             other => {
                 return Err(ApiError::bad_request(format!(
                     "unknown Workflow Advisor {other:?}; choose mock or llm"

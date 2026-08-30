@@ -2,14 +2,18 @@
 
 Baseline limitations before implementation:
 
-- The live Workflow Advisor performs one constrained submission call; it is not yet the required
-  multi-turn Pipeline Builder tool loop.
+- A real external OpenAI-compatible loop is live-conditional because CI does not possess an
+  operator credential. The identical multi-turn path is covered with a scripted model Provider.
 - The Application persists the backward-compatible generic `AgentSession` audit envelope. Dedicated
   Builder status/constraints/stop-reason types exist in Core; API/GUI/TUI projection is completed in
   M6 without invalidating stored sessions.
 - ScriptedMock has the complete deterministic policy and Application performs real invalid/repair,
   validation and sandbox steps. Binding the post-Dry-Run revision to real metrics and Artifact
   inspection is M5.
+- Live Alpha exposes a conservative subset of the 31-tool Registry: inspection, safe-template
+  creation, model/parameter/decision/mapping edits, validation, Dry Run, summary and human
+  submission. Arbitrary graph add/remove/connect remains ScriptedMock/Expert until M5 safety tests
+  cover live revision shapes.
 - Pre-Lean Capability implementations still exist as Registry compatibility adapters and internal
   node IDs. New authoring exposes the generic Skills, but removal awaits persisted-version migration.
 - Expert mode intentionally exposes internal Workflow node IDs, ports and raw parameters. Guided
