@@ -7,10 +7,13 @@ use std::{
 
 use annotagent_application::{
     AnnotAgentApplication, DetectionWorkerSettings, LocalApplication, Settings, load_settings,
+    stable_project_id,
 };
 use annotagent_core::{
-    AgentSessionStatus, PipelineBuilderConstraints, ProjectSchema, RunEvent, RunEventPayload,
-    RunStatus,
+    AgentSessionStatus, BindingMutationActor, InputModality, ModelBindingId, ModelBindingMatch,
+    ModelBindingRole, ModelCapability, ModelProfileId, ModelProfileStatus,
+    PipelineBuilderConstraints, ProjectId, ProjectModelBinding, ProjectSchema, ProviderAdapterKind,
+    ProviderHealthStatus, ProviderId, RunEvent, RunEventPayload, RunStatus,
 };
 use annotagent_provider::HttpVisionWorkerClient;
 use anyhow::{Context, Result};
@@ -43,6 +46,7 @@ struct ActiveRun {
 #[derive(Debug, Clone)]
 struct ProjectContext {
     id: String,
+    stable_id: ProjectId,
     name: String,
     workflow: String,
     skills: String,
@@ -66,6 +70,7 @@ impl ProjectContext {
                 .and_then(std::ffi::OsStr::to_str)
                 .context("Project directory has no usable id")?
                 .to_owned(),
+            stable_id: stable_project_id(path.parent().unwrap_or(path)),
             name: project.project.name,
             workflow: format!("Configured task graph@v{}", project.version),
             skills: if skills.is_empty() {
@@ -99,7 +104,10 @@ impl TuiState {
         } else {
             "No project opened. Use /open <project.yaml> or /init for setup help."
         };
-        let model_lines = model_lines(&workspace_settings(application.as_ref())?);
+        let model_lines = registry_model_lines(application.as_ref())?
+            .into_iter()
+            .chain(model_lines(&workspace_settings(application.as_ref())?))
+            .collect();
         Ok(Self {
             project,
             project_context,
@@ -445,15 +453,176 @@ impl TuiState {
         Ok(())
     }
 
-    async fn models(&mut self, action: Option<&str>, id: Option<&str>) -> Result<()> {
-        let settings = workspace_settings(self.application.as_ref())?;
-        if action != Some("test") {
-            self.model_lines = model_lines(&settings);
-            for line in self.model_lines.clone() {
-                self.push(format!("model · {line}"));
+    fn providers(&mut self, action: Option<&str>, id: Option<&str>) -> Result<()> {
+        let providers = self.application.store().list_provider_profiles()?;
+        match action {
+            None => {
+                if providers.is_empty() {
+                    self.push(
+                        "No Provider Profiles. Use the GUI to add credentials safely, or configure an environment-variable reference.",
+                    );
+                }
+                for provider in providers {
+                    let model_count = self
+                        .application
+                        .store()
+                        .list_model_profiles(Some(provider.id), false)?
+                        .len();
+                    self.push(format!(
+                        "provider · {} · {} · {} · models {}",
+                        provider.display_name,
+                        provider.id,
+                        enum_label(provider.health.status),
+                        model_count
+                    ));
+                }
+                Ok(())
             }
-            return Ok(());
+            Some("show") => {
+                let id = parse_provider_id(id.context("usage: /providers show <id>")?)?;
+                let provider = self.application.store().get_provider_profile(id)?;
+                self.push(format!(
+                    "Provider {} · {} · {}",
+                    provider.display_name,
+                    provider.id,
+                    enum_label(provider.health.status)
+                ));
+                self.push(format!(
+                    "adapter {} · endpoint {} · enabled {} · credential {}",
+                    enum_label(provider.adapter),
+                    provider.endpoint_summary(),
+                    provider.enabled,
+                    if provider.credential_ref.is_some() {
+                        "configured"
+                    } else {
+                        "not configured"
+                    }
+                ));
+                if let Some(message) = provider.health.safe_message {
+                    self.push(format!("health · {message}"));
+                }
+                Ok(())
+            }
+            Some("check") => {
+                let id = parse_provider_id(id.context("usage: /providers check <id>")?)?;
+                let provider = self.application.store().get_provider_profile(id)?;
+                provider.validate()?;
+                self.push(format!(
+                    "passive Provider check · {} · configuration valid · cached status {}",
+                    provider.display_name,
+                    enum_label(provider.health.status)
+                ));
+                self.push(
+                    "No billable request was sent. Use GUI Provider settings for a credential-aware network check; the TUI never accepts or prints API keys.",
+                );
+                Ok(())
+            }
+            Some(_) => {
+                anyhow::bail!("usage: /providers | /providers show <id> | /providers check <id>")
+            }
         }
+    }
+
+    async fn models(&mut self, action: Option<&str>, id: Option<&str>) -> Result<()> {
+        match action {
+            None => {
+                let lines = registry_model_lines(self.application.as_ref())?;
+                if lines.is_empty() {
+                    self.push("No Model Profiles. Add and verify one in GUI Model settings.");
+                }
+                for line in lines {
+                    self.push(format!("model · {line}"));
+                }
+                return Ok(());
+            }
+            Some("workers") => {
+                let lines = model_lines(&workspace_settings(self.application.as_ref())?);
+                for line in lines {
+                    self.push(format!("Vision Worker · {line}"));
+                }
+                return Ok(());
+            }
+            Some("show") => {
+                let model_id =
+                    parse_model_profile_id(id.context("usage: /models show <model-profile-id>")?)?;
+                let model = self.application.store().get_model_profile(model_id, None)?;
+                let provider = self
+                    .application
+                    .store()
+                    .get_provider_profile(model.provider_id)?;
+                self.push(format!(
+                    "Model {} · {} · revision {} · {}",
+                    model.display_name,
+                    model.id,
+                    model.revision,
+                    enum_label(model.status)
+                ));
+                self.push(format!(
+                    "Provider {} · inputs {} · capabilities {}",
+                    provider.display_name,
+                    model
+                        .input_modalities
+                        .iter()
+                        .map(|value| enum_label(*value))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    model
+                        .task_capabilities
+                        .iter()
+                        .map(|value| enum_label(*value))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                self.push(format!(
+                    "protocol · Tool Calls {} · Structured Output {} · JSON Schema {}",
+                    model.protocol_features.tool_calls,
+                    model.protocol_features.structured_output,
+                    model.protocol_features.json_schema
+                ));
+                return Ok(());
+            }
+            Some("compatible") => {
+                let capability =
+                    parse_model_capability(id.context("usage: /models compatible <capability>")?)?;
+                let models = self.application.store().list_model_profiles(None, false)?;
+                let mut count = 0_usize;
+                for model in models {
+                    let provider = self
+                        .application
+                        .store()
+                        .get_provider_profile(model.provider_id)?;
+                    if model.enabled
+                        && model.status == ModelProfileStatus::Available
+                        && model.task_capabilities.contains(&capability)
+                        && provider.enabled
+                        && matches!(
+                            provider.health.status,
+                            ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+                        )
+                        && (provider.credential_ref.is_some()
+                            || provider.adapter == ProviderAdapterKind::Mock)
+                    {
+                        count += 1;
+                        self.push(format!(
+                            "compatible · {} via {} · {}",
+                            model.display_name, provider.display_name, model.id
+                        ));
+                    }
+                }
+                if count == 0 {
+                    self.push(format!(
+                        "No Available Model Profile declares {}. Verify Provider credentials and model capabilities in the GUI.",
+                        enum_label(capability)
+                    ));
+                }
+                return Ok(());
+            }
+            Some("test") => {}
+            Some(_) => anyhow::bail!(
+                "usage: /models | /models show <id> | /models compatible <capability> | /models workers | /models test <worker-id>"
+            ),
+        }
+        let settings = workspace_settings(self.application.as_ref())?;
         let id = id.context("usage: /models test <id>")?;
         let worker = settings
             .detection_workers
@@ -496,6 +665,92 @@ impl TuiState {
         Ok(())
     }
 
+    fn bindings(&mut self) -> Result<()> {
+        let Some(project) = self.project_context.as_ref() else {
+            self.push("Open a Project before viewing model bindings.");
+            return Ok(());
+        };
+        let project_name = project.name.clone();
+        let stable_id = project.stable_id;
+        let bindings = self
+            .application
+            .store()
+            .list_project_model_bindings(stable_id)?;
+        self.push(format!("Project model bindings · {project_name}"));
+        if bindings.is_empty() {
+            self.push("No Project defaults; Workflow nodes and global defaults apply.");
+        }
+        for binding in bindings {
+            let model = self
+                .application
+                .store()
+                .get_model_profile(binding.model_profile_id, None)?;
+            self.push(format!(
+                "{} · {} · {} · locked {}",
+                enum_label(binding.role),
+                model.display_name,
+                binding.model_profile_id,
+                binding.locked
+            ));
+        }
+        let defaults = self.application.store().get_global_model_defaults()?;
+        self.push(format!(
+            "global · Pipeline Builder {} · vision {} · text {}",
+            defaults
+                .pipeline_builder
+                .map_or_else(|| "none".to_owned(), |id| id.to_string()),
+            defaults
+                .vision_language
+                .map_or_else(|| "none".to_owned(), |id| id.to_string()),
+            defaults
+                .text_generation
+                .map_or_else(|| "none".to_owned(), |id| id.to_string())
+        ));
+        Ok(())
+    }
+
+    fn bind(&mut self, role: Option<&str>, model_id: Option<&str>) -> Result<()> {
+        let role =
+            parse_model_binding_role(role.context("usage: /bind <role> <model-profile-id>")?)?;
+        let model_id =
+            parse_model_profile_id(model_id.context("usage: /bind <role> <model-profile-id>")?)?;
+        let project_id = self
+            .project_context
+            .as_ref()
+            .map(|project| project.stable_id)
+            .context("open a Project before choosing a model")?;
+        let model = self.application.store().get_model_profile(model_id, None)?;
+        let capability = binding_capability(role, &model)?;
+        if role == ModelBindingRole::PipelineBuilder
+            && (!model.input_modalities.contains(&InputModality::Text)
+                || !model.protocol_features.tool_calls
+                || !model.protocol_features.structured_output)
+        {
+            anyhow::bail!(
+                "Pipeline Builder requires text input, Tool Calls, and Structured Output"
+            );
+        }
+        let binding = ProjectModelBinding {
+            id: ModelBindingId::new(),
+            project_id,
+            capability,
+            role,
+            match_kind: ModelBindingMatch::Role,
+            model_profile_id: model_id,
+            locked: true,
+            created_at: chrono::Utc::now(),
+        };
+        self.application
+            .store()
+            .save_project_model_binding(&binding, BindingMutationActor::User)?;
+        self.push(format!(
+            "bound {} to {} · locked for Agent replacement",
+            enum_label(role),
+            model.display_name
+        ));
+        Ok(())
+    }
+
     async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
@@ -529,6 +784,10 @@ impl TuiState {
                     workspace,
                     runner::database_path()?,
                 )?);
+                self.model_lines = registry_model_lines(self.application.as_ref())?
+                    .into_iter()
+                    .chain(model_lines(&workspace_settings(self.application.as_ref())?))
+                    .collect();
                 self.push(format!("opened Project {}", context.name));
                 self.project = Some(path);
                 self.project_context = Some(context);
@@ -558,6 +817,15 @@ impl TuiState {
                             session.usage.cost,
                             session.stop_reason.as_deref().unwrap_or("running")
                         ));
+                        if let Some(selection) = &session.model_selection {
+                            self.push(format!(
+                                "Agent model · {} via {} · revision {} · {}",
+                                selection.model_display_name,
+                                selection.provider_display_name,
+                                selection.model_profile_revision,
+                                enum_label(selection.binding_source)
+                            ));
+                        }
                     }
                 }
                 Ok(())
@@ -565,7 +833,10 @@ impl TuiState {
             "/inspect" => self.inspect_latest(),
             "/artifacts" => self.list_artifacts(),
             "/replay" => self.replay(parts.next()).await,
+            "/providers" => self.providers(parts.next(), parts.next()),
             "/models" => self.models(parts.next(), parts.next()).await,
+            "/bindings" => self.bindings(),
+            "/bind" => self.bind(parts.next(), parts.next()),
             "/skills" => {
                 if parts.next() == Some("show") {
                     let id = parts.next().context("usage: /skills show <skill-id>")?;
@@ -621,6 +892,16 @@ impl TuiState {
                         session.usage.input_tokens + session.usage.output_tokens,
                         session.usage.cost
                     ));
+                    if let Some(selection) = &session.model_selection {
+                        self.push(format!(
+                            "Agent model · {} via {} · revision {} · {}{}",
+                            selection.model_display_name,
+                            selection.provider_display_name,
+                            selection.model_profile_revision,
+                            enum_label(selection.binding_source),
+                            if selection.locked { " · locked" } else { "" }
+                        ));
+                    }
                     if let Some(constraints) = &session.builder_constraints {
                         self.push(format!(
                             "objective {:?} · review target {} · external APIs {} · human review {}",
@@ -666,7 +947,9 @@ impl TuiState {
                     ));
                     return Ok(());
                 }
-                self.push("Advisor started · registry-bounded Draft only");
+                self.push(
+                    "Advisor started · scripted offline mode · registry-bounded Draft only. Use /bind pipeline_builder <model-profile-id> to select the live GUI Agent model.",
+                );
                 let report = self
                     .application
                     .run_workflow_advisor_agent(
@@ -730,7 +1013,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /models /models test <id> /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /bindings /bind <role> <model-profile-id> /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -748,6 +1031,81 @@ impl TuiState {
 fn workspace_settings(application: &LocalApplication) -> Result<Settings> {
     let path = application.workspace().join(".annotagent/settings.toml");
     load_settings(path.is_file().then_some(path.as_path()))
+}
+
+fn enum_label<T: serde::Serialize>(value: T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn parse_provider_id(value: &str) -> Result<ProviderId> {
+    value
+        .parse()
+        .with_context(|| format!("invalid Provider Profile id {value:?}"))
+}
+
+fn parse_model_profile_id(value: &str) -> Result<ModelProfileId> {
+    value
+        .parse()
+        .with_context(|| format!("invalid Model Profile id {value:?}"))
+}
+
+fn parse_model_capability(value: &str) -> Result<ModelCapability> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned()))
+        .with_context(|| format!("unknown model capability {value:?}"))
+}
+
+fn parse_model_binding_role(value: &str) -> Result<ModelBindingRole> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned()))
+        .with_context(|| format!("unknown model binding role {value:?}"))
+}
+
+fn binding_capability(
+    role: ModelBindingRole,
+    model: &annotagent_core::ModelProfile,
+) -> Result<ModelCapability> {
+    let required = match role {
+        ModelBindingRole::PipelineBuilder => Some(ModelCapability::TextGeneration),
+        ModelBindingRole::Detection => Some(ModelCapability::ObjectDetection),
+        ModelBindingRole::Classification => Some(ModelCapability::ImageClassification),
+        ModelBindingRole::Segmentation => Some(ModelCapability::InstanceSegmentation),
+        ModelBindingRole::Verification => Some(ModelCapability::VisionLanguage),
+        ModelBindingRole::PrimaryInference | ModelBindingRole::Fallback => None,
+    };
+    let capability = required
+        .or_else(|| model.task_capabilities.iter().next().copied())
+        .context("Model Profile declares no task capability")?;
+    if !model.task_capabilities.contains(&capability) {
+        anyhow::bail!(
+            "{} requires the {} capability, which {} does not declare",
+            enum_label(role),
+            enum_label(capability),
+            model.display_name
+        );
+    }
+    Ok(capability)
+}
+
+fn registry_model_lines(application: &LocalApplication) -> Result<Vec<String>> {
+    application
+        .store()
+        .list_model_profiles(None, false)?
+        .into_iter()
+        .map(|model| {
+            let provider = application
+                .store()
+                .get_provider_profile(model.provider_id)?;
+            Ok(format!(
+                "{} · {} · {} · {}",
+                model.display_name,
+                provider.display_name,
+                enum_label(model.status),
+                model.id
+            ))
+        })
+        .collect()
 }
 
 fn worker_capability(worker: &DetectionWorkerSettings) -> String {
@@ -992,7 +1350,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
         frame.render_widget(
             Paragraph::new(models)
                 .style(theme.panel())
-                .block(themed_block("Models · /models test <id>", theme))
+                .block(themed_block("Models · /models · /providers", theme))
                 .wrap(Wrap { trim: true }),
             body[1],
         );
@@ -1182,6 +1540,40 @@ mod tests {
             lines
                 .iter()
                 .any(|line| { line.contains("RF-DETR") && line.contains("object_detection") })
+        );
+    }
+
+    #[tokio::test]
+    async fn registry_commands_are_safe_and_actionable_without_profiles() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let mut state = TuiState::new(None, application).expect("state");
+        state.command("/providers").await.expect("Provider list");
+        state.command("/models").await.expect("Model list");
+        state.command("/bindings").await.expect("binding list");
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("GUI") && line.contains("credentials"))
+        );
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("No Model Profiles"))
+        );
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("Open a Project"))
+        );
+        assert!(
+            state
+                .trace
+                .iter()
+                .all(|line| !line.to_ascii_lowercase().contains("authorization"))
         );
     }
 

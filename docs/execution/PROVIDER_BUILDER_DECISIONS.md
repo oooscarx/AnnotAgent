@@ -178,3 +178,29 @@ groups are removed, while at least four recent groups remain. A short system not
 that Rust still owns the authoritative Draft/validation/Dry Run state. Native parallel Tool Calls are
 disabled and the Alpha loop accepts exactly one Tool Call per turn, so compaction cannot create an
 orphaned or ambiguous history.
+
+## D026 — Guided model selectors are projections of compatibility and durable bindings
+
+Build and Settings never maintain a separate browser-side model catalog. Each selector queries the
+server's typed compatibility boundary and renders the reusable Model Profile with its Provider,
+capabilities and Available state. A Project selection is immediately saved as a user-authored,
+locked role binding; the Agent receives the chosen Profile ID explicitly and therefore cannot
+silently replace it. Global defaults remain lower-priority fallbacks, and publication still freezes
+the final semantic revision.
+
+## D027 — inline first-use credentials avoid both workspace plaintext and Keychain coupling
+
+The in-Project setup offers an environment-variable reference or process-local Session-only secret.
+The React password field is never copied into local/session storage, URLs or Draft state and is
+cleared after the write-only credential request. This honors the local product requirement not to
+store new API keys in the OS Keychain while preserving the Registry's separate optional Keyring
+implementation. Provider discovery is passive; model verification stays a second explicitly
+confirmed possibly billable action.
+
+## D028 — TUI Registry inspection is safe by construction and network checks remain server-owned
+
+The TUI reads durable Provider/Profile/binding metadata and prints only endpoint summaries,
+configured booleans, textual health and model identities. `/providers check` validates the local
+profile and reports cached health without pretending it tested a credential or sending a billable
+request. Credential-aware network checks stay in the GUI/server Secret Store boundary. Keyboard
+selection uses `/bind`, creates a locked Project binding and never opens a terminal secret prompt.

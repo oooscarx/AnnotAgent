@@ -272,6 +272,32 @@ export interface RegistryModelProfile {
   updated_at: string;
 }
 
+export type ModelBindingRole =
+  | "pipeline_builder"
+  | "primary_inference"
+  | "detection"
+  | "classification"
+  | "segmentation"
+  | "verification"
+  | "fallback";
+
+export interface ProjectModelBinding {
+  id: string;
+  project_id: string;
+  capability: ModelCapability;
+  role: ModelBindingRole;
+  match_kind: "capability" | "role";
+  model_profile_id: string;
+  locked: boolean;
+  created_at: string;
+}
+
+export interface GlobalModelDefaults {
+  pipeline_builder?: string;
+  vision_language?: string;
+  text_generation?: string;
+}
+
 export interface ProviderProbeUsage {
   id: string;
   provider_id: string;
@@ -603,6 +629,41 @@ export interface AgentSession {
     max_cost?: string;
   };
   builder_constraints?: PipelineBuilderConstraints;
+  model_selection?: {
+    provider_profile_id: string;
+    provider_display_name: string;
+    provider_adapter: ProviderAdapterKind;
+    endpoint_summary: string;
+    model_profile_id: string;
+    model_profile_revision: number;
+    model_display_name: string;
+    remote_model_id: string;
+    binding_source:
+      | "workflow_node"
+      | "project_capability"
+      | "project_role"
+      | "global_default";
+    locked: boolean;
+  };
+  model_calls: {
+    sequence: number;
+    provider_profile_id?: string;
+    model_profile_id?: string;
+    model_profile_revision?: number;
+    provider_name: string;
+    remote_model_id: string;
+    request_id?: string;
+    input_tokens: number;
+    output_tokens: number;
+    usage_source: string;
+    duration_ms: number;
+    cost: string;
+    currency: string;
+    retry_count: number;
+    succeeded: boolean;
+    safe_error?: string;
+    created_at: string;
+  }[];
   usage: {
     steps: number;
     tool_calls: number;

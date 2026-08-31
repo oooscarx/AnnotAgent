@@ -52,3 +52,39 @@ enable/status, input modalities, protocol features, and task capabilities. Provi
 separate bounded route for infrastructure failures (timeout, rate limit, unavailability, temporary
 server failure). Empty detections, low confidence, conflicting evidence, and domain validation stay
 inside explicit Workflow Decision branches.
+
+## Guided selection
+
+Configure reusable connections in **Settings → Providers**, then declare and explicitly verify
+their capabilities in **Settings → Models**. Workspace defaults for Pipeline Builder, Vision
+Language and Text models live at the top of the Models page. A Project may override those defaults
+in **Build → Automation → Project model choices**; the Pipeline Builder Agent has its own prominent
+compatible model selector before it starts.
+
+The normal UI shows the Model Profile, Provider, capabilities and health. Endpoint, remote model ID
+and protocol metadata stay in Settings/advanced inspection. When no compatible Agent model exists,
+Build embeds a first-use flow. It accepts either an environment-variable reference or a process
+Session-only value, never stores that value in browser/workspace state, performs a non-billable
+Provider check, then asks separately before the possibly billable model verification request.
+
+## TUI registry commands
+
+The TUI uses the same SQLite Registry and supports:
+
+```text
+/providers
+/providers show <provider-id>
+/providers check <provider-id>
+/models
+/models show <model-profile-id>
+/models compatible <capability>
+/bindings
+/bind <role> <model-profile-id>
+/advisor
+/advisor status
+/advisor cancel
+```
+
+`/providers check` is a passive local-profile and cached-health inspection. The TUI has no API-key
+prompt and never prints authorization data; use GUI Settings or a server environment-variable
+reference for credential-aware network checks.

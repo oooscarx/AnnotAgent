@@ -126,6 +126,20 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | Real Provider smoke | LIVE-CONDITIONAL | Ignored opt-in test requires an explicit billable flag plus base URL/model/key environment variables. Normal CI never reads a real key or sends a request. |
 | M6 quality gate | PASS | fmt, strict all-target/all-feature Clippy and all-feature build pass. Full Rust suite passes 267/267 with one explicit billable test ignored; all doc-test groups pass. TypeScript, Vitest 36/36 and production Web build pass. |
 
+## M7 Guided Project UX and TUI
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Compatible Project choices | PASS | Guided Build queries the typed compatibility endpoint for Pipeline Builder, Detection, Classification and Verification and persists user choices as locked Project role bindings. Isolated E2E creates an image-capable Profile, selects it for Classification and proves API/UI restoration after reload. |
+| Agent model selector | PASS | The primary Agent card names Model Profile and Provider, displays Available/capability/binding state, persists the Project choice and sends `agent_model_profile_id`; incompatible or absent live Profiles cannot start `advisor=llm`. |
+| Global defaults | PASS | Settings exposes Pipeline Builder, Vision Language and Text defaults using compatible Available Profiles. Isolated E2E selects a default and proves refresh persistence. |
+| Inline Provider setup | PASS | The no-model state embeds preset, model ID and environment/session-only credential setup, preserves the Draft, performs a passive check and gates the separate active probe behind explicit possible-charge confirmation. No browser/workspace/Keychain plaintext path is used. |
+| Agent progress and audit | PASS | Persisted Running/Waiting-for-Human sessions recover on Project load; trace shows stage, budgets, Provider/Profile/revision/binding lock, safe Tool results and per-request tokens/cost/duration/retries/errors without hidden reasoning or credentials. |
+| Draft approval UX | PASS | Structured node/edge/model/policy Diff, selective apply/all, reject and exact undo remain attached to the persisted Draft. Agent cannot publish or start a formal Run. |
+| TUI Registry commands | PASS | `/providers`, show/check, `/models`, show/compatible, `/bindings`, `/bind`, Advisor status/cancel and safe model audit are implemented. TUI tests prove actionable no-profile states and no Authorization output. |
+| Responsive and accessible | PASS | Controls use fieldsets, labels, textual status and ARIA progress/live regions. Real-browser inspection passed 1280/1024/390 px without overflow; the isolated compact/keyboard/reduced-motion suite passes. |
+| M7 validation | PASS | Full fmt, strict all-target/all-feature Clippy and build pass; Rust passes 269/269 with one explicit billable smoke ignored and all doc tests green. TypeScript, 38/38 Vitest and production build pass. Isolated Chromium E2E passes 29/29 including new binding/default recovery. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
@@ -133,11 +147,11 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | A. Provider | PASS | Multiple persistent Profiles, pure presets, CRUD, passive/active checks, discovery, health, reference protection and Settings lifecycle UI pass offline tests. |
 | B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
 | C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe/Agent usage and snapshot contract pass; annotation Run publication/runtime integration remains for M7–M8. |
-| D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility and locks pass; Project/Node binding UI and end-to-end execution remain. |
+| D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility, locks and Guided Project selection/refresh pass. Published annotation Run resolution remains for M8. |
 | E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M7–M8 before release PASS. |
 | F. Agent | PASS | M6 resolves the Agent's own Registry Profile, runs the real OpenAI-compatible multi-turn loop, preserves Tool history, bounds context, records Profile-priced usage, repairs validation/Dry Run feedback and stops for human approval. |
 | G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
-| H. Product | OPEN | Registry Settings IA passes; Project Build still needs compatible Profile selection and Builder integration in later milestones. |
+| H. Product | PASS | Central Settings, reusable credentials, global/Project/Agent selectors, compatibility/health labels, inline first-use setup, generic product identity and responsive/accessible UI pass offline and browser evidence. |
 | I. Regression | OPEN | Existing release tests are strong; full post-migration evidence remains. |
 
 No item is marked PASS merely because a UI control, DTO or Mock path exists.

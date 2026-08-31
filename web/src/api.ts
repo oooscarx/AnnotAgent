@@ -38,6 +38,9 @@ import type {
   InputModality,
   ModelCapability,
   ProviderProbeUsage,
+  ProjectModelBinding,
+  GlobalModelDefaults,
+  ModelBindingRole,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -144,6 +147,28 @@ export const api = {
         ...(allRevisions ? { all_revisions: "true" } : {}),
       }).toString()}`,
     ),
+  compatibleModelProfiles: (requirements: {
+    input_modalities?: InputModality[];
+    capabilities?: ModelCapability[];
+    tool_calls?: boolean;
+    structured_output?: boolean;
+    json_schema?: boolean;
+    allow_unverified?: boolean;
+  }) =>
+    request<{ models: RegistryModelProfile[] }>(
+      `/api/model-profiles/compatible?${new URLSearchParams({
+        ...(requirements.input_modalities?.length
+          ? { input_modalities: requirements.input_modalities.join(",") }
+          : {}),
+        ...(requirements.capabilities?.length
+          ? { capabilities: requirements.capabilities.join(",") }
+          : {}),
+        ...(requirements.tool_calls ? { tool_calls: "true" } : {}),
+        ...(requirements.structured_output ? { structured_output: "true" } : {}),
+        ...(requirements.json_schema ? { json_schema: "true" } : {}),
+        ...(requirements.allow_unverified ? { allow_unverified: "true" } : {}),
+      }).toString()}`,
+    ),
   createModelProfile: (value: {
     provider_id: string;
     display_name: string;
@@ -178,6 +203,31 @@ export const api = {
     }),
   projectSummary: (projectId: string) =>
     request<ProjectWorkspaceSummary>(`/api/projects/${projectId}/summary`),
+  projectModelBindings: (projectId: string) =>
+    request<{ project_id: string; bindings: ProjectModelBinding[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/model-bindings`,
+    ),
+  saveProjectModelBindings: (
+    projectId: string,
+    bindings: {
+      capability: ModelCapability;
+      role: ModelBindingRole;
+      match_kind: "capability" | "role";
+      model_profile_id: string;
+      locked: boolean;
+    }[],
+  ) =>
+    request<{ project_id: string; bindings: ProjectModelBinding[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/model-bindings`,
+      { method: "PUT", body: JSON.stringify({ bindings }) },
+    ),
+  agentModelBindings: () =>
+    request<GlobalModelDefaults>("/api/agent-model-bindings"),
+  saveAgentModelBindings: (defaults: GlobalModelDefaults) =>
+    request<GlobalModelDefaults>("/api/agent-model-bindings", {
+      method: "PUT",
+      body: JSON.stringify(defaults),
+    }),
   images: (projectId: string) =>
     request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
   importImages: (projectId: string, source: string) =>
@@ -274,6 +324,7 @@ export const api = {
       minimum_accuracy?: number;
     },
     builderConstraints?: PipelineBuilderConstraints,
+    agentModelProfileId?: string,
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -285,6 +336,9 @@ export const api = {
           : {}),
         constraints: { require_review_gate: true, ...constraints },
         builder_constraints: builderConstraints,
+        ...(agentModelProfileId
+          ? { agent_model_profile_id: agentModelProfileId }
+          : {}),
       }),
     }),
   workflowDraftDiff: (baseDraftId: string, proposedDraftId: string) =>

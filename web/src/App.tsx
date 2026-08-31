@@ -51,6 +51,9 @@ import type {
   ModelCapability,
   InputModality,
   ProviderProbeUsage,
+  ProjectModelBinding,
+  ModelBindingRole,
+  GlobalModelDefaults,
   ExportReadiness,
   ProjectExportResult,
   GuidedAction,
@@ -96,6 +99,38 @@ const DEFAULT_PIPELINE_BUILDER_CONSTRAINTS: PipelineBuilderConstraints = {
   maximum_dry_runs: 3,
   maximum_agent_cost: "1",
 };
+
+const PROJECT_MODEL_CHOICES: {
+  role: ModelBindingRole;
+  capability: ModelCapability;
+  label: string;
+  modality: InputModality;
+}[] = [
+  {
+    role: "pipeline_builder",
+    capability: "text_generation",
+    label: "Pipeline Builder",
+    modality: "text",
+  },
+  {
+    role: "detection",
+    capability: "object_detection",
+    label: "Detection",
+    modality: "image",
+  },
+  {
+    role: "classification",
+    capability: "image_classification",
+    label: "Classification",
+    modality: "image",
+  },
+  {
+    role: "verification",
+    capability: "vision_language",
+    label: "Verification",
+    modality: "image",
+  },
+];
 
 function pipelineDiffChangeIds(diff: PipelineDraftDiff): string[] {
   return [
@@ -474,6 +509,8 @@ export function App() {
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
+            onOpenProviders={() => navigate("/settings")}
+            onOpenModels={() => navigate("/settings/models")}
             onError={setError}
           />
         )}
@@ -2076,6 +2113,244 @@ function ProjectExportPage({
   );
 }
 
+function InlineProviderSetup({
+  onOpenProviders,
+  onOpenModels,
+  onReady,
+  onError,
+}: {
+  onOpenProviders: () => void;
+  onOpenModels: () => void;
+  onReady: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [presets, setPresets] = useState<ProviderPresetProfile[]>([]);
+  const [presetId, setPresetId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [credentialSource, setCredentialSource] = useState<
+    "environment_variable" | "session_only"
+  >("environment_variable");
+  const [environmentVariable, setEnvironmentVariable] =
+    useState("ANNOTAGENT_PROVIDER_API_KEY");
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState<"connect" | "probe" | "">("");
+  const [created, setCreated] = useState<{
+    provider: ProviderProfile;
+    model: RegistryModelProfile;
+  }>();
+  useEffect(() => {
+    void api
+      .providerPresets()
+      .then(({ presets: values }) => {
+        const available = values.filter(
+          (preset) => preset.adapter === "open_ai_compatible",
+        );
+        setPresets(available);
+        const first = available[0];
+        if (first) {
+          setPresetId(first.id);
+          setDisplayName(first.display_name);
+          setModelId(first.suggested_models[0] ?? "");
+        }
+      })
+      .catch((error: Error) => onError(error.message));
+  }, []);
+  const choosePreset = (id: string) => {
+    const preset = presets.find((candidate) => candidate.id === id);
+    setPresetId(id);
+    if (preset) {
+      setDisplayName(preset.display_name);
+      setModelId(preset.suggested_models[0] ?? "");
+    }
+  };
+  const connect = async () => {
+    const preset = presets.find((candidate) => candidate.id === presetId);
+    if (!preset) return onError("Choose a Provider preset first.");
+    if (!displayName.trim() || !modelId.trim())
+      return onError("Enter a Provider name and exact model ID.");
+    if (
+      credentialSource === "environment_variable" &&
+      !environmentVariable.trim()
+    )
+      return onError("Enter the server environment variable name.");
+    if (credentialSource === "session_only" && !secret)
+      return onError("Enter the API key for this server session.");
+    setBusy("connect");
+    try {
+      const provider = await api.createProvider({
+        display_name: displayName.trim(),
+        preset_id: preset.id,
+        adapter: preset.adapter,
+        base_url: preset.base_url,
+      });
+      await api.saveProviderCredential(provider.id, {
+        source: credentialSource,
+        ...(credentialSource === "environment_variable"
+          ? { environment_variable: environmentVariable.trim() }
+          : { secret }),
+      });
+      const model = await api.createModelProfile({
+        provider_id: provider.id,
+        display_name: modelId.trim(),
+        remote_model_id: modelId.trim(),
+        input_modalities: ["text"],
+        task_capabilities: ["text_generation"],
+        protocol_features: {
+          tool_calls: true,
+          parallel_tool_calls: false,
+          structured_output: true,
+          json_schema: false,
+          usage_reporting: true,
+          streaming: false,
+          reasoning_controls: false,
+        },
+      });
+      await api.checkProvider(provider.id);
+      setSecret("");
+      setCreated({ provider, model });
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const probe = async () => {
+    if (!created) return;
+    if (
+      !window.confirm(
+        "This sends one minimal generation request and may incur Provider charges. Continue?",
+      )
+    )
+      return;
+    setBusy("probe");
+    try {
+      await api.activeProbe(created.provider.id, created.model.id);
+      await onReady();
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <details className="inline-provider-setup" open>
+      <summary>Provider setup required</summary>
+      <p>
+        Pipeline Builder needs an Available text model with Tool Calls and
+        Structured Output. This setup keeps the current Draft and returns here
+        after verification.
+      </p>
+      {!created ? (
+        <div className="inline-provider-form">
+          <label>
+            Provider preset
+            <select
+              value={presetId}
+              onChange={(event) => choosePreset(event.target.value)}
+            >
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Connection name
+            <input
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </label>
+          <label>
+            Agent model
+            <input
+              value={modelId}
+              onChange={(event) => setModelId(event.target.value)}
+              placeholder="Exact Provider model ID"
+            />
+          </label>
+          <label>
+            Credential source
+            <select
+              value={credentialSource}
+              onChange={(event) =>
+                setCredentialSource(
+                  event.target.value as
+                    | "environment_variable"
+                    | "session_only",
+                )
+              }
+            >
+              <option value="environment_variable">
+                Server environment variable
+              </option>
+              <option value="session_only">This server session only</option>
+            </select>
+          </label>
+          {credentialSource === "environment_variable" ? (
+            <label>
+              Environment variable name
+              <input
+                value={environmentVariable}
+                onChange={(event) =>
+                  setEnvironmentVariable(event.target.value)
+                }
+                placeholder="ANNOTAGENT_PROVIDER_API_KEY"
+              />
+            </label>
+          ) : (
+            <label>
+              API key
+              <input
+                type="password"
+                autoComplete="off"
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+              />
+            </label>
+          )}
+          <small>
+            No credential is placed in the workspace, browser storage, or OS
+            keychain. Session-only values disappear when the server stops.
+          </small>
+          <button
+            disabled={busy === "connect" || !presets.length}
+            onClick={() => void connect()}
+          >
+            {busy === "connect"
+              ? "Saving and checking…"
+              : "Save and check connection"}
+          </button>
+        </div>
+      ) : (
+        <div className="inline-provider-verified">
+          <Status status="configured" />
+          <span>
+            <strong>{created.model.display_name}</strong>
+            <small>via {created.provider.display_name}</small>
+          </span>
+          <p>
+            The non-billable Provider check passed. One explicit model test is
+            required before this Profile becomes Available.
+          </p>
+          <button
+            disabled={busy === "probe"}
+            onClick={() => void probe()}
+          >
+            {busy === "probe" ? "Testing model…" : "Run billable model test"}
+          </button>
+        </div>
+      )}
+      <div className="button-row">
+        <button onClick={onOpenProviders}>Open Provider settings</button>
+        <button onClick={onOpenModels}>Open Model settings</button>
+      </div>
+    </details>
+  );
+}
+
 function WorkflowsPage({
   projects,
   activeProjectId,
@@ -2084,6 +2359,8 @@ function WorkflowsPage({
   onNavigate,
   onOpenProjects,
   onOpenProject,
+  onOpenProviders,
+  onOpenModels,
   onError,
 }: {
   projects: ProjectSummary[];
@@ -2093,6 +2370,8 @@ function WorkflowsPage({
   onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
+  onOpenProviders: () => void;
+  onOpenModels: () => void;
   onError: (value: string) => void;
 }) {
   const entries = projects.flatMap((project) =>
@@ -2128,6 +2407,18 @@ function WorkflowsPage({
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
   const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
+  const [registryProviders, setRegistryProviders] = useState<ProviderProfile[]>([]);
+  const [compatibleModels, setCompatibleModels] = useState<
+    Partial<Record<ModelBindingRole, RegistryModelProfile[]>>
+  >({});
+  const [projectModelBindings, setProjectModelBindings] = useState<
+    ProjectModelBinding[]
+  >([]);
+  const [globalModelDefaults, setGlobalModelDefaults] =
+    useState<GlobalModelDefaults>({});
+  const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
+  const [modelBindingBusy, setModelBindingBusy] = useState(false);
+  const [registryLoading, setRegistryLoading] = useState(true);
   const [builderConstraints, setBuilderConstraints] = useState<PipelineBuilderConstraints>(
     DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
   );
@@ -2138,6 +2429,7 @@ function WorkflowsPage({
   const [targetLabel, setTargetLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [advisorRunning, setAdvisorRunning] = useState(false);
+  const advisorRequestActive = useRef(false);
   const persistedDrafts = useRef(new Map<string, string>());
   const autosaveTimer = useRef<number | undefined>(undefined);
   const [savedAt, setSavedAt] = useState<Date>();
@@ -2156,6 +2448,71 @@ function WorkflowsPage({
         );
       })
       .catch((error: Error) => onError(error.message));
+  const refreshModelChoices = () => {
+    if (!activeProjectId) {
+      setRegistryProviders([]);
+      setCompatibleModels({});
+      setProjectModelBindings([]);
+      setGlobalModelDefaults({});
+      setSelectedAgentModelId("");
+      setRegistryLoading(false);
+      return Promise.resolve();
+    }
+    setRegistryLoading(true);
+    return Promise.all([
+      api.providers(),
+      api.projectModelBindings(activeProjectId),
+      api.agentModelBindings(),
+      Promise.all(
+        PROJECT_MODEL_CHOICES.map(async (choice) => [
+          choice.role,
+          (
+            await api.compatibleModelProfiles({
+              input_modalities: [choice.modality],
+              capabilities: [choice.capability],
+              ...(choice.role === "pipeline_builder"
+                ? { tool_calls: true, structured_output: true }
+                : {}),
+            })
+          ).models,
+        ] as const),
+      ),
+    ])
+      .then(([providerResult, bindingResult, defaults, choiceEntries]) => {
+        const choices = Object.fromEntries(choiceEntries) as Partial<
+          Record<ModelBindingRole, RegistryModelProfile[]>
+        >;
+        const providers = providerResult.providers;
+        const liveBuilderModels = (choices.pipeline_builder ?? []).filter(
+          (model) =>
+            providers.find((provider) => provider.id === model.provider_id)
+              ?.adapter === "open_ai_compatible",
+        );
+        const projectChoice = bindingResult.bindings.find(
+          (binding) =>
+            binding.match_kind === "role" &&
+            binding.role === "pipeline_builder",
+        )?.model_profile_id;
+        const preferred =
+          [projectChoice, defaults.pipeline_builder]
+            .filter(Boolean)
+            .find((id) => liveBuilderModels.some((model) => model.id === id)) ??
+          liveBuilderModels[0]?.id ??
+          "";
+        setRegistryProviders(providers);
+        setCompatibleModels(choices);
+        setProjectModelBindings(bindingResult.bindings);
+        setGlobalModelDefaults(defaults);
+        setSelectedAgentModelId((current) =>
+          liveBuilderModels.some((model) => model.id === current)
+            ? current
+            : preferred,
+        );
+        setAdvisorKind(preferred ? "llm" : "mock");
+      })
+      .catch((error: Error) => onError(`Model Registry: ${error.message}`))
+      .finally(() => setRegistryLoading(false));
+  };
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
@@ -2181,13 +2538,28 @@ function WorkflowsPage({
   }, [draft]);
   useEffect(() => {
     void refreshDrafts();
+    void refreshModelChoices();
     if (activeProjectId) {
       void api
         .workflowCatalog(activeProjectId)
         .then(setCatalog)
         .catch((error: Error) => onError(error.message));
+      void api
+        .agentSessions(activeProjectId)
+        .then(({ sessions }) => {
+          const latest = sessions.find(
+            (session) =>
+              session.kind === "pipeline_builder" &&
+              ["running", "waiting_for_human"].includes(session.status),
+          );
+          setActiveAgentSession(latest);
+          setAdvisorRunning(latest?.status === "running");
+        })
+        .catch((error: Error) => onError(`Agent recovery: ${error.message}`));
     } else {
       setCatalog(undefined);
+      setActiveAgentSession(undefined);
+      setAdvisorRunning(false);
     }
     setReport(undefined);
     setSelectedPublishedKey("");
@@ -2201,10 +2573,22 @@ function WorkflowsPage({
       api.agentSessions(activeProjectId).then(({ sessions }) => {
         if (stopped) return;
         const latest = sessions.find((session) => session.kind === "pipeline_builder");
-        if (latest) setActiveAgentSession(latest);
+        if (latest) {
+          if (
+            advisorRequestActive.current &&
+            latest.status !== "running"
+          )
+            return;
+          setActiveAgentSession(latest);
+          if (
+            !advisorRequestActive.current &&
+            latest.status !== "running"
+          )
+            setAdvisorRunning(false);
+        }
       }).catch(() => undefined);
     void poll();
-    const timer = window.setInterval(() => void poll(), 250);
+    const timer = window.setInterval(() => void poll(), 750);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -2230,8 +2614,13 @@ function WorkflowsPage({
   const runAdvisor = (target?: { task_id: string; label: string }) => {
     if (!activeProjectId)
       return onError("Select a Project before suggesting a Pipeline.");
+    if (advisorKind === "llm" && !selectedAgentModelId)
+      return onError(
+        "Provider setup required: choose an Available Pipeline Builder Model Profile.",
+      );
     setBusy(true);
     setAdvisorRunning(true);
+    advisorRequestActive.current = true;
     setActiveAgentSession(undefined);
     setProposalDiff(undefined);
     setSelectedProposalChanges([]);
@@ -2254,6 +2643,7 @@ function WorkflowsPage({
             max_latency_ms: builderConstraints.max_expected_latency_ms,
           },
           builderConstraints,
+          advisorKind === "llm" ? selectedAgentModelId : undefined,
         );
         setAdvisorProposal(proposal);
         setActiveAgentSession(proposal.agent_session);
@@ -2267,6 +2657,7 @@ function WorkflowsPage({
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => {
+        advisorRequestActive.current = false;
         setAdvisorRunning(false);
         setBusy(false);
       });
@@ -2321,6 +2712,62 @@ function WorkflowsPage({
   const targetTask = activeProject?.annotation_schema.find(
     (task) => task.id === targetTaskId,
   );
+  const selectedAgentModel = (compatibleModels.pipeline_builder ?? []).find(
+    (model) => model.id === selectedAgentModelId,
+  );
+  const selectedAgentProvider = registryProviders.find(
+    (provider) => provider.id === selectedAgentModel?.provider_id,
+  );
+  const agentProjectBinding = projectModelBindings.find(
+    (binding) =>
+      binding.match_kind === "role" && binding.role === "pipeline_builder",
+  );
+  const liveAgentModels = (compatibleModels.pipeline_builder ?? []).filter(
+    (model) =>
+      registryProviders.find((provider) => provider.id === model.provider_id)
+        ?.adapter === "open_ai_compatible",
+  );
+  const saveProjectModelChoice = (
+    role: ModelBindingRole,
+    capability: ModelCapability,
+    modelProfileId: string,
+    locked = true,
+  ) => {
+    if (!activeProjectId || modelBindingBusy) return;
+    const inputs = projectModelBindings
+      .filter(
+        (binding) =>
+          !(binding.match_kind === "role" && binding.role === role),
+      )
+      .map((binding) => ({
+        capability: binding.capability,
+        role: binding.role,
+        match_kind: binding.match_kind,
+        model_profile_id: binding.model_profile_id,
+        locked: binding.locked,
+      }));
+    if (modelProfileId) {
+      inputs.push({
+        capability,
+        role,
+        match_kind: "role",
+        model_profile_id: modelProfileId,
+        locked,
+      });
+    }
+    setModelBindingBusy(true);
+    void api
+      .saveProjectModelBindings(activeProjectId, inputs)
+      .then(({ bindings }) => {
+        setProjectModelBindings(bindings);
+        if (role === "pipeline_builder") {
+          setSelectedAgentModelId(modelProfileId);
+          setAdvisorKind(modelProfileId ? "llm" : "mock");
+        }
+      })
+      .catch((error: Error) => onError(`Model choice: ${error.message}`))
+      .finally(() => setModelBindingBusy(false));
+  };
   const discardChanges = () => {
     if (!draft) return;
     const persisted = persistedDrafts.current.get(draft.id);
@@ -2489,6 +2936,88 @@ function WorkflowsPage({
           <span className="eyebrow">Pipeline Builder Agent</span>
           <h3>Build a recommended automation</h3>
           <p>{targetLabel ? `Set the boundaries for ${targetLabel}. The Agent may inspect, draft, validate, and Dry Run, but it cannot activate the result.` : "Choose a Label and bounded objective before starting the Agent."}</p>
+          {registryLoading ? (
+            <div className="loading-banner compact" role="status">
+              Finding compatible Agent models…
+            </div>
+          ) : liveAgentModels.length ? (
+            <fieldset className="agent-model-choice">
+              <legend>Agent model</legend>
+              <label>
+                Model Profile
+                <select
+                  value={selectedAgentModelId}
+                  disabled={modelBindingBusy || advisorRunning}
+                  onChange={(event) =>
+                    saveProjectModelChoice(
+                      "pipeline_builder",
+                      "text_generation",
+                      event.target.value,
+                      true,
+                    )
+                  }
+                >
+                  {liveAgentModels.map((model) => {
+                    const provider = registryProviders.find(
+                      (candidate) => candidate.id === model.provider_id,
+                    );
+                    return (
+                      <option key={model.id} value={model.id}>
+                        {model.display_name} via {provider?.display_name ?? "Provider"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              {selectedAgentModel && selectedAgentProvider && (
+                <div className="agent-model-summary" aria-live="polite">
+                  <span>
+                    <strong>{selectedAgentModel.display_name}</strong>
+                    <small>via {selectedAgentProvider.display_name}</small>
+                  </span>
+                  <Status status={selectedAgentModel.status} />
+                  <div className="tag-group">
+                    <span>Text generation</span>
+                    <span>Structured output</span>
+                    <span>Tool calls</span>
+                    <span>
+                      {agentProjectBinding
+                        ? "Project choice"
+                        : globalModelDefaults.pipeline_builder ===
+                            selectedAgentModel.id
+                          ? "Global default"
+                          : "Compatible fallback"}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={agentProjectBinding?.locked ?? true}
+                  disabled={
+                    modelBindingBusy || !selectedAgentModelId || advisorRunning
+                  }
+                  onChange={(event) =>
+                    saveProjectModelChoice(
+                      "pipeline_builder",
+                      "text_generation",
+                      selectedAgentModelId,
+                      event.target.checked,
+                    )
+                  }
+                />
+                Lock this Project choice so the Agent cannot replace it
+              </label>
+            </fieldset>
+          ) : (
+            <InlineProviderSetup
+              onOpenProviders={onOpenProviders}
+              onOpenModels={onOpenModels}
+              onReady={refreshModelChoices}
+              onError={onError}
+            />
+          )}
           <fieldset className="agent-objective" aria-label="Pipeline Builder objective">
             <legend>Objective</legend>
             <select aria-label="Target task" value={targetTaskId} onChange={(event) => {
@@ -2514,11 +3043,70 @@ function WorkflowsPage({
             <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
             <div className="agent-worker-summary"><span>Available local workers</span><strong>{activeProject?.model_bindings.filter((model) => model.scope === "workspace_worker" && model.availability_group === "ready").map((model) => model.id).join(", ") || "None ready"}</strong></div>
           </fieldset>
+          <details className="project-model-choices">
+            <summary>Project model choices</summary>
+            <p>
+              Reuse Available Model Profiles for each capability. Node overrides
+              remain part of the Draft and are frozen when published.
+            </p>
+            <div>
+              {PROJECT_MODEL_CHOICES.filter(
+                (choice) => choice.role !== "pipeline_builder",
+              ).map((choice) => {
+                const binding = projectModelBindings.find(
+                  (candidate) =>
+                    candidate.match_kind === "role" &&
+                    candidate.role === choice.role,
+                );
+                const models = compatibleModels[choice.role] ?? [];
+                return (
+                  <label key={choice.role}>
+                    {choice.label}
+                    <select
+                      aria-label={choice.label}
+                      value={binding?.model_profile_id ?? ""}
+                      disabled={modelBindingBusy}
+                      onChange={(event) =>
+                        saveProjectModelChoice(
+                          choice.role,
+                          choice.capability,
+                          event.target.value,
+                          true,
+                        )
+                      }
+                    >
+                      <option value="">Use a node-specific choice</option>
+                      {models.map((model) => {
+                        const provider = registryProviders.find(
+                          (candidate) => candidate.id === model.provider_id,
+                        );
+                        return (
+                          <option key={model.id} value={model.id}>
+                            {model.display_name} via {provider?.display_name ?? "Provider"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <small>
+                      {models.length
+                        ? `${models.length} compatible and Available`
+                        : "No compatible Profile is Available"}
+                    </small>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="button-row">
+              <button onClick={onOpenModels}>Manage Model Profiles</button>
+              <button onClick={onOpenProviders}>Manage Providers</button>
+            </div>
+          </details>
           <details className="advanced-settings"><summary>Agent limits and provider</summary><div className="workflow-advisor-fields">
-            <select aria-label="Workflow Advisor" value={advisorKind} onChange={(event) => setAdvisorKind(event.target.value as "mock" | "llm")}>
-              <option value="mock">ScriptedMock · offline evidence</option>
-              <option value="llm">Workspace LLM · configured provider</option>
-            </select>
+            <fieldset className="agent-execution-mode">
+              <legend>Execution mode</legend>
+              <label><input type="radio" name="advisor-mode" value="llm" checked={advisorKind === "llm"} disabled={!selectedAgentModelId} onChange={() => setAdvisorKind("llm")} />Use the selected Agent model</label>
+              <label><input type="radio" name="advisor-mode" value="mock" checked={advisorKind === "mock"} onChange={() => setAdvisorKind("mock")} />Scripted Mock · offline demonstration</label>
+            </fieldset>
             <label>Maximum model calls / image<input type="number" min="1" max="16" value={builderConstraints.max_model_calls_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_model_calls_per_image: event.target.value ? Number(event.target.value) : undefined }))} /></label>
             <label>Maximum Agent turns<input type="number" min="1" max="64" value={builderConstraints.maximum_agent_turns} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_turns: Number(event.target.value) }))} /></label>
             <label>Maximum Tool Calls<input type="number" min="1" max="128" value={builderConstraints.maximum_tool_calls} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_tool_calls: Number(event.target.value) }))} /></label>
@@ -2526,7 +3114,7 @@ function WorkflowsPage({
             <label>Maximum Agent cost<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
             <button onClick={suggest} disabled={busy || !activeProjectId}>Build complete Project automation</button>
           </div></details>
-          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || !activeProjectId || !targetTaskId || !targetLabel}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
+          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || (advisorKind === "llm" && !selectedAgentModelId)}>{advisorRunning ? "Agent is working…" : advisorKind === "mock" ? "Ask AnnotAgent · offline" : "Ask AnnotAgent"}</button>
         </section>
         <section className="workflow-command-card workflow-version-actions">
           <span className="eyebrow">Current Automation</span>
@@ -2541,8 +3129,8 @@ function WorkflowsPage({
           </div>
         </section>
       </div>
-      {advisorRunning && (
-        <Panel title="Agent progress" eyebrow="Live persisted Pipeline Builder session">
+      {(advisorRunning || (activeAgentSession && !advisorProposal)) && (
+        <Panel title="Agent progress" eyebrow={advisorRunning ? "Live persisted Pipeline Builder session" : "Recovered persisted Pipeline Builder session"}>
           {activeAgentSession ? (
             <AgentSessionTrace
               session={activeAgentSession}
@@ -4370,6 +4958,12 @@ function ModelRegistryPage({
 }) {
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
+  const [globalDefaults, setGlobalDefaults] = useState<GlobalModelDefaults>({});
+  const [defaultChoices, setDefaultChoices] = useState<{
+    pipeline_builder: RegistryModelProfile[];
+    vision_language: RegistryModelProfile[];
+    text_generation: RegistryModelProfile[];
+  }>({ pipeline_builder: [], vision_language: [], text_generation: [] });
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState("");
   const [busy, setBusy] = useState("");
@@ -4391,10 +4985,41 @@ function ModelRegistryPage({
   const [enabledFilter, setEnabledFilter] = useState("all");
   const [costFilter, setCostFilter] = useState("all");
   const refresh = () =>
-    Promise.all([api.providers(), api.modelProfiles()])
-      .then(([providerResult, modelResult]) => {
+    Promise.all([
+      api.providers(),
+      api.modelProfiles(),
+      api.agentModelBindings(),
+      api.compatibleModelProfiles({
+        input_modalities: ["text"],
+        capabilities: ["text_generation"],
+        tool_calls: true,
+        structured_output: true,
+      }),
+      api.compatibleModelProfiles({
+        input_modalities: ["image"],
+        capabilities: ["vision_language"],
+      }),
+      api.compatibleModelProfiles({
+        input_modalities: ["text"],
+        capabilities: ["text_generation"],
+      }),
+    ])
+      .then(([
+        providerResult,
+        modelResult,
+        defaults,
+        pipelineBuilder,
+        visionLanguage,
+        textGeneration,
+      ]) => {
         setProviders(providerResult.providers);
         setModels(modelResult.models);
+        setGlobalDefaults(defaults);
+        setDefaultChoices({
+          pipeline_builder: pipelineBuilder.models,
+          vision_language: visionLanguage.models,
+          text_generation: textGeneration.models,
+        });
         setProviderId((current) => current || providerResult.providers[0]?.id || "");
       })
       .catch((error: Error) => onError(error.message));
@@ -4483,10 +5108,96 @@ function ModelRegistryPage({
     setBusy(model.id);
     void api.activeProbe(model.provider_id, model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy(""));
   };
+  const saveGlobalDefault = (
+    key: keyof GlobalModelDefaults,
+    modelProfileId: string,
+  ) => {
+    const next = {
+      ...globalDefaults,
+      [key]: modelProfileId || undefined,
+    };
+    setBusy("defaults");
+    void api
+      .saveAgentModelBindings(next)
+      .then((saved) => setGlobalDefaults(saved))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(""));
+  };
+  const defaultOption = (model: RegistryModelProfile) => {
+    const provider = providers.find(
+      (candidate) => candidate.id === model.provider_id,
+    );
+    return `${model.display_name} via ${provider?.display_name ?? "Provider"}`;
+  };
   return (
     <section className="registry-page">
       <div className="toolbar-panel"><div><span className="eyebrow">Reusable capability contracts</span><h2>Models</h2><p>Model Profiles bind a Provider model ID to explicit modalities, protocol features, capabilities, pricing, and an immutable revision.</p></div><button className="primary" disabled={!providers.length} onClick={() => adding ? resetEditor() : setAdding(true)}>{adding ? "Cancel" : "Add model"}</button></div>
       {!providers.length && <div className="guided-callout"><strong>Provider setup required</strong><p>Add a Provider before creating a Model Profile.</p><button onClick={onOpenProviders}>Connect a Provider</button></div>}
+      <Panel title="Default model choices" eyebrow="Reusable workspace defaults">
+        <p>
+          Projects may override these choices. Published Workflows still freeze
+          the final Model Profile revision.
+        </p>
+        <div className="registry-default-models">
+          <label>
+            Default Pipeline Builder model
+            <select
+              aria-label="Default Pipeline Builder model"
+              value={globalDefaults.pipeline_builder ?? ""}
+              disabled={busy === "defaults"}
+              onChange={(event) =>
+                saveGlobalDefault("pipeline_builder", event.target.value)
+              }
+            >
+              <option value="">No global default</option>
+              {defaultChoices.pipeline_builder.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {defaultOption(model)}
+                </option>
+              ))}
+            </select>
+            <small>Text · Structured Output · Tool Calls · Available</small>
+          </label>
+          <label>
+            Default Vision Language model
+            <select
+              aria-label="Default Vision Language model"
+              value={globalDefaults.vision_language ?? ""}
+              disabled={busy === "defaults"}
+              onChange={(event) =>
+                saveGlobalDefault("vision_language", event.target.value)
+              }
+            >
+              <option value="">No global default</option>
+              {defaultChoices.vision_language.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {defaultOption(model)}
+                </option>
+              ))}
+            </select>
+            <small>Image · Vision Language · Available</small>
+          </label>
+          <label>
+            Default Text model
+            <select
+              aria-label="Default Text model"
+              value={globalDefaults.text_generation ?? ""}
+              disabled={busy === "defaults"}
+              onChange={(event) =>
+                saveGlobalDefault("text_generation", event.target.value)
+              }
+            >
+              <option value="">No global default</option>
+              {defaultChoices.text_generation.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {defaultOption(model)}
+                </option>
+              ))}
+            </select>
+            <small>Text Generation · Available</small>
+          </label>
+        </div>
+      </Panel>
       {adding && <Panel title={editingId ? "Edit Model Profile" : "New Model Profile"} eyebrow="Manual capability declaration">
         <div className="form-grid"><label>Provider<select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Remote model ID<input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder="Exact Provider model ID" /></label></div>
         <fieldset className="registry-check-group"><legend>Input modalities</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
@@ -6221,6 +6932,22 @@ function AgentSessionTrace({
       <div className="fact-grid">
         <Fact label="Current stage" value={stage} />
         <Fact
+          label="Provider"
+          value={session.model_selection?.provider_display_name ?? "Scripted Mock"}
+        />
+        <Fact
+          label="Agent model"
+          value={session.model_selection?.model_display_name ?? "Offline deterministic"}
+        />
+        <Fact
+          label="Model choice"
+          value={
+            session.model_selection
+              ? `${session.model_selection.binding_source.replaceAll("_", " ")}${session.model_selection.locked ? " · locked" : ""}`
+              : "Offline mode"
+          }
+        />
+        <Fact
           label="Validation issues"
           value={validation?.issues.length ?? "Not recorded"}
         />
@@ -6250,6 +6977,26 @@ function AgentSessionTrace({
         ))}
       </ol>
       </details>
+      {session.model_calls.length > 0 && (
+        <details className="agent-model-call-trace">
+          <summary>Model requests ({session.model_calls.length})</summary>
+          <ol className="agent-action-list">
+            {session.model_calls.map((call) => (
+              <li key={`${call.sequence}-${call.request_id ?? call.created_at}`}>
+                <strong>
+                  {call.sequence}. {call.provider_name} · {call.remote_model_id}
+                </strong>
+                <small>
+                  {call.succeeded ? "Succeeded" : "Failed"} · {call.duration_ms} ms
+                  · {call.input_tokens + call.output_tokens} tokens · {call.currency}{" "}
+                  {call.cost} · {call.retry_count} retries
+                </small>
+                {call.safe_error && <p role="alert">{call.safe_error}</p>}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
     </div>
   );
 }

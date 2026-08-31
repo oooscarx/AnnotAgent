@@ -21,7 +21,9 @@ This file records observed baseline limitations and will be narrowed as mileston
 - New Builder mutations can bind a typed, lock-aware `ModelProfileId`; the legacy runtime string is
   retained only when the Profile remote ID resolves to an existing runtime descriptor. Complete
   Profile-to-runtime resolution for every Provider is M6–M8 work.
-- TUI lacks Provider and Binding inspection/mutation commands.
+- TUI supports Provider/Profile inspection, passive configuration checks, compatibility queries and
+  locked Project role bindings. It intentionally does not accept credentials or perform a
+  credential-aware Provider network request; use GUI Settings or an environment-variable reference.
 - Active Probe and Pipeline Builder Agent usage persist Provider/Profile revision, tokens, latency
   and configured pricing. Normal annotation Run usage still needs the same Profile/revision and
   pricing-snapshot integration in M7–M8.
@@ -44,6 +46,12 @@ This file records observed baseline limitations and will be narrowed as mileston
 - The real OpenAI-compatible Builder smoke is ignored by default because it is billable and depends
   on external network/provider behavior. It runs only with an explicit billable opt-in and dedicated
   environment variables; offline release evidence uses Scripted Mock.
+- Inline first-use setup spans Provider, credential reference, Model Profile and connection check as
+  separate durable operations. If a later operation fails, the already-created safe Registry
+  records remain visible for repair or deletion in Settings rather than being silently rolled back.
+- Session-only credentials intentionally disappear when the server process stops. Environment
+  references are the non-Keychain persistent choice and require that variable to exist in the
+  server process environment.
 
 ## Explicitly outside this Alpha
 

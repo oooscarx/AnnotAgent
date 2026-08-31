@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 7 — Project Guided UX and TUI.
+Milestone 8 — Migration, regression and release evidence.
 
 ## 已完成内容
 
@@ -118,16 +118,41 @@ Milestone 7 — Project Guided UX and TUI.
   and human approval without publication or a formal Run.
 - Added an ignored, explicitly billable opt-in real OpenAI-compatible end-to-end smoke test. Normal
   CI never reads a real key or sends its requests.
+- Connected Guided Build to the real compatibility, Project-binding and global-default APIs.
+  Pipeline Builder, Detection, Classification and Verification choices show reusable Model Profile
+  and Provider names; user changes persist as locked Project role bindings.
+- Replaced the ambiguous Workspace LLM switch with an Available Agent Model Profile selector that
+  shows Provider, health, capability and binding provenance and sends the selected immutable ID to
+  the real LLM Tool Loop. Scripted Mock remains an explicitly labeled offline mode.
+- Added an inline first-use Provider flow that preserves the Draft, supports environment-variable
+  and process-session credentials without workspace/browser/Keychain storage, performs a passive
+  Provider check, and requires a separate explicit billable confirmation before a Model becomes
+  Available.
+- Added workspace-wide Pipeline Builder, Vision Language and Text default selectors in Settings;
+  every selector uses the same fail-closed compatibility endpoint rather than presenting all
+  configured names as runnable.
+- Agent progress now restores a persisted Running/Waiting-for-Human session after refresh and shows
+  the selected Provider/Profile, revision, binding source, lock, tool actions and safe per-request
+  usage audit. Existing structured Draft Diff, selective apply, reject and exact undo remain the
+  human approval surface.
+- Added TUI Registry commands for Provider list/show/passive check, Model list/show/compatible,
+  Project/global bindings and locked keyboard model selection. Agent history/status names the safe
+  Provider/Profile identity; the TUI never accepts a secret and redirects credential work to GUI or
+  environment configuration.
+- Browser inspection on the real local server verified the Guided Build at 1280, 1024 and 390 px
+  with no horizontal overflow or console errors. It also identified and resolved the stale-server
+  `index.html` API fallback during local validation; an ignored local Project schema was updated to
+  its currently registered foreground refiner without entering Git.
 
 ## 正在进行内容
 
-- Adding the selected Agent model and compatible Project bindings to Guided Project UX, then
-  exposing the same safe identity, progress and trace in TUI.
+- Auditing legacy Provider/Model/Secret migration and annotation Run publication/runtime binding
+  before the final release matrix.
 
 ## 下一步
 
-- Milestone 7: Project model selection, inline Provider setup, Agent model selector, progress,
-  proposal comparison, human approval and TUI inspection without exposing credentials.
+- Milestone 8: explicit legacy migrations, Run/Review/Replay/Batch/Export regression, release
+  documentation, demo script and final security/source scan.
 
 ## 最近 Rust 测试
 
@@ -167,6 +192,11 @@ Milestone 7 — Project Guided UX and TUI.
 - M6 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
   passed; full Rust suite 267/267 passed, one explicitly billable smoke ignored, and every doc-test
   group passed.
+- M7 TUI focused validation: strict Clippy passed; 7/7 CLI/TUI tests passed, including secret-safe
+  empty Registry guidance and normal/small layout rendering.
+- M7 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
+  passed; full Rust suite 269/269 passed, one explicitly billable smoke ignored, and every doc-test
+  group passed.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -179,12 +209,17 @@ Milestone 7 — Project Guided UX and TUI.
 - M4 final Web validation: TypeScript, 36/36 Vitest tests and production build passed.
 - M5 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
 - M6 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
+- M7 Web validation: TypeScript and production build passed; 38/38 Vitest tests passed. New API
+  tests cover compatible queries, locked Project bindings and explicit Agent Profile selection.
 
 ## 最近 E2E 测试
 
 - `npm --prefix web run test:e2e`: 28 passed, 0 failed after M3 in an isolated workspace.
 - M4 isolated Chromium E2E: 28 passed, including Crop Artifact lineage with Cache absent from the
   graph and Registry compact-layout coverage.
+- M7 isolated Chromium E2E: 29 passed after adding global-default persistence and Project
+  Classification binding/refresh recovery. Existing compact, keyboard, reduced-motion, Draft Diff,
+  Run, Review, Replay and Export coverage remained green.
 
 ## 最近本地提交
 
@@ -195,7 +230,8 @@ Milestone 7 — Project Guided UX and TUI.
 - M3: `5a750ef feat(settings): manage llm and vlm providers from one registry`.
 - M4: `f3cb72b refactor(workflow): expose a constrained annotation node catalog`.
 - M5: `6a2a389 feat(agent): let the builder inspect providers and edit real drafts`.
-- M6 commit pending at this status write; its hash is filled by the next milestone.
+- M6: `0db0f8e feat(agent): build and revise pipelines through constrained llm tools`.
+- M7 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
@@ -204,8 +240,8 @@ Milestone 7 — Project Guided UX and TUI.
   revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
   integration and migration are proven. M4 closes the public Node Catalog contract, but E remains
   open until later runtime/template milestones prove every public node end to end. M6 closes the
-  real constrained Agent Tool Loop and Profile-based accounting; Project/TUI product integration
-  and G–I remain open for M7–M8.
+  real constrained Agent Tool Loop and Profile-based accounting. M7 closes the Guided Project/TUI
+  product path and H; annotation Run cutover, migration and final G/I evidence remain for M8.
 
 ## Live-conditional 项
 
