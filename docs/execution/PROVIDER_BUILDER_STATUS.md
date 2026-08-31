@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 5 — Pipeline Builder Agent tools.
+Milestone 6 — real LLM Tool Loop.
 
 ## 已完成内容
 
@@ -75,15 +75,40 @@ Milestone 5 — Pipeline Builder Agent tools.
   identities while retaining Skill/runtime operation adapters behind the execution boundary.
 - Updated Guided UI vocabulary and the Label Pipeline node chooser to use Select & Map, Decision
   and Combine Evidence as one product concept each; hidden technical nodes are not addable.
+- Replaced the legacy 31-item Builder catalog with the exact 39-tool Alpha contract across Project,
+  Skill/Node/Provider/Model discovery, persistent Draft mutation, validation, cost estimation,
+  sandbox Dry Run inspection and human-approval/session completion groups.
+- Added an explicit permission to every Builder tool. The catalog contains no publish, full-dataset
+  Run, Provider/credential mutation, Shell, Python, model-download, arbitrary-URL or whole-JSON
+  replacement capability.
+- Added credential-safe `PipelineBuilderProviderProfile` summaries and revisioned Model Profiles to
+  `WorkflowAdvisorInput`; Provider credential references, locators, safe headers and secret values
+  never enter the Builder model context.
+- Added passive-only Provider assessment, compatible Model Profile filtering, profile inspection and
+  declared-pricing estimation. None of these tools sends a generation request.
+- Added real public Node Definition inspection and generic node instantiation with typed ports. New
+  nodes can be configured and connected after creation because Rust validates dynamic IDs rather
+  than freezing the initial graph into the model schema.
+- Added durable explicit `WorkflowModelBinding`, capability validation, Runtime Policy storage
+  outside the graph, Workflow-level policy Diff support and a bounded 32-entry session undo journal.
+- Added real persisted create/add/remove/connect/disconnect/configure/bind/policy/undo operations;
+  every successful live-loop mutation is saved through the normal Draft store boundary.
+- Added aggregate Dry Run node statistics alongside bounded sample/artifact inspection. Approval
+  still requires a valid static report and a non-committing Dry Run and never publishes or starts a
+  formal Run.
+- Added security and integration tests proving the exact catalog, forbidden-tool absence, credential
+  locator redaction, compatible Profile binding, Runtime Policy undo, persistent Draft mutation and
+  no Published Version/formal Run side effects.
 
 ## 正在进行内容
 
-- Closing the M4 validation and local commit, then extending the bounded Agent tool catalog in M5.
+- Closing M5 validation and its independent local commit, then resolving the Builder Agent's own
+  Provider/Model Profile and hardening multi-turn context/stop behavior in M6.
 
 ## 下一步
 
-- Milestone 5: add Provider/Model and Node inspection, revision-aware compatible binding, real Draft
-  mutation/undo/comparison, validation, Dry Run, human approval, permissions and audit tools.
+- Milestone 6: resolve the Agent model through the Registry, use Profile pricing in usage accounting,
+  tighten Tool Call history/context and prove validation/Dry Run revision paths through Scripted Mock.
 
 ## 最近 Rust 测试
 
@@ -109,6 +134,15 @@ Milestone 5 — Pipeline Builder Agent tools.
 - M4 constrained catalog and Runtime Policy Registry test: PASS.
 - M4 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
   passed; full Rust suite 262/262 passed and doc-test groups passed.
+- M5 focused Core Builder tests: 8 passed, covering exact permissions/forbidden tools, typed Model
+  Profile binding, Draft Diff, Runtime Policy, undo, grammar, budgets and human stop.
+- M5 complete Application library suite: 38/38 passed, including a real scripted Tool Loop that
+  persists node creation, revision-aware binding, Runtime Policy mutation and undo without publish
+  or formal Run side effects.
+- M5 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
+  passed; full Rust suite 265/265 passed and every doc-test group passed.
+- M5 secret-pattern scan across application/source/Web/docs (excluding preserved master prompts):
+  no API-key-shaped value found.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -119,6 +153,7 @@ Milestone 5 — Pipeline Builder Agent tools.
 - M3 TypeScript check, 36 Vitest tests and production build: PASS.
 - M4 TypeScript check and affected Label Pipeline UI tests: 8 passed.
 - M4 final Web validation: TypeScript, 36/36 Vitest tests and production build passed.
+- M5 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
 
 ## 最近 E2E 测试
 
@@ -133,7 +168,8 @@ Milestone 5 — Pipeline Builder Agent tools.
 - M1: `5be1bf3 feat(provider): add reusable provider profiles and secure credentials`.
 - M2: `f8b4437 feat(models): add reusable model profiles and capability bindings`.
 - M3: `5a750ef feat(settings): manage llm and vlm providers from one registry`.
-- M4 commit pending at this status write; its hash is filled by the next milestone.
+- M4: `f3cb72b refactor(workflow): expose a constrained annotation node catalog`.
+- M5 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
@@ -141,7 +177,9 @@ Milestone 5 — Pipeline Builder Agent tools.
   final M8 security/source-scan/native evidence. C and D now have lifecycle API/UI, persistence,
   revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
   integration and migration are proven. M4 closes the public Node Catalog contract, but E remains
-  open until later runtime/template milestones prove every public node end to end. F–I remain open.
+  open until later runtime/template milestones prove every public node end to end. M5 closes the
+  bounded Agent Tool contract; F remains open for M6 Agent-profile resolution and real Provider
+  accounting. G–I remain open.
 
 ## Live-conditional 项
 

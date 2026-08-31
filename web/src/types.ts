@@ -514,6 +514,7 @@ export interface WorkflowDraft {
   edges?: WorkflowEdge[];
   enabled_skills?: Record<string, string>;
   resource_versions?: Record<string, string>;
+  runtime_policies?: Record<string, unknown>;
   allow_unvalidated_commit?: boolean;
   label_pipeline?: LabelWorkflowComposition;
   created_at: string;

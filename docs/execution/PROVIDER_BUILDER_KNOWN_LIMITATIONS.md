@@ -17,7 +17,9 @@ This file records observed baseline limitations and will be narrowed as mileston
   active model-specific verification.
 - `/api/models` remains the legacy Vision Worker/runtime-binding list; revisioned API/VLM profiles
   use `/api/model-profiles` and the separate Models tab.
-- Project and Workflow nodes bind string IDs; lock and compatibility hierarchy are absent.
+- New Builder mutations can bind a typed, lock-aware `ModelProfileId`; the legacy runtime string is
+  retained only when the Profile remote ID resolves to an existing runtime descriptor. Complete
+  Profile-to-runtime resolution for every Provider is M6–M8 work.
 - TUI lacks Provider and Binding inspection/mutation commands.
 - Active Probe usage persists Provider/Profile revision, tokens, latency and configured pricing.
   Normal Run usage still needs the same Profile/revision and pricing-snapshot integration in M6–M8.
@@ -28,6 +30,15 @@ This file records observed baseline limitations and will be narrowed as mileston
   remote inference is considered end-to-end release evidence in M6–M8.
 - Existing Annotations and generic Segment are registered public contracts, but their complete
   Project-store/template execution paths remain release-open until M6.
+- The Builder's passive Provider availability tool reads the persisted sanitized health snapshot;
+  it does not perform DNS or HTTP itself because the Application Tool Loop does not own the Server
+  Secret Store. The explicit Provider Settings passive-check endpoint remains the network check.
+- Builder undo is intentionally scoped to the current Agent session and retains at most 32 prior
+  successful mutation snapshots. Durable cross-session recovery remains available through saved
+  Draft comparison/clone operations rather than an unbounded hidden undo log.
+- `finish_agent_session` is registered and permissioned, while the current compatibility Tool Loop
+  stops immediately when `submit_draft_for_human_approval` enters `WaitingForHuman`. M6 will
+  normalize explicit finish/stop behavior across real Provider implementations.
 
 ## Explicitly outside this Alpha
 

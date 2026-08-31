@@ -9,12 +9,27 @@ use uuid::Uuid;
 
 use crate::{
     AgentBudget, AgentKind, AgentSession, AgentSessionStatus, AgentUsage, CoreError, CoreResult,
-    ModelRegistry, NodeRegistry, StoredPayloadRef, ValidationCatalog, VisionBackendKind,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
-    WorkflowStaticValidator, WorkflowValidationIssue, WorkflowValidationReport,
+    ModelProfile, ModelProfileStatus, ModelRegistry, NodeRegistry, ProviderAdapterKind,
+    ProviderHealthStatus, ProviderId, StoredPayloadRef, ValidationCatalog, VisionBackendKind,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowModelBinding,
+    WorkflowNodeKind, WorkflowStaticValidator, WorkflowValidationIssue, WorkflowValidationReport,
 };
 
 pub const PIPELINE_BUILDER_PROTOCOL_VERSION: u32 = 1;
+
+/// Credential-safe Provider information allowed into the Builder model context. In particular,
+/// this deliberately has no credential reference, locator, headers, or secret-bearing URL path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineBuilderProviderProfile {
+    pub id: ProviderId,
+    pub display_name: String,
+    pub adapter: ProviderAdapterKind,
+    pub endpoint_summary: String,
+    pub enabled: bool,
+    pub health_status: ProviderHealthStatus,
+    pub credential_configured: bool,
+    pub model_count: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +76,8 @@ pub struct ModelBindingDiff {
     pub node_id: String,
     pub before: Option<String>,
     pub after: Option<String>,
+    pub before_profile: Option<WorkflowModelBinding>,
+    pub after_profile: Option<WorkflowModelBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,12 +142,16 @@ impl PipelineDraftDiff {
                     after: node.parameters.clone(),
                 });
             }
-            if previous.model_binding != node.model_binding {
+            if previous.model_binding != node.model_binding
+                || previous.model_profile_binding != node.model_profile_binding
+            {
                 diff.model_binding_changes.push(ModelBindingDiff {
                     change_id: format!("node:model:{}", node.id),
                     node_id: node.id.clone(),
                     before: previous.model_binding.clone(),
                     after: node.model_binding.clone(),
+                    before_profile: previous.model_profile_binding,
+                    after_profile: node.model_profile_binding,
                 });
             }
             let previous_policy = node_policy(previous);
@@ -168,6 +189,14 @@ impl PipelineDraftDiff {
                     edge: edge.clone(),
                 });
             }
+        }
+        if base.runtime_policies != proposed.runtime_policies {
+            diff.policy_changes.push(PolicyDiff {
+                change_id: "workflow:runtime_policies".to_owned(),
+                node_id: "$workflow".to_owned(),
+                before: serde_json::json!(base.runtime_policies),
+                after: serde_json::json!(proposed.runtime_policies),
+            });
         }
         Ok(diff)
     }
@@ -278,10 +307,17 @@ impl PipelineDraftDiff {
                     .find(|node| node.id == change.node_id)
             {
                 node.model_binding.clone_from(&change.after);
+                node.model_profile_binding = change.after_profile;
             }
         }
         for change in &self.policy_changes {
             if selected_change_ids.contains(&change.change_id)
+                && change.change_id == "workflow:runtime_policies"
+            {
+                applied
+                    .runtime_policies
+                    .clone_from(&proposed.runtime_policies);
+            } else if selected_change_ids.contains(&change.change_id)
                 && let (Some(target), Some(source)) = (
                     applied
                         .nodes
@@ -542,69 +578,85 @@ pub enum PipelineBuilderTool {
     InspectProject,
     InspectLabelSchema,
     InspectLabel,
-    SampleImages,
+    SampleDataset,
     InspectSampleImage,
+    InspectExistingAutomations,
     ListEnabledSkills,
     LoadSkillResource,
-    ListAvailableCapabilities,
-    ListAvailableNodes,
-    ListAvailableModels,
-    InspectModel,
+    ListNodeDefinitions,
+    InspectNodeDefinition,
     ListPipelineTemplates,
+    ListProviderProfiles,
+    ListCompatibleModels,
+    InspectModelProfile,
+    CheckProviderAvailability,
+    EstimateModelCost,
+    CreatePipelineDraft,
     CreateDraftFromTemplate,
-    CreateEmptyDraft,
     AddPipelineNode,
     RemovePipelineNode,
     ConnectPipelineNodes,
     DisconnectPipelineNodes,
-    SetNodeParameter,
-    BindModel,
+    SetNodeConfiguration,
+    BindModelProfile,
     SetLabelMapping,
     SetDecisionPolicy,
+    SetRuntimePolicy,
+    ComparePipelineDrafts,
+    UndoLastDraftChange,
     ValidatePipeline,
     EstimatePipelineCost,
     DryRunPipeline,
     InspectDryRunSummary,
     InspectFailedSamples,
     InspectReviewSamples,
+    InspectNodeStatistics,
     InspectNodeArtifacts,
     SubmitDraftForHumanApproval,
-    FinishAdvisorSession,
+    FinishAgentSession,
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 39] = [
         Self::InspectProject,
         Self::InspectLabelSchema,
         Self::InspectLabel,
-        Self::SampleImages,
+        Self::SampleDataset,
         Self::InspectSampleImage,
+        Self::InspectExistingAutomations,
         Self::ListEnabledSkills,
         Self::LoadSkillResource,
-        Self::ListAvailableCapabilities,
-        Self::ListAvailableNodes,
-        Self::ListAvailableModels,
-        Self::InspectModel,
+        Self::ListNodeDefinitions,
+        Self::InspectNodeDefinition,
         Self::ListPipelineTemplates,
+        Self::ListProviderProfiles,
+        Self::ListCompatibleModels,
+        Self::InspectModelProfile,
+        Self::CheckProviderAvailability,
+        Self::EstimateModelCost,
+        Self::CreatePipelineDraft,
         Self::CreateDraftFromTemplate,
-        Self::CreateEmptyDraft,
         Self::AddPipelineNode,
         Self::RemovePipelineNode,
         Self::ConnectPipelineNodes,
         Self::DisconnectPipelineNodes,
-        Self::SetNodeParameter,
-        Self::BindModel,
+        Self::SetNodeConfiguration,
+        Self::BindModelProfile,
         Self::SetLabelMapping,
         Self::SetDecisionPolicy,
+        Self::SetRuntimePolicy,
+        Self::ComparePipelineDrafts,
+        Self::UndoLastDraftChange,
         Self::ValidatePipeline,
         Self::EstimatePipelineCost,
         Self::DryRunPipeline,
         Self::InspectDryRunSummary,
         Self::InspectFailedSamples,
         Self::InspectReviewSamples,
+        Self::InspectNodeStatistics,
         Self::InspectNodeArtifacts,
         Self::SubmitDraftForHumanApproval,
-        Self::FinishAdvisorSession,
+        Self::FinishAgentSession,
     ];
 
     #[must_use]
@@ -613,34 +665,42 @@ impl PipelineBuilderTool {
             Self::InspectProject => "inspect_project",
             Self::InspectLabelSchema => "inspect_label_schema",
             Self::InspectLabel => "inspect_label",
-            Self::SampleImages => "sample_images",
+            Self::SampleDataset => "sample_dataset",
             Self::InspectSampleImage => "inspect_sample_image",
+            Self::InspectExistingAutomations => "inspect_existing_automations",
             Self::ListEnabledSkills => "list_enabled_skills",
             Self::LoadSkillResource => "load_skill_resource",
-            Self::ListAvailableCapabilities => "list_available_capabilities",
-            Self::ListAvailableNodes => "list_available_nodes",
-            Self::ListAvailableModels => "list_available_models",
-            Self::InspectModel => "inspect_model",
+            Self::ListNodeDefinitions => "list_node_definitions",
+            Self::InspectNodeDefinition => "inspect_node_definition",
             Self::ListPipelineTemplates => "list_pipeline_templates",
+            Self::ListProviderProfiles => "list_provider_profiles",
+            Self::ListCompatibleModels => "list_compatible_models",
+            Self::InspectModelProfile => "inspect_model_profile",
+            Self::CheckProviderAvailability => "check_provider_availability",
+            Self::EstimateModelCost => "estimate_model_cost",
+            Self::CreatePipelineDraft => "create_pipeline_draft",
             Self::CreateDraftFromTemplate => "create_draft_from_template",
-            Self::CreateEmptyDraft => "create_empty_draft",
             Self::AddPipelineNode => "add_pipeline_node",
             Self::RemovePipelineNode => "remove_pipeline_node",
             Self::ConnectPipelineNodes => "connect_pipeline_nodes",
             Self::DisconnectPipelineNodes => "disconnect_pipeline_nodes",
-            Self::SetNodeParameter => "set_node_parameter",
-            Self::BindModel => "bind_model",
+            Self::SetNodeConfiguration => "set_node_configuration",
+            Self::BindModelProfile => "bind_model_profile",
             Self::SetLabelMapping => "set_label_mapping",
             Self::SetDecisionPolicy => "set_decision_policy",
+            Self::SetRuntimePolicy => "set_runtime_policy",
+            Self::ComparePipelineDrafts => "compare_pipeline_drafts",
+            Self::UndoLastDraftChange => "undo_last_draft_change",
             Self::ValidatePipeline => "validate_pipeline",
             Self::EstimatePipelineCost => "estimate_pipeline_cost",
             Self::DryRunPipeline => "dry_run_pipeline",
             Self::InspectDryRunSummary => "inspect_dry_run_summary",
             Self::InspectFailedSamples => "inspect_failed_samples",
             Self::InspectReviewSamples => "inspect_review_samples",
+            Self::InspectNodeStatistics => "inspect_node_statistics",
             Self::InspectNodeArtifacts => "inspect_node_artifacts",
             Self::SubmitDraftForHumanApproval => "submit_draft_for_human_approval",
-            Self::FinishAdvisorSession => "finish_advisor_session",
+            Self::FinishAgentSession => "finish_agent_session",
         }
     }
 
@@ -649,23 +709,87 @@ impl PipelineBuilderTool {
         matches!(
             self,
             Self::CreateDraftFromTemplate
-                | Self::CreateEmptyDraft
+                | Self::CreatePipelineDraft
                 | Self::AddPipelineNode
                 | Self::RemovePipelineNode
                 | Self::ConnectPipelineNodes
                 | Self::DisconnectPipelineNodes
-                | Self::SetNodeParameter
-                | Self::BindModel
+                | Self::SetNodeConfiguration
+                | Self::BindModelProfile
                 | Self::SetLabelMapping
                 | Self::SetDecisionPolicy
+                | Self::SetRuntimePolicy
+                | Self::UndoLastDraftChange
+                | Self::SubmitDraftForHumanApproval
         )
     }
+
+    #[must_use]
+    pub const fn permission(self) -> PipelineBuilderPermission {
+        match self {
+            Self::InspectProject
+            | Self::InspectLabelSchema
+            | Self::InspectLabel
+            | Self::SampleDataset
+            | Self::InspectSampleImage
+            | Self::InspectExistingAutomations => PipelineBuilderPermission::ReadProject,
+            Self::ListEnabledSkills
+            | Self::LoadSkillResource
+            | Self::ListNodeDefinitions
+            | Self::InspectNodeDefinition
+            | Self::ListPipelineTemplates
+            | Self::ListProviderProfiles
+            | Self::ListCompatibleModels
+            | Self::InspectModelProfile
+            | Self::EstimateModelCost => PipelineBuilderPermission::ReadRegistry,
+            Self::CheckProviderAvailability => PipelineBuilderPermission::PassiveProviderCheck,
+            Self::CreatePipelineDraft | Self::CreateDraftFromTemplate => {
+                PipelineBuilderPermission::CreateDraft
+            }
+            Self::AddPipelineNode
+            | Self::RemovePipelineNode
+            | Self::ConnectPipelineNodes
+            | Self::DisconnectPipelineNodes
+            | Self::SetNodeConfiguration
+            | Self::BindModelProfile
+            | Self::SetLabelMapping
+            | Self::SetDecisionPolicy
+            | Self::SetRuntimePolicy
+            | Self::UndoLastDraftChange => PipelineBuilderPermission::MutateDraft,
+            Self::ComparePipelineDrafts | Self::ValidatePipeline | Self::EstimatePipelineCost => {
+                PipelineBuilderPermission::ReadDraft
+            }
+            Self::DryRunPipeline
+            | Self::InspectDryRunSummary
+            | Self::InspectFailedSamples
+            | Self::InspectReviewSamples
+            | Self::InspectNodeStatistics
+            | Self::InspectNodeArtifacts => PipelineBuilderPermission::DryRunSandbox,
+            Self::SubmitDraftForHumanApproval | Self::FinishAgentSession => {
+                PipelineBuilderPermission::RequestHumanApproval
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineBuilderPermission {
+    ReadProject,
+    ReadRegistry,
+    PassiveProviderCheck,
+    CreateDraft,
+    ReadDraft,
+    MutateDraft,
+    DryRunSandbox,
+    RequestHumanApproval,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineBuilderToolDescriptor {
     pub name: String,
     pub mutates_draft: bool,
+    pub permission: PipelineBuilderPermission,
     pub description: String,
 }
 
@@ -680,6 +804,7 @@ impl PipelineBuilderToolRegistry {
             .map(|tool| PipelineBuilderToolDescriptor {
                 name: tool.as_str().to_owned(),
                 mutates_draft: tool.mutates_draft(),
+                permission: tool.permission(),
                 description: tool_description(tool).to_owned(),
             })
             .collect()
@@ -863,6 +988,64 @@ impl PipelineBuilderSession {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PipelineDraftTools;
 
+/// Session-local undo journal. Every entry is a complete, previously persisted Draft snapshot;
+/// the Agent still performs mutations through typed tools and never receives a database handle.
+#[derive(Debug, Clone)]
+pub struct PipelineDraftHistory {
+    entries: Vec<WorkflowDraft>,
+    maximum_entries: usize,
+}
+
+impl Default for PipelineDraftHistory {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            maximum_entries: 32,
+        }
+    }
+}
+
+impl PipelineDraftHistory {
+    pub fn record_before_change(&mut self, draft: &WorkflowDraft) -> CoreResult<()> {
+        ensure_mutable(draft)?;
+        if self.maximum_entries == 0 {
+            return Err(CoreError::Validation(
+                "Pipeline Draft undo history is disabled".to_owned(),
+            ));
+        }
+        if self.entries.len() == self.maximum_entries {
+            self.entries.remove(0);
+        }
+        self.entries.push(draft.clone());
+        Ok(())
+    }
+
+    pub fn undo_last(&mut self, draft: &mut WorkflowDraft) -> CoreResult<()> {
+        ensure_mutable(draft)?;
+        let previous = self.entries.pop().ok_or_else(|| {
+            CoreError::Validation("Pipeline Draft has no Builder change to undo".to_owned())
+        })?;
+        if previous.id != draft.id || previous.project_id != draft.project_id {
+            return Err(CoreError::Validation(
+                "Pipeline Draft undo history belongs to another Draft".to_owned(),
+            ));
+        }
+        *draft = previous;
+        touch(draft);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 impl PipelineDraftTools {
     pub fn add_node(
         self,
@@ -1024,6 +1207,60 @@ impl PipelineDraftTools {
         Ok(())
     }
 
+    pub fn set_configuration(
+        self,
+        draft: &mut WorkflowDraft,
+        node_id: &str,
+        configuration: BTreeMap<String, serde_json::Value>,
+        node_registry: &NodeRegistry,
+    ) -> CoreResult<()> {
+        ensure_mutable(draft)?;
+        let node = draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == node_id)
+            .ok_or_else(|| CoreError::Validation(format!("unknown Draft node {node_id:?}")))?;
+        let definition = node_registry.definition(&node.node_type).ok_or_else(|| {
+            CoreError::Validation(format!(
+                "node type {:?} is not in the public Node Catalog",
+                node.node_type
+            ))
+        })?;
+        if !configuration.is_empty() && !definition.config_schema.is_object() {
+            return Err(CoreError::Validation(
+                "node configuration has no object schema".to_owned(),
+            ));
+        }
+        node.parameters = configuration;
+        touch(draft);
+        Ok(())
+    }
+
+    pub fn set_runtime_policy(
+        self,
+        draft: &mut WorkflowDraft,
+        policy_id: &str,
+        configuration: serde_json::Value,
+        node_registry: &NodeRegistry,
+    ) -> CoreResult<()> {
+        ensure_mutable(draft)?;
+        if node_registry.runtime_policy(policy_id).is_none() {
+            return Err(CoreError::Validation(format!(
+                "runtime policy {policy_id:?} is not registered"
+            )));
+        }
+        if !configuration.is_object() {
+            return Err(CoreError::Validation(
+                "runtime policy configuration must be an object".to_owned(),
+            ));
+        }
+        draft
+            .runtime_policies
+            .insert(policy_id.to_owned(), configuration);
+        touch(draft);
+        Ok(())
+    }
+
     pub fn bind_model(
         self,
         draft: &mut WorkflowDraft,
@@ -1043,6 +1280,48 @@ impl PipelineDraftTools {
         candidate.model_binding = Some(model_id.to_owned());
         validate_node_binding(&candidate, node_registry, model_registry, enabled_skills)?;
         draft.nodes[node_index] = candidate;
+        touch(draft);
+        Ok(())
+    }
+
+    pub fn bind_model_profile(
+        self,
+        draft: &mut WorkflowDraft,
+        node_id: &str,
+        model: &ModelProfile,
+        locked: bool,
+        node_registry: &NodeRegistry,
+    ) -> CoreResult<()> {
+        ensure_mutable(draft)?;
+        let node = draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == node_id)
+            .ok_or_else(|| CoreError::Validation(format!("unknown Draft node {node_id:?}")))?;
+        let definition = node_registry.definition(&node.node_type).ok_or_else(|| {
+            CoreError::Validation(format!(
+                "node type {:?} is not in the public Node Catalog",
+                node.node_type
+            ))
+        })?;
+        if !model.enabled || model.status != ModelProfileStatus::Available {
+            return Err(CoreError::Validation(format!(
+                "Model Profile {:?}@{} is not available",
+                model.id, model.revision
+            )));
+        }
+        if let Some(required) = definition.required_model_capability
+            && !model.task_capabilities.contains(&required)
+        {
+            return Err(CoreError::Validation(format!(
+                "Model Profile {:?}@{} does not provide {required:?}",
+                model.id, model.revision
+            )));
+        }
+        node.model_profile_binding = Some(WorkflowModelBinding {
+            model_profile_id: model.id,
+            locked,
+        });
         touch(draft);
         Ok(())
     }
@@ -1412,7 +1691,7 @@ impl ScriptedMockPipelineBuilder {
         match self.phase {
             Phase::InspectProject => Some(Tool::InspectProject),
             Phase::InspectLabel => Some(Tool::InspectLabel),
-            Phase::InspectRegistry => Some(Tool::ListAvailableModels),
+            Phase::InspectRegistry => Some(Tool::ListCompatibleModels),
             Phase::CreateDraft => Some(Tool::CreateDraftFromTemplate),
             Phase::MakeInvalidDraft => Some(Tool::DisconnectPipelineNodes),
             Phase::ValidateInvalidDraft
@@ -1558,6 +1837,26 @@ mod tests {
                 })
                 .expect("node");
         }
+        nodes
+            .register_definition(crate::NodeDefinition {
+                id: "detect".to_owned(),
+                display_name: "Detect".to_owned(),
+                category: crate::NodeCategory::ModelInference,
+                input_ports: Vec::new(),
+                output_ports: vec![crate::PortDefinition {
+                    name: "output".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    cardinality: crate::PortCardinality::Many,
+                }],
+                config_schema: serde_json::json!({"type": "object"}),
+                required_model_capability: Some(crate::ModelCapability::ObjectDetection),
+                cardinality: crate::NodeCardinality::OneToMany,
+                side_effect: crate::NodeSideEffect::None,
+                dry_run_supported: true,
+                expert_only: false,
+            })
+            .expect("public definition");
         let mut models = ModelRegistry::new();
         models
             .register_backend(Arc::new(MockBackend))
@@ -1663,6 +1962,7 @@ mod tests {
             ],
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             label_pipeline: None,
             created_at: now,
@@ -1673,14 +1973,20 @@ mod tests {
     #[test]
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
-        assert_eq!(registry.tools().len(), PipelineBuilderTool::ALL.len());
+        let tools = registry.tools();
+        assert_eq!(tools.len(), 39);
+        assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
-            "run_shell",
-            "write_python",
-            "install_package",
+            "publish_pipeline",
+            "start_full_dataset_run",
+            "set_api_key",
+            "create_provider",
+            "delete_provider",
+            "execute_shell",
+            "execute_python",
             "download_model",
             "open_arbitrary_url",
-            "execute_code",
+            "replace_entire_workflow_json",
         ] {
             assert!(registry.resolve(forbidden).is_err(), "{forbidden}");
         }
@@ -1689,6 +1995,58 @@ mod tests {
                 .resolve("validate_pipeline")
                 .expect("registered tool"),
             PipelineBuilderTool::ValidatePipeline
+        );
+        assert_eq!(
+            registry
+                .resolve("check_provider_availability")
+                .expect("passive check")
+                .permission(),
+            PipelineBuilderPermission::PassiveProviderCheck
+        );
+        assert!(tools.iter().all(|tool| !tool.name.contains("api_key")));
+    }
+
+    #[test]
+    fn undo_and_runtime_policy_are_bounded_draft_mutations() {
+        let mut draft = draft();
+        let before = draft.clone();
+        let mut history = PipelineDraftHistory::default();
+        history
+            .record_before_change(&draft)
+            .expect("record previous Draft");
+        PipelineDraftTools
+            .set_parameter(&mut draft, "detect", "threshold", serde_json::json!(0.8))
+            .expect("bounded mutation");
+        history.undo_last(&mut draft).expect("undo");
+        assert_eq!(draft.nodes, before.nodes);
+        assert!(history.is_empty());
+
+        let mut registry = NodeRegistry::new();
+        registry
+            .register_runtime_policy(crate::RuntimePolicyDefinition {
+                id: "retry".to_owned(),
+                display_name: "Retry".to_owned(),
+                scope: crate::RuntimePolicyScope::Workflow,
+                config_schema: serde_json::json!({"type": "object"}),
+            })
+            .expect("Runtime Policy");
+        PipelineDraftTools
+            .set_runtime_policy(
+                &mut draft,
+                "retry",
+                serde_json::json!({"maximum_attempts": 2}),
+                &registry,
+            )
+            .expect("Runtime Policy mutation");
+        assert_eq!(
+            draft.runtime_policies["retry"]["maximum_attempts"],
+            serde_json::json!(2)
+        );
+        let diff = PipelineDraftDiff::between(&before, &draft).expect("Runtime Policy Diff");
+        assert!(
+            diff.policy_changes
+                .iter()
+                .any(|change| change.change_id == "workflow:runtime_policies")
         );
     }
 
@@ -1716,6 +2074,53 @@ mod tests {
         assert!(
             PipelineDraftTools
                 .set_parameter(&mut draft, "detect", "threshold", serde_json::json!(0.5))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn model_profile_binding_is_capability_checked_and_revision_aware() {
+        let (nodes, _models) = registries();
+        let provider_id = crate::ProviderId::new();
+        let now = Utc::now();
+        let model = ModelProfile {
+            id: crate::ModelProfileId::new(),
+            revision: 3,
+            provider_id,
+            display_name: "Detector".to_owned(),
+            remote_model_id: "detector-v3".to_owned(),
+            input_modalities: BTreeSet::from([crate::InputModality::Image]),
+            protocol_features: crate::ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([crate::ModelCapability::ObjectDetection]),
+            capability_source: crate::CapabilityDeclarationSource::UserDeclared,
+            limits: crate::ModelLimits::default(),
+            generation_defaults: crate::GenerationDefaults::default(),
+            pricing: crate::ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut draft = draft();
+        PipelineDraftTools
+            .bind_model_profile(&mut draft, "detect", &model, true, &nodes)
+            .expect("compatible Model Profile");
+        assert_eq!(
+            draft.nodes[0]
+                .model_profile_binding
+                .as_ref()
+                .map(|binding| (binding.model_profile_id, binding.locked)),
+            Some((model.id, true))
+        );
+
+        let mut incompatible = model.clone();
+        incompatible.id = crate::ModelProfileId::new();
+        incompatible.task_capabilities =
+            BTreeSet::from([crate::ModelCapability::ImageClassification]);
+        assert!(
+            PipelineDraftTools
+                .bind_model_profile(&mut draft, "detect", &incompatible, true, &nodes)
                 .is_err()
         );
     }
@@ -1860,7 +2265,7 @@ mod tests {
             vec![
                 PipelineBuilderTool::InspectProject,
                 PipelineBuilderTool::InspectLabel,
-                PipelineBuilderTool::ListAvailableModels,
+                PipelineBuilderTool::ListCompatibleModels,
                 PipelineBuilderTool::CreateDraftFromTemplate,
                 PipelineBuilderTool::DisconnectPipelineNodes,
                 PipelineBuilderTool::ValidatePipeline,

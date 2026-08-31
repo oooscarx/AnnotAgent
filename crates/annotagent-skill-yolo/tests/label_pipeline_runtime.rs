@@ -113,6 +113,7 @@ fn workflow(
         edges,
         enabled_skills: BTreeMap::new(),
         resource_versions: BTreeMap::new(),
+        runtime_policies: BTreeMap::new(),
         allow_unvalidated_commit: false,
         label_pipeline: None,
         created_at: now,

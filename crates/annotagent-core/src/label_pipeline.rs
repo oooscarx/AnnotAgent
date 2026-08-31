@@ -1410,6 +1410,7 @@ impl LabelWorkflowComposition {
             edges,
             enabled_skills,
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             label_pipeline: Some(self.clone()),
             created_at: now,

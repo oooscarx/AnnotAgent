@@ -134,3 +134,21 @@ Derived Image Artifacts carry a parent `ArtifactRef`, a stable item identity and
 normalized root-image region. Coordinate Projection accepts a single unambiguous image or requires
 the DetectionSet to name the source image artifact/item, then performs the affine rectangle mapping.
 Missing or ambiguous lineage fails closed instead of emitting plausible but misplaced annotations.
+
+## D021 — the Builder receives a dedicated Provider projection, never `ProviderProfile`
+
+`ProviderProfile` legitimately contains an opaque credential reference and safe transport headers,
+but neither is necessary for Pipeline design. The Builder receives only Provider ID, display name,
+adapter, origin-only endpoint summary, enable/health state, credential-configured boolean and model
+count. Model Profiles are safe semantic/pricing records and may be inspected directly. This makes
+secret non-disclosure structural instead of depending on prompt compliance or field redaction after
+serialization.
+
+## D022 — incremental mutations share the normal Draft boundary and undo is session-scoped
+
+The Agent never receives a database handle or a replace-entire-Workflow operation. Each Tool loads
+or mutates the current typed Draft, passes Core validation and persists through `save_workflow_draft`.
+Before a successful mutation, the live Builder retains a bounded prior Draft snapshot; undo restores
+that snapshot under the same Draft/Project identity and saves it normally. Runtime Policy lives on
+the Draft outside `nodes`, and structured Diff treats it as a Workflow policy change. This provides
+exact undo/audit behavior without inventing hidden graph nodes or an Agent-specific database path.

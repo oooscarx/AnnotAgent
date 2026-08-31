@@ -3281,6 +3281,7 @@ mod tests {
             edges: Vec::new(),
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             label_pipeline: None,
             created_at: now,

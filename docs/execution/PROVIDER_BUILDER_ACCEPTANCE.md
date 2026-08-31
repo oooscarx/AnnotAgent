@@ -89,6 +89,25 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | Capability node adapters | PASS | Public Detect/Classify aliases are accepted by the existing typed Skill runners; Segment uses the registered model-execution boundary. Static descriptors require bindings/capabilities. |
 | M4 affected validation | PASS | Runtime focused suite 8/8 and constrained Application/API tests pass. Final fmt, strict all-target/all-feature Clippy, all-feature build, Rust 262/262 plus doc tests, TypeScript, Vitest 36/36, production build and isolated Chromium E2E 28/28 pass. |
 
+## M5 Pipeline Builder Agent tools
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Exact bounded Tool Catalog | PASS | Core exposes the requested 39 tools in four groups with an explicit permission per tool; contract test asserts the exact count and names. |
+| Forbidden capabilities absent | PASS | Registry and live-catalog tests reject/omit publish, full-dataset Run, API-key, Provider CRUD, Shell, Python, model download, arbitrary URL and whole-Workflow JSON replacement tools. |
+| Credential-safe Provider discovery | PASS | Builder input uses a dedicated summary with no credential reference/source/locator or headers. Sentinel regression proves the locator is absent from serialized model context. |
+| Provider check is passive | PASS | Builder availability result uses the bounded Registry health/endpoint summary, explicitly reports `passive_registry_snapshot` and `billable_request_sent=false`; no active-probe tool exists. |
+| Compatible Model Profile discovery | PASS | Listing filters enabled/Available Profile, Provider state, credential configuration and required Node capability; inspection returns revisioned Profile metadata and no secret object. |
+| Cost estimation | PASS | Model/Pipeline estimates use exact declared decimal request/image/token pricing and report that no model request was sent. Unknown pricing remains zero with `unknown` provenance rather than an invented price. |
+| Node Definition discovery | PASS | List and inspect tools expose only the public 16-node catalog with typed ports/schema/capability/side-effect metadata; runtime policies remain a separate catalog. |
+| Real persisted Draft mutation | PASS | Scripted live Tool Loop creates a Draft, adds public nodes, binds a Model Profile, changes Runtime Policy, undoes it and reloads the resulting Draft from SQLite. Core validates duplicate nodes, ports, artifact types, cycles, capabilities and immutable states. |
+| Runtime Policy is not a node | PASS | `WorkflowDraft.runtime_policies` stores registered cross-cutting configuration; Diff has a dedicated Workflow policy change and Tool results assert no graph node was added. |
+| Compare and undo | PASS | Structured Draft Diff includes nodes/edges/config/legacy+typed model bindings/node policy and Workflow Runtime Policy. A bounded 32-entry session journal restores and persists the exact prior Draft identity. |
+| Validation and Dry Run | PASS | Existing Rust static grammar, 1–10 image non-committing Dry Run, summary, failed/review samples and bounded node artifact inspection remain; M5 adds aggregate node statistics. |
+| Human approval boundary | PASS | Submission requires a valid static report and completed sandbox Dry Run, saves `Suggested`, stops in `WaitingForHuman`, and tests prove zero Published Versions and zero formal Runs. |
+| Audit and budgets | PASS | Every success/failure is recorded through `AgentSession.record_tool` with arguments, sanitized model payload and display summary; existing turn/tool/Dry Run/cost/cancellation limits remain enforced and persisted. |
+| M5 focused validation | PASS | Core Pipeline Builder suite 8/8 and complete Application library suite 38/38 pass, including exact-catalog, redaction and persisted-mutation integration tests. Final fmt, strict all-target/all-feature Clippy, all-feature build, Rust 265/265 plus doc tests, TypeScript, Vitest 36/36 and production Web build pass. API-key-shaped source scan is empty. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
@@ -98,7 +117,7 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe usage and snapshot contract pass; real publish/runtime call integration remains for M6–M8. |
 | D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility and locks pass; Project/Node binding UI and end-to-end execution remain. |
 | E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M6–M8 before release PASS. |
-| F. Agent | OPEN | Real bounded loop is reusable; Provider/Profile tools and revision-aware compatible binding remain. |
+| F. Agent | OPEN | M5 Tool Catalog, permissions, safe discovery, real Draft mutation/undo, Dry Run and approval pass. M6 must resolve the Agent's own Model Profile and finish Profile-based usage/context/stop behavior. |
 | G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
 | H. Product | OPEN | Registry Settings IA passes; Project Build still needs compatible Profile selection and Builder integration in later milestones. |
 | I. Regression | OPEN | Existing release tests are strong; full post-migration evidence remains. |

@@ -25,25 +25,27 @@ use annotagent_core::{
     FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelCapability,
-    ModelInputContract, ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodeRegistry,
-    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderTool,
-    PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftTools, PipelineGrammarValidator,
-    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, ProjectId,
-    ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
-    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
-    VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
-    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
-    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
+    ModelInputContract, ModelMessage, ModelOutputContract, ModelProfile, ModelProfileStatus,
+    ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory,
+    NodeDefinition, NodePort, NodeRegistry, NodeSideEffect, PipelineArtifact,
+    PipelineBuilderConstraints, PipelineBuilderProviderProfile, PipelineBuilderTool,
+    PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools,
+    PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality, PortDefinition,
+    PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, ProviderAdapterKind,
+    ProviderHealthStatus, PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements,
+    RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
+    RunStatus, RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
+    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
+    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
+    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -256,20 +258,16 @@ fn default_provider_kind() -> String {
     "mock".to_owned()
 }
 
-fn pipeline_builder_live_tools(
-    input: &WorkflowAdvisorInput,
-    suggestion: &WorkflowSuggestion,
-) -> Vec<ToolDefinition> {
-    let node_ids = suggestion
-        .draft
-        .nodes
+fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefinition> {
+    let node_definition_ids = input
+        .node_catalog
         .iter()
         .map(|node| node.id.clone())
         .collect::<Vec<_>>();
-    let model_ids = input
-        .model_registry
+    let runtime_policy_ids = input
+        .runtime_policies
         .iter()
-        .map(|model| model.id.clone())
+        .map(|policy| policy.id.clone())
         .collect::<Vec<_>>();
     let no_arguments = || {
         json!({
@@ -290,7 +288,7 @@ fn pipeline_builder_live_tools(
         parameters,
         read_only: false,
     };
-    let mut tools = vec![
+    vec![
         read(
             PipelineBuilderTool::InspectProject,
             "Read a bounded Project summary without file paths or image bytes.",
@@ -307,8 +305,18 @@ fn pipeline_builder_live_tools(
             no_arguments(),
         ),
         read(
-            PipelineBuilderTool::SampleImages,
+            PipelineBuilderTool::SampleDataset,
             "Read bounded dataset dimensions and MIME types; no image bytes are returned.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectSampleImage,
+            "Inspect bounded metadata for one Project image; image bytes and filesystem paths are excluded.",
+            json!({"type":"object","additionalProperties":false,"required":["image_index"],"properties":{"image_index":{"type":"integer","minimum":0}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectExistingAutomations,
+            "Inspect the Project's published workflows and recent Run summaries without starting a Run.",
             no_arguments(),
         ),
         read(
@@ -317,39 +325,69 @@ fn pipeline_builder_live_tools(
             no_arguments(),
         ),
         read(
-            PipelineBuilderTool::ListAvailableCapabilities,
-            "List registered capability-bound Pipeline nodes.",
-            no_arguments(),
+            PipelineBuilderTool::LoadSkillResource,
+            "Load one declared resource from an enabled Skill. Undeclared resources are rejected.",
+            json!({"type":"object","additionalProperties":false,"required":["skill_id","resource_name"],"properties":{"skill_id":{"type":"string"},"resource_name":{"type":"string"}}}),
         ),
         read(
-            PipelineBuilderTool::ListAvailableNodes,
+            PipelineBuilderTool::ListNodeDefinitions,
             "List registered node IDs and typed input/output contracts.",
             no_arguments(),
         ),
         read(
-            PipelineBuilderTool::ListAvailableModels,
-            "List registered Models with capability, health, backend, and price metadata.",
-            no_arguments(),
-        ),
-        read(
-            PipelineBuilderTool::InspectModel,
-            "Inspect one Model selected from the Registry.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["model_id"],
-                "properties": {"model_id": {"type": "string", "enum": model_ids.clone()}}
-            }),
+            PipelineBuilderTool::InspectNodeDefinition,
+            "Inspect one public Node Definition and its configuration schema.",
+            json!({"type":"object","additionalProperties":false,"required":["node_type"],"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
         ),
         read(
             PipelineBuilderTool::ListPipelineTemplates,
             "List compatible Registry templates and the safe default template.",
             no_arguments(),
         ),
+        read(
+            PipelineBuilderTool::ListProviderProfiles,
+            "List credential-safe Provider summaries. Secrets and credential locators are never returned.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListCompatibleModels,
+            "List enabled Model Profiles compatible with an optional Node Definition.",
+            json!({"type":"object","additionalProperties":false,"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelProfile,
+            "Inspect one revisioned Model Profile. Provider credentials are not part of this object.",
+            json!({"type":"object","additionalProperties":false,"required":["model_profile_id"],"properties":{"model_profile_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::CheckProviderAvailability,
+            "Read a passive Provider availability assessment only. Never sends a billable model request.",
+            json!({"type":"object","additionalProperties":false,"required":["provider_id"],"properties":{"provider_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::EstimateModelCost,
+            "Estimate Model Profile cost from declared Registry pricing without invoking the model.",
+            json!({"type":"object","additionalProperties":false,"required":["model_profile_id"],"properties":{"model_profile_id":{"type":"string"},"image_count":{"type":"integer","minimum":0,"maximum":1_000_000},"input_tokens":{"type":"integer","minimum":0},"output_tokens":{"type":"integer","minimum":0}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::CreatePipelineDraft,
+            "Create a real persisted editable Draft. Never publishes.",
+            json!({"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":160}}}),
+        ),
         mutate(
             PipelineBuilderTool::CreateDraftFromTemplate,
             "Create a new editable Draft from the safe Registry template. Never publishes.",
-            no_arguments(),
+            json!({"type":"object","additionalProperties":false,"properties":{"template_id":{"type":["string","null"]}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::AddPipelineNode,
+            "Add one public Node Definition to the current Draft.",
+            json!({"type":"object","additionalProperties":false,"required":["node_type"],"properties":{"node_type":{"type":"string","enum":node_definition_ids},"node_id":{"type":["string","null"],"maxLength":120},"configuration":{"type":"object"}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::RemovePipelineNode,
+            "Remove one existing node and its incident connections from the current Draft.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":{"type":"string"}}}),
         ),
         mutate(
             PipelineBuilderTool::DisconnectPipelineNodes,
@@ -359,8 +397,8 @@ fn pipeline_builder_live_tools(
                 "additionalProperties": false,
                 "required": ["from_node", "to_node"],
                 "properties": {
-                    "from_node": {"type": "string", "enum": node_ids.clone()},
-                    "to_node": {"type": "string", "enum": node_ids.clone()}
+                    "from_node": {"type": "string"},
+                    "to_node": {"type": "string"}
                 }
             }),
         ),
@@ -372,52 +410,23 @@ fn pipeline_builder_live_tools(
                 "additionalProperties": false,
                 "required": ["from_node", "from_port", "to_node", "to_port"],
                 "properties": {
-                    "from_node": {"type": "string", "enum": node_ids.clone()},
+                    "from_node": {"type": "string"},
                     "from_port": {"type": "string"},
-                    "to_node": {"type": "string", "enum": node_ids.clone()},
+                    "to_node": {"type": "string"},
                     "to_port": {"type": "string"},
                     "route": {"type": ["string", "null"]}
                 }
             }),
         ),
         mutate(
-            PipelineBuilderTool::AddPipelineNode,
-            "Add one controlled Guided action after Dry Run evidence. Alpha supports Crop verification only.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["guided_template"],
-                "properties": {
-                    "guided_template": {"type": "string", "enum": ["crop_verification"]}
-                }
-            }),
+            PipelineBuilderTool::SetNodeConfiguration,
+            "Replace the configuration object of one existing public node.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id","configuration"],"properties":{"node_id":{"type":"string"},"configuration":{"type":"object"}}}),
         ),
         mutate(
-            PipelineBuilderTool::SetNodeParameter,
-            "Set one allowed parameter on a node in the current Draft.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["node_id", "parameter", "value"],
-                "properties": {
-                    "node_id": {"type": "string", "enum": node_ids.clone()},
-                    "parameter": {"type": "string", "enum": ["threshold", "minimum_confidence", "padding", "max_detections", "grounding_assist"]},
-                    "value": {}
-                }
-            }),
-        ),
-        mutate(
-            PipelineBuilderTool::BindModel,
-            "Bind one Registry Model to an existing model node. Rust validates capability and availability.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["node_id", "model_id"],
-                "properties": {
-                    "node_id": {"type": "string", "enum": node_ids.clone()},
-                    "model_id": {"type": "string", "enum": model_ids}
-                }
-            }),
+            PipelineBuilderTool::BindModelProfile,
+            "Bind one compatible revisioned Model Profile to a node.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id","model_profile_id"],"properties":{"node_id":{"type":"string"},"model_profile_id":{"type":"string"},"locked":{"type":"boolean","default":true}}}),
         ),
         mutate(
             PipelineBuilderTool::SetLabelMapping,
@@ -427,7 +436,7 @@ fn pipeline_builder_live_tools(
                 "additionalProperties": false,
                 "required": ["node_id", "class_mapping"],
                 "properties": {
-                    "node_id": {"type": "string", "enum": node_ids.clone()},
+                    "node_id": {"type": "string"},
                     "class_mapping": {"type": "object", "additionalProperties": {"type": "string"}}
                 }
             }),
@@ -440,15 +449,35 @@ fn pipeline_builder_live_tools(
                 "additionalProperties": false,
                 "required": ["node_id", "threshold"],
                 "properties": {
-                    "node_id": {"type": "string", "enum": node_ids},
+                    "node_id": {"type": "string"},
                     "threshold": {"type": "number", "minimum": 0, "maximum": 1}
                 }
             }),
+        ),
+        mutate(
+            PipelineBuilderTool::SetRuntimePolicy,
+            "Configure a registered cross-cutting Runtime Policy outside the graph.",
+            json!({"type":"object","additionalProperties":false,"required":["policy_id","configuration"],"properties":{"policy_id":{"type":"string","enum":runtime_policy_ids},"configuration":{"type":"object"}}}),
+        ),
+        read(
+            PipelineBuilderTool::ComparePipelineDrafts,
+            "Compare the current persisted Draft with another persisted Draft from the same Project.",
+            json!({"type":"object","additionalProperties":false,"required":["other_draft_id"],"properties":{"other_draft_id":{"type":"string"}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::UndoLastDraftChange,
+            "Undo the last Builder mutation and persist the restored Draft.",
+            no_arguments(),
         ),
         read(
             PipelineBuilderTool::ValidatePipeline,
             "Run Rust Pipeline Grammar and static validation on the current Draft.",
             no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::EstimatePipelineCost,
+            "Estimate cost for the current Draft from bound Model Profile pricing without a model call.",
+            json!({"type":"object","additionalProperties":false,"properties":{"image_count":{"type":"integer","minimum":1,"maximum":1_000_000,"default":1}}}),
         ),
         read(
             PipelineBuilderTool::DryRunPipeline,
@@ -477,6 +506,11 @@ fn pipeline_builder_live_tools(
             bounded_inspection_schema(),
         ),
         read(
+            PipelineBuilderTool::InspectNodeStatistics,
+            "Read bounded aggregate latency, cost, status, and issue counts for one node.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":{"type":"string"}}}),
+        ),
+        read(
             PipelineBuilderTool::InspectNodeArtifacts,
             "Read bounded node-level Dry Run statistics and structured warnings, not Artifact bodies.",
             json!({
@@ -503,26 +537,12 @@ fn pipeline_builder_live_tools(
                 }
             }),
         ),
-    ];
-    if !input.resource_ids.is_empty() {
-        tools.insert(
-            5,
-            read(
-                PipelineBuilderTool::LoadSkillResource,
-                "Load one declared Advisor resource from an enabled Skill. Paths and undeclared resources are rejected by Rust.",
-                json!({
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["skill_id", "resource_name"],
-                    "properties": {
-                        "skill_id": {"type": "string", "enum": input.enabled_skills},
-                        "resource_name": {"type": "string", "enum": input.resource_ids}
-                    }
-                }),
-            ),
-        );
-    }
-    tools
+        mutate(
+            PipelineBuilderTool::FinishAgentSession,
+            "Finish only after the current Draft has been submitted for explicit human approval.",
+            no_arguments(),
+        ),
+    ]
 }
 
 fn pipeline_builder_constraints(
@@ -614,6 +634,143 @@ fn required_string_argument(arguments: &serde_json::Value, name: &str) -> Result
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(|| anyhow!("Tool argument {name:?} must be a non-empty string"))
+}
+
+fn required_usize_argument(arguments: &serde_json::Value, name: &str) -> Result<usize> {
+    arguments
+        .get(name)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| anyhow!("Tool argument {name:?} must be a non-negative integer"))
+}
+
+fn compatible_builder_models(
+    input: &WorkflowAdvisorInput,
+    required_capability: Option<ModelCapability>,
+) -> Vec<&ModelProfile> {
+    input
+        .model_profiles
+        .iter()
+        .filter(|model| {
+            let provider = input
+                .provider_profiles
+                .iter()
+                .find(|provider| provider.id == model.provider_id);
+            model.enabled
+                && model.status == ModelProfileStatus::Available
+                && required_capability
+                    .is_none_or(|capability| model.task_capabilities.contains(&capability))
+                && provider.is_some_and(|provider| {
+                    provider.enabled
+                        && provider.credential_configured
+                        && matches!(
+                            provider.health_status,
+                            ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+                        )
+                })
+        })
+        .collect()
+}
+
+fn estimate_model_profile_cost(
+    model: &ModelProfile,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let image_count = arguments
+        .get("image_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let input_tokens = arguments
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let output_tokens = arguments
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    estimate_model_profile_cost_for_counts(model, image_count, input_tokens, output_tokens)
+}
+
+fn estimate_model_profile_cost_for_counts(
+    model: &ModelProfile,
+    image_count: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> serde_json::Value {
+    let million = rust_decimal::Decimal::from(1_000_000_u64);
+    let image_count_decimal = rust_decimal::Decimal::from(image_count);
+    let request_cost = model.pricing.per_request.unwrap_or_default() * image_count_decimal;
+    let image_cost = model.pricing.per_image.unwrap_or_default() * image_count_decimal;
+    let input_cost = model.pricing.input_per_million_tokens.unwrap_or_default()
+        * rust_decimal::Decimal::from(input_tokens)
+        / million;
+    let output_cost = model.pricing.output_per_million_tokens.unwrap_or_default()
+        * rust_decimal::Decimal::from(output_tokens)
+        / million;
+    let total = request_cost + image_cost + input_cost + output_cost;
+    json!({
+        "currency": model.pricing.currency,
+        "estimated_cost": total.to_string(),
+        "image_count": image_count,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "pricing_source": model.pricing.source,
+        "billable_request_sent": false,
+    })
+}
+
+fn workflow_node_from_definition(
+    definition: &NodeDefinition,
+    node_id: String,
+    configuration: &serde_json::Value,
+) -> Result<annotagent_core::WorkflowDraftNode> {
+    let parameters = configuration
+        .as_object()
+        .ok_or_else(|| anyhow!("node configuration must be an object"))?
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let ports = |definitions: &[PortDefinition]| {
+        definitions
+            .iter()
+            .map(|port| NodePort {
+                id: port.name.clone(),
+                artifact_type: port.artifact_type,
+                required: port.required,
+                multiple: port.cardinality == PortCardinality::Many,
+            })
+            .collect::<Vec<_>>()
+    };
+    let kind = match definition.id.as_str() {
+        "core.image_input" => WorkflowNodeKind::ImageInput,
+        "core.validate" => WorkflowNodeKind::Validator,
+        "core.decision" => WorkflowNodeKind::Gate,
+        "core.human_review" => WorkflowNodeKind::HumanReview,
+        "core.commit" => WorkflowNodeKind::Commit,
+        _ if definition.required_model_capability.is_some() => WorkflowNodeKind::VisionModel,
+        _ => WorkflowNodeKind::Transform,
+    };
+    Ok(annotagent_core::WorkflowDraftNode {
+        id: node_id,
+        node_type: definition.id.clone(),
+        kind,
+        depends_on: Vec::new(),
+        inputs: ports(&definition.input_ports),
+        outputs: ports(&definition.output_ports),
+        model_binding: None,
+        model_profile_binding: None,
+        required_skills: Vec::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        max_retries: 0,
+        review_gate: false,
+        parameters,
+        retry_policy: RetryPolicy::default(),
+        fallback_policy: annotagent_core::FallbackPolicy::default(),
+        gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    })
 }
 
 fn string_array_argument(arguments: &serde_json::Value, name: &str) -> Vec<String> {
@@ -4991,6 +5148,31 @@ impl LocalApplication {
             mime_types.insert(image.metadata.mime_type.clone());
         }
         let workflow_templates = workflow_templates_for(&self.skills, &enabled_skills)?;
+        let provider_profiles = self.store.list_provider_profiles()?;
+        let model_profiles = self.store.list_model_profiles(None, false)?;
+        let model_counts = model_profiles
+            .iter()
+            .fold(BTreeMap::new(), |mut counts, model| {
+                *counts.entry(model.provider_id).or_insert(0_usize) += 1;
+                counts
+            });
+        let provider_profiles = provider_profiles
+            .into_iter()
+            .map(|profile| {
+                let endpoint_summary = profile.endpoint_summary();
+                PipelineBuilderProviderProfile {
+                    id: profile.id,
+                    display_name: profile.display_name,
+                    adapter: profile.adapter,
+                    endpoint_summary,
+                    enabled: profile.enabled,
+                    health_status: profile.health.status,
+                    credential_configured: profile.adapter == ProviderAdapterKind::Mock
+                        || profile.credential_ref.is_some(),
+                    model_count: model_counts.get(&profile.id).copied().unwrap_or_default(),
+                }
+            })
+            .collect();
         Ok(WorkflowAdvisorInput {
             project_id: project_id.to_owned(),
             project_schema: project,
@@ -4999,6 +5181,8 @@ impl LocalApplication {
             enabled_skills,
             node_catalog: nodes.definitions(),
             runtime_policies: nodes.runtime_policies(),
+            provider_profiles,
+            model_profiles,
             model_registry: models.models(),
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
@@ -5084,6 +5268,7 @@ impl LocalApplication {
                 edges: Vec::new(),
                 enabled_skills: project.project.enabled_skill_versions(),
                 resource_versions: BTreeMap::new(),
+                runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
                 label_pipeline: None,
                 created_at: now,
@@ -5236,14 +5421,19 @@ impl LocalApplication {
         }
         if !record(
             &mut session,
-            "list_available_capabilities",
+            "list_node_definitions",
             json!({"skills": input.enabled_skills}),
             json!({"nodes": input.node_catalog}),
         ) || !record(
             &mut session,
-            "list_available_models",
+            "list_provider_profiles",
             json!({}),
-            json!({"models": input.model_registry}),
+            json!({"providers": input.provider_profiles, "secrets_exposed": false}),
+        ) || !record(
+            &mut session,
+            "list_compatible_models",
+            json!({}),
+            json!({"models": compatible_builder_models(&input, None)}),
         ) || !record(
             &mut session,
             "list_pipeline_templates",
@@ -5488,7 +5678,7 @@ impl LocalApplication {
         if revise_draft_after_failed_dry_run(&mut revised, dry_run.summary.failed_count) {
             let _recorded = record(
                 &mut session,
-                "set_node_parameter",
+                "set_node_configuration",
                 json!({"draft_id": revised.draft.id, "cause": "dry_run_metrics"}),
                 json!({
                     "retry_policy_hardened": true,
@@ -5760,7 +5950,7 @@ impl LocalApplication {
         let mut messages = vec![
             ModelMessage {
                 role: ModelRole::System,
-                content: "You are AnnotAgent's constrained Pipeline Builder. Call exactly one registered tool at a time. Inspect the Project and Registry before creating a Draft. You may modify only the current editable Draft through tools, must validate it, must run a sandbox Dry Run, and may finish only with submit_draft_for_human_approval. Never publish, start a formal Run, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
+                content: "You are AnnotAgent's constrained Pipeline Builder. Call exactly one registered tool at a time. Inspect the Project, public Node Definitions, credential-safe Provider summaries, and compatible Model Profiles before creating a Draft. Modify only the current persisted editable Draft through incremental tools; never replace its entire JSON. Validate it, run a non-committing sandbox Dry Run, and end at submit_draft_for_human_approval. check_provider_availability is passive only: never request an active or billable probe. Never publish, start a formal Run, set credentials, create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
                 tool_call_id: None,
                 tool_calls: Vec::new(),
             },
@@ -5783,7 +5973,7 @@ impl LocalApplication {
                 tool_calls: Vec::new(),
             },
         ];
-        let tools = pipeline_builder_live_tools(&input, &safe_suggestion);
+        let tools = pipeline_builder_live_tools(&input);
         let (nodes, models) = workflow_catalog(settings)?;
         let enabled_skills = safe_suggestion
             .draft
@@ -5803,6 +5993,7 @@ impl LocalApplication {
         let mut inspected_skills = false;
         let mut inspected_nodes = false;
         let mut inspected_models = false;
+        let mut draft_history = PipelineDraftHistory::default();
         let required_advisor_resource = input
             .resource_ids
             .iter()
@@ -5903,12 +6094,50 @@ impl LocalApplication {
                             json!({"task_id": task_id, "kind": task.kind, "label": label, "declared": task.labels.iter().any(|candidate| candidate == label)}),
                         ))
                     }
-                    Ok(PipelineBuilderTool::SampleImages) => Ok(
+                    Ok(PipelineBuilderTool::SampleDataset) => Ok(
                         annotagent_core::AgentToolResult::summary(
                             "Inspected bounded image sample metadata",
                             json!({"image_count": input.data_profile.image_count, "sample_width": input.data_profile.sample_width, "sample_height": input.data_profile.sample_height, "mime_types": input.data_profile.mime_types}),
                         ),
                     ),
+                    Ok(PipelineBuilderTool::InspectSampleImage) => {
+                        let image_index = required_usize_argument(&call.arguments, "image_index")?;
+                        let image_path = self
+                            .list_project_images(project_id)?
+                            .get(image_index)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("image_index is outside the Project dataset"))?;
+                        let image = load_image(&image_path, 40_000_000).map_err(|error| anyhow!(error))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected sample image {image_index}"),
+                            json!({
+                                "image_index": image_index,
+                                "width": image.metadata.width,
+                                "height": image.metadata.height,
+                                "mime_type": image.metadata.mime_type,
+                                "byte_length": image.rgb.len(),
+                                "path_exposed": false,
+                                "image_bytes_exposed": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectExistingAutomations) => {
+                        let versions = self
+                            .store
+                            .list_published_workflow_versions(Some(project_id))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected existing published Workflow automations",
+                            json!({
+                                "published_workflows": versions.iter().map(|version| json!({
+                                    "workflow_id": version.workflow_id,
+                                    "version": version.version,
+                                    "name": version.draft.name,
+                                    "published_at": version.published_at,
+                                })).collect::<Vec<_>>(),
+                                "formal_run_started": false,
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::ListEnabledSkills) => {
                         inspected_skills = true;
                         Ok(annotagent_core::AgentToolResult::summary(
@@ -5942,10 +6171,7 @@ impl LocalApplication {
                             }),
                         ))
                     }
-                    Ok(
-                        PipelineBuilderTool::ListAvailableCapabilities
-                        | PipelineBuilderTool::ListAvailableNodes,
-                    ) => {
+                    Ok(PipelineBuilderTool::ListNodeDefinitions) => {
                         inspected_nodes = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Listed available Pipeline nodes",
@@ -5964,23 +6190,90 @@ impl LocalApplication {
                             })).collect::<Vec<_>>() }),
                         ))
                     }
-                    Ok(PipelineBuilderTool::ListAvailableModels) => {
-                        inspected_models = true;
+                    Ok(PipelineBuilderTool::InspectNodeDefinition) => {
+                        let node_type = required_string_argument(&call.arguments, "node_type")?;
+                        let definition = input
+                            .node_catalog
+                            .iter()
+                            .find(|node| node.id == node_type)
+                            .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))?;
+                        inspected_nodes = true;
                         Ok(annotagent_core::AgentToolResult::summary(
-                            "Listed registered Models",
-                            json!({"models": input.model_registry.iter().map(|model| json!({"id": model.id, "name": model.display_name, "capabilities": model.capabilities, "status": model.status, "backend": model.backend.kind, "pricing": model.pricing})).collect::<Vec<_>>() }),
+                            format!("Inspected Node Definition {node_type}"),
+                            serde_json::to_value(definition)?,
                         ))
                     }
-                    Ok(PipelineBuilderTool::InspectModel) => {
-                        let model_id = required_string_argument(&call.arguments, "model_id")?;
-                        let model = input
-                            .model_registry
-                            .iter()
-                            .find(|model| model.id == model_id)
-                            .ok_or_else(|| anyhow!("model {model_id:?} is not registered"))?;
+                    Ok(PipelineBuilderTool::ListProviderProfiles) => Ok(
+                        annotagent_core::AgentToolResult::summary(
+                            "Listed credential-safe Provider summaries",
+                            json!({"providers": input.provider_profiles, "secrets_exposed": false, "credential_locators_exposed": false}),
+                        ),
+                    ),
+                    Ok(PipelineBuilderTool::ListCompatibleModels) => {
+                        inspected_models = true;
+                        let required_capability = call
+                            .arguments
+                            .get("node_type")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|node_type| {
+                                input
+                                    .node_catalog
+                                    .iter()
+                                    .find(|node| node.id == node_type)
+                                    .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))
+                                    .map(|node| node.required_model_capability)
+                            })
+                            .transpose()?
+                            .flatten();
+                        let models = compatible_builder_models(&input, required_capability);
                         Ok(annotagent_core::AgentToolResult::summary(
-                            format!("Inspected Model {model_id}"),
-                            json!({"id": model.id, "capabilities": model.capabilities, "status": model.status, "input_contract": model.input_contract, "output_contract": model.output_contract, "pricing": model.pricing}),
+                            "Listed compatible Model Profiles",
+                            json!({"models": models, "required_capability": required_capability}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModelProfile) => {
+                        let model_id = required_string_argument(&call.arguments, "model_profile_id")?;
+                        let model = input
+                            .model_profiles
+                            .iter()
+                            .find(|model| model.id.to_string() == model_id)
+                            .ok_or_else(|| anyhow!("Model Profile {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Model Profile {model_id}"),
+                            serde_json::to_value(model)?,
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::CheckProviderAvailability) => {
+                        let provider_id = required_string_argument(&call.arguments, "provider_id")?;
+                        let provider = input
+                            .provider_profiles
+                            .iter()
+                            .find(|provider| provider.id.to_string() == provider_id)
+                            .ok_or_else(|| anyhow!("Provider Profile {provider_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Completed passive Provider availability assessment",
+                            json!({
+                                "provider_id": provider.id,
+                                "enabled": provider.enabled,
+                                "health_status": provider.health_status,
+                                "credential_configured": provider.credential_configured,
+                                "endpoint_summary": provider.endpoint_summary,
+                                "check_kind": "passive_registry_snapshot",
+                                "billable_request_sent": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::EstimateModelCost) => {
+                        let model_id = required_string_argument(&call.arguments, "model_profile_id")?;
+                        let model = input
+                            .model_profiles
+                            .iter()
+                            .find(|model| model.id.to_string() == model_id)
+                            .ok_or_else(|| anyhow!("Model Profile {model_id:?} is not registered"))?;
+                        let estimate = estimate_model_profile_cost(model, &call.arguments);
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Estimated cost for Model Profile {model_id}"),
+                            estimate,
                         ))
                     }
                     Ok(PipelineBuilderTool::ListPipelineTemplates) => Ok(
@@ -5989,7 +6282,10 @@ impl LocalApplication {
                             json!({"templates": input.workflow_templates.iter().map(|template| json!({"id": template.id, "name": template.name, "description": template.description})).collect::<Vec<_>>(), "safe_default_available": true}),
                         ),
                     ),
-                    Ok(PipelineBuilderTool::CreateDraftFromTemplate) => {
+                    Ok(
+                        tool @ (PipelineBuilderTool::CreatePipelineDraft
+                        | PipelineBuilderTool::CreateDraftFromTemplate),
+                    ) => {
                         if !inspected_project
                             || !inspected_label
                             || !inspected_skills
@@ -6005,8 +6301,43 @@ impl LocalApplication {
                             bail!("load the enabled Domain Advisor resource before creating a Draft");
                         }
                         let mut created = safe_suggestion.clone();
-                        created.draft.id = uuid::Uuid::new_v4().to_string();
-                        created.draft.status = WorkflowDraftStatus::Suggested;
+                        if tool == PipelineBuilderTool::CreateDraftFromTemplate
+                            && let Some(template_id) = call
+                                .arguments
+                                .get("template_id")
+                                .and_then(serde_json::Value::as_str)
+                        {
+                            if !input
+                                .workflow_templates
+                                .iter()
+                                .any(|template| template.id == template_id)
+                            {
+                                bail!("workflow template {template_id:?} is not registered for this Project");
+                            }
+                            created.draft = self.create_workflow_draft_with_template(
+                                project_id,
+                                settings,
+                                false,
+                                Some(template_id),
+                            )?;
+                        } else {
+                            created.draft.id = uuid::Uuid::new_v4().to_string();
+                        }
+                        if tool == PipelineBuilderTool::CreatePipelineDraft {
+                            created.draft.nodes.clear();
+                            created.draft.edges.clear();
+                            created.draft.label_pipeline = None;
+                            created.rationale = vec![
+                                "Created an empty, constrained Pipeline Draft for incremental editing."
+                                    .to_owned(),
+                            ];
+                        }
+                        if let Some(name) = call.arguments.get("name").and_then(|value| value.as_str())
+                            && !name.trim().is_empty()
+                        {
+                            name.clone_into(&mut created.draft.name);
+                        }
+                        created.draft.status = WorkflowDraftStatus::Editing;
                         created.draft.created_at = chrono::Utc::now();
                         created.draft.updated_at = created.draft.created_at;
                         validation = None;
@@ -6027,11 +6358,13 @@ impl LocalApplication {
                         let suggestion = current
                             .as_mut()
                             .ok_or_else(|| anyhow!("create a Draft before editing connections"))?;
+                        let previous_draft = suggestion.draft.clone();
                         let removed = PipelineDraftTools.disconnect(
                             &mut suggestion.draft,
                             &from_node,
                             &to_node,
                         )?;
+                        draft_history.record_before_change(&previous_draft)?;
                         validation = None;
                         dry_run = None;
                         inspected_dry_run = false;
@@ -6056,7 +6389,9 @@ impl LocalApplication {
                         let suggestion = current
                             .as_mut()
                             .ok_or_else(|| anyhow!("create a Draft before editing connections"))?;
+                        let previous_draft = suggestion.draft.clone();
                         PipelineDraftTools.connect(&mut suggestion.draft, edge.clone())?;
+                        draft_history.record_before_change(&previous_draft)?;
                         validation = None;
                         dry_run = None;
                         inspected_dry_run = false;
@@ -6067,143 +6402,313 @@ impl LocalApplication {
                         ))
                     }
                     Ok(PipelineBuilderTool::AddPipelineNode) => {
-                        let template =
-                            required_string_argument(&call.arguments, "guided_template")?;
-                        if template != "crop_verification" {
-                            bail!("unsupported Guided node template {template:?}");
+                        if call
+                            .arguments
+                            .get("guided_template")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("crop_verification")
+                        {
+                            let (task_id, label) = target.ok_or_else(|| {
+                                anyhow!("Crop verification requires a target Label session")
+                            })?;
+                            if !inspected_dry_run {
+                                bail!("inspect the latest Dry Run before adding Crop verification");
+                            }
+                            let report = dry_run.as_ref().ok_or_else(|| {
+                                anyhow!("run and inspect a Dry Run before adding Crop verification")
+                            })?;
+                            let draft = current
+                                .as_ref()
+                                .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                            let observation = agent_dry_run_summary(report, &draft.draft);
+                            let classifier_model_id = available_model_for_capability(
+                                &input.model_registry,
+                                VisionCapability::Classification,
+                            )?;
+                            let suggestion = current
+                                .as_mut()
+                                .ok_or_else(|| anyhow!("create a Draft before revising it"))?;
+                            let previous_draft = suggestion.draft.clone();
+                            if !add_crop_verification_revision(
+                                suggestion,
+                                &input.project_schema,
+                                task_id,
+                                label,
+                                &classifier_model_id,
+                                &observation,
+                            )? {
+                                bail!("Crop verification is not applicable or is already present");
+                            }
+                            draft_history.record_before_change(&previous_draft)?;
+                            validation = None;
+                            dry_run = None;
+                            inspected_dry_run = false;
+                            self.store.save_workflow_draft(&suggestion.draft)?;
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                "Added Crop verification from Dry Run evidence",
+                                json!({
+                                    "draft_id": suggestion.draft.id,
+                                    "guided_action": "crop_verification",
+                                    "evidence": {
+                                        "review_count": observation.review_count,
+                                        "review_rate": observation.review_rate(),
+                                    }
+                                }),
+                            ));
                         }
-                        let (task_id, label) = target.ok_or_else(|| {
-                            anyhow!("Crop verification requires a target Label session")
-                        })?;
-                        if !inspected_dry_run {
-                            bail!("inspect the latest Dry Run before adding Crop verification");
-                        }
-                        let report = dry_run.as_ref().ok_or_else(|| {
-                            anyhow!("run and inspect a Dry Run before adding Crop verification")
-                        })?;
-                        let draft = current
-                            .as_ref()
-                            .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
-                        let observation = agent_dry_run_summary(report, &draft.draft);
-                        let classifier_model_id = available_model_for_capability(
-                            &input.model_registry,
-                            VisionCapability::Classification,
+                        let node_type = required_string_argument(&call.arguments, "node_type")?;
+                        let definition = input
+                            .node_catalog
+                            .iter()
+                            .find(|node| node.id == node_type)
+                            .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))?;
+                        let node_id = call
+                            .arguments
+                            .get("node_id")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                            .map_or_else(
+                                || format!("agent-{}", uuid::Uuid::new_v4().simple()),
+                                ToOwned::to_owned,
+                            );
+                        let configuration = call
+                            .arguments
+                            .get("configuration")
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
+                        let node = workflow_node_from_definition(
+                            definition,
+                            node_id.clone(),
+                            &configuration,
                         )?;
                         let suggestion = current
                             .as_mut()
-                            .ok_or_else(|| anyhow!("create a Draft before revising it"))?;
-                        if !add_crop_verification_revision(
-                            suggestion,
-                            &input.project_schema,
-                            task_id,
-                            label,
-                            &classifier_model_id,
-                            &observation,
-                        )? {
-                            bail!("Crop verification is not applicable or is already present");
-                        }
-                        validation = None;
-                        dry_run = None;
-                        inspected_dry_run = false;
-                        self.store.save_workflow_draft(&suggestion.draft)?;
-                        Ok(annotagent_core::AgentToolResult::summary(
-                            "Added Crop verification from Dry Run evidence",
-                            json!({
-                                "draft_id": suggestion.draft.id,
-                                "guided_action": "crop_verification",
-                                "evidence": {
-                                    "review_count": observation.review_count,
-                                    "review_rate": observation.review_rate(),
-                                }
-                            }),
-                        ))
-                    }
-                    Ok(
-                        tool @ (PipelineBuilderTool::SetNodeParameter
-                        | PipelineBuilderTool::SetDecisionPolicy
-                        | PipelineBuilderTool::SetLabelMapping),
-                    ) => {
-                        let node_id = required_string_argument(&call.arguments, "node_id")?;
-                        let (parameter, value) = match tool {
-                            PipelineBuilderTool::SetDecisionPolicy => (
-                                "threshold".to_owned(),
-                                call.arguments
-                                    .get("threshold")
-                                    .cloned()
-                                    .ok_or_else(|| anyhow!("threshold is required"))?,
-                            ),
-                            PipelineBuilderTool::SetLabelMapping => (
-                                "class_mapping".to_owned(),
-                                call.arguments
-                                    .get("class_mapping")
-                                    .cloned()
-                                    .ok_or_else(|| anyhow!("class_mapping is required"))?,
-                            ),
-                            _ => (
-                                required_string_argument(&call.arguments, "parameter")?,
-                                call.arguments
-                                    .get("value")
-                                    .cloned()
-                                    .ok_or_else(|| anyhow!("value is required"))?,
-                            ),
-                        };
-                        if !matches!(
-                            parameter.as_str(),
-                            "threshold"
-                                | "minimum_confidence"
-                                | "padding"
-                                | "max_detections"
-                                | "grounding_assist"
-                                | "class_mapping"
-                        ) {
-                            bail!("Pipeline Builder parameter {parameter:?} is not mutable");
-                        }
-                        let suggestion = current
-                            .as_mut()
-                            .ok_or_else(|| anyhow!("create a Draft before editing it"))?;
-                        PipelineDraftTools.set_parameter(
+                            .ok_or_else(|| anyhow!("create a Draft before adding a node"))?;
+                        let previous_draft = suggestion.draft.clone();
+                        PipelineDraftTools.add_node(
                             &mut suggestion.draft,
-                            &node_id,
-                            parameter.clone(),
-                            value.clone(),
-                        )?;
-                        sync_label_step_parameter(
-                            &mut suggestion.draft,
-                            &node_id,
-                            &parameter,
-                            value,
-                        );
-                        validation = None;
-                        dry_run = None;
-                        inspected_dry_run = false;
-                        self.store.save_workflow_draft(&suggestion.draft)?;
-                        Ok(annotagent_core::AgentToolResult::summary(
-                            format!("Updated {parameter} on {node_id}"),
-                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "parameter": parameter}),
-                        ))
-                    }
-                    Ok(PipelineBuilderTool::BindModel) => {
-                        let node_id = required_string_argument(&call.arguments, "node_id")?;
-                        let model_id = required_string_argument(&call.arguments, "model_id")?;
-                        let suggestion = current
-                            .as_mut()
-                            .ok_or_else(|| anyhow!("create a Draft before binding a Model"))?;
-                        PipelineDraftTools.bind_model(
-                            &mut suggestion.draft,
-                            &node_id,
-                            &model_id,
+                            node,
                             &nodes,
                             &models,
                             &enabled_skills,
                         )?;
-                        sync_label_step_model(&mut suggestion.draft, &node_id, &model_id);
+                        draft_history.record_before_change(&previous_draft)?;
                         validation = None;
                         dry_run = None;
                         inspected_dry_run = false;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
-                            format!("Bound {model_id} to {node_id}"),
-                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "model_id": model_id}),
+                            format!("Added {node_type} as {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "node_type": node_type}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::RemovePipelineNode) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before removing a node"))?;
+                        let previous_draft = suggestion.draft.clone();
+                        PipelineDraftTools.remove_node(&mut suggestion.draft, &node_id)?;
+                        draft_history.record_before_change(&previous_draft)?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Removed {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id}),
+                        ))
+                    }
+                    Ok(
+                        tool @ (PipelineBuilderTool::SetNodeConfiguration
+                        | PipelineBuilderTool::SetDecisionPolicy
+                        | PipelineBuilderTool::SetLabelMapping),
+                    ) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before editing it"))?;
+                        let previous_draft = suggestion.draft.clone();
+                        let summary = match tool {
+                            PipelineBuilderTool::SetDecisionPolicy => {
+                                let value = call
+                                    .arguments
+                                    .get("threshold")
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("threshold is required"))?;
+                                PipelineDraftTools.set_parameter(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    "threshold",
+                                    value.clone(),
+                                )?;
+                                sync_label_step_parameter(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    "threshold",
+                                    value,
+                                );
+                                "decision policy"
+                            }
+                            PipelineBuilderTool::SetLabelMapping => {
+                                let value = call
+                                    .arguments
+                                    .get("class_mapping")
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("class_mapping is required"))?;
+                                PipelineDraftTools.set_parameter(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    "class_mapping",
+                                    value.clone(),
+                                )?;
+                                sync_label_step_parameter(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    "class_mapping",
+                                    value,
+                                );
+                                "label mapping"
+                            }
+                            PipelineBuilderTool::SetNodeConfiguration => {
+                                let configuration = call
+                                    .arguments
+                                    .get("configuration")
+                                    .and_then(serde_json::Value::as_object)
+                                    .ok_or_else(|| anyhow!("configuration object is required"))?
+                                    .iter()
+                                    .map(|(key, value)| (key.clone(), value.clone()))
+                                    .collect();
+                                PipelineDraftTools.set_configuration(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    configuration,
+                                    &nodes,
+                                )?;
+                                "node configuration"
+                            }
+                            _ => unreachable!(),
+                        };
+                        draft_history.record_before_change(&previous_draft)?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Updated {summary} on {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "updated": summary}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::BindModelProfile) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let model_id =
+                            required_string_argument(&call.arguments, "model_profile_id")?;
+                        let model_profile = input
+                            .model_profiles
+                            .iter()
+                            .find(|model| model.id.to_string() == model_id)
+                            .ok_or_else(|| anyhow!("Model Profile {model_id:?} is not registered"))?;
+                        let locked = call
+                            .arguments
+                            .get("locked")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(true);
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before binding a Model"))?;
+                        let previous_draft = suggestion.draft.clone();
+                        PipelineDraftTools.bind_model_profile(
+                            &mut suggestion.draft,
+                            &node_id,
+                            model_profile,
+                            locked,
+                            &nodes,
+                        )?;
+                        let runtime_binding = input
+                            .model_registry
+                            .iter()
+                            .find(|model| {
+                                model.id == model_profile.remote_model_id
+                                    || model.model == model_profile.remote_model_id
+                            })
+                            .map(|model| model.id.clone());
+                        if let Some(node) = suggestion
+                            .draft
+                            .nodes
+                            .iter_mut()
+                            .find(|node| node.id == node_id)
+                        {
+                            node.model_binding.clone_from(&runtime_binding);
+                        }
+                        if let Some(runtime_binding) = runtime_binding {
+                            sync_label_step_model(
+                                &mut suggestion.draft,
+                                &node_id,
+                                &runtime_binding,
+                            );
+                        }
+                        draft_history.record_before_change(&previous_draft)?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Bound Model Profile {model_id} to {node_id}"),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "model_profile_id": model_id, "revision": model_profile.revision, "locked": locked}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::SetRuntimePolicy) => {
+                        let policy_id = required_string_argument(&call.arguments, "policy_id")?;
+                        let configuration = call
+                            .arguments
+                            .get("configuration")
+                            .cloned()
+                            .ok_or_else(|| anyhow!("configuration is required"))?;
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before setting Runtime Policy"))?;
+                        let previous_draft = suggestion.draft.clone();
+                        PipelineDraftTools.set_runtime_policy(
+                            &mut suggestion.draft,
+                            &policy_id,
+                            configuration,
+                            &nodes,
+                        )?;
+                        draft_history.record_before_change(&previous_draft)?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Configured Runtime Policy {policy_id}"),
+                            json!({"draft_id": suggestion.draft.id, "policy_id": policy_id, "graph_node_added": false}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ComparePipelineDrafts) => {
+                        let other_id = required_string_argument(&call.arguments, "other_draft_id")?;
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a Draft before comparing it"))?;
+                        let other = self.store.get_workflow_draft(&other_id)?;
+                        let diff = PipelineDraftDiff::between(&other, &suggestion.draft)
+                            .map_err(|error| anyhow!(error))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Compared current Draft with {other_id}"),
+                            json!({"base_draft_id": other_id, "current_draft_id": suggestion.draft.id, "diff": diff}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::UndoLastDraftChange) => {
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before undoing a change"))?;
+                        draft_history.undo_last(&mut suggestion.draft)?;
+                        validation = None;
+                        dry_run = None;
+                        inspected_dry_run = false;
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Restored and persisted the previous Draft revision",
+                            json!({"draft_id": suggestion.draft.id, "remaining_undo_changes": draft_history.len()}),
                         ))
                     }
                     Ok(PipelineBuilderTool::ValidatePipeline) => {
@@ -6239,6 +6744,41 @@ impl LocalApplication {
                         );
                         validation = Some(report);
                         Ok(result)
+                    }
+                    Ok(PipelineBuilderTool::EstimatePipelineCost) => {
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a Draft before estimating it"))?;
+                        let image_count = call
+                            .arguments
+                            .get("image_count")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(1);
+                        let estimates = suggestion
+                            .draft
+                            .nodes
+                            .iter()
+                            .filter_map(|node| {
+                                node.model_profile_binding.as_ref().and_then(|binding| {
+                                    input
+                                        .model_profiles
+                                        .iter()
+                                        .find(|model| model.id == binding.model_profile_id)
+                                        .map(|model| {
+                                            json!({
+                                                "node_id": node.id,
+                                                "model_profile_id": model.id,
+                                                "revision": model.revision,
+                                                "estimate": estimate_model_profile_cost_for_counts(model, image_count, 0, 0),
+                                            })
+                                        })
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Estimated Pipeline cost from bound Model Profile pricing",
+                            json!({"image_count": image_count, "node_estimates": estimates, "model_request_sent": false}),
+                        ))
                     }
                     Ok(PipelineBuilderTool::DryRunPipeline) => {
                         let completed_dry_runs = session
@@ -6338,6 +6878,46 @@ impl LocalApplication {
                             json!({"sample_count": samples.len(), "limit": limit, "samples": samples}),
                         ))
                     }
+                    Ok(PipelineBuilderTool::InspectNodeStatistics) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting node statistics")
+                        })?;
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let results = report
+                            .samples
+                            .iter()
+                            .filter_map(|sample| {
+                                sample.nodes.iter().find(|node| node.node_id == node_id)
+                            })
+                            .collect::<Vec<_>>();
+                        if results.is_empty() {
+                            bail!("node {node_id:?} has no result in the latest Dry Run");
+                        }
+                        let total_latency_ms = results.iter().map(|node| node.latency_ms).sum::<u64>();
+                        let maximum_latency_ms = results
+                            .iter()
+                            .map(|node| node.latency_ms)
+                            .max()
+                            .unwrap_or_default();
+                        let mut statuses = BTreeMap::<String, usize>::new();
+                        for node in &results {
+                            *statuses.entry(node.status.clone()).or_default() += 1;
+                        }
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected aggregate statistics for {node_id}"),
+                            json!({
+                                "node_id": node_id,
+                                "sample_count": results.len(),
+                                "total_latency_ms": total_latency_ms,
+                                "average_latency_ms": total_latency_ms / u64::try_from(results.len()).unwrap_or(1),
+                                "maximum_latency_ms": maximum_latency_ms,
+                                "statuses": statuses,
+                                "issue_count": results.iter().map(|node| node.issues.len()).sum::<usize>(),
+                                "estimated_costs": results.iter().map(|node| node.estimated_cost.clone()).collect::<Vec<_>>(),
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::InspectNodeArtifacts) => {
                         let report = dry_run.as_ref().ok_or_else(|| {
                             anyhow!("run dry_run_pipeline before inspecting node results")
@@ -6385,6 +6965,7 @@ impl LocalApplication {
                         let suggestion = current
                             .as_mut()
                             .ok_or_else(|| anyhow!("create a Draft before submission"))?;
+                        let previous_draft = suggestion.draft.clone();
                         if let Some(name) = call.arguments.get("name").and_then(|value| value.as_str())
                             && !name.trim().is_empty()
                             && name.len() <= 160
@@ -6404,16 +6985,25 @@ impl LocalApplication {
                         suggestion.warnings.dedup();
                         suggestion.alternatives.dedup();
                         suggestion.draft.status = WorkflowDraftStatus::Suggested;
+                        draft_history.record_before_change(&previous_draft)?;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Draft is ready for explicit human approval",
                             json!({"draft_id": suggestion.draft.id, "published": false, "formal_run_started": false, "requires_human": true}),
                         ))
                     }
-                    Ok(other) => Err(anyhow!(
-                        "registered tool {:?} is unavailable in the current bounded live context",
-                        other.as_str()
-                    )),
+                    Ok(PipelineBuilderTool::FinishAgentSession) => {
+                        let suggestion = current.as_ref().ok_or_else(|| {
+                            anyhow!("create and submit a Draft before finishing the session")
+                        })?;
+                        if suggestion.draft.status != WorkflowDraftStatus::Suggested {
+                            bail!("submit_draft_for_human_approval must succeed before finish_agent_session");
+                        }
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Pipeline Builder session is ready to finish at human approval",
+                            json!({"draft_id": suggestion.draft.id, "requires_human": true}),
+                        ))
+                    }
                         Err(error) => Err(anyhow!(error)),
                     }
                 }
@@ -8971,6 +9561,256 @@ export:
   formats: [native, coco]
 ";
 
+    #[test]
+    fn pipeline_builder_catalog_is_exact_and_provider_context_is_credential_safe() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("builder-tools", GENERIC_BBOX_PROJECT)
+            .expect("Project");
+        let provider_id = annotagent_core::ProviderId::new();
+        let now = chrono::Utc::now();
+        application
+            .store
+            .save_provider_profile(&annotagent_core::ProviderProfile {
+                id: provider_id,
+                display_name: "Credential-safe fixture".to_owned(),
+                preset_id: None,
+                adapter: ProviderAdapterKind::OpenAiCompatible,
+                base_url: "https://provider.example/v1".parse().expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: Some(annotagent_core::CredentialReference {
+                    provider_id,
+                    source: annotagent_core::CredentialSource::EnvironmentVariable,
+                    locator: "ANNOTAGENT_SUPER_SECRET_FIXTURE".to_owned(),
+                }),
+                safe_headers: BTreeMap::new(),
+                connection_policy: annotagent_core::ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: annotagent_core::ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Configured,
+                    safe_message: Some("Configured".to_owned()),
+                    checked_at: None,
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("Provider Profile");
+        let settings = load_settings(None).expect("settings");
+        let input = application
+            .workflow_advisor_input_for_label(
+                "builder-tools",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("components"),
+                Some("component"),
+            )
+            .expect("Builder input");
+        let tools = pipeline_builder_live_tools(&input);
+        let names = tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(names.len(), 39);
+        assert_eq!(
+            names,
+            PipelineBuilderTool::ALL
+                .iter()
+                .map(|tool| tool.as_str())
+                .collect::<BTreeSet<_>>()
+        );
+        for forbidden in [
+            "publish_pipeline",
+            "start_full_dataset_run",
+            "set_api_key",
+            "create_provider",
+            "delete_provider",
+            "execute_shell",
+            "execute_python",
+            "download_model",
+            "open_arbitrary_url",
+        ] {
+            assert!(!names.contains(forbidden), "{forbidden}");
+        }
+        let encoded = serde_json::to_string(&input.provider_profiles).expect("safe Provider JSON");
+        assert!(encoded.contains("Credential-safe fixture"));
+        assert!(!encoded.contains("ANNOTAGENT_SUPER_SECRET_FIXTURE"));
+        assert!(!encoded.contains("credential_ref"));
+        assert!(!encoded.contains("locator"));
+    }
+
+    #[tokio::test]
+    async fn pipeline_builder_profile_binding_runtime_policy_and_undo_persist_real_draft() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("builder-mutations", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("Project");
+        let settings = load_settings(None).expect("settings");
+        let provider_id = annotagent_core::ProviderId::new();
+        let now = chrono::Utc::now();
+        application
+            .store
+            .save_provider_profile(&annotagent_core::ProviderProfile {
+                id: provider_id,
+                display_name: "Offline Builder Provider".to_owned(),
+                preset_id: Some("mock".to_owned()),
+                adapter: ProviderAdapterKind::Mock,
+                base_url: "https://mock.invalid/v1".parse().expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: annotagent_core::ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: annotagent_core::ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: Some("Offline fixture".to_owned()),
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("Provider Profile");
+        let model_profile = ModelProfile {
+            id: annotagent_core::ModelProfileId::new(),
+            revision: 1,
+            provider_id,
+            display_name: "Offline classifier".to_owned(),
+            remote_model_id: settings.provider.model.clone(),
+            input_modalities: BTreeSet::from([
+                annotagent_core::InputModality::Text,
+                annotagent_core::InputModality::Image,
+            ]),
+            protocol_features: annotagent_core::ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([ModelCapability::ImageClassification]),
+            capability_source: annotagent_core::CapabilityDeclarationSource::UserDeclared,
+            limits: annotagent_core::ModelLimits::default(),
+            generation_defaults: annotagent_core::GenerationDefaults::default(),
+            pricing: annotagent_core::ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store
+            .save_model_profile(&model_profile)
+            .expect("Model Profile");
+        let constraints = WorkflowConstraints::default();
+        let input = application
+            .workflow_advisor_input_for_label(
+                "builder-mutations",
+                &settings,
+                constraints.clone(),
+                Some("scene"),
+                Some("day"),
+            )
+            .expect("Builder input");
+        let safe = application
+            .suggest_label_pipeline_preview(
+                "builder-mutations",
+                &settings,
+                "scene",
+                "day",
+                &constraints,
+            )
+            .expect("safe Draft");
+        let scripted_step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                scripted_step("inspect_project", json!({})),
+                scripted_step("inspect_label", json!({})),
+                scripted_step("list_enabled_skills", json!({})),
+                scripted_step("list_node_definitions", json!({})),
+                scripted_step(
+                    "list_compatible_models",
+                    json!({"node_type": "capability.classify"}),
+                ),
+                scripted_step(
+                    "create_pipeline_draft",
+                    json!({"name": "Agent mutation fixture"}),
+                ),
+                scripted_step(
+                    "add_pipeline_node",
+                    json!({"node_type": "core.image_input", "node_id": "image", "configuration": {}}),
+                ),
+                scripted_step(
+                    "add_pipeline_node",
+                    json!({"node_type": "capability.classify", "node_id": "classifier", "configuration": {"labels": ["day", "night"]}}),
+                ),
+                scripted_step(
+                    "bind_model_profile",
+                    json!({"node_id": "classifier", "model_profile_id": model_profile.id, "locked": true}),
+                ),
+                scripted_step(
+                    "set_runtime_policy",
+                    json!({"policy_id": "retry", "configuration": {"maximum_attempts": 2}}),
+                ),
+                scripted_step("undo_last_draft_change", json!({})),
+            ],
+        });
+        let report = application
+            .run_workflow_advisor_with_provider(
+                "builder-mutations",
+                &settings,
+                &constraints,
+                Some(("scene", "day")),
+                input,
+                safe,
+                &provider,
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bounded Builder loop");
+        let suggestion = report.suggestion.expect("persisted Draft suggestion");
+        let persisted = application
+            .store
+            .get_workflow_draft(&suggestion.draft.id)
+            .expect("persisted Draft");
+        assert_eq!(persisted.name, "Agent mutation fixture");
+        assert_eq!(persisted.nodes.len(), 2);
+        assert!(
+            persisted.runtime_policies.is_empty(),
+            "undo restored Runtime Policy"
+        );
+        let classifier = persisted
+            .nodes
+            .iter()
+            .find(|node| node.id == "classifier")
+            .expect("classifier node");
+        assert_eq!(
+            classifier
+                .model_profile_binding
+                .as_ref()
+                .map(|binding| (binding.model_profile_id, binding.locked)),
+            Some((model_profile.id, true))
+        );
+        assert_eq!(classifier.model_binding.as_deref(), Some("default-vision"));
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("builder-mutations"))
+                .expect("published versions")
+                .is_empty()
+        );
+        assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
     const HIGH_REVIEW_BBOX_PROJECT: &str = r"
 version: 1
 project:
@@ -9846,6 +10686,7 @@ export:
             ],
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             label_pipeline: None,
             created_at: now,
@@ -10175,8 +11016,9 @@ export:
         assert!(tools.starts_with(&[
             "inspect_project",
             "list_enabled_skills",
-            "list_available_capabilities",
-            "list_available_models",
+            "list_node_definitions",
+            "list_provider_profiles",
+            "list_compatible_models",
             "list_pipeline_templates",
             "create_draft_from_template",
             "disconnect_pipeline_nodes",
@@ -10383,8 +11225,9 @@ export:
             vec![
                 "inspect_project",
                 "list_enabled_skills",
-                "list_available_capabilities",
-                "list_available_models",
+                "list_node_definitions",
+                "list_provider_profiles",
+                "list_compatible_models",
                 "list_pipeline_templates",
                 "create_draft_from_template",
                 "disconnect_pipeline_nodes",
@@ -10500,8 +11343,8 @@ export:
                 scripted_step("inspect_project", json!({}), Some("inspect Project")),
                 scripted_step("inspect_label", json!({}), Some("project_id")),
                 scripted_step("list_enabled_skills", json!({}), Some("declared")),
-                scripted_step("list_available_nodes", json!({}), Some("skill_ids")),
-                scripted_step("list_available_models", json!({}), Some("nodes")),
+                scripted_step("list_node_definitions", json!({}), Some("skill_ids")),
+                scripted_step("list_compatible_models", json!({}), Some("nodes")),
                 scripted_step("create_draft_from_template", json!({}), Some("models")),
                 scripted_step("validate_pipeline", json!({}), Some("draft_id")),
                 scripted_step(
@@ -10562,8 +11405,8 @@ export:
                 "inspect_project",
                 "inspect_label",
                 "list_enabled_skills",
-                "list_available_nodes",
-                "list_available_models",
+                "list_node_definitions",
+                "list_compatible_models",
                 "create_draft_from_template",
                 "validate_pipeline",
                 "dry_run_pipeline",
@@ -10631,8 +11474,8 @@ export:
                 scripted_step("inspect_project", json!({})),
                 scripted_step("inspect_label", json!({})),
                 scripted_step("list_enabled_skills", json!({})),
-                scripted_step("list_available_nodes", json!({})),
-                scripted_step("list_available_models", json!({})),
+                scripted_step("list_node_definitions", json!({})),
+                scripted_step("list_compatible_models", json!({})),
                 scripted_step("create_draft_from_template", json!({})),
                 scripted_step(
                     "disconnect_pipeline_nodes",
@@ -11295,7 +12138,7 @@ export:
                 Some("ball"),
             )
             .expect("Advisor input");
-        let tools = pipeline_builder_live_tools(&input, &ready);
+        let tools = pipeline_builder_live_tools(&input);
         assert!(tools.iter().any(|tool| tool.name == "load_skill_resource"));
         assert!(
             input

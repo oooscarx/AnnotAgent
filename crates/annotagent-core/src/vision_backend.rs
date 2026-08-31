@@ -959,6 +959,16 @@ impl NodeRegistry {
     }
 
     #[must_use]
+    pub fn definition(&self, id: &str) -> Option<&crate::NodeDefinition> {
+        self.definitions.get(id)
+    }
+
+    #[must_use]
+    pub fn runtime_policy(&self, id: &str) -> Option<&crate::RuntimePolicyDefinition> {
+        self.runtime_policies.get(id)
+    }
+
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<&VisionNodeDescriptor> {
         self.nodes.get(id)
     }

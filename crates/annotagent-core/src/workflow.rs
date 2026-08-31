@@ -182,6 +182,10 @@ pub struct WorkflowDraft {
     pub enabled_skills: BTreeMap<String, String>,
     #[serde(default)]
     pub resource_versions: BTreeMap<String, String>,
+    /// Cross-cutting execution behavior. Runtime Policies are intentionally stored outside the
+    /// graph so the Builder cannot disguise cache, retry, budget, or Run control as Nodes.
+    #[serde(default)]
+    pub runtime_policies: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub allow_unvalidated_commit: bool,
     /// Optional authoring projection for label-oriented workflows. Runtime execution remains the
@@ -226,6 +230,7 @@ impl WorkflowTemplate {
             edges: self.edges.clone(),
             enabled_skills,
             resource_versions: self.resource_versions.clone(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: self.allow_unvalidated_commit,
             label_pipeline: None,
             created_at: now,
@@ -312,6 +317,12 @@ pub struct WorkflowAdvisorInput {
     /// Cross-cutting behavior is configured separately and cannot be inserted into the graph.
     #[serde(default)]
     pub runtime_policies: Vec<crate::RuntimePolicyDefinition>,
+    /// Credential-safe Provider summaries available to the constrained Builder.
+    #[serde(default)]
+    pub provider_profiles: Vec<crate::PipelineBuilderProviderProfile>,
+    /// Model Profiles contain semantic configuration and pricing, never Provider credentials.
+    #[serde(default)]
+    pub model_profiles: Vec<crate::ModelProfile>,
     pub model_registry: Vec<VisionModelDescriptor>,
     pub validator_ids: Vec<String>,
     pub refiner_ids: Vec<String>,
@@ -539,6 +550,7 @@ impl WorkflowSnapshot {
             edges: &'a [WorkflowEdge],
             enabled_skills: &'a BTreeMap<String, String>,
             resource_versions: &'a BTreeMap<String, String>,
+            runtime_policies: &'a BTreeMap<String, serde_json::Value>,
             allow_unvalidated_commit: bool,
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
@@ -555,6 +567,7 @@ impl WorkflowSnapshot {
             edges: &draft.edges,
             enabled_skills: &self.enabled_skills,
             resource_versions: &draft.resource_versions,
+            runtime_policies: &draft.runtime_policies,
             allow_unvalidated_commit: draft.allow_unvalidated_commit,
             label_pipeline: &draft.label_pipeline,
             models: &self.models,
@@ -798,6 +811,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 edges,
                 enabled_skills: skill_versions,
                 resource_versions: BTreeMap::new(),
+                runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
                 label_pipeline: None,
                 created_at: now,
@@ -1190,6 +1204,7 @@ fn suggest_detection_workflow(
             edges,
             enabled_skills: project_schema.project.enabled_skill_versions(),
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             label_pipeline: None,
             created_at: now,
@@ -2196,6 +2211,7 @@ mod tests {
             edges,
             enabled_skills: BTreeMap::new(),
             resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             label_pipeline: None,
             created_at: now,
