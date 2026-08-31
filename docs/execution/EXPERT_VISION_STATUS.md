@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M5 — Existing expert-model migration (complete)
+M6 — Evidence-driven Pipeline Builder Agent (complete)
 
 ## Completed
 
@@ -84,22 +84,38 @@ M5 — Existing expert-model migration (complete)
   node identity and edges.
 - Kept grid-assisted VLM grounding as bounded preprocessing configuration and added no model-brand
   branch to Core, Runtime or the Web client.
+- Expanded the bounded Builder registry to 51 tools, including available-capability, Worker health,
+  model contract, Label Space, score/geometry semantics, capability-path, failure-class,
+  geometry-quality and Dry Run comparison inspection.
+- Added Worker-backed Expert Model Manifests to the credential-safe Advisor input and made
+  compatible-model results distinguish executable `Available` models from setup-only alternatives.
+- Allowed direct binding of an Expert Model only when its availability and Node capability match;
+  all other states fail closed with a structured unavailable-model error.
+- Replaced generic “VLM may be inaccurate” advice with enforced failure policy: Provider failure,
+  no candidate, semantic/domain risk, missing score and geometry error now lead to distinct actions.
+- Added an evidence-gated Prompted Segmentation revision that constructs the explicit
+  Detection→Prompt→Mask→BBox chain only for promptable candidates with observed geometry problems,
+  a complete conversion path and an Available model.
+- Added deterministic cases proving Provider failure, empty candidates and semantic/domain errors
+  do not trigger segmentation, while geometry correction evidence does.
+- Updated the RoboCup Advisor resource to express capability preferences and hard-negative policy
+  without selecting concrete model brands.
 
 ## In progress
 
-- None. M5 is ready for its independent local commit.
+- None. M6 is ready for its independent local commit.
 
 ## Next
 
-- M6: make Pipeline Builder decisions and revision policy consume availability, conversion paths,
-  failure classes and geometry-quality evidence.
+- M7: implement guided Expert Model onboarding, discovery, sample smoke evidence and accessible
+  setup/recommendation UI.
 
 ## Latest Rust tests
 
-- `cargo test --workspace --all-features`: PASS — 295 tests; zero failures; one opt-in billable
+- `cargo test --workspace --all-features`: PASS — 297 tests; zero failures; one opt-in billable
   smoke ignored.
-- `cargo fmt --all --check`: PASS after M5.
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M5.
+- `cargo fmt --all --check`: PASS after M6.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M6.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
@@ -135,11 +151,12 @@ M5 — Existing expert-model migration (complete)
 - M2: `561de50 feat(workers): add an extensible expert vision worker sdk`.
 - M3: `b98ceaa feat(workflow): compose expert models through typed artifact conversions`.
 - M4: `e8eb285 feat(evaluation): distinguish semantic, geometry and provider failures`.
-- M5 commit pending: `refactor(models): register existing vision backends through capabilities`.
+- M5: `07c0675 refactor(models): register existing vision backends through capabilities`.
+- M6 commit pending: `feat(agent): build evidence-driven expert vision pipelines`.
 
 ## Release-blocking remainder
 
-- M6–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
+- M7–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Live-conditional
 

@@ -580,6 +580,7 @@ pub enum PipelineBuilderTool {
     InspectLabel,
     SampleDataset,
     InspectSampleImage,
+    InspectExistingPipeline,
     InspectExistingAutomations,
     ListEnabledSkills,
     LoadSkillResource,
@@ -588,8 +589,15 @@ pub enum PipelineBuilderTool {
     FindArtifactConversionPath,
     ListPipelineTemplates,
     ListProviderProfiles,
+    ListAvailableCapabilities,
     ListCompatibleModels,
     InspectModelProfile,
+    InspectWorkerHealth,
+    InspectModelContracts,
+    InspectLabelSpace,
+    InspectScoreSemantics,
+    InspectGeometrySemantics,
+    CheckCapabilityPath,
     CheckProviderAvailability,
     EstimateModelCost,
     CreatePipelineDraft,
@@ -609,21 +617,25 @@ pub enum PipelineBuilderTool {
     EstimatePipelineCost,
     DryRunPipeline,
     InspectDryRunSummary,
+    InspectFailureClasses,
+    InspectGeometryQuality,
     InspectFailedSamples,
     InspectReviewSamples,
     InspectNodeStatistics,
     InspectNodeArtifacts,
+    CompareDryRuns,
     SubmitDraftForHumanApproval,
     FinishAgentSession,
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 51] = [
         Self::InspectProject,
         Self::InspectLabelSchema,
         Self::InspectLabel,
         Self::SampleDataset,
         Self::InspectSampleImage,
+        Self::InspectExistingPipeline,
         Self::InspectExistingAutomations,
         Self::ListEnabledSkills,
         Self::LoadSkillResource,
@@ -632,8 +644,15 @@ impl PipelineBuilderTool {
         Self::FindArtifactConversionPath,
         Self::ListPipelineTemplates,
         Self::ListProviderProfiles,
+        Self::ListAvailableCapabilities,
         Self::ListCompatibleModels,
         Self::InspectModelProfile,
+        Self::InspectWorkerHealth,
+        Self::InspectModelContracts,
+        Self::InspectLabelSpace,
+        Self::InspectScoreSemantics,
+        Self::InspectGeometrySemantics,
+        Self::CheckCapabilityPath,
         Self::CheckProviderAvailability,
         Self::EstimateModelCost,
         Self::CreatePipelineDraft,
@@ -653,10 +672,13 @@ impl PipelineBuilderTool {
         Self::EstimatePipelineCost,
         Self::DryRunPipeline,
         Self::InspectDryRunSummary,
+        Self::InspectFailureClasses,
+        Self::InspectGeometryQuality,
         Self::InspectFailedSamples,
         Self::InspectReviewSamples,
         Self::InspectNodeStatistics,
         Self::InspectNodeArtifacts,
+        Self::CompareDryRuns,
         Self::SubmitDraftForHumanApproval,
         Self::FinishAgentSession,
     ];
@@ -669,6 +691,7 @@ impl PipelineBuilderTool {
             Self::InspectLabel => "inspect_label",
             Self::SampleDataset => "sample_dataset",
             Self::InspectSampleImage => "inspect_sample_image",
+            Self::InspectExistingPipeline => "inspect_existing_pipeline",
             Self::InspectExistingAutomations => "inspect_existing_automations",
             Self::ListEnabledSkills => "list_enabled_skills",
             Self::LoadSkillResource => "load_skill_resource",
@@ -677,8 +700,15 @@ impl PipelineBuilderTool {
             Self::FindArtifactConversionPath => "find_artifact_conversion_path",
             Self::ListPipelineTemplates => "list_pipeline_templates",
             Self::ListProviderProfiles => "list_provider_profiles",
+            Self::ListAvailableCapabilities => "list_available_capabilities",
             Self::ListCompatibleModels => "list_compatible_models",
             Self::InspectModelProfile => "inspect_model_profile",
+            Self::InspectWorkerHealth => "inspect_worker_health",
+            Self::InspectModelContracts => "inspect_model_contracts",
+            Self::InspectLabelSpace => "inspect_label_space",
+            Self::InspectScoreSemantics => "inspect_score_semantics",
+            Self::InspectGeometrySemantics => "inspect_geometry_semantics",
+            Self::CheckCapabilityPath => "check_capability_path",
             Self::CheckProviderAvailability => "check_provider_availability",
             Self::EstimateModelCost => "estimate_model_cost",
             Self::CreatePipelineDraft => "create_pipeline_draft",
@@ -698,10 +728,13 @@ impl PipelineBuilderTool {
             Self::EstimatePipelineCost => "estimate_pipeline_cost",
             Self::DryRunPipeline => "dry_run_pipeline",
             Self::InspectDryRunSummary => "inspect_dry_run_summary",
+            Self::InspectFailureClasses => "inspect_failure_classes",
+            Self::InspectGeometryQuality => "inspect_geometry_quality",
             Self::InspectFailedSamples => "inspect_failed_samples",
             Self::InspectReviewSamples => "inspect_review_samples",
             Self::InspectNodeStatistics => "inspect_node_statistics",
             Self::InspectNodeArtifacts => "inspect_node_artifacts",
+            Self::CompareDryRuns => "compare_dry_runs",
             Self::SubmitDraftForHumanApproval => "submit_draft_for_human_approval",
             Self::FinishAgentSession => "finish_agent_session",
         }
@@ -735,6 +768,7 @@ impl PipelineBuilderTool {
             | Self::InspectLabel
             | Self::SampleDataset
             | Self::InspectSampleImage
+            | Self::InspectExistingPipeline
             | Self::InspectExistingAutomations => PipelineBuilderPermission::ReadProject,
             Self::ListEnabledSkills
             | Self::LoadSkillResource
@@ -743,8 +777,15 @@ impl PipelineBuilderTool {
             | Self::FindArtifactConversionPath
             | Self::ListPipelineTemplates
             | Self::ListProviderProfiles
+            | Self::ListAvailableCapabilities
             | Self::ListCompatibleModels
             | Self::InspectModelProfile
+            | Self::InspectWorkerHealth
+            | Self::InspectModelContracts
+            | Self::InspectLabelSpace
+            | Self::InspectScoreSemantics
+            | Self::InspectGeometrySemantics
+            | Self::CheckCapabilityPath
             | Self::EstimateModelCost => PipelineBuilderPermission::ReadRegistry,
             Self::CheckProviderAvailability => PipelineBuilderPermission::PassiveProviderCheck,
             Self::CreatePipelineDraft | Self::CreateDraftFromTemplate => {
@@ -765,10 +806,13 @@ impl PipelineBuilderTool {
             }
             Self::DryRunPipeline
             | Self::InspectDryRunSummary
+            | Self::InspectFailureClasses
+            | Self::InspectGeometryQuality
             | Self::InspectFailedSamples
             | Self::InspectReviewSamples
             | Self::InspectNodeStatistics
-            | Self::InspectNodeArtifacts => PipelineBuilderPermission::DryRunSandbox,
+            | Self::InspectNodeArtifacts
+            | Self::CompareDryRuns => PipelineBuilderPermission::DryRunSandbox,
             Self::SubmitDraftForHumanApproval | Self::FinishAgentSession => {
                 PipelineBuilderPermission::RequestHumanApproval
             }
@@ -1978,7 +2022,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 40);
+        assert_eq!(tools.len(), 51);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",

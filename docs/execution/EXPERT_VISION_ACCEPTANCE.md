@@ -38,7 +38,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   sources; focused Runtime test verifies the full lineage.
 - PASS — Existing editable `sam_prompted_refiner` Drafts migrate idempotently to the explicit
   public chain while preserving the original final node id and downstream edges.
-- PENDING — Builder availability/failure/no-candidate policy tests.
+- PASS — Builder policy tests prove Provider/Worker failure, no candidate and semantic/domain risk
+  cannot trigger prompted segmentation; missing availability returns a setup-only alternative.
 
 ## D — VLM geometry quality
 
@@ -47,16 +48,22 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - PASS — Detection score semantics preserve missing/unknown values without fabrication.
 - PASS — Geometry reports and Dry Run summaries expose geometry, human-adjustment and refiner
   metrics independently from score confidence.
-- PENDING — Evidence-driven refiner selection.
+- PASS — Evidence-driven refiner selection requires promptable candidates, structured geometry
+  evidence, an Available model and the complete registered conversion path.
 
 ## E — Advisor
 
-- PASS — Builder already has constrained Draft mutation, static validation, Dry Run and
-  human-approval boundaries.
-- PARTIAL — Compatible Model Profile filtering exists for provider-backed profiles.
-- PARTIAL — Builder now has `find_artifact_conversion_path`; Worker health/contracts/label-space/
-  score/geometry selection evidence remains M5–M7.
-- PENDING — Structured failure diagnosis and evidence-driven revision cases 1–8.
+- PASS — Builder has constrained Draft mutation, static validation, Dry Run and human-approval
+  boundaries; it cannot publish or start a formal Run.
+- PASS — Compatible model filtering covers Provider and Expert Worker profiles and applies only
+  `Available` models. Other lifecycle states are labeled as setup-only alternatives.
+- PASS — The 51-tool bounded registry exposes capability availability, Worker health, typed
+  contracts, Label Space, score/geometry semantics, conversion paths, failure classes, geometry
+  quality and Dry Run comparison.
+- PASS — Provider failure, no-candidate, semantic/domain and geometry cases are deterministic and
+  distinct; an evidence-backed geometry case compiles a valid Prompt→Mask→BBox Draft.
+- PARTIAL — Specialist-first, missing-score and open-vocabulary behavior has deterministic Registry
+  Advisor coverage; dedicated multi-turn Agent fixtures for every release scenario remain M8.
 
 ## F — Product
 
@@ -148,4 +155,18 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - Model migration tests prove additive loading for older Settings, common YOLO/RF-DETR DetectionSet
   contracts, SAM prompt/mask contracts and LocateAnything missing-score semantics.
 - Full Rust workspace: 295 passed, zero failed, one explicitly billable smoke ignored. Strict
+  workspace Clippy and Rustfmt pass.
+
+## M6 evidence
+
+- `pipeline_builder_rules_separate_geometry_from_provider_and_semantic_failures` covers Provider
+  failure, all-empty no-candidate, semantic/domain false positives, unavailable refinement and
+  supported geometry refinement.
+- `geometry_evidence_builds_a_typed_prompt_mask_bbox_revision` creates the generic three-node
+  refinement path, binds the available mock capability profile, and passes Rust static validation.
+- Live and deterministic Builder loops inspect structured failure and geometry data, keep setup-only
+  models out of Drafts, and still stop at explicit human approval.
+- The RoboCup Advisor resource names capability policy rather than a concrete backend preference;
+  white-footwear risk routes semantic verification before geometry refinement.
+- Full Rust workspace: 297 passed, zero failed, one explicitly billable smoke ignored. Strict
   workspace Clippy and Rustfmt pass.

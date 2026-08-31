@@ -619,6 +619,31 @@ fn default_provider_kind() -> String {
     "mock".to_owned()
 }
 
+const PIPELINE_BUILDER_SYSTEM_PROMPT: &str = "You are AnnotAgent's constrained Pipeline Builder. \
+Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
+and inspected evidence. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
+uncalibrated CoarseHypothesis even when confidence is high. Provider or Worker failure is infrastructure \
+evidence, never a reason to add prompted segmentation. NoCandidate has no box or point prompt, so do not \
+add prompted segmentation; consider Tile, zoom/crop search, an available open-vocabulary or specialist \
+detector, or Review. Semantic errors such as white footwear mistaken for a football require Crop \
+Classification, a Domain Validator, a second detector, Correction Memory, or Review; segmentation may \
+tighten the wrong object and is not the primary repair. Add Detection -> Box Prompt -> Prompted Segmentation \
+-> Mask to BBox only when a semantically plausible candidate exists, inspected geometry evidence is poor, \
+the conversion path is registered, and an Available prompted-segmentation Model Profile passes its \
+contracts. For small targets consider Resize or Tile -> Detection -> Merge before refinement. Prefer an \
+Available specialist whose fixed Label Space covers the target; otherwise an Available open-vocabulary \
+detector may cold-start. Missing scores remain missing and require evidence decision or Review, never a \
+fabricated confidence. Never bind unavailable, disabled, unconfigured, missing-weights, unreachable, \
+incompatible, invalid-contract, failed-smoke, or Unknown models. Setup-only models may appear only as \
+unapplied Alternatives with a setup action. Never invent a capability, score, health result, benchmark, \
+Validator, Refiner, model, or node. Inspect the Project, current Pipeline, enabled Skills, Node Definitions, \
+available capabilities, compatible models, model contracts, and relevant Skill resources before creating a \
+Draft. Modify only the persisted editable Draft through bounded tools. Validate with Rust, run a \
+non-committing Dry Run, inspect failure classes and geometry quality, revise only from that structured \
+evidence, then submit for explicit human approval. Never publish, start a formal Run, set credentials, \
+create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal \
+hidden reasoning. check_provider_availability is passive only and must not send a billable request.";
+
 fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefinition> {
     let node_definition_ids = input
         .node_catalog
@@ -712,6 +737,11 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             json!({"type":"object","additionalProperties":false,"required":["image_index"],"properties":{"image_index":{"type":"integer","minimum":0}}}),
         ),
         read(
+            PipelineBuilderTool::InspectExistingPipeline,
+            "Inspect the current editable and published Workflow summaries without changing them.",
+            no_arguments(),
+        ),
+        read(
             PipelineBuilderTool::InspectExistingAutomations,
             "Inspect the Project's published workflows and recent Run summaries without starting a Run.",
             no_arguments(),
@@ -760,14 +790,49 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             no_arguments(),
         ),
         read(
+            PipelineBuilderTool::ListAvailableCapabilities,
+            "List capabilities backed by Available models separately from setup-only alternatives.",
+            no_arguments(),
+        ),
+        read(
             PipelineBuilderTool::ListCompatibleModels,
-            "List enabled Model Profiles compatible with an optional Node Definition.",
+            "List available Provider and expert Worker models compatible with an optional Node Definition; setup-only alternatives are never applied.",
             json!({"type":"object","additionalProperties":false,"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
         ),
         read(
             PipelineBuilderTool::InspectModelProfile,
             "Inspect one revisioned Model Profile. Provider credentials are not part of this object.",
             json!({"type":"object","additionalProperties":false,"required":["model_profile_id"],"properties":{"model_profile_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectWorkerHealth,
+            "Inspect evidence-backed availability for one expert Worker model. No active probe is sent.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelContracts,
+            "Inspect typed inputs, outputs and prompt contracts for one Registry model.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectLabelSpace,
+            "Inspect the declared Label Space for one Registry model without inferring missing labels.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectScoreSemantics,
+            "Inspect score semantics for one Registry model; missing scores remain NotProvided.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectGeometrySemantics,
+            "Inspect geometry semantics independently from model confidence.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::CheckCapabilityPath,
+            "Check whether a public capability node has an Available compatible model and satisfiable typed contracts.",
+            json!({"type":"object","additionalProperties":false,"required":["node_type"],"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
         ),
         read(
             PipelineBuilderTool::CheckProviderAvailability,
@@ -791,8 +856,8 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         mutate(
             PipelineBuilderTool::AddPipelineNode,
-            "Add one public Node Definition to the current Draft.",
-            json!({"type":"object","additionalProperties":false,"required":["node_type"],"properties":{"node_type":{"type":"string","enum":node_definition_ids},"node_id":{"type":["string","null"],"maxLength":120},"configuration":{"type":"object"}}}),
+            "Add one public Node Definition, or apply one evidence-gated guided revision after inspecting a Dry Run.",
+            json!({"type":"object","additionalProperties":false,"properties":{"node_type":{"type":"string","enum":node_definition_ids},"guided_template":{"type":"string","enum":["crop_verification","prompted_segmentation_refinement"]},"node_id":{"type":["string","null"],"maxLength":120},"configuration":{"type":"object"}}}),
         ),
         mutate(
             PipelineBuilderTool::RemovePipelineNode,
@@ -906,6 +971,16 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             no_arguments(),
         ),
         read(
+            PipelineBuilderTool::InspectFailureClasses,
+            "Inspect structured failure classes from the latest Dry Run; infrastructure, no-candidate, semantic and geometry failures stay distinct.",
+            bounded_inspection_schema(),
+        ),
+        read(
+            PipelineBuilderTool::InspectGeometryQuality,
+            "Inspect aggregate and bounded per-candidate geometry quality from the latest Dry Run.",
+            bounded_inspection_schema(),
+        ),
+        read(
             PipelineBuilderTool::InspectFailedSamples,
             "Read at most five failed sample summaries. Image bytes and complete Artifacts are never returned.",
             bounded_inspection_schema(),
@@ -932,6 +1007,11 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
                     "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
                 }
             }),
+        ),
+        read(
+            PipelineBuilderTool::CompareDryRuns,
+            "Compare the latest Dry Run summary with a persisted Dry Run from another Draft in the same Project.",
+            json!({"type":"object","additionalProperties":false,"required":["other_draft_id"],"properties":{"other_draft_id":{"type":"string"}}}),
         ),
         mutate(
             PipelineBuilderTool::SubmitDraftForHumanApproval,
@@ -6369,6 +6449,7 @@ impl LocalApplication {
             runtime_policies: nodes.runtime_policies(),
             provider_profiles,
             model_profiles,
+            expert_models: models.expert_manifests(),
             model_registry: models.models(),
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
@@ -6576,6 +6657,17 @@ impl LocalApplication {
         }
         if !record(
             &mut session,
+            "inspect_existing_pipeline",
+            json!({}),
+            json!({
+                "draft_count": self.store.list_workflow_drafts(Some(project_id))?.len(),
+                "published_count": self.store.list_published_workflow_versions(Some(project_id))?.len(),
+            }),
+        ) {
+            return Ok(abort(session));
+        }
+        if !record(
+            &mut session,
             "list_enabled_skills",
             json!({}),
             json!({"enabled_skills": input.enabled_skills}),
@@ -6615,6 +6707,20 @@ impl LocalApplication {
             "list_provider_profiles",
             json!({}),
             json!({"providers": input.provider_profiles, "secrets_exposed": false}),
+        ) || !record(
+            &mut session,
+            "list_available_capabilities",
+            json!({}),
+            json!({
+                "available_expert_models": input.expert_models.iter()
+                    .filter(|model| model.availability == ModelAvailability::Available)
+                    .map(|model| json!({"model_id": model.model_id, "capabilities": model.capabilities}))
+                    .collect::<Vec<_>>(),
+                "setup_only_alternatives": input.expert_models.iter()
+                    .filter(|model| model.availability != ModelAvailability::Available)
+                    .map(|model| json!({"model_id": model.model_id, "availability": model.availability, "applied": false}))
+                    .collect::<Vec<_>>(),
+            }),
         ) || !record(
             &mut session,
             "list_compatible_models",
@@ -6760,6 +6866,23 @@ impl LocalApplication {
                 "summary": first_observation,
                 "review_rate": first_observation.review_rate(),
             }),
+        ) || !record(
+            &mut session,
+            "inspect_failure_classes",
+            json!({"limit": 3}),
+            json!({
+                "provider_failure_count": first_observation.provider_failure_count,
+                "worker_failure_count": first_observation.worker_failure_count,
+                "no_candidate_count": first_observation.no_candidate_count,
+                "semantic_review_count": first_observation.semantic_review_count,
+                "geometry_review_count": first_observation.geometry_review_count,
+                "domain_risk_count": first_observation.domain_risk_count,
+            }),
+        ) || !record(
+            &mut session,
+            "inspect_geometry_quality",
+            json!({"limit": 3}),
+            json!({"summary": first_observation.geometry_quality}),
         ) {
             return Ok(WorkflowAdvisorAgentReport {
                 session,
@@ -7209,7 +7332,7 @@ impl LocalApplication {
         let mut messages = vec![
             ModelMessage {
                 role: ModelRole::System,
-                content: "You are AnnotAgent's constrained Pipeline Builder. You may batch independent read-only tool calls, but call mutating tools in dependency order. Inspect the Project, public Node Definitions, credential-safe Provider summaries, and compatible Model Profiles before creating a Draft. Modify only the current persisted editable Draft through incremental tools; never replace its entire JSON. Once safe_default passes validation, do not add or rewire nodes before its initial Dry Run; revise only from inspected Dry Run evidence. Treat Dry Run provider/backend failures as unresolved warnings for human review: do not replace model nodes to work around infrastructure failures. Validate the Draft, run a non-committing sandbox Dry Run, inspect its summary, and promptly end at submit_draft_for_human_approval. check_provider_availability is passive only: never request an active or billable probe. Never publish, start a formal Run, set credentials, create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
+                content: PIPELINE_BUILDER_SYSTEM_PROMPT.to_owned(),
                 tool_call_id: None,
                 tool_calls: Vec::new(),
             },
@@ -7502,6 +7625,30 @@ impl LocalApplication {
                             }),
                         ))
                     }
+                    Ok(PipelineBuilderTool::InspectExistingPipeline) => {
+                        let drafts = self.store.list_workflow_drafts(Some(project_id))?;
+                        let published = self
+                            .store
+                            .list_published_workflow_versions(Some(project_id))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected existing Workflow state",
+                            json!({
+                                "drafts": drafts.iter().map(|draft| json!({
+                                    "id": draft.id,
+                                    "name": draft.name,
+                                    "status": draft.status,
+                                    "node_count": draft.nodes.len(),
+                                    "updated_at": draft.updated_at,
+                                })).collect::<Vec<_>>(),
+                                "published": published.iter().map(|version| json!({
+                                    "workflow_id": version.workflow_id,
+                                    "version": version.version,
+                                    "name": version.draft.name,
+                                    "node_count": version.draft.nodes.len(),
+                                })).collect::<Vec<_>>(),
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::InspectExistingAutomations) => {
                         let versions = self
                             .store
@@ -7624,6 +7771,43 @@ impl LocalApplication {
                             json!({"providers": input.provider_profiles, "secrets_exposed": false, "credential_locators_exposed": false}),
                         ),
                     ),
+                    Ok(PipelineBuilderTool::ListAvailableCapabilities) => {
+                        let mut available = BTreeMap::<ModelCapability, BTreeSet<String>>::new();
+                        for model in compatible_builder_models(&input, None) {
+                            for capability in &model.task_capabilities {
+                                available
+                                    .entry(*capability)
+                                    .or_default()
+                                    .insert(model.id.to_string());
+                            }
+                        }
+                        for model in &input.expert_models {
+                            if model.availability == ModelAvailability::Available {
+                                for capability in &model.capabilities {
+                                    available
+                                        .entry(*capability)
+                                        .or_default()
+                                        .insert(model.model_id.clone());
+                                }
+                            }
+                        }
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed evidence-backed available capabilities",
+                            json!({
+                                "available": available,
+                                "setup_only_alternatives": input.expert_models.iter()
+                                    .filter(|model| model.availability != ModelAvailability::Available)
+                                    .map(|model| json!({
+                                        "model_id": model.model_id,
+                                        "capabilities": model.capabilities,
+                                        "availability": model.availability,
+                                        "requires_setup": true,
+                                        "applied_to_draft": false,
+                                    }))
+                                    .collect::<Vec<_>>(),
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::ListCompatibleModels) => {
                         inspected_models = true;
                         let required_capability = call
@@ -7640,22 +7824,225 @@ impl LocalApplication {
                             })
                             .transpose()?
                             .flatten();
-                        let models = compatible_builder_models(&input, required_capability);
+                        let provider_models =
+                            compatible_builder_models(&input, required_capability);
+                        let expert_models = input
+                            .expert_models
+                            .iter()
+                            .filter(|model| {
+                                model.availability == ModelAvailability::Available
+                                    && required_capability.is_none_or(|capability| {
+                                        model.capabilities.contains(&capability)
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+                        let alternatives = input
+                            .expert_models
+                            .iter()
+                            .filter(|model| {
+                                model.availability != ModelAvailability::Available
+                                    && required_capability.is_none_or(|capability| {
+                                        model.capabilities.contains(&capability)
+                                    })
+                            })
+                            .map(|model| json!({
+                                "model_id": model.model_id,
+                                "display_name": model.display_name,
+                                "capabilities": model.capabilities,
+                                "availability": model.availability,
+                                "requires_setup": true,
+                                "applied_to_draft": false,
+                            }))
+                            .collect::<Vec<_>>();
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Listed compatible Model Profiles",
-                            json!({"models": models, "required_capability": required_capability}),
+                            json!({
+                                "models": provider_models,
+                                "expert_models": expert_models,
+                                "setup_only_alternatives": alternatives,
+                                "required_capability": required_capability,
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::InspectModelProfile) => {
                         let model_id = required_string_argument(&call.arguments, "model_profile_id")?;
-                        let model = input
+                        if let Some(model) = input
                             .model_profiles
                             .iter()
                             .find(|model| model.id.to_string() == model_id)
+                        {
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                format!("Inspected Model Profile {model_id}"),
+                                serde_json::to_value(model)?,
+                            ));
+                        }
+                        let model = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
                             .ok_or_else(|| anyhow!("Model Profile {model_id:?} is not registered"))?;
                         Ok(annotagent_core::AgentToolResult::summary(
-                            format!("Inspected Model Profile {model_id}"),
+                            format!("Inspected Expert Model Profile {model_id}"),
                             serde_json::to_value(model)?,
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectWorkerHealth) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let model = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                            .ok_or_else(|| anyhow!("Expert Model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Worker evidence for {model_id}"),
+                            json!({
+                                "model_id": model.model_id,
+                                "connection": model.connection,
+                                "availability": model.availability,
+                                "evidence": model.availability_evidence,
+                                "publishable": model.availability.publishable(),
+                                "active_probe_sent": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModelContracts) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        if let Some(model) = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                        {
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                format!("Inspected contracts for {model_id}"),
+                                json!({
+                                    "model_id": model.model_id,
+                                    "capabilities": model.capabilities,
+                                    "input_contracts": model.input_contracts,
+                                    "output_contracts": model.output_contracts,
+                                    "prompt_contracts": model.prompt_contracts,
+                                }),
+                            ));
+                        }
+                        let model = input
+                            .model_registry
+                            .iter()
+                            .find(|model| model.id == model_id)
+                            .ok_or_else(|| anyhow!("Registry Model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected contracts for {model_id}"),
+                            json!({
+                                "model_id": model.id,
+                                "capabilities": model.capabilities,
+                                "input_contract": model.input_contract,
+                                "output_contract": model.output_contract,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectLabelSpace) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let labels = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                            .and_then(|model| model.label_space.clone())
+                            .or_else(|| {
+                                input
+                                    .model_registry
+                                    .iter()
+                                    .find(|model| model.id == model_id)
+                                    .map(|model| model.output_contract.label_space.clone())
+                            })
+                            .ok_or_else(|| anyhow!("Registry Model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Label Space for {model_id}"),
+                            json!({"model_id": model_id, "labels": labels, "open_label_space": labels.is_empty()}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectScoreSemantics) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let semantics = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                            .map(|model| model.score_semantics)
+                            .or_else(|| {
+                                input
+                                    .model_registry
+                                    .iter()
+                                    .find(|model| model.id == model_id)
+                                    .map(|model| model.score_semantics)
+                            })
+                            .ok_or_else(|| anyhow!("Registry Model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected score semantics for {model_id}"),
+                            json!({"model_id": model_id, "score_semantics": semantics, "missing_score_must_remain_missing": semantics == ScoreSemantics::NotProvided}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectGeometrySemantics) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let semantics = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                            .map(|model| model.geometry_semantics)
+                            .or_else(|| {
+                                input
+                                    .model_registry
+                                    .iter()
+                                    .find(|model| model.id == model_id)
+                                    .map(|model| {
+                                        annotagent_core::default_geometry_semantics(
+                                            &model.capabilities,
+                                        )
+                                    })
+                            })
+                            .ok_or_else(|| anyhow!("Registry Model {model_id:?} is not registered"))?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected geometry semantics for {model_id}"),
+                            json!({"model_id": model_id, "geometry_semantics": semantics, "independent_from_score": true}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::CheckCapabilityPath) => {
+                        let node_type = required_string_argument(&call.arguments, "node_type")?;
+                        let definition = input
+                            .node_catalog
+                            .iter()
+                            .find(|definition| definition.id == node_type)
+                            .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))?;
+                        let provider_models = compatible_builder_models(
+                            &input,
+                            definition.required_model_capability,
+                        );
+                        let expert_models = input
+                            .expert_models
+                            .iter()
+                            .filter(|model| {
+                                model.availability == ModelAvailability::Available
+                                    && definition.required_model_capability.is_none_or(
+                                        |capability| model.capabilities.contains(&capability),
+                                    )
+                            })
+                            .collect::<Vec<_>>();
+                        let available = definition.required_model_capability.is_none()
+                            || !provider_models.is_empty()
+                            || !expert_models.is_empty();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            if available {
+                                "Capability path is available"
+                            } else {
+                                "Capability path requires model setup"
+                            },
+                            json!({
+                                "node": definition,
+                                "available": available,
+                                "provider_models": provider_models,
+                                "expert_models": expert_models,
+                                "setup_only_alternatives": input.expert_models.iter()
+                                    .filter(|model| model.availability != ModelAvailability::Available)
+                                    .filter(|model| definition.required_model_capability.is_none_or(|capability| model.capabilities.contains(&capability)))
+                                    .map(|model| json!({"model_id": model.model_id, "availability": model.availability, "requires_setup": true}))
+                                    .collect::<Vec<_>>(),
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::CheckProviderAvailability) => {
@@ -7915,6 +8302,112 @@ impl LocalApplication {
                             .arguments
                             .get("guided_template")
                             .and_then(serde_json::Value::as_str)
+                            == Some("prompted_segmentation_refinement")
+                        {
+                            let (task_id, label) = target.ok_or_else(|| {
+                                anyhow!("Geometry refinement requires a target Label session")
+                            })?;
+                            if !inspected_dry_run {
+                                bail!(
+                                    "inspect the latest Dry Run before considering geometry refinement"
+                                );
+                            }
+                            let report = dry_run.as_ref().ok_or_else(|| {
+                                anyhow!("run and inspect a Dry Run before geometry refinement")
+                            })?;
+                            let draft = current
+                                .as_ref()
+                                .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                            let observation = agent_dry_run_summary(report, &draft.draft);
+                            let segmenter = input.expert_models.iter().find(|model| {
+                                model.availability == ModelAvailability::Available
+                                    && model
+                                        .capabilities
+                                        .contains(&ModelCapability::PromptedSegmentation)
+                            });
+                            let paths = annotagent_core::ArtifactConversionRegistry::default()
+                                .find_conversion_path(
+                                    ArtifactKind::DetectionSet,
+                                    ArtifactKind::DetectionSet,
+                                    &nodes,
+                                );
+                            let path_available = paths.iter().any(|path| {
+                                path.steps
+                                    .iter()
+                                    .map(|step| step.node_id.as_str())
+                                    .collect::<Vec<_>>()
+                                    == vec![
+                                        annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS,
+                                        "capability.segment",
+                                        annotagent_runtime::CORE_MASK_TO_BBOX,
+                                    ]
+                            });
+                            let assessment = assess_prompted_segmentation_revision(
+                                &observation,
+                                segmenter.is_some(),
+                                path_available,
+                            );
+                            if !assessment.applicable {
+                                return Ok(annotagent_core::AgentToolResult::summary(
+                                    "Prompted segmentation was not applied",
+                                    json!({
+                                        "applied": false,
+                                        "assessment": assessment,
+                                        "setup_only_alternatives": input.expert_models.iter()
+                                            .filter(|model| model.capabilities.contains(&ModelCapability::PromptedSegmentation))
+                                            .filter(|model| model.availability != ModelAvailability::Available)
+                                            .map(|model| json!({
+                                                "model_id": model.model_id,
+                                                "availability": model.availability,
+                                                "requires_setup": true,
+                                            }))
+                                            .collect::<Vec<_>>(),
+                                    }),
+                                ));
+                            }
+                            let model_id = segmenter
+                                .expect("applicable assessment requires an available model")
+                                .model_id
+                                .clone();
+                            let suggestion = current
+                                .as_mut()
+                                .ok_or_else(|| anyhow!("create a Draft before revising it"))?;
+                            let previous_draft = suggestion.draft.clone();
+                            if !add_prompted_segmentation_revision(
+                                suggestion,
+                                task_id,
+                                label,
+                                &model_id,
+                                &observation,
+                            )? {
+                                bail!(
+                                    "Prompted segmentation refinement is not applicable or is already present"
+                                );
+                            }
+                            draft_history.record_before_change(&previous_draft)?;
+                            validation = None;
+                            dry_run = None;
+                            inspected_dry_run = false;
+                            self.store.save_workflow_draft(&suggestion.draft)?;
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                "Added evidence-backed prompted segmentation refinement",
+                                json!({
+                                    "draft_id": suggestion.draft.id,
+                                    "applied": true,
+                                    "model_id": model_id,
+                                    "assessment": assessment,
+                                    "nodes": [
+                                        annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS,
+                                        "capability.segment",
+                                        annotagent_runtime::CORE_MASK_TO_BBOX,
+                                    ],
+                                }),
+                            ));
+                        }
+                        if call
+                            .arguments
+                            .get("guided_template")
+                            .and_then(serde_json::Value::as_str)
                             == Some("crop_verification")
                         {
                             let (task_id, label) = target.ok_or_else(|| {
@@ -7966,6 +8459,39 @@ impl LocalApplication {
                             ));
                         }
                         let node_type = required_string_argument(&call.arguments, "node_type")?;
+                        if node_type == "capability.segment" {
+                            if !inspected_dry_run {
+                                bail!(
+                                    "inspect a Dry Run before adding prompted segmentation"
+                                );
+                            }
+                            let report = dry_run.as_ref().ok_or_else(|| {
+                                anyhow!("run a Dry Run before adding prompted segmentation")
+                            })?;
+                            let draft = current
+                                .as_ref()
+                                .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                            let observation = agent_dry_run_summary(report, &draft.draft);
+                            let assessment = assess_prompted_segmentation_revision(
+                                &observation,
+                                input.expert_models.iter().any(|model| {
+                                    model.availability == ModelAvailability::Available
+                                        && model
+                                            .capabilities
+                                            .contains(&ModelCapability::PromptedSegmentation)
+                                }),
+                                !annotagent_core::ArtifactConversionRegistry::default()
+                                    .find_conversion_path(
+                                        ArtifactKind::DetectionSet,
+                                        ArtifactKind::DetectionSet,
+                                        &nodes,
+                                    )
+                                    .is_empty(),
+                            );
+                            if !assessment.applicable {
+                                bail!("{}", assessment.explanation);
+                            }
+                        }
                         let definition = input
                             .node_catalog
                             .iter()
@@ -8115,8 +8641,14 @@ impl LocalApplication {
                         let model_profile = input
                             .model_profiles
                             .iter()
-                            .find(|model| model.id.to_string() == model_id)
-                            .ok_or_else(|| anyhow!("Model Profile {model_id:?} is not registered"))?;
+                            .find(|model| model.id.to_string() == model_id);
+                        let expert_model = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id);
+                        if model_profile.is_none() && expert_model.is_none() {
+                            bail!("Model Profile {model_id:?} is not registered");
+                        }
                         let locked = call
                             .arguments
                             .get("locked")
@@ -8126,36 +8658,78 @@ impl LocalApplication {
                             .as_mut()
                             .ok_or_else(|| anyhow!("create a Draft before binding a Model"))?;
                         let previous_draft = suggestion.draft.clone();
-                        PipelineDraftTools.bind_model_profile(
-                            &mut suggestion.draft,
-                            &node_id,
-                            model_profile,
-                            locked,
-                            &nodes,
-                        )?;
-                        let runtime_binding = input
-                            .model_registry
-                            .iter()
-                            .find(|model| {
-                                model.id == model_profile.remote_model_id
-                                    || model.model == model_profile.remote_model_id
-                            })
-                            .map(|model| model.id.clone());
-                        if let Some(node) = suggestion
-                            .draft
-                            .nodes
-                            .iter_mut()
-                            .find(|node| node.id == node_id)
-                        {
-                            node.model_binding.clone_from(&runtime_binding);
-                        }
-                        if let Some(runtime_binding) = runtime_binding {
+                        let revision = if let Some(model_profile) = model_profile {
+                            PipelineDraftTools.bind_model_profile(
+                                &mut suggestion.draft,
+                                &node_id,
+                                model_profile,
+                                locked,
+                                &nodes,
+                            )?;
+                            let runtime_binding = input
+                                .model_registry
+                                .iter()
+                                .find(|model| {
+                                    model.id == model_profile.remote_model_id
+                                        || model.model == model_profile.remote_model_id
+                                })
+                                .map(|model| model.id.clone());
+                            if let Some(node) = suggestion
+                                .draft
+                                .nodes
+                                .iter_mut()
+                                .find(|node| node.id == node_id)
+                            {
+                                node.model_binding.clone_from(&runtime_binding);
+                            }
+                            if let Some(runtime_binding) = runtime_binding {
+                                sync_label_step_model(
+                                    &mut suggestion.draft,
+                                    &node_id,
+                                    &runtime_binding,
+                                );
+                            }
+                            Some(model_profile.revision)
+                        } else {
+                            let expert_model = expert_model.expect("checked above");
+                            if expert_model.availability != ModelAvailability::Available {
+                                bail!(
+                                    "model_profile_unavailable: Expert Model {:?} is {:?}; setup-only alternatives cannot be applied to a Draft",
+                                    expert_model.model_id,
+                                    expert_model.availability
+                                );
+                            }
+                            let definition = suggestion
+                                .draft
+                                .nodes
+                                .iter()
+                                .find(|node| node.id == node_id)
+                                .and_then(|node| nodes.definition(&node.node_type))
+                                .ok_or_else(|| anyhow!("node {node_id:?} is not registered"))?;
+                            if let Some(capability) = definition.required_model_capability
+                                && !expert_model.capabilities.contains(&capability)
+                            {
+                                bail!(
+                                    "incompatible_model_capability: Expert Model {:?} does not support {:?}",
+                                    expert_model.model_id,
+                                    capability
+                                );
+                            }
+                            let node = suggestion
+                                .draft
+                                .nodes
+                                .iter_mut()
+                                .find(|node| node.id == node_id)
+                                .ok_or_else(|| anyhow!("node {node_id:?} is not in the Draft"))?;
+                            node.model_binding = Some(expert_model.model_id.clone());
+                            node.model_profile_binding = None;
                             sync_label_step_model(
                                 &mut suggestion.draft,
                                 &node_id,
-                                &runtime_binding,
+                                &expert_model.model_id,
                             );
-                        }
+                            None
+                        };
                         draft_history.record_before_change(&previous_draft)?;
                         validation = None;
                         dry_run = None;
@@ -8163,7 +8737,7 @@ impl LocalApplication {
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Bound Model Profile {model_id} to {node_id}"),
-                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "model_profile_id": model_id, "revision": model_profile.revision, "locked": locked}),
+                            json!({"draft_id": suggestion.draft.id, "node_id": node_id, "model_profile_id": model_id, "revision": revision, "locked": locked}),
                         ))
                     }
                     Ok(PipelineBuilderTool::SetRuntimePolicy) => {
@@ -8359,6 +8933,77 @@ impl LocalApplication {
                             }),
                         ))
                     }
+                    Ok(PipelineBuilderTool::InspectFailureClasses) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting failure classes")
+                        })?;
+                        let limit = bounded_inspection_limit(&call.arguments)?;
+                        let mut counts = BTreeMap::<AnnotationFailureClass, usize>::new();
+                        for failure_class in report
+                            .samples
+                            .iter()
+                            .flat_map(|sample| sample.failure_classes.iter().copied())
+                        {
+                            *counts.entry(failure_class).or_default() += 1;
+                        }
+                        let samples = report
+                            .samples
+                            .iter()
+                            .filter(|sample| !sample.failure_classes.is_empty())
+                            .take(limit)
+                            .map(|sample| json!({
+                                "image_index": sample.image_index,
+                                "failure_classes": sample.failure_classes,
+                                "candidate_produced": sample.result_count > 0,
+                            }))
+                            .collect::<Vec<_>>();
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected structured Dry Run failure classes",
+                            json!({
+                                "counts": counts,
+                                "samples": samples,
+                                "policy": {
+                                    "provider_failure_is_geometry_evidence": false,
+                                    "no_candidate_is_promptable": false,
+                                    "semantic_error_is_geometry_error": false,
+                                }
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectGeometryQuality) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting geometry quality")
+                        })?;
+                        let limit = bounded_inspection_limit(&call.arguments)?;
+                        let reports = report
+                            .samples
+                            .iter()
+                            .flat_map(|sample| {
+                                sample.outcomes.iter().filter_map(move |outcome| {
+                                    outcome.geometry_quality.as_ref().map(|quality| {
+                                        json!({
+                                            "image_index": sample.image_index,
+                                            "outcome_id": outcome.id,
+                                            "label": outcome.label,
+                                            "score": outcome.confidence,
+                                            "geometry": quality,
+                                        })
+                                    })
+                                })
+                            })
+                            .take(limit)
+                            .collect::<Vec<_>>();
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected Dry Run geometry evidence",
+                            json!({
+                                "summary": report.summary.geometry_quality,
+                                "reports": reports,
+                                "confidence_is_geometry_quality": false,
+                            }),
+                        ))
+                    }
                     Ok(
                         tool @ (PipelineBuilderTool::InspectFailedSamples
                         | PipelineBuilderTool::InspectReviewSamples),
@@ -8500,6 +9145,43 @@ impl LocalApplication {
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Inspected {} bounded result(s) for {node_id}", node_results.len()),
                             json!({"node_id": node_id, "result_count": node_results.len(), "limit": limit, "results": node_results}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::CompareDryRuns) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before comparing Dry Runs")
+                        })?;
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                        let other_id = required_string_argument(&call.arguments, "other_draft_id")?;
+                        let other_draft = self.store.get_workflow_draft(&other_id)?;
+                        if other_draft.project_id != project_id {
+                            bail!("Dry Run comparison requires Drafts from the same Project");
+                        }
+                        let other = self
+                            .store
+                            .get_workflow_sample_test(&other_id)?
+                            .ok_or_else(|| anyhow!("Draft {other_id:?} has no persisted Dry Run"))?;
+                        let current_summary = agent_dry_run_summary(report, &suggestion.draft);
+                        let other_summary =
+                            agent_dry_run_summary(&other.report, &other_draft);
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Compared latest Dry Run with {other_id}"),
+                            json!({
+                                "current_draft_id": suggestion.draft.id,
+                                "other_draft_id": other_id,
+                                "current": current_summary,
+                                "other": other_summary,
+                                "delta": {
+                                    "review_count": i64::from(current_summary.review_count) - i64::from(other_summary.review_count),
+                                    "geometry_review_count": i64::from(current_summary.geometry_review_count) - i64::from(other_summary.geometry_review_count),
+                                    "provider_failure_count": i64::from(current_summary.provider_failure_count) - i64::from(other_summary.provider_failure_count),
+                                    "refiner_success_count": i64::from(current_summary.refiner_success_count) - i64::from(other_summary.refiner_success_count),
+                                    "duration_ms": i128::from(current_summary.duration_ms) - i128::from(other_summary.duration_ms),
+                                }
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::SubmitDraftForHumanApproval) => {
@@ -11413,6 +12095,260 @@ fn add_crop_verification_revision(
     Ok(true)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PromptedSegmentationAssessment {
+    applicable: bool,
+    code: &'static str,
+    explanation: String,
+}
+
+fn assess_prompted_segmentation_revision(
+    evidence: &AgentDryRunSummary,
+    model_available: bool,
+    conversion_path_available: bool,
+) -> PromptedSegmentationAssessment {
+    if evidence.provider_failure_count > 0 || evidence.worker_failure_count > 0 {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "infrastructure_failure",
+            explanation: format!(
+                "Prompted segmentation was not added: the Dry Run recorded {} Provider and {} Worker failure(s), which did not produce geometry evidence.",
+                evidence.provider_failure_count, evidence.worker_failure_count
+            ),
+        };
+    }
+    if evidence.detection_count == 0 || evidence.no_candidate_count == evidence.image_count {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "no_promptable_candidate",
+            explanation: "Prompted segmentation was not added: no Detection candidate exists to convert into a box or point prompt.".to_owned(),
+        };
+    }
+    let geometry_evidence = evidence.geometry_review_count > 0
+        || evidence.geometry_quality.geometry_review_count > 0
+        || evidence.geometry_quality.inaccurate_bbox_reason_count > 0
+        || evidence.geometry_quality.human_adjustment_count > 0
+        || evidence
+            .geometry_quality
+            .mean_manual_center_shift
+            .is_some_and(|value| value > 0.02)
+        || evidence
+            .geometry_quality
+            .mean_manual_area_change
+            .is_some_and(|value| value.abs() > 0.10);
+    if !geometry_evidence {
+        let code = if evidence.semantic_review_count > 0 || evidence.domain_risk_count > 0 {
+            "semantic_or_domain_error"
+        } else {
+            "no_geometry_evidence"
+        };
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code,
+            explanation: if code == "semantic_or_domain_error" {
+                "Prompted segmentation was not added: the observed issue is semantic/domain risk, so Crop Classification, validation, a second detector, or Review is the appropriate primary repair.".to_owned()
+            } else {
+                "Prompted segmentation was not added: the Dry Run has candidates but no structured evidence that their geometry is inaccurate.".to_owned()
+            },
+        };
+    }
+    if !conversion_path_available {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "conversion_path_unavailable",
+            explanation: "Prompted segmentation was not added: the registered DetectionSet → BoxPromptSet → MaskSet → DetectionSet conversion path is incomplete.".to_owned(),
+        };
+    }
+    if !model_available {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "model_requires_setup",
+            explanation: "Prompted segmentation was not added: no Available prompted-segmentation Model Profile has completed setup, health, contract, and sample-conversion evidence.".to_owned(),
+        };
+    }
+    PromptedSegmentationAssessment {
+        applicable: true,
+        code: "geometry_refinement_supported",
+        explanation: format!(
+            "Prompted segmentation is supported by evidence: {} geometry Review(s), {} inaccurate-bbox reason(s), and {} human geometry adjustment(s) were observed with promptable candidates.",
+            evidence
+                .geometry_review_count
+                .max(evidence.geometry_quality.geometry_review_count),
+            evidence.geometry_quality.inaccurate_bbox_reason_count,
+            evidence.geometry_quality.human_adjustment_count
+        ),
+    }
+}
+
+fn add_prompted_segmentation_revision(
+    suggestion: &mut WorkflowSuggestion,
+    target_task_id: &str,
+    target_label: &str,
+    model_id: &str,
+    evidence: &AgentDryRunSummary,
+) -> Result<bool> {
+    let Some(mut composition) = suggestion.draft.label_pipeline.clone() else {
+        return Ok(false);
+    };
+    let Some(pipeline_index) = composition.label_pipelines.iter().position(|pipeline| {
+        pipeline.target_task_id.as_str() == target_task_id
+            && pipeline.target_label.as_str() == target_label
+    }) else {
+        return Ok(false);
+    };
+    let pipeline = &composition.label_pipelines[pipeline_index];
+    if pipeline
+        .steps
+        .iter()
+        .any(|step| step.node_type == "capability.segment")
+    {
+        return Ok(false);
+    }
+    let filter = pipeline
+        .steps
+        .iter()
+        .find(|step| step.node_type == annotagent_runtime::CORE_FILTER)
+        .cloned()
+        .ok_or_else(|| anyhow!("Geometry refinement requires a Select detections step"))?;
+    let gate = pipeline
+        .steps
+        .iter()
+        .find(|step| step.kind == WorkflowNodeKind::Gate)
+        .cloned()
+        .ok_or_else(|| anyhow!("Geometry refinement requires a Decision step"))?;
+    let prefix = format!("{target_task_id}.{target_label}.geometry_refine");
+    let prompts = PipelineStep {
+        id: format!("{prefix}.prompts"),
+        node_type: annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS.to_owned(),
+        kind: WorkflowNodeKind::Transform,
+        inputs: BTreeMap::from([(
+            "detections".to_owned(),
+            PipelineSource::Step {
+                step_id: filter.id.clone(),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+            },
+        )]),
+        outputs: BTreeMap::from([("prompts".to_owned(), ArtifactKind::BoxPromptSet)]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::from([("padding".to_owned(), json!(0.02))]),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let segment = PipelineStep {
+        id: format!("{prefix}.segment"),
+        node_type: "capability.segment".to_owned(),
+        kind: WorkflowNodeKind::VisionModel,
+        inputs: BTreeMap::from([
+            ("images".to_owned(), PipelineSource::Image),
+            (
+                "box_prompts".to_owned(),
+                PipelineSource::Step {
+                    step_id: prompts.id.clone(),
+                    port: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                },
+            ),
+        ]),
+        outputs: BTreeMap::from([("masks".to_owned(), ArtifactKind::MaskSet)]),
+        model_binding: Some(PipelineModelBinding {
+            model_id: model_id.to_owned(),
+            capability: VisionCapability::PromptedSegmentation,
+            configuration: BTreeMap::new(),
+        }),
+        skill_binding: None,
+        parameters: BTreeMap::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let mask_to_bbox = PipelineStep {
+        id: format!("{prefix}.mask_to_bbox"),
+        node_type: annotagent_runtime::CORE_MASK_TO_BBOX.to_owned(),
+        kind: WorkflowNodeKind::Transform,
+        inputs: BTreeMap::from([
+            (
+                "masks".to_owned(),
+                PipelineSource::Step {
+                    step_id: segment.id.clone(),
+                    port: "masks".to_owned(),
+                    artifact_type: ArtifactKind::MaskSet,
+                },
+            ),
+            (
+                "box_prompts".to_owned(),
+                PipelineSource::Step {
+                    step_id: prompts.id.clone(),
+                    port: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                },
+            ),
+        ]),
+        outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let mut revised_gate = gate;
+    for source in revised_gate.inputs.values_mut() {
+        if matches!(source, PipelineSource::Step { step_id, .. } if step_id == &filter.id) {
+            *source = PipelineSource::Step {
+                step_id: mask_to_bbox.id.clone(),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+            };
+        }
+    }
+    let revised_gate_id = revised_gate.id.clone();
+    let pipeline = &mut composition.label_pipelines[pipeline_index];
+    pipeline.steps = pipeline
+        .steps
+        .iter()
+        .filter(|step| step.id != revised_gate_id)
+        .cloned()
+        .chain([prompts, segment, mask_to_bbox, revised_gate])
+        .collect();
+
+    let old = suggestion.draft.clone();
+    let mut compiled = composition.compile_draft(
+        old.project_id.clone(),
+        old.name.clone(),
+        old.enabled_skills.clone(),
+        old.created_at,
+    );
+    compiled.id = old.id;
+    compiled.status = WorkflowDraftStatus::Editing;
+    compiled.resource_versions = old.resource_versions;
+    compiled.runtime_policies = old.runtime_policies;
+    compiled.allow_unvalidated_commit = old.allow_unvalidated_commit;
+    compiled.updated_at = chrono::Utc::now();
+    suggestion.draft = compiled;
+    suggestion.rationale.push(format!(
+        "Geometry evidence justified an explicit Detection → Box Prompt → Prompted Segmentation → Mask to BBox revision using available Model Profile {model_id}; {} geometry Review(s) and {} inaccurate-bbox reason(s) were observed.",
+        evidence.geometry_review_count.max(evidence.geometry_quality.geometry_review_count),
+        evidence.geometry_quality.inaccurate_bbox_reason_count,
+    ));
+    suggestion.warnings.push(
+        "Prompted segmentation refines existing candidate geometry only; it does not repair missing candidates, Provider failures, or semantic false positives."
+            .to_owned(),
+    );
+    Ok(true)
+}
+
 trait TerminalEvent {
     fn payload_terminal(&self) -> bool;
 }
@@ -11776,7 +12712,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 40);
+        assert_eq!(names.len(), 51);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -12146,6 +13082,156 @@ export:
         assert!(sam.output_contracts.iter().any(|contract| {
             contract.data_type == ContractDataType::Artifact(ArtifactKind::MaskSet)
         }));
+    }
+
+    #[test]
+    fn pipeline_builder_rules_separate_geometry_from_provider_and_semantic_failures() {
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("confidence is not geometry accuracy"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("NoCandidate has no box or point prompt"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("white footwear"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Missing scores remain missing"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("submit for explicit human approval"));
+
+        let geometry = AgentDryRunSummary {
+            image_count: 4,
+            successful_images: 4,
+            detection_count: 8,
+            geometry_review_count: 5,
+            geometry_quality: annotagent_core::GeometryQualitySummary {
+                total_candidates: 8,
+                coarse_geometry_count: 8,
+                geometry_review_count: 5,
+                human_adjustment_count: 5,
+                mean_manual_center_shift: Some(0.12),
+                mean_manual_area_change: Some(-0.41),
+                mean_refiner_iou: None,
+                inaccurate_bbox_reason_count: 5,
+            },
+            ..AgentDryRunSummary::default()
+        };
+        let supported = assess_prompted_segmentation_revision(&geometry, true, true);
+        assert!(supported.applicable);
+        assert_eq!(supported.code, "geometry_refinement_supported");
+
+        let provider_failure = assess_prompted_segmentation_revision(
+            &AgentDryRunSummary {
+                image_count: 4,
+                failed_images: 4,
+                provider_failure_count: 4,
+                ..AgentDryRunSummary::default()
+            },
+            true,
+            true,
+        );
+        assert!(!provider_failure.applicable);
+        assert_eq!(provider_failure.code, "infrastructure_failure");
+
+        let no_candidate = assess_prompted_segmentation_revision(
+            &AgentDryRunSummary {
+                image_count: 4,
+                no_candidate_count: 4,
+                ..AgentDryRunSummary::default()
+            },
+            true,
+            true,
+        );
+        assert!(!no_candidate.applicable);
+        assert_eq!(no_candidate.code, "no_promptable_candidate");
+
+        let semantic = assess_prompted_segmentation_revision(
+            &AgentDryRunSummary {
+                image_count: 4,
+                successful_images: 4,
+                detection_count: 4,
+                semantic_review_count: 3,
+                domain_risk_count: 3,
+                ..AgentDryRunSummary::default()
+            },
+            true,
+            true,
+        );
+        assert!(!semantic.applicable);
+        assert_eq!(semantic.code, "semantic_or_domain_error");
+
+        let unavailable = assess_prompted_segmentation_revision(&geometry, false, true);
+        assert!(!unavailable.applicable);
+        assert_eq!(unavailable.code, "model_requires_setup");
+    }
+
+    #[test]
+    fn geometry_evidence_builds_a_typed_prompt_mask_bbox_revision() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("geometry-builder", OBJECT_DETECTION_PROJECT)
+            .expect("Project");
+        let settings = load_settings(None).expect("Settings");
+        let mut suggestion = application
+            .suggest_label_pipeline_preview(
+                "geometry-builder",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe detection Draft");
+        let evidence = AgentDryRunSummary {
+            image_count: 3,
+            successful_images: 3,
+            detection_count: 6,
+            geometry_review_count: 4,
+            geometry_quality: annotagent_core::GeometryQualitySummary {
+                total_candidates: 6,
+                coarse_geometry_count: 6,
+                geometry_review_count: 4,
+                human_adjustment_count: 4,
+                mean_manual_center_shift: Some(0.08),
+                mean_manual_area_change: Some(-0.35),
+                mean_refiner_iou: None,
+                inaccurate_bbox_reason_count: 4,
+            },
+            ..AgentDryRunSummary::default()
+        };
+        assert!(
+            add_prompted_segmentation_revision(
+                &mut suggestion,
+                "objects",
+                "ball",
+                "mock-prompted-segmenter",
+                &evidence,
+            )
+            .expect("evidence-backed revision")
+        );
+        let node_types = suggestion
+            .draft
+            .nodes
+            .iter()
+            .map(|node| node.node_type.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(node_types.contains(annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS));
+        assert!(node_types.contains("capability.segment"));
+        assert!(node_types.contains(annotagent_runtime::CORE_MASK_TO_BBOX));
+        let segment = suggestion
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.node_type == "capability.segment")
+            .expect("segment node");
+        assert_eq!(
+            segment.model_binding.as_deref(),
+            Some("mock-prompted-segmenter")
+        );
+        let validation = application
+            .validate_workflow_draft(&suggestion.draft, &settings, false)
+            .expect("static validation");
+        assert!(validation.valid, "{:#?}", validation.issues);
+        assert!(
+            !suggestion
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.node_type.contains("sam"))
+        );
     }
 
     #[test]
@@ -13818,9 +14904,11 @@ export:
             .collect::<Vec<_>>();
         assert!(tools.starts_with(&[
             "inspect_project",
+            "inspect_existing_pipeline",
             "list_enabled_skills",
             "list_node_definitions",
             "list_provider_profiles",
+            "list_available_capabilities",
             "list_compatible_models",
             "list_pipeline_templates",
             "create_draft_from_template",
@@ -13830,6 +14918,8 @@ export:
             "validate_pipeline",
             "dry_run_pipeline",
             "inspect_dry_run_summary",
+            "inspect_failure_classes",
+            "inspect_geometry_quality",
             "submit_draft_for_human_approval",
         ]));
         assert!(report.session.steps.iter().all(|step| {
@@ -14027,9 +15117,11 @@ export:
                 .collect::<Vec<_>>(),
             vec![
                 "inspect_project",
+                "inspect_existing_pipeline",
                 "list_enabled_skills",
                 "list_node_definitions",
                 "list_provider_profiles",
+                "list_available_capabilities",
                 "list_compatible_models",
                 "list_pipeline_templates",
                 "create_draft_from_template",
@@ -14039,6 +15131,8 @@ export:
                 "validate_pipeline",
                 "dry_run_pipeline",
                 "inspect_dry_run_summary",
+                "inspect_failure_classes",
+                "inspect_geometry_quality",
                 "add_pipeline_node",
                 "validate_pipeline",
                 "dry_run_pipeline",

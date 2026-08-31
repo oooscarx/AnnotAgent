@@ -69,3 +69,10 @@ An HTTP endpoint and expected capability list are enough to construct an adapter
 Manifest contract, but not enough to report a model as `Available`. Default profiles without an
 immutable checkpoint identity report `MissingWeights`; a configured profile remains `Unknown`
 until discovery, health and explicit sample conversion produce the remaining evidence in M7.
+
+## D12 — Prompt policy is backed by executable Agent gates
+
+The system prompt explains VLM geometry limits and failure-specific actions, but Prompt text is not
+the sole control. The Builder receives typed availability/contracts/quality data; Expert Model
+binding rejects every state except `Available`; and the prompted-segmentation guided revision checks
+candidate, failure, geometry, conversion-path and model evidence before changing a Draft.

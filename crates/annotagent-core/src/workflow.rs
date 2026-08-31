@@ -323,6 +323,10 @@ pub struct WorkflowAdvisorInput {
     /// Model Profiles contain semantic configuration and pricing, never Provider credentials.
     #[serde(default)]
     pub model_profiles: Vec<crate::ModelProfile>,
+    /// Capability manifests for Worker-backed expert models. This is credential-free and includes
+    /// truthful setup/health evidence so the Builder can distinguish an adapter from availability.
+    #[serde(default)]
+    pub expert_models: Vec<crate::ExpertModelManifest>,
     pub model_registry: Vec<VisionModelDescriptor>,
     pub validator_ids: Vec<String>,
     pub refiner_ids: Vec<String>,

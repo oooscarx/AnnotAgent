@@ -681,7 +681,11 @@ mod tests {
             })
             .expect("Advisor resource");
         assert!(advisor[0].content.contains("smallest Pipeline"));
-        assert!(advisor[0].content.contains("never add an unavailable"));
+        assert!(
+            advisor[0]
+                .content
+                .contains("Never add an unavailable, Unknown, disabled")
+        );
         assert!(
             ball.resources(&SkillResourceRequest {
                 task_id: None,
