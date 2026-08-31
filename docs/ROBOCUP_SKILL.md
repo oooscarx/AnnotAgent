@@ -52,7 +52,9 @@ and exact-scope Correction Memory risks can force fallback or Crop verification;
 
 The Domain Skill registers one dependency-free foreground refiner. SAM is a Model Backend in Labs,
 not a RoboCup Skill action. A deployment may compose prompted Segmentation through HTTP Vision
-Protocol v1 after the Worker is explicitly configured and healthy; the default Agent never adds it.
+Protocol v1 after the Worker is explicitly configured, sample-tested and Available. The bounded
+Advisor adds the generic Prompt→Mask→BBox path only for observed geometry error; Provider failure,
+no candidate, white-shoe/semantic risk and missing availability do not trigger SAM.
 
 ## Ball hard negatives
 

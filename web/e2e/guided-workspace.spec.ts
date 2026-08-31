@@ -1055,44 +1055,23 @@ export:
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
 
-test("Models exposes truthful unavailable and timeout Worker states", async ({ page }) => {
-  const models = [
-    {
-      id: "locate-worker", provider: "http_vision", model: "locate-anything-v1", role: "open_vocabulary_detection",
-      scope: "workspace_worker", health_status: "unavailable", health_detail: "weights unavailable",
-      capabilities: ["open_vocabulary_detection"], score_semantics: "not_provided", model_version: "1",
-      endpoint: "http://127.0.0.1:8791", enabled: true, license_summary: "non-commercial research/evaluation",
-      architecture: "locateanything-3b", label_space: [], cost_per_request: "0",
-      availability_group: "configured_unavailable",
-    },
-    {
-      id: "rfdetr-worker", provider: "http_vision", model: "rfdetr-v1", role: "object_detection",
-      scope: "workspace_worker", health_status: "unknown", capabilities: ["object_detection"],
-      score_semantics: "relative_confidence", model_version: "1", endpoint: "http://127.0.0.1:8792",
-      enabled: true, license_summary: "checkpoint terms configured", architecture: "rfdetr-small",
-      checkpoint_sha256: "a".repeat(64), label_space: ["football"], cost_per_request: "0.001",
-      availability_group: "labs",
-    },
-  ];
-  await page.route("**/api/models", (route) => route.fulfill({ json: { models } }));
-  await page.route("**/api/models/locate-worker/test", (route) => route.fulfill({ json: {
-    model_id: "locate-anything-v1",
-    health: { status: "unavailable", detail: "weights unavailable" },
-    capabilities: { capabilities: ["open_vocabulary_detection"], score_semantics: "not_provided", supports_visual_prompt: false, supports_batch: false, label_space: [] },
-  } }));
-  await page.route("**/api/models/rfdetr-worker/test", (route) => route.fulfill({
-    status: 504,
-    contentType: "application/json",
-    body: JSON.stringify({ error: "Detection Worker request timed out after 120 seconds" }),
-  }));
-  await page.goto("/models");
-  await expect(page.getByText("Label space · football")).toBeVisible();
-  await expect(page.getByText("Checkpoint · aaaaaaaaaaaa…")).toBeVisible();
-  await page.locator("article", { hasText: "locate-worker" }).getByRole("button", { name: "Test connection" }).click();
-  await expect(page.getByRole("status")).toContainText("Live · unavailable");
-  await expect(page.getByRole("status")).toContainText("Confidence not provided");
-  await page.locator("article", { hasText: "rfdetr-worker" }).getByRole("button", { name: "Test connection" }).click();
-  await expect(page.getByRole("alert")).toContainText("request timed out");
+test("Vision Workers exposes truthful missing-weight and discovery-failure states", async ({ page }) => {
+  await page.goto("/settings/vision-workers");
+  const sam = page.locator("article", { hasText: "sam2.1-hiera-tiny" });
+  await expect(sam).toContainText("Availability · missing weights");
+  await expect(sam).toContainText("Expected contract · prompted_segmentation");
+  await expect(sam.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Add expert model" }).click();
+  const choose = page.getByRole("dialog", { name: "Choose an integration" });
+  await choose.getByRole("radio", { name: /Generic HTTP Worker/ }).check();
+  await choose.getByRole("button", { name: "Continue" }).click();
+  const connect = page.getByRole("dialog", { name: "Connect the Worker" });
+  await connect.getByLabel("Endpoint", { exact: true }).fill("http://127.0.0.1:65534");
+  await connect.getByRole("button", { name: "Save and discover" }).click();
+  const discovery = page.getByRole("dialog", { name: "Discover live capabilities" });
+  await expect(discovery).toContainText("Discovery stopped at health");
+  await expect(discovery).toContainText("unreachable");
 });
 
 test("Review behaves as a keyboard-operable decision inbox", async ({ page }) => {

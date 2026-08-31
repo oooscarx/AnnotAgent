@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-01 CST
 
+## Expert Vision SDK M8 — 2026-09-01
+
+- Closed the offline Expert Vision release matrix: capability-bound RoboCup Ball, specialist-first
+  execution, bounded open-vocabulary fallback, semantic-first hard-negative handling and
+  evidence-gated Prompt→Mask→BBox refinement all pass without model brands in Core.
+- Added a clearly labelled deterministic HTTP contract fixture and browser journeys for Generic,
+  SAM, YOLO, RF-DETR and LocateAnything registration. The full 34-test Chromium suite also keeps
+  Run, Review, Replay, Export, Provider Registry, responsive and Generic isolation paths green.
+- Added the required Geometry Quality, Expert Model Onboarding, YOLO, PIDNet and Grounding DINO
+  documentation and aligned the existing architecture, Agent, Guided Experience, RoboCup and
+  limitations documents.
+- `scripts/acceptance.sh` passes boundary/secret scans, 299 Rust tests, strict Clippy/Rustfmt,
+  all-feature build, Web typecheck/40 tests/build, doctor and four offline demos. Python SDK/SAM
+  tests pass 16/16. One billable Provider smoke is ignored by default.
+- Offline release status is `PASS`. Real external-model accuracy remains `LIVE-CONDITIONAL`; no
+  key, checkpoint, model download, push or remote mutation was used.
+
 ## Expert Vision SDK M7 — 2026-09-01
 
 - Added a guided, six-step Expert Model setup for SAM and other capability-compatible Workers:

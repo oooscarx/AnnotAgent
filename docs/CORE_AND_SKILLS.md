@@ -44,6 +44,11 @@ through `core.evidence_gate`. Candidate Clusters retain each model contribution 
 validation issues travel as upstream node metadata, and the Gate persists an explainable decision
 report. See [Detection Evidence](DETECTION_EVIDENCE.md).
 
+Expert model brands remain outside both Core nodes and Domain Skills. A versioned Manifest and the
+Worker SDK register capabilities, typed Artifact contracts and availability evidence. The generic
+Conversion Registry composes Detection → Box Prompt → Prompted Segmentation → Mask → Bounding Box
+without a SAM-specific Core branch.
+
 Model bindings belong to Projects and published Workflow snapshots. A Domain Skill can require or
 optionally use capabilities without naming a Backend. This lets three Label Pipelines reference one
 shared specialist node while a conditional Recovery node binds a separate open-vocabulary model.

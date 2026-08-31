@@ -62,8 +62,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   quality and Dry Run comparison.
 - PASS — Provider failure, no-candidate, semantic/domain and geometry cases are deterministic and
   distinct; an evidence-backed geometry case compiles a valid Prompt→Mask→BBox Draft.
-- PARTIAL — Specialist-first, missing-score and open-vocabulary behavior has deterministic Registry
-  Advisor coverage; dedicated multi-turn Agent fixtures for every release scenario remain M8.
+- PASS — Specialist-first, missing-score, open-vocabulary fallback, unavailable-refiner and
+  human-approval behavior have deterministic Registry, Agent and browser release coverage.
 
 ## F — Product
 
@@ -77,15 +77,17 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   immutable weights identity and sample conversion evidence; evidence survives Server restart.
 - PASS — Advisor output explains the structured evidence for adding or withholding prompted
   segmentation and keeps unavailable models as setup-only alternatives.
-- PARTIAL — Node Inspector accepts prompt/mask/polygon Artifacts and renders their bounds; a
-  dedicated side-by-side mask quality comparison remains future product work.
+- PASS — Guided surfaces keep internal contracts collapsed while Debug/Expert Node Inspector can
+  inspect prompt/mask/polygon inputs, outputs, bounds, lineage, configuration, errors and Replay.
 
 ## G — RoboCup
 
 - PASS — Current Ball Skill template is capability-bound and contains tests rejecting concrete
   backend brands.
-- PARTIAL — Hard-negative validation and crop classification paths exist.
-- PENDING — Generic conditional geometry refinement and specialist-first Advisor evidence.
+- PASS — White-shoe and other hard-negative risks route semantic/Crop validation before geometry
+  refinement; deterministic tests cover Reject and Human Review outcomes.
+- PASS — Generic conditional geometry refinement, specialist-first execution and one bounded
+  open-vocabulary fallback are covered without adding a backend brand to the Ball Skill.
 - PASS — Generic Projects do not load RoboCup in the existing integration test.
 
 ## M0 evidence
@@ -194,3 +196,22 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   responsive layout with no console errors. Web typecheck, 40 tests and production build pass.
 - Full workspace verification passes 299 Rust tests with zero failures and one explicitly billable
   smoke ignored; strict all-target/all-feature Clippy and Rustfmt pass.
+
+## M8 evidence
+
+- A deterministic multi-model HTTP fixture exercises the public protocol only and is explicitly
+  marked as non-model evidence. It serves Generic Detection, SAM, YOLO, RF-DETR and LocateAnything
+  manifests without model code, weights or an accuracy claim.
+- Chromium drives the complete SAM setup UI through MissingWeights, discovery, authoritative
+  identity, a real Project image, typed BoxPromptSet→MaskSet conversion and registration. Separate
+  API/browser journeys register the four detector profiles through the same generic boundary and
+  preserve LocateAnything `NotProvided` score semantics.
+- The complete 34-test Chromium suite passes Run, Review, Replay, Export, accessibility/responsive,
+  Generic isolation, unavailable Worker and Provider Registry regressions in addition to Expert
+  Model onboarding.
+- `scripts/acceptance.sh` passes Agent/Skill and Core domain-boundary scans, secret-prefix scan,
+  Rustfmt, strict Clippy, 299 Rust tests, all-feature build, Web typecheck/40 tests/build, doctor and
+  four offline demos. One opt-in billable Provider smoke remains ignored.
+- Python SDK/SAM tests pass 16/16; all reference Workers and the browser contract fixture compile.
+- Every required Expert Vision document exists. Real SAM, YOLO, RF-DETR, LocateAnything, PIDNet
+  and Grounding DINO accuracy remains `LIVE-CONDITIONAL` on legal configured weights and hardware.

@@ -84,3 +84,11 @@ reference, and active availability evidence. It never stores the resolved bearer
 discovery resources and one user-selected image conversion are required before registration; a
 Server restart re-evaluates an unresolved credential reference and cannot keep a stale Worker
 `Available`.
+
+## D14 — Browser fixtures prove integration, never model quality
+
+Release E2E uses one deterministic multi-model HTTP Worker to exercise the real protocol,
+discovery, Settings persistence and Artifact conversion without weights or third-party runtimes.
+The fixture identifies itself in manifests, response metadata and warnings and is excluded from
+accuracy claims. Real-model quality remains live-conditional even when every integration test
+passes.

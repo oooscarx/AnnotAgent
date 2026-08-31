@@ -38,6 +38,14 @@ The persisted Agent Session contains structured reason codes, selected model/cap
 timing, decision and stop condition. It does not store hidden chain-of-thought, query text, image
 bytes or raw Worker responses.
 
+## Evidence-driven expert model selection
+
+The Pipeline Builder inspects model availability, capability, typed contracts, conversion paths,
+failure class, geometry quality and bounded Dry Run comparison before changing a Draft. Provider
+failure, no candidate and semantic/domain risk cannot trigger prompted segmentation. A coarse-box
+geometry failure may add an Available promptable refiner, but the resulting Draft still requires
+static validation, Dry Run and explicit human approval.
+
 ## Real-provider hardening
 
 - The submit schema receives a dynamic enum of labels allowed by the current task.

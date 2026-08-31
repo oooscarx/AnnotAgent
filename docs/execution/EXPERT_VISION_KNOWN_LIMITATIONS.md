@@ -2,7 +2,7 @@
 
 Updated: 2026-09-01
 
-## Current limitations after M7
+## Current limitations after M8
 
 - Provider-backed `ModelProfile` records expose the shared Provider connection abstraction and
   Worker-backed profiles are represented by Expert Manifests in the existing Model Registry.

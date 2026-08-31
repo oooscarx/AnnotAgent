@@ -98,6 +98,11 @@ cargo run -p annotagent -- demo robocup-ball
 
 Manual: start the TUI or GUI, begin a run, use pause/resume/cancel, and inspect persisted `/api/runs/{id}/events`.
 
+Expert Vision extension evidence includes a model-brand-neutral Manifest, Python Worker SDK,
+health/capability/model/contract discovery, explicit Detection→Prompt→Mask→BBox Runtime execution,
+selected-image onboarding and evidence-driven Advisor revision. Deterministic fixtures are labelled
+as fixtures; real model accuracy without legal configured weights remains live-conditional.
+
 ## R5 — Context and history
 
 `ContextManager` loads current task resources, usage and allowed tools without hidden reasoning. SQLite persists run schema snapshot, events, calls, issues, annotations, revisions, review queue, corrections and usage. History JSON is versioned, redacted, conflict-remapped, and warns about missing images.

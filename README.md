@@ -72,6 +72,12 @@ Provider survives restarts without using the OS Keychain. Environment-variable, 
 native system credential references remain available. Worker health and capabilities are
 discovered live, and an unavailable Provider or Worker never blocks AnnotAgent startup.
 
+Expert Vision Workers are added through **Settings → Vision Workers**. Registration verifies
+health, protocol, typed contracts, immutable model/checkpoint identity and one selected-image
+Artifact conversion. SAM and other refiners are composed through Capabilities and typed Artifact
+conversions rather than model-branded Core nodes. See [Expert Model Onboarding](docs/EXPERT_MODEL_ONBOARDING.md)
+and [SAM Pipeline](docs/SAM_PIPELINE.md).
+
 ## 5. Skill
 
 A Skill contributes domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It does not own a Dataset or the application shell. Rust implementations are registered through `DomainSkill`; the generic canvas consumes stable `annotation-1` through `annotation-8` slots through a `SkillVisualProfile`.
@@ -84,8 +90,8 @@ attributes. Segmentation declares semantic, prompted, and instance-mask contract
 unavailable until a healthy compatible backend is configured.
 
 Mock, OpenAI-compatible VLM, YOLO, RF-DETR, LocateAnything, and SAM are Model Backends rather than
-top-level Skills. The optional local Workers live in Settings → Models under Experimental / Labs
-until explicitly configured and healthy. Pre-Lean Skill IDs remain hidden compatibility aliases so
+top-level Skills. The optional local Workers live in Settings → Vision Workers and remain
+unavailable until live discovery and a selected-image conversion pass. Pre-Lean Skill IDs remain hidden compatibility aliases so
 stored Projects and immutable versions can still be loaded. See
 [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md),
 [Object Detection](docs/OBJECT_DETECTION.md), [LocateAnything Backend](docs/LOCATE_ANYTHING_BACKEND.md),

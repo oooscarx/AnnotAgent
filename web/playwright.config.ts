@@ -28,11 +28,19 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } },
     },
   ],
-  webServer: {
-    command:
-      `cd .. && npm --prefix web run build && cargo run -p annotagent -- serve --workspace ${e2eWorkspace} --port 8791`,
-    url: "http://127.0.0.1:8791/api/health",
-    timeout: 120_000,
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: "python3 e2e/fixtures/expert_vision_worker.py",
+      url: "http://127.0.0.1:8796/health",
+      timeout: 30_000,
+      reuseExistingServer: true,
+    },
+    {
+      command:
+        `cd .. && npm --prefix web run build && cargo run -p annotagent -- serve --workspace ${e2eWorkspace} --port 8791`,
+      url: "http://127.0.0.1:8791/api/health",
+      timeout: 120_000,
+      reuseExistingServer: true,
+    },
+  ],
 });

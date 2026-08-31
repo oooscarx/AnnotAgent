@@ -53,6 +53,18 @@ detector keys unchanged; Replay preserves checkpointed ancestors and never persi
 
 SQLite provides local transactions and exportable audit history. Revision records append before/after snapshots. Money uses `rust_decimal::Decimal`. Run history stores Project and immutable Workflow snapshots, provider/model identity, node/task state, typed Artifacts, usage, annotations, validation, events, and checkpoint. Dataset Batches add a durable queue, leases, monotonic events, and exact consumed/reserved budget ledger.
 
+## Expert model boundary
+
+Provider models and Vision Workers share capability-driven selection but keep different connection
+lifecycles. An Expert Model Manifest declares identity, Capability, typed input/output and prompt
+contracts, score/geometry semantics, runtime/license facts and observed availability. Only complete
+health, protocol, contract, weights and selected-image conversion evidence makes a Worker
+publishable. Core owns neither model brands nor Worker process launch policy.
+
+Prompted geometry refinement is an explicit auditable chain:
+DetectionSet → BoxPromptSet → MaskSet → refined DetectionSet. Every conversion keeps parent/item
+references; Replay can resume from the refiner without rerunning an upstream detector.
+
 ## Frontends
 
 CLI, TUI, and HTTP use `LocalApplication`; none duplicates the agent loop. React renders product DTOs and sends review/control requests. The server owns validation, state transitions, correction records, exports, and settings validation.

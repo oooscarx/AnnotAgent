@@ -1084,3 +1084,29 @@ Persistent workspace Provider credentials status: `PASS`.
 7. Desktop and 480 × 760 Browser verification passes on the direct Vision Workers route with no
    console errors. Full verification passes 299 Rust tests, strict Clippy/Rustfmt, all 40 Web unit
    tests, the production build and 16 Python SDK/SAM tests; one billable smoke remains ignored.
+
+## Expert Vision SDK M8 — RoboCup and release closure — 2026-09-01
+
+1. The Release Matrix has no `PENDING` or `PARTIAL` item. Generic Projects stay independent of
+   RoboCup; the Ball Skill and its public template name capabilities rather than backend brands.
+2. Deterministic Rust/Agent coverage distinguishes Provider failure, no candidate, semantic/domain
+   risk, missing score and geometry error. Only the geometry case with a complete conversion path
+   and Available refiner produces Detection→Prompt→Mask→BBox Draft changes.
+3. Specialist-first and one bounded open-vocabulary fallback remain the RoboCup execution policy.
+   White-footwear risk uses semantic/Crop verification before geometry refinement and preserves
+   Human Review when evidence remains unresolved.
+4. The test-only multi-model HTTP fixture contains no model implementation or weights and labels
+   every response as fixture evidence. Chromium nevertheless exercises the real Server protocol,
+   Settings persistence and typed Artifact conversion for Generic, SAM, YOLO, RF-DETR and
+   LocateAnything registration.
+5. All 34 Chromium journeys pass, including MissingWeights/discovery failure, selected-image SAM
+   MaskSet conversion, model identity, Run, Review, Replay, Export, Provider Registry,
+   accessibility/responsive behavior and Generic isolation.
+6. `scripts/acceptance.sh` passes Agent/Skill and Core model/domain boundary scans, secret-prefix
+   scan, Rustfmt, strict Clippy, 299 Rust tests, all-feature build, Web typecheck/40 tests/build,
+   doctor and four offline demos. Python SDK/SAM tests pass 16/16 and all Worker files compile.
+7. All required documentation exists. Real SAM, YOLO, RF-DETR, LocateAnything, PIDNet and
+   Grounding DINO accuracy remains `LIVE-CONDITIONAL` on user-supplied legal weights, dependencies
+   and hardware. No credential, weight, download, push or remote change occurred.
+
+Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha offline release status: `PASS`.

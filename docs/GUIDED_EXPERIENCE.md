@@ -31,6 +31,12 @@ Technical capability is preserved through progressive disclosure:
 - Advanced Project Details retains schemas, bindings, versions, Skill configuration, records, and usage.
 - Settings owns Provider, Models, and Capabilities.
 
+Expert Vision setup lives in **Settings → Vision Workers**. Guided setup shows endpoint trust,
+discovery, model identity, selected-image conversion and the final registration checklist. Raw
+contracts remain under expandable details; unavailable presets are setup choices, not executable
+models. Run Results remain outcome-first while Debug/Expert retains the complete Prompt, Mask and
+refined-geometry Artifact chain plus Replay.
+
 For bounding-box Projects, New Project reads the Registry instead of asking for a free-text model
 name. A compatible enabled specialist produces `Use your trained detector first`; otherwise the
 cold-start recommendation is `Find objects by description` and explicitly says that no target-class

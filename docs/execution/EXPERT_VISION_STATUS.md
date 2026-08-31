@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M7 — Guided model setup and product flow (complete)
+M8 — RoboCup Workflow and Release (complete)
 
 ## Completed
 
@@ -119,22 +119,35 @@ M7 — Guided model setup and product flow (complete)
 - Live model/version/checkpoint/license discovery is authoritative: setup auto-fills missing
   identity, rejects conflicting local identity, and re-runs discovery immediately before the
   selected-image sample so stale evidence cannot register a different Worker.
+- Added a deterministic multi-model browser fixture that proves Generic, SAM, YOLO, RF-DETR and
+  LocateAnything discovery/contract/sample registration through the public protocol while
+  explicitly refusing any real-model accuracy claim.
+- Added complete SAM onboarding E2E from MissingWeights through selected-Project-image
+  BoxPromptSet→MaskSet conversion and registration; the full 34-journey suite keeps Generic,
+  Provider, Run, Review, Replay and Export paths green.
+- Closed the Release Matrix for RoboCup capability binding, semantic-first hard-negative handling,
+  specialist-first execution, bounded open-vocabulary fallback and conditional geometry
+  refinement. Generic Projects remain RoboCup-free.
+- Added all required backend, onboarding and geometry documentation and updated the existing
+  architecture, Agent, Guided Experience, RoboCup, limitation and course documents.
+- The repository acceptance script passes boundary/secret scans, all Rust/Web gates, doctor and
+  four offline demos. Python SDK/SAM tests pass 16/16 and every reference Worker parses.
 
 ## In progress
 
-- None. M7 is ready for its independent local commit.
+- None. The offline Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha is release-complete.
 
 ## Next
 
-- M8: run the complete offline release matrix, dedicated Agent/RoboCup scenarios, architecture and
-  secret scans, and final documentation closure.
+- Live-conditional validation only: run real external models after the user supplies legal model
+  weights, dependencies/hardware and any required credential references.
 
 ## Latest Rust tests
 
 - `cargo test --workspace --all-features`: PASS — 299 tests; zero failures; one opt-in billable
   smoke ignored.
-- `cargo fmt --all --check`: PASS after M7.
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M7.
+- `cargo fmt --all --check`: PASS after M8.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M8.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
@@ -153,7 +166,7 @@ M7 — Guided model setup and product flow (complete)
 
 - Existing Rust provider contract tests passed inside the workspace suite.
 - `python3 -m py_compile` for the HTTP, SAM, RF-DETR and LocateAnything reference workers: PASS.
-- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: PASS — 14 tests.
+- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: PASS — 16 tests.
 - Rust generic protocol fixture covers health/capabilities/models/contracts/warmup/infer and rejects
   duplicate/spoofed discovery identities.
 - Native SAM scaffold command plus SDK manifest parse smoke: PASS.
@@ -163,6 +176,9 @@ M7 — Guided model setup and product flow (complete)
 - PASS — Settings → Vision Workers lands on the editable Worker collection rather than Storage.
 - PASS — the six-step Expert Model wizard is readable at desktop width and 480 × 760, with no
   horizontal overflow or Browser console error.
+- PASS — all 34 Chromium journeys, including selected-image SAM conversion, Generic/YOLO/RF-DETR/
+  LocateAnything registration, unavailable Worker states, Run/Review/Replay/Export and responsive
+  accessibility regressions.
 
 ## Latest local commit
 
@@ -174,12 +190,12 @@ M7 — Guided model setup and product flow (complete)
 - M4: `e8eb285 feat(evaluation): distinguish semantic, geometry and provider failures`.
 - M5: `07c0675 refactor(models): register existing vision backends through capabilities`.
 - M6: `506bde6 feat(agent): build evidence-driven expert vision pipelines`.
-- M7: `feat(settings): guide expert vision model onboarding` (this milestone commit).
+- M7: `f523ad3 feat(settings): guide expert vision model onboarding`.
+- M8: `test(release): validate expert vision pipeline alpha` (this milestone commit).
 
 ## Release-blocking remainder
 
-- M8 and every non-live-conditional item that remains incomplete in
-  `EXPERT_VISION_ACCEPTANCE.md`.
+- None for the offline Alpha. `EXPERT_VISION_ACCEPTANCE.md` contains no pending or partial item.
 
 ## Live-conditional
 
@@ -195,12 +211,13 @@ M7 — Guided model setup and product flow (complete)
 
 | Backend | Adapter implemented | Worker implemented | Process/weights configured | Health/smoke | Registered execution path | Builder selectable |
 | --- | --- | --- | --- | --- | --- | --- |
-| SAM 2 | Yes: generic prompted-segmentation Pipeline adapter plus legacy refiner | SDK scaffold/reference adapter | No evidence | Not run; missing weights | Public Prompt→Mask→BBox path works with mock and any conforming healthy Worker | No until configured, healthy and sample-tested |
+| SAM 2 | Yes: generic prompted-segmentation Pipeline adapter plus legacy refiner | SDK scaffold/reference adapter | No real-weight evidence | Protocol fixture passes; real Worker missing weights | Public Prompt→Mask→BBox path works with mock and any conforming healthy Worker | No until configured, healthy and sample-tested |
 | YOLO | Yes: generic HTTP/Pipeline detection adapters | Reference HTTP worker supports explicit local Ultralytics weights | No evidence | Not run | Generic Object Detection and legacy YOLO Skill paths | Only configured/healthy generic profiles; preset is not available |
 | RF-DETR | Yes: detection Worker adapter | Yes: reference worker | No evidence | Not run; disabled/unavailable | Generic Object Detection | No until configured, healthy and tested |
 | LocateAnything | Yes: detection Worker adapter | Yes: reference worker | No evidence | Not run; disabled/unavailable | Generic Open Vocabulary/Phrase Grounding | No until configured, healthy and tested |
 | PIDNet | Generic semantic-segmentation adapter contract only | No tracked concrete worker | No | None | Generic segment catalog only | No |
 | Grounding DINO | Generic open-vocabulary adapter contract only | No tracked concrete worker | No | None | Generic detection contract only | No |
 
-The baseline deliberately does not convert “file exists” into “supported”. `Available` and Builder
-selection will be closed behind the complete M1–M3 manifest/contract and M7 sample-test gates.
+The release deliberately does not convert “file exists” into “supported”. `Available` and Builder
+selection are closed behind Manifest/contract, health, immutable identity and selected-image sample
+evidence. The deterministic browser fixture proves integration only, never model accuracy.
