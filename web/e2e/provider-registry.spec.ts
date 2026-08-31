@@ -129,6 +129,10 @@ test("Legacy compatibility configuration imports once without moving a secret or
 
   await page.goto("/settings/providers");
   if (!preview.already_applied) {
+    const legacyImport = page.locator(".legacy-registry-import");
+    await expect(legacyImport).not.toHaveAttribute("open", "");
+    await legacyImport.locator("summary").click();
+    await expect(legacyImport.getByText("Current Providers continue to work if you leave this untouched.")).toBeVisible();
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("credential value and historical Runs will not be moved");
       await dialog.accept();

@@ -4844,19 +4844,6 @@ function ProviderRegistryPage({
         </button>
       </div>
       {notice && <div className="positive-empty" role="status"><strong>{notice}</strong></div>}
-      {legacyImport && !legacyImport.already_applied && (
-        <div className="guided-callout legacy-registry-import">
-          <div>
-            <strong>Compatibility settings are ready to import</strong>
-            <p>
-              Create {legacyImport.provider_display_name}, {legacyImport.model_display_name}, and {legacyImport.project_binding_count} default Project binding{legacyImport.project_binding_count === 1 ? "" : "s"}. The existing credential stays as a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret Mock"} reference; no secret or Run history is moved.
-            </p>
-          </div>
-          <button disabled={Boolean(busy)} onClick={importLegacy}>
-            {busy === "legacy-import" ? "Importing…" : "Review and import"}
-          </button>
-        </div>
-      )}
       {adding && (
         <Panel title="New Provider" eyebrow="Connection profile">
           <div className="form-grid">
@@ -4883,6 +4870,28 @@ function ProviderRegistryPage({
         </div>
       ) : (
         <Empty title="No Providers configured" detail="Add Mock for offline work or connect an OpenAI-compatible API." />
+      )}
+      {legacyImport && !legacyImport.already_applied && (
+        <details className="legacy-registry-import">
+          <summary>
+            <span><strong>Legacy compatibility</strong><small>Optional import available from older workspace settings</small></span>
+            <b>Optional</b>
+          </summary>
+          <div className="legacy-registry-import-body">
+            <p>Import older compatibility settings into the Provider Registry. Current Providers continue to work if you leave this untouched.</p>
+            <dl>
+              <div><dt>Provider</dt><dd>{legacyImport.provider_display_name}</dd></div>
+              <div><dt>Model Profile</dt><dd>{legacyImport.model_display_name}</dd></div>
+              <div><dt>Project bindings</dt><dd>{legacyImport.project_binding_count}</dd></div>
+            </dl>
+            <div className="legacy-registry-import-footer">
+              <small>The credential remains a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret Mock"} reference. No secret or Run history is moved.</small>
+              <button disabled={Boolean(busy)} onClick={importLegacy}>
+                {busy === "legacy-import" ? "Importing…" : "Review and import"}
+              </button>
+            </div>
+          </div>
+        </details>
       )}
     </section>
   );
