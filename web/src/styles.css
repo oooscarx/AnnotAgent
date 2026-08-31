@@ -745,10 +745,24 @@ main { min-width: 0; padding-bottom: 48px; }
 .registry-safe-message { display: grid; gap: 4px; margin: 0; padding: 11px 12px; border-radius: var(--aa-radius-md); background: var(--aa-primary-soft); color: var(--aa-text-muted); font-size: 11px; line-height: 1.45; }
 .registry-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .registry-card-actions button { flex: 1 1 130px; }
-.registry-card-section { border-top: 1px solid var(--aa-border); padding-top: 12px; }
+.registry-card-section { min-width: 0; border-top: 1px solid var(--aa-border); padding-top: 12px; }
 .registry-card-section > summary, .registry-discovery > summary { cursor: pointer; color: var(--aa-text); font-size: 11px; font-weight: 750; }
+.registry-card-section > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; list-style: none; border-radius: var(--aa-radius-sm); }
+.registry-card-section > summary::-webkit-details-marker { display: none; }
+.registry-card-section > summary::after { content: "+"; display: grid; flex: 0 0 24px; width: 24px; height: 24px; place-items: center; border: 1px solid var(--aa-border); border-radius: 50%; color: var(--aa-text-muted); font-size: 15px; font-weight: 500; line-height: 1; }
+.registry-card-section[open] > summary { margin-bottom: 12px; }
+.registry-card-section[open] > summary::after { content: "−"; border-color: var(--aa-primary); background: var(--aa-primary-soft); color: var(--aa-primary); }
 .registry-card-section > p, .registry-discovery > p { color: var(--aa-text-muted); font-size: 11px; line-height: 1.5; }
 .registry-card-section .button-row select { min-width: 0; flex: 1 1 180px; }
+.credential-editor { display: grid; gap: 16px; min-width: 0; padding: 15px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.credential-field { display: grid; gap: 7px; min-width: 0; }
+.credential-field > label { color: var(--aa-text); font-size: 11px; font-weight: 750; letter-spacing: .01em; }
+.credential-field > input, .credential-field > select { min-width: 0; min-height: 44px; background: var(--aa-surface); }
+.credential-field-help { margin: 0; color: var(--aa-text-muted); font-size: 10px; font-weight: 450; letter-spacing: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.credential-field-help code { padding: 1px 4px; border-radius: 3px; background: var(--aa-surface); color: var(--aa-text); font-size: inherit; }
+.credential-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.credential-actions button { min-width: 0; }
+.credential-actions button:nth-child(n + 3) { grid-column: 1 / -1; }
 .registry-discovery { min-width: 0; padding: 12px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .discovered-model-list { display: grid; max-height: 190px; gap: 6px; overflow: auto; margin: 10px 0; }
 .discovered-model-list code, .registry-model-card > code { min-width: 0; overflow: hidden; padding: 7px 9px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); color: var(--aa-text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1095,6 +1109,9 @@ main { min-width: 0; padding-bottom: 48px; }
   .page-stack, .settings-grid, .registry-page { padding: 14px 12px; }
   .registry-facts { grid-template-columns: 1fr; }
   .registry-provider-card, .registry-model-card { padding: 15px; }
+  .credential-editor { padding: 13px; }
+  .credential-actions { grid-template-columns: 1fr; }
+  .credential-actions button:nth-child(n) { grid-column: auto; }
   .review-layout { gap: 10px; padding: 10px; }
   .review-progress-header { align-items: flex-start; padding: 11px; }
   .review-progress-header strong { font-size: 13px; }

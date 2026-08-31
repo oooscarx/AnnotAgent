@@ -223,8 +223,14 @@ test("Provider lifecycle is reference-safe and persistent credentials stay write
   await page.goto("/settings");
   const remoteCard = page.locator(".registry-provider-card").filter({ hasText: "Remote lifecycle fixture" });
   await remoteCard.getByText("Rotate or remove credential", { exact: true }).click();
-  await expect(remoteCard.getByLabel("Storage")).toHaveValue("workspace_file");
-  await expect(remoteCard.getByLabel("API key")).toBeVisible();
+  await expect(remoteCard.getByLabel("Storage", { exact: true })).toHaveValue("workspace_file");
+  await expect(remoteCard.getByLabel("API key", { exact: true })).toBeVisible();
+  await expect(remoteCard.getByText("For security, an existing key is never shown here.")).toBeVisible();
+  const credentialLayout = await remoteCard.locator(".credential-editor").evaluate((element) => ({
+    overflows: element.scrollWidth > element.clientWidth,
+    columns: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+  }));
+  expect(credentialLayout).toEqual({ overflows: false, columns: 1 });
 });
 
 test("Settings registry remains reachable without horizontal page overflow on a phone", async ({ page }) => {
@@ -232,10 +238,13 @@ test("Settings registry remains reachable without horizontal page overflow on a 
   await page.goto("/settings");
   expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(1024);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/settings/usage");
+  await page.goto("/settings");
   for (const section of ["Providers", "Models", "Vision Workers", "Storage", "Usage"]) {
     await expect(page.getByRole("button", { name: section, exact: true })).toBeVisible();
   }
+  const remoteCard = page.locator(".registry-provider-card").filter({ hasText: "Remote lifecycle fixture" });
+  await remoteCard.getByText("Rotate or remove credential", { exact: true }).click();
+  await expect(remoteCard.locator(".credential-actions")).toHaveCSS("grid-template-columns", /\d+px/);
   const widths = await page.evaluate(() => ({
     body: document.body.scrollWidth,
     viewport: window.innerWidth,

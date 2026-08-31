@@ -4956,6 +4956,14 @@ function ProviderRegistryCard({
     if (!window.confirm(`Delete ${provider.display_name}? Referenced Providers cannot be deleted.`)) return;
     run("delete", () => api.deleteProvider(provider.id), "Provider deleted.");
   };
+  const credentialFieldId = `provider-${provider.id}-credential`;
+  const credentialStorageHelp = credentialSource === "workspace_file"
+    ? "Encrypted transport is unchanged. The key is written to this Git-ignored workspace with owner-only file permissions and remains available after a restart."
+    : credentialSource === "environment_variable"
+      ? "Use the name of a variable that already exists in the server environment. The key itself is never copied into AnnotAgent."
+      : credentialSource === "session_only"
+        ? "The key stays in this server process and is cleared whenever the server stops."
+        : "The key is stored by the operating system credential service.";
   return (
     <article className="registry-provider-card">
       <header>
@@ -4987,11 +4995,28 @@ function ProviderRegistryCard({
       <details className="registry-card-section">
         <summary>{provider.credential_configured ? "Rotate or remove credential" : "Add credential"}</summary>
         {provider.adapter === "mock" ? <p>Mock runs offline and does not need a credential.</p> : <>
-          <div className="form-grid">
-            <label>Storage<select value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as typeof credentialSource)}><option value="workspace_file">Local workspace file</option><option value="environment_variable">Environment variable</option><option value="session_only">This server session only</option><option value="system_keyring">System credential store</option></select></label>
-            {credentialSource === "environment_variable" ? <label>Variable name<input value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="DASHSCOPE_API_KEY" /><small>Enter only a variable name already set before the server starts. Do not paste the API key here.</small></label> : <label>API key<input type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Written once; never returned" /><small>{credentialSource === "workspace_file" ? "Saved with owner-only permissions under this Git-ignored workspace; persists across restarts." : credentialSource === "session_only" ? "Stored only in this server process and cleared when it stops." : "Saved by the operating system credential store."}</small></label>}
+          <div className="credential-editor">
+            <div className="credential-field">
+              <label htmlFor={`${credentialFieldId}-storage`}>Storage</label>
+              <select id={`${credentialFieldId}-storage`} aria-describedby={`${credentialFieldId}-storage-help`} value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as typeof credentialSource)}>
+                <option value="workspace_file">Local workspace file</option>
+                <option value="environment_variable">Environment variable</option>
+                <option value="session_only">This server session only</option>
+                <option value="system_keyring">System credential store</option>
+              </select>
+              <p className="credential-field-help" id={`${credentialFieldId}-storage-help`}>{credentialStorageHelp}</p>
+            </div>
+            {credentialSource === "environment_variable" ? <div className="credential-field">
+              <label htmlFor={`${credentialFieldId}-variable`}>Variable name</label>
+              <input id={`${credentialFieldId}-variable`} aria-describedby={`${credentialFieldId}-variable-help`} value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="DASHSCOPE_API_KEY" />
+              <p className="credential-field-help" id={`${credentialFieldId}-variable-help`}>Enter only a variable name, such as <code>DASHSCOPE_API_KEY</code>. Do not paste the API key into this field.</p>
+            </div> : <div className="credential-field">
+              <label htmlFor={`${credentialFieldId}-secret`}>API key</label>
+              <input id={`${credentialFieldId}-secret`} aria-describedby={`${credentialFieldId}-secret-help`} type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={provider.credential_configured ? "Enter a replacement key" : "Paste API key"} />
+              <p className="credential-field-help" id={`${credentialFieldId}-secret-help`}>For security, an existing key is never shown here. Saving replaces the current key.</p>
+            </div>}
           </div>
-          <div className="button-row"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
+          <div className="credential-actions"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
         </>}
       </details>
       <details className="registry-card-section">
