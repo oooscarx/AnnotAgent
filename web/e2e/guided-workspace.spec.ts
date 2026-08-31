@@ -203,6 +203,14 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   await expect(page.locator(".guidance-hero h2")).toBeVisible();
   await expect(page.locator(".guidance-actions .primary")).toHaveCount(1);
   await expect(page.locator(".guidance-actions .primary")).toHaveText(/Test on samples|Activate automation/);
+  const guidanceActionLayout = await page.locator(".guidance-actions button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const bounds = button.getBoundingClientRect();
+      return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
+    }),
+  );
+  expect(new Set(guidanceActionLayout.map((button) => button.top)).size).toBe(1);
+  expect(new Set(guidanceActionLayout.map((button) => button.height)).size).toBe(1);
   const restoredAction = await page.locator(".guidance-actions .primary").textContent();
   await expect(page.locator(".journey-timeline li")).toHaveCount(8);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
