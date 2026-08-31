@@ -352,11 +352,43 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         .iter()
         .map(|node| node.id.clone())
         .collect::<Vec<_>>();
+    let mut template_ids = vec!["safe_default".to_owned()];
+    template_ids.extend(
+        input
+            .workflow_templates
+            .iter()
+            .filter(|template| {
+                template.nodes.iter().all(|node| {
+                    node_definition_ids
+                        .iter()
+                        .any(|node_type| node_type == &node.node_type)
+                })
+            })
+            .map(|template| template.id.clone()),
+    );
     let runtime_policy_ids = input
         .runtime_policies
         .iter()
         .map(|policy| policy.id.clone())
         .collect::<Vec<_>>();
+    let enabled_skill_ids = input.enabled_skills.clone();
+    let resource_ids = input.resource_ids.clone();
+    let enum_string_schema = |values: &[String]| {
+        if values.is_empty() {
+            json!({"type": "string"})
+        } else {
+            json!({"type": "string", "enum": values})
+        }
+    };
+    let load_resource_description = if resource_ids.is_empty() {
+        "Load one declared resource from an enabled Skill. This Project declares no Skill resources."
+            .to_owned()
+    } else {
+        format!(
+            "Load one declared resource from an enabled Skill. Use an exact resource_name from: {}.",
+            resource_ids.join(", ")
+        )
+    };
     let no_arguments = || {
         json!({
             "type": "object",
@@ -414,8 +446,8 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         read(
             PipelineBuilderTool::LoadSkillResource,
-            "Load one declared resource from an enabled Skill. Undeclared resources are rejected.",
-            json!({"type":"object","additionalProperties":false,"required":["skill_id","resource_name"],"properties":{"skill_id":{"type":"string"},"resource_name":{"type":"string"}}}),
+            &load_resource_description,
+            json!({"type":"object","additionalProperties":false,"required":["skill_id","resource_name"],"properties":{"skill_id":enum_string_schema(&enabled_skill_ids),"resource_name":enum_string_schema(&resource_ids)}}),
         ),
         read(
             PipelineBuilderTool::ListNodeDefinitions,
@@ -464,8 +496,8 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         mutate(
             PipelineBuilderTool::CreateDraftFromTemplate,
-            "Create a new editable Draft from the safe Registry template. Never publishes.",
-            json!({"type":"object","additionalProperties":false,"properties":{"template_id":{"type":["string","null"]}}}),
+            "Create a new editable Draft from safe_default or an exact compatible Registry template ID. Never publishes.",
+            json!({"type":"object","additionalProperties":false,"properties":{"template_id":{"type":"string","enum":template_ids}}}),
         ),
         mutate(
             PipelineBuilderTool::AddPipelineNode,
@@ -737,6 +769,10 @@ fn pipeline_builder_tool_error_code(message: &str) -> &'static str {
         "incompatible_model_capability"
     } else if message.contains("model_profile_unavailable:") {
         "model_profile_unavailable"
+    } else if message.contains("valid resource_name values")
+        || message.contains("valid skill_id values")
+    {
+        "invalid_declared_tool_value"
     } else {
         "tool_validation_failed"
     }
@@ -6563,7 +6599,7 @@ impl LocalApplication {
         let mut messages = vec![
             ModelMessage {
                 role: ModelRole::System,
-                content: "You are AnnotAgent's constrained Pipeline Builder. Call exactly one registered tool at a time. Inspect the Project, public Node Definitions, credential-safe Provider summaries, and compatible Model Profiles before creating a Draft. Modify only the current persisted editable Draft through incremental tools; never replace its entire JSON. Validate it, run a non-committing sandbox Dry Run, and end at submit_draft_for_human_approval. check_provider_availability is passive only: never request an active or billable probe. Never publish, start a formal Run, set credentials, create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
+                content: "You are AnnotAgent's constrained Pipeline Builder. You may batch independent read-only tool calls, but call mutating tools in dependency order. Inspect the Project, public Node Definitions, credential-safe Provider summaries, and compatible Model Profiles before creating a Draft. Modify only the current persisted editable Draft through incremental tools; never replace its entire JSON. Once safe_default passes validation, do not add or rewire nodes before its initial Dry Run; revise only from inspected Dry Run evidence. Treat Dry Run provider/backend failures as unresolved warnings for human review: do not replace model nodes to work around infrastructure failures. Validate the Draft, run a non-committing sandbox Dry Run, inspect its summary, and promptly end at submit_draft_for_human_approval. check_provider_availability is passive only: never request an active or billable probe. Never publish, start a formal Run, set credentials, create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal hidden reasoning. Use short tool arguments only.".to_owned(),
                 tool_call_id: None,
                 tool_calls: Vec::new(),
             },
@@ -6613,6 +6649,9 @@ impl LocalApplication {
             .find(|resource| resource.ends_with("advisor.md"))
             .cloned();
         let mut loaded_resources = BTreeSet::new();
+        let mut failed_tool_attempts = BTreeMap::<String, u32>::new();
+        let mut provider_turns = 0_u32;
+        let mut consecutive_no_tool_responses = 0_u32;
 
         while session.status == AgentSessionStatus::Running {
             if cancellation.is_cancelled() {
@@ -6620,6 +6659,10 @@ impl LocalApplication {
                 break;
             }
             if session.usage.steps >= session.budget.max_steps {
+                session.fail("maximum Pipeline Builder Tool Calls reached");
+                break;
+            }
+            if provider_turns >= builder_constraints.maximum_agent_turns {
                 session.fail("maximum Pipeline Builder turns reached");
                 break;
             }
@@ -6702,6 +6745,7 @@ impl LocalApplication {
             };
             let input_tokens = response.usage.input_tokens.unwrap_or_default();
             let output_tokens = response.usage.output_tokens.unwrap_or_default();
+            provider_turns = provider_turns.saturating_add(1);
             let retry_count = response
                 .provider_metadata
                 .get("retry_count")
@@ -6735,13 +6779,42 @@ impl LocalApplication {
                 break;
             }
             if response.tool_calls.is_empty() {
-                session.fail("Pipeline Builder provider returned no registered Tool Call");
-                break;
+                consecutive_no_tool_responses = consecutive_no_tool_responses.saturating_add(1);
+                messages.push(ModelMessage {
+                    role: ModelRole::Assistant,
+                    content: response.content.unwrap_or_default(),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                });
+                if consecutive_no_tool_responses >= 2 {
+                    session.fail(
+                        "Pipeline Builder provider returned no registered Tool Call twice in succession",
+                    );
+                    break;
+                }
+                let required_next_tool = if current.is_none() {
+                    "finish the required inspection, then call create_draft_from_template with template_id safe_default"
+                } else if !validation.as_ref().is_some_and(|report| report.valid) {
+                    "call validate_pipeline"
+                } else if dry_run.is_none() {
+                    "call dry_run_pipeline with one image index"
+                } else if !inspected_dry_run {
+                    "call inspect_dry_run_summary"
+                } else {
+                    "call submit_draft_for_human_approval"
+                };
+                messages.push(ModelMessage {
+                    role: ModelRole::User,
+                    content: format!(
+                        "Your previous response did not include a registered Tool Call. Do not explain or return prose; {required_next_tool}."
+                    ),
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                });
+                self.store.save_agent_session(&session)?;
+                continue;
             }
-            if response.tool_calls.len() != 1 {
-                session.fail("Pipeline Builder requires exactly one Tool Call per turn");
-                break;
-            }
+            consecutive_no_tool_responses = 0;
             messages.push(ModelMessage {
                 role: ModelRole::Assistant,
                 content: response.content.unwrap_or_default(),
@@ -6840,7 +6913,10 @@ impl LocalApplication {
                         inspected_skills = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Listed enabled Skills",
-                            json!({"skill_ids": input.enabled_skills}),
+                            json!({
+                                "skill_ids": input.enabled_skills,
+                                "declared_resource_ids": input.resource_ids,
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::LoadSkillResource) => {
@@ -6848,10 +6924,16 @@ impl LocalApplication {
                         let resource_id =
                             required_string_argument(&call.arguments, "resource_name")?;
                         if !input.enabled_skills.contains(&skill_id) {
-                            bail!("Skill {skill_id:?} is not enabled by this Project");
+                            bail!(
+                                "Skill {skill_id:?} is not enabled by this Project; valid skill_id values are: {}",
+                                input.enabled_skills.join(", ")
+                            );
                         }
                         if !input.resource_ids.contains(&resource_id) {
-                            bail!("Skill resource {resource_id:?} is not declared for this Project");
+                            bail!(
+                                "Skill resource {resource_id:?} is not declared for this Project; valid resource_name values are: {}",
+                                input.resource_ids.join(", ")
+                            );
                         }
                         let (_, resource_name, resources) = load_enabled_skill_resource(
                             &self.skills,
@@ -6977,7 +7059,31 @@ impl LocalApplication {
                     Ok(PipelineBuilderTool::ListPipelineTemplates) => Ok(
                         annotagent_core::AgentToolResult::summary(
                             "Listed compatible Pipeline templates",
-                            json!({"templates": input.workflow_templates.iter().map(|template| json!({"id": template.id, "name": template.name, "description": template.description})).collect::<Vec<_>>(), "safe_default_available": true}),
+                            json!({
+                                "templates": std::iter::once(json!({
+                                    "id": "safe_default",
+                                    "name": safe_suggestion.draft.name,
+                                    "description": "Core-generated controlled Label Pipeline, statically type-checked before this Agent session.",
+                                    "node_count": safe_suggestion.draft.nodes.len(),
+                                }))
+                                .chain(input.workflow_templates.iter().filter(|template| {
+                                    template.nodes.iter().all(|node| {
+                                        input.node_catalog.iter().any(|definition| definition.id == node.node_type)
+                                    })
+                                }).map(|template| json!({
+                                    "id": template.id,
+                                    "name": template.name,
+                                    "description": template.description,
+                                    "node_count": template.nodes.len(),
+                                })))
+                                .collect::<Vec<_>>(),
+                                "safe_default_available": true,
+                                "incompatible_templates_hidden": input.workflow_templates.iter().filter(|template| {
+                                    template.nodes.iter().any(|node| {
+                                        !input.node_catalog.iter().any(|definition| definition.id == node.node_type)
+                                    })
+                                }).count(),
+                            }),
                         ),
                     ),
                     Ok(
@@ -6996,7 +7102,10 @@ impl LocalApplication {
                             .as_ref()
                             .is_some_and(|resource| !loaded_resources.contains(resource))
                         {
-                            bail!("load the enabled Domain Advisor resource before creating a Draft");
+                            bail!(
+                                "load the enabled Domain Advisor resource {:?} before creating a Draft",
+                                required_advisor_resource.as_deref().unwrap_or_default()
+                            );
                         }
                         let mut created = safe_suggestion.clone();
                         if tool == PipelineBuilderTool::CreateDraftFromTemplate
@@ -7004,13 +7113,23 @@ impl LocalApplication {
                                 .arguments
                                 .get("template_id")
                                 .and_then(serde_json::Value::as_str)
+                            && template_id != "safe_default"
                         {
                             if !input
                                 .workflow_templates
                                 .iter()
-                                .any(|template| template.id == template_id)
+                                .any(|template| {
+                                    template.id == template_id
+                                        && template.nodes.iter().all(|node| {
+                                            input.node_catalog.iter().any(|definition| {
+                                                definition.id == node.node_type
+                                            })
+                                        })
+                                })
                             {
-                                bail!("workflow template {template_id:?} is not registered for this Project");
+                                bail!(
+                                    "workflow template {template_id:?} is not Pipeline Builder compatible; use safe_default or an exact ID returned by list_pipeline_templates"
+                                );
                             }
                             created.draft = self.create_workflow_draft_with_template(
                                 project_id,
@@ -7087,6 +7206,63 @@ impl LocalApplication {
                         let suggestion = current
                             .as_mut()
                             .ok_or_else(|| anyhow!("create a Draft before editing connections"))?;
+                        let source = suggestion
+                            .draft
+                            .nodes
+                            .iter()
+                            .find(|node| node.id == edge.from_node)
+                            .ok_or_else(|| anyhow!("connection source is not a Draft node"))?;
+                        let target_node = suggestion
+                            .draft
+                            .nodes
+                            .iter()
+                            .find(|node| node.id == edge.to_node)
+                            .ok_or_else(|| anyhow!("connection target is not a Draft node"))?;
+                        let source_port = source
+                            .outputs
+                            .iter()
+                            .find(|port| port.id == edge.from_port)
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "connection source port {:?} is not registered; valid outputs on {:?}: {}",
+                                    edge.from_port,
+                                    edge.from_node,
+                                    source
+                                        .outputs
+                                        .iter()
+                                        .map(|port| format!("{}:{:?}", port.id, port.artifact_type))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            })?;
+                        let target_port = target_node
+                            .inputs
+                            .iter()
+                            .find(|port| port.id == edge.to_port)
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "connection target port {:?} is not registered; valid inputs on {:?}: {}",
+                                    edge.to_port,
+                                    edge.to_node,
+                                    target_node
+                                        .inputs
+                                        .iter()
+                                        .map(|port| format!("{}:{:?}", port.id, port.artifact_type))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            })?;
+                        if source_port.artifact_type != target_port.artifact_type {
+                            bail!(
+                                "connection Artifact types do not match: {:?}.{} is {:?}, but {:?}.{} requires {:?}",
+                                edge.from_node,
+                                edge.from_port,
+                                source_port.artifact_type,
+                                edge.to_node,
+                                edge.to_port,
+                                target_port.artifact_type
+                            );
+                        }
                         let previous_draft = suggestion.draft.clone();
                         PipelineDraftTools.connect(&mut suggestion.draft, edge.clone())?;
                         draft_history.record_before_change(&previous_draft)?;
@@ -7438,7 +7614,13 @@ impl LocalApplication {
                             } else {
                                 "Draft has blocking validation issues"
                             },
-                            json!({"valid": report.valid, "issues": report.issues, "execution_order": report.execution_order}),
+                            json!({
+                                "valid": report.valid,
+                                "issues": report.issues,
+                                "execution_order": report.execution_order,
+                                "next_required_tool": if report.valid { "dry_run_pipeline" } else { "repair_the_reported_issues_then_validate_pipeline" },
+                                "add_or_rewire_before_initial_dry_run": false,
+                            }),
                         );
                         validation = Some(report);
                         Ok(result)
@@ -7528,7 +7710,18 @@ impl LocalApplication {
                         inspected_dry_run = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Inspected Dry Run quality, cost, and latency",
-                            json!({"summary": observation, "review_rate": observation.review_rate()}),
+                            json!({
+                                "summary": observation,
+                                "review_rate": observation.review_rate(),
+                                "next_required_tool": "submit_draft_for_human_approval",
+                                "submission_guidance": if observation.failed_images > 0 {
+                                    "Include the Dry Run provider/backend failures as unresolved warnings. Do not replace or rewire model nodes to work around infrastructure failures."
+                                } else {
+                                    "Submit the validated, Dry Run tested Draft for explicit human approval."
+                                },
+                                "published": false,
+                                "formal_run_started": false,
+                            }),
                         ))
                     }
                     Ok(
@@ -7573,7 +7766,12 @@ impl LocalApplication {
                         inspected_dry_run = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Inspected {} bounded sample(s)", samples.len()),
-                            json!({"sample_count": samples.len(), "limit": limit, "samples": samples}),
+                            json!({
+                                "sample_count": samples.len(),
+                                "limit": limit,
+                                "samples": samples,
+                                "next_required_tool": "inspect_dry_run_summary",
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::InspectNodeStatistics) => {
@@ -7589,7 +7787,15 @@ impl LocalApplication {
                             })
                             .collect::<Vec<_>>();
                         if results.is_empty() {
-                            bail!("node {node_id:?} has no result in the latest Dry Run");
+                            let available_node_ids = report
+                                .samples
+                                .iter()
+                                .flat_map(|sample| sample.nodes.iter().map(|node| node.node_id.clone()))
+                                .collect::<BTreeSet<_>>();
+                            bail!(
+                                "node {node_id:?} has no result in the latest Dry Run; node IDs with results: {}",
+                                available_node_ids.into_iter().collect::<Vec<_>>().join(", ")
+                            );
                         }
                         let total_latency_ms = results.iter().map(|node| node.latency_ms).sum::<u64>();
                         let maximum_latency_ms = results
@@ -7645,7 +7851,15 @@ impl LocalApplication {
                             .take(limit)
                             .collect::<Vec<_>>();
                         if node_results.is_empty() {
-                            bail!("node {node_id:?} has no result in the latest Dry Run");
+                            let available_node_ids = report
+                                .samples
+                                .iter()
+                                .flat_map(|sample| sample.nodes.iter().map(|node| node.node_id.clone()))
+                                .collect::<BTreeSet<_>>();
+                            bail!(
+                                "node {node_id:?} has no result in the latest Dry Run; node IDs with results: {}",
+                                available_node_ids.into_iter().collect::<Vec<_>>().join(", ")
+                            );
                         }
                         inspected_dry_run = true;
                         Ok(annotagent_core::AgentToolResult::summary(
@@ -7707,20 +7921,36 @@ impl LocalApplication {
                 }
                 .await;
 
-                let (result, success) = match outcome {
-                    Ok(result) => (result, true),
+                let (result, success, failed_attempts) = match outcome {
+                    Ok(result) => {
+                        let prefix = format!("{}:", call.name);
+                        failed_tool_attempts.retain(|key, _| !key.starts_with(&prefix));
+                        (result, true, 0)
+                    }
                     Err(error) => {
                         let message = error.to_string();
+                        let code = pipeline_builder_tool_error_code(&message);
+                        let failure_key = if code == "invalid_declared_tool_value" {
+                            format!("{}:{code}", call.name)
+                        } else {
+                            format!("{}:{}", call.name, call.arguments)
+                        };
+                        let failed_attempts = failed_tool_attempts
+                            .entry(failure_key)
+                            .and_modify(|count| *count = count.saturating_add(1))
+                            .or_insert(1);
                         (
                             annotagent_core::AgentToolResult::summary(
                                 format!("{} failed", call.name),
                                 json!({
-                                    "code": pipeline_builder_tool_error_code(&message),
+                                    "code": code,
                                     "error": message,
-                                    "retryable": true
+                                    "retryable": *failed_attempts < 3,
+                                    "failed_attempts": *failed_attempts,
                                 }),
                             ),
                             false,
+                            *failed_attempts,
                         )
                     }
                 };
@@ -7743,6 +7973,13 @@ impl LocalApplication {
                     tool_call_id: Some(call.id),
                     tool_calls: Vec::new(),
                 });
+                if !success && failed_attempts >= 3 {
+                    session.fail(format!(
+                        "Pipeline Builder stopped after {failed_attempts} failed {} attempts; inspect the declared tool values before retrying",
+                        call.name
+                    ));
+                    break;
+                }
                 if success && call.name == PipelineBuilderTool::SubmitDraftForHumanApproval.as_str()
                 {
                     session.wait_for_human("approve_pipeline_draft");
@@ -10394,6 +10631,7 @@ mod tests {
     use annotagent_core::{
         LabelId, NodePort, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
     };
+    use annotagent_provider::MockToolCall;
 
     use super::*;
 
@@ -12722,6 +12960,276 @@ export:
     }
 
     #[tokio::test]
+    async fn live_pipeline_builder_exposes_and_loads_exact_domain_resource_ids() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "live-resource-builder",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("live-resource-builder/images/synthetic.png"),
+        )
+        .expect("synthetic image");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-resource-builder");
+        let scripted_step =
+            |name: &str, arguments: serde_json::Value, expect_message_contains: Option<&str>| {
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: expect_message_contains.map(ToOwned::to_owned),
+                    response: MockResponseSpec::ToolCall {
+                        name: name.to_owned(),
+                        arguments,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                }
+            };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCalls {
+                        calls: vec![
+                            MockToolCall {
+                                name: "inspect_project".to_owned(),
+                                arguments: json!({}),
+                            },
+                            MockToolCall {
+                                name: "inspect_label".to_owned(),
+                                arguments: json!({}),
+                            },
+                            MockToolCall {
+                                name: "list_enabled_skills".to_owned(),
+                                arguments: json!({}),
+                            },
+                        ],
+                        content: None,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                },
+                scripted_step(
+                    "load_skill_resource",
+                    json!({
+                        "skill_id": "robocup",
+                        "resource_name": "resources/advisor.md"
+                    }),
+                    Some("resources/advisor.md"),
+                ),
+                scripted_step(
+                    "list_node_definitions",
+                    json!({}),
+                    Some("smallest Pipeline"),
+                ),
+                scripted_step("list_pipeline_templates", json!({}), Some("nodes")),
+                scripted_step("list_compatible_models", json!({}), Some("nodes")),
+                scripted_step(
+                    "create_draft_from_template",
+                    json!({"template_id": "safe_default"}),
+                    Some("models"),
+                ),
+                scripted_step("validate_pipeline", json!({}), Some("draft_id")),
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: Some("valid".to_owned()),
+                    response: MockResponseSpec::Content {
+                        content: "The Draft is valid, so I will test it next.".to_owned(),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                },
+                scripted_step(
+                    "dry_run_pipeline",
+                    json!({"image_indices": [0]}),
+                    Some("did not include a registered Tool Call"),
+                ),
+                scripted_step("inspect_dry_run_summary", json!({}), Some("sandbox")),
+                scripted_step(
+                    "submit_draft_for_human_approval",
+                    json!({
+                        "name": "RoboCup Ball resource-aware proposal",
+                        "rationale": ["Loaded the exact enabled Domain Advisor resource."],
+                        "warnings": [],
+                        "alternatives": []
+                    }),
+                    Some("review_rate"),
+                ),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "live-resource-builder",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("resource-aware Pipeline Builder");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        let skill_list = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "list_enabled_skills")
+            .expect("enabled Skills result");
+        assert!(
+            skill_list.result["model_payload"]["declared_resource_ids"]
+                .as_array()
+                .is_some_and(|resources| resources.contains(&json!("resources/advisor.md")))
+        );
+        let resource = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "load_skill_resource")
+            .expect("loaded resource");
+        assert!(resource.success);
+        assert_eq!(
+            resource.result["model_payload"]["resource_id"],
+            json!("resources/advisor.md")
+        );
+        let templates = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "list_pipeline_templates")
+            .expect("compatible templates");
+        assert_eq!(
+            templates.result["model_payload"]["templates"]
+                .as_array()
+                .expect("template list")
+                .iter()
+                .map(|template| template["id"].as_str().expect("template id"))
+                .collect::<Vec<_>>(),
+            vec!["safe_default"]
+        );
+        assert!(
+            templates.result["model_payload"]["incompatible_templates_hidden"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        let dry_run_summary = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "inspect_dry_run_summary")
+            .expect("Dry Run summary");
+        assert_eq!(
+            dry_run_summary.result["model_payload"]["next_required_tool"],
+            json!("submit_draft_for_human_approval")
+        );
+    }
+
+    #[tokio::test]
+    async fn live_pipeline_builder_stops_repeated_invalid_resource_guesses() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "live-resource-stall",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("live-resource-stall/images/synthetic.png"),
+        )
+        .expect("synthetic image");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-resource-stall");
+        let scripted_step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                scripted_step("inspect_project", json!({})),
+                scripted_step("inspect_label", json!({})),
+                scripted_step("list_enabled_skills", json!({})),
+                scripted_step("list_node_definitions", json!({})),
+                scripted_step("list_compatible_models", json!({})),
+                scripted_step(
+                    "load_skill_resource",
+                    json!({"skill_id": "robocup", "resource_name": "advisor"}),
+                ),
+                scripted_step(
+                    "load_skill_resource",
+                    json!({"skill_id": "robocup", "resource_name": "domain_advisor"}),
+                ),
+                scripted_step(
+                    "load_skill_resource",
+                    json!({"skill_id": "robocup", "resource_name": "DomainAdvisor"}),
+                ),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "live-resource-stall",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bounded invalid resource handling");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::Failed);
+        assert!(
+            report
+                .session
+                .stop_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("3 failed load_skill_resource attempts"))
+        );
+        let last = report
+            .session
+            .steps
+            .last()
+            .expect("third failed resource load");
+        assert!(!last.success);
+        assert_eq!(last.result["model_payload"]["retryable"], json!(false));
+        assert!(
+            last.result["model_payload"]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("resources/advisor.md"))
+        );
+    }
+
+    #[tokio::test]
     async fn live_pipeline_builder_repairs_then_revises_from_bounded_dry_run_feedback() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -13656,7 +14164,20 @@ export:
             )
             .expect("Advisor input");
         let tools = pipeline_builder_live_tools(&input);
-        assert!(tools.iter().any(|tool| tool.name == "load_skill_resource"));
+        let resource_tool = tools
+            .iter()
+            .find(|tool| tool.name == "load_skill_resource")
+            .expect("Skill resource tool");
+        assert_eq!(
+            resource_tool.parameters["properties"]["skill_id"]["enum"],
+            json!(["robocup"])
+        );
+        assert!(
+            resource_tool.parameters["properties"]["resource_name"]["enum"]
+                .as_array()
+                .is_some_and(|resources| resources.contains(&json!("resources/advisor.md")))
+        );
+        assert!(resource_tool.description.contains("resources/advisor.md"));
         assert!(
             input
                 .model_registry
