@@ -2270,8 +2270,11 @@ fn registry_model_bindings(state: &ServerState) -> ApiResult<Vec<ModelBinding>> 
 }
 
 fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
-    let capabilities = worker
-        .expected_capabilities
+    let manifest = worker.expert_manifest().ok();
+    let capabilities = manifest
+        .as_ref()
+        .map(|manifest| manifest.capabilities.iter().copied().collect::<Vec<_>>())
+        .unwrap_or_default()
         .iter()
         .filter_map(|capability| {
             serde_json::to_value(capability)
@@ -2282,6 +2285,48 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
     let score_semantics = serde_json::to_value(worker.score_semantics)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned));
+    let availability = manifest.as_ref().map_or(
+        annotagent_core::ModelAvailability::Unconfigured,
+        |manifest| manifest.availability,
+    );
+    let (health_status, availability_group) = match availability {
+        annotagent_core::ModelAvailability::Available => (
+            "available",
+            annotagent_application::ModelAvailabilityGroup::Ready,
+        ),
+        annotagent_core::ModelAvailability::MissingWeights => (
+            "missing_weights",
+            annotagent_application::ModelAvailabilityGroup::Labs,
+        ),
+        annotagent_core::ModelAvailability::Unconfigured => (
+            "unconfigured",
+            annotagent_application::ModelAvailabilityGroup::Labs,
+        ),
+        annotagent_core::ModelAvailability::Disabled => (
+            "disabled",
+            annotagent_application::ModelAvailabilityGroup::Disabled,
+        ),
+        annotagent_core::ModelAvailability::Unknown => (
+            "unknown",
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        ),
+        annotagent_core::ModelAvailability::Unreachable => (
+            "unreachable",
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        ),
+        annotagent_core::ModelAvailability::IncompatibleProtocol => (
+            "incompatible_protocol",
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        ),
+        annotagent_core::ModelAvailability::InvalidContract => (
+            "invalid_contract",
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        ),
+        annotagent_core::ModelAvailability::FailedSmokeTest => (
+            "failed_smoke_test",
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        ),
+    };
     ModelBinding {
         id: worker.model_id.clone(),
         provider: "http_vision".to_owned(),
@@ -2299,27 +2344,9 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         }
         .to_owned(),
         scope: "workspace_worker".to_owned(),
-        health_status: if worker.enabled {
-            "unknown"
-        } else {
-            "unavailable"
-        }
-        .to_owned(),
-        health_detail: Some(if worker.enabled {
-            "Run Test Worker to discover live health and capabilities".to_owned()
-        } else {
-            "Disabled in workspace Settings".to_owned()
-        }),
-        availability_group: if worker.enabled {
-            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable
-        } else if matches!(
-            worker.model_id.as_str(),
-            "locate-anything-local" | "rfdetr-specialist-local" | "sam2.1-hiera-tiny"
-        ) {
-            annotagent_application::ModelAvailabilityGroup::Labs
-        } else {
-            annotagent_application::ModelAvailabilityGroup::Disabled
-        },
+        health_status: health_status.to_owned(),
+        health_detail: manifest.and_then(|manifest| manifest.availability_evidence.detail),
+        availability_group,
         capabilities,
         score_semantics,
         model_version: Some(worker.version.model_version.clone()),
@@ -2336,61 +2363,6 @@ fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
         label_space: worker.label_space.clone(),
         cost_per_request: Some(worker.cost_per_request),
     }
-}
-
-fn labs_model_bindings() -> Vec<ModelBinding> {
-    vec![
-        ModelBinding {
-            id: "sam2.1-hiera-tiny".to_owned(),
-            provider: "http_vision".to_owned(),
-            model: "SAM 2.1 Prompted Segmentation".to_owned(),
-            role: "segmentation".to_owned(),
-            scope: "optional_local_worker".to_owned(),
-            health_status: "unavailable".to_owned(),
-            health_detail: Some(
-                "Labs adapter is installed; configure and start the workspace-private SAM Worker"
-                    .to_owned(),
-            ),
-            availability_group: annotagent_application::ModelAvailabilityGroup::Labs,
-            capabilities: vec!["prompted_segmentation".to_owned()],
-            score_semantics: Some("not_provided".to_owned()),
-            model_version: Some("local-unpinned".to_owned()),
-            endpoint: Some("http://127.0.0.1:8790".to_owned()),
-            enabled: Some(false),
-            license_summary: Some(
-                "Configure and verify the concrete SAM checkpoint license".to_owned(),
-            ),
-            architecture: Some("sam2.1-hiera-tiny".to_owned()),
-            checkpoint_sha256: None,
-            label_space: Vec::new(),
-            cost_per_request: None,
-        },
-        ModelBinding {
-            id: "yolo-http-worker".to_owned(),
-            provider: "http_vision".to_owned(),
-            model: "YOLO HTTP Worker".to_owned(),
-            role: "detection".to_owned(),
-            scope: "optional_local_worker".to_owned(),
-            health_status: "unavailable".to_owned(),
-            health_detail: Some(
-                "Labs reference adapter only; register an explicit versioned Worker and weights"
-                    .to_owned(),
-            ),
-            availability_group: annotagent_application::ModelAvailabilityGroup::Labs,
-            capabilities: vec!["object_detection".to_owned()],
-            score_semantics: Some("relative_confidence".to_owned()),
-            model_version: Some("unconfigured".to_owned()),
-            endpoint: None,
-            enabled: Some(false),
-            license_summary: Some(
-                "Depends on the configured implementation and weights".to_owned(),
-            ),
-            architecture: Some("yolo".to_owned()),
-            checkpoint_sha256: None,
-            label_space: Vec::new(),
-            cost_per_request: None,
-        },
-    ]
 }
 
 fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
@@ -3046,7 +3018,6 @@ async fn list_models(State(state): State<ServerState>) -> Json<Value> {
         let settings = state.settings.read().await;
         let mut models = vec![workspace_model_binding(&settings)];
         models.extend(settings.detection_workers.iter().map(worker_model_binding));
-        models.extend(labs_model_bindings());
         models
     };
     Json(json!({"models": models}))

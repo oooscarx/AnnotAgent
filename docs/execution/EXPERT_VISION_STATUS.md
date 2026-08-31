@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M4 — Geometry quality and failure classification (complete)
+M5 — Existing expert-model migration (complete)
 
 ## Completed
 
@@ -71,20 +71,35 @@ M4 — Geometry quality and failure classification (complete)
   those metrics into Correction Memory when review is resolved.
 - Added deterministic Dry Run cases proving a Provider failure is classified without becoming a
   no-candidate/geometry claim, while a successful terminal empty result is `NoCandidate`.
+- Registered LocateAnything, RF-DETR, SAM 2 and YOLO workspace Workers through the same
+  `ExpertModelManifest` boundary used by new SDK-generated models.
+- Removed Server-side SAM/YOLO Labs card synthesis. Model listings now derive capability,
+  connection, score semantics and availability from each Worker's Manifest.
+- Added default SAM and YOLO Worker profiles without claiming weights, health or availability;
+  all four unconfigured defaults truthfully report `MissingWeights`.
+- Preserved LocateAnything's `NotProvided` score semantics and its open-vocabulary plus phrase
+  grounding capabilities. RF-DETR and YOLO now expose the same Object Detection contract.
+- Added an Application compatibility migration from opaque `sam_prompted_refiner` nodes to the
+  explicit Detection→BoxPrompt→PromptedSegmentation→Mask→BBox chain while retaining downstream
+  node identity and edges.
+- Kept grid-assisted VLM grounding as bounded preprocessing configuration and added no model-brand
+  branch to Core, Runtime or the Web client.
 
 ## In progress
 
-- None. M4 is ready for its independent local commit.
+- None. M5 is ready for its independent local commit.
 
 ## Next
 
-- M5: make Pipeline Builder decisions and revision policy consume availability, conversion paths,
+- M6: make Pipeline Builder decisions and revision policy consume availability, conversion paths,
   failure classes and geometry-quality evidence.
 
 ## Latest Rust tests
 
-- `cargo test --workspace --all-features`: PASS — 294 tests; zero failures; one opt-in billable
+- `cargo test --workspace --all-features`: PASS — 295 tests; zero failures; one opt-in billable
   smoke ignored.
+- `cargo fmt --all --check`: PASS after M5.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M5.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
@@ -119,11 +134,12 @@ M4 — Geometry quality and failure classification (complete)
 - M1: `4faed86 feat(models): add capability-driven expert model manifests`.
 - M2: `561de50 feat(workers): add an extensible expert vision worker sdk`.
 - M3: `b98ceaa feat(workflow): compose expert models through typed artifact conversions`.
-- M4 commit pending: `feat(evaluation): distinguish semantic, geometry and provider failures`.
+- M4: `e8eb285 feat(evaluation): distinguish semantic, geometry and provider failures`.
+- M5 commit pending: `refactor(models): register existing vision backends through capabilities`.
 
 ## Release-blocking remainder
 
-- M5–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
+- M6–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Live-conditional
 

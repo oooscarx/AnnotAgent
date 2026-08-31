@@ -17,10 +17,14 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## B — Expert models
 
-- PARTIAL — Capabilities already represent prompted/semantic/instance segmentation and object/open
-  vocabulary detection without model-branded Core node kinds.
-- PENDING — SAM/YOLO/RF-DETR/LocateAnything/PIDNet/Grounding DINO manifests and truthful state
-  projections.
+- PASS — Capabilities represent prompted/semantic/instance segmentation and object/open-vocabulary
+  detection without model-branded Core node kinds.
+- PASS — SAM, YOLO, RF-DETR and LocateAnything workspace profiles are registered from
+  `ExpertModelManifest`; PIDNet and Grounding DINO are representable through the same SDK preset
+  manifest boundary without Core changes.
+- PASS — RF-DETR and YOLO share Object Detection plus DetectionSet contracts; SAM uses Prompted
+  Segmentation plus MaskSet; LocateAnything preserves Open Vocabulary, Phrase Grounding and
+  `NotProvided` scores.
 - PASS — `MissingWeights` is a non-publishable Manifest state and conflicts with `weights_ready`;
   `Available` requires `weights_ready` plus the other registration evidence.
 
@@ -32,6 +36,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - PASS — Explicit Core Mask-to-BBox produces a refined DetectionSet outside the Worker.
 - PASS — Generic DAG Artifacts retain original box, prompt, mask, tight box and both model evidence
   sources; focused Runtime test verifies the full lineage.
+- PASS — Existing editable `sam_prompted_refiner` Drafts migrate idempotently to the explicit
+  public chain while preserving the original final node id and downstream edges.
 - PENDING — Builder availability/failure/no-candidate policy tests.
 
 ## D — VLM geometry quality
@@ -130,3 +136,16 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   verifies center-shift/area-change metrics persisted in Correction Memory.
 - Full Rust workspace: 294 passed, zero failed, one explicitly billable smoke ignored. Strict Clippy,
   Rustfmt, Web typecheck and all 40 Web tests pass.
+
+## M5 evidence
+
+- Application catalog construction registers every configured HTTP Worker backend first, then
+  registers its versioned capability Manifest; there is no separate SAM/YOLO Server card path.
+- Default LocateAnything, RF-DETR, SAM and YOLO profiles all remain non-publishable
+  `MissingWeights`; settings metadata alone never claims health or smoke-test success.
+- `legacy_sam_refiner_migrates_to_an_auditable_capability_chain` proves idempotent compatibility
+  expansion and downstream edge preservation.
+- Model migration tests prove additive loading for older Settings, common YOLO/RF-DETR DetectionSet
+  contracts, SAM prompt/mask contracts and LocateAnything missing-score semantics.
+- Full Rust workspace: 295 passed, zero failed, one explicitly billable smoke ignored. Strict
+  workspace Clippy and Rustfmt pass.

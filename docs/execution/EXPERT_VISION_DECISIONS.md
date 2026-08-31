@@ -55,3 +55,17 @@ derived `ProviderModel` connection. Worker-backed expert profiles are registered
 versioned Manifest in the existing Model Registry. Persistent Worker setup will migrate onto this
 boundary in M5/M7 instead of introducing a fake Provider ID or weakening current credential and
 foreign-key guarantees.
+
+## D10 — Legacy model names stop at the Application compatibility boundary
+
+Existing editable `sam_prompted_refiner` Drafts are recognized only by the Application migration
+layer and expanded to generic conversion and capability nodes. Core, Runtime and the public node
+catalog never branch on SAM, YOLO, RF-DETR or LocateAnything identities. The original node id is
+retained as Mask-to-BBox so downstream references remain stable.
+
+## D11 — Workspace configuration is not availability evidence
+
+An HTTP endpoint and expected capability list are enough to construct an adapter and validate a
+Manifest contract, but not enough to report a model as `Available`. Default profiles without an
+immutable checkpoint identity report `MissingWeights`; a configured profile remains `Unknown`
+until discovery, health and explicit sample conversion produce the remaining evidence in M7.

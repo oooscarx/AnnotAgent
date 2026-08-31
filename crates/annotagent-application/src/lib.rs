@@ -19,39 +19,40 @@ use std::{
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
     AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationFailureClass,
-    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor,
+    AnnotationSource, ArtifactContract, ArtifactKind, AttributeDefinition, AttributeValue,
     BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
     BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
-    CapabilityDeclarationSource, CredentialReference, CredentialSource, DatasetExporter,
-    DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate,
-    GenerationDefaults, GeometryQualityReport, ImageId, ImportIssue, ImportReport, ImportRequest,
-    InputModality, LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
-    LicenseMetadata, LicensePermission, ModelAvailabilityStatus,
-    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
-    ModelBindingSource, ModelCapability, ModelInputContract, ModelLimits, ModelMessage,
-    ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
-    ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata,
-    NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry, NodeSideEffect,
-    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
-    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
-    PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
-    PortDefinition, PricingConfig, PricingSource, ProjectId, ProjectModelBinding, ProjectSchema,
-    ProjectSnapshot, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
-    ProviderHealthSnapshot, ProviderHealthStatus, ProviderId, ProviderProfile,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
-    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
-    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
-    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
-    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
-    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
+    CapabilityDeclarationSource, CheckpointIdentity, ContractDataType, CredentialReference,
+    CredentialSource, DatasetExporter, DatasetImporter, DomainSkill, EnabledSkillConfig,
+    ExpertModelManifest, ExportReport, ExportRequest, FullRunEstimate, GenerationDefaults,
+    GeometryQualityReport, ImageId, ImportIssue, ImportReport, ImportRequest, InputModality,
+    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
+    LicenseMetadata, LicensePermission, ModelAvailability, ModelAvailabilityEvidence,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
+    ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
+    ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile,
+    ModelProfileId, ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest,
+    ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort,
+    NodeRegistry, NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints,
+    PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
+    PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGrammarValidator,
+    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, PricingSource,
+    ProjectId, ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
+    ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
+    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
+    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -231,6 +232,189 @@ impl DetectionWorkerSettings {
             authorization: None,
         }
     }
+
+    #[must_use]
+    fn has_fixed_label_space(&self) -> bool {
+        self.expected_capabilities
+            .contains(&VisionCapability::ObjectDetection)
+            && !self
+                .expected_capabilities
+                .contains(&VisionCapability::OpenVocabularyDetection)
+    }
+
+    #[must_use]
+    fn checkpoint_identity_complete(&self) -> bool {
+        let base_identity_complete = self
+            .version
+            .architecture
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            && !matches!(
+                self.version.model_version.trim(),
+                "" | "unconfigured" | "local-unpinned"
+            )
+            && self
+                .version
+                .checkpoint_sha256
+                .as_deref()
+                .is_some_and(|sha256| {
+                    sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+            && self
+                .license
+                .weight_license
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+        base_identity_complete
+            && (!self.has_fixed_label_space()
+                || (self
+                    .version
+                    .training_dataset_version
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                    && !self.label_space.is_empty()))
+    }
+
+    /// Projects a configured HTTP Worker into the same capability manifest used by newly
+    /// scaffolded expert models. Configuration alone never counts as live health or a smoke test.
+    pub fn expert_manifest(&self) -> Result<ExpertModelManifest> {
+        let capabilities = self
+            .expected_capabilities
+            .iter()
+            .filter_map(|capability| annotagent_core::model_capability(*capability))
+            .collect::<BTreeSet<_>>();
+        let supports_text_queries = capabilities
+            .contains(&ModelCapability::OpenVocabularyDetection)
+            || capabilities.contains(&ModelCapability::PhraseGrounding);
+        let supports_prompts = capabilities.contains(&ModelCapability::PromptedSegmentation);
+
+        let mut input_contracts = vec![ArtifactContract::artifact(
+            "image",
+            ArtifactKind::Image,
+            true,
+            false,
+        )];
+        let mut prompt_contracts = Vec::new();
+        if supports_text_queries {
+            input_contracts.push(ArtifactContract {
+                name: "queries".to_owned(),
+                data_type: ContractDataType::Text,
+                required: true,
+                multiple: true,
+            });
+            prompt_contracts.push(PromptContract {
+                kind: PromptKind::Text,
+                required: true,
+                multiple: true,
+            });
+        }
+        if supports_prompts {
+            input_contracts.extend([
+                ArtifactContract::artifact("box_prompts", ArtifactKind::BoxPromptSet, false, true),
+                ArtifactContract::artifact(
+                    "point_prompts",
+                    ArtifactKind::PointPromptSet,
+                    false,
+                    true,
+                ),
+            ]);
+            prompt_contracts.extend([
+                PromptContract {
+                    kind: PromptKind::Box,
+                    required: false,
+                    multiple: true,
+                },
+                PromptContract {
+                    kind: PromptKind::Point,
+                    required: false,
+                    multiple: true,
+                },
+            ]);
+        }
+        let output_kind = if supports_prompts {
+            ArtifactKind::MaskSet
+        } else if capabilities.contains(&ModelCapability::SemanticSegmentation) {
+            ArtifactKind::SemanticMask
+        } else if capabilities.contains(&ModelCapability::ImageClassification) {
+            ArtifactKind::ClassificationSet
+        } else {
+            ArtifactKind::DetectionSet
+        };
+
+        let weights_ready = if self.requires_checkpoint_metadata {
+            self.checkpoint_identity_complete()
+        } else {
+            self.enabled
+        };
+        let availability_evidence = ModelAvailabilityEvidence {
+            health_passed: false,
+            protocol_compatible: false,
+            contracts_validated: true,
+            sample_conversion_passed: false,
+            weights_ready,
+            checked_at: None,
+            detail: Some(if !weights_ready {
+                "Model weights or immutable model identity are not configured".to_owned()
+            } else if !self.enabled {
+                "Worker is disabled in workspace Settings".to_owned()
+            } else {
+                "Configured; run discovery and a sample conversion before publishing".to_owned()
+            }),
+        };
+        let availability = if !weights_ready {
+            ModelAvailability::MissingWeights
+        } else if !self.enabled {
+            ModelAvailability::Disabled
+        } else {
+            ModelAvailability::Unknown
+        };
+        let checkpoint = self
+            .version
+            .checkpoint_sha256
+            .as_ref()
+            .map(|sha256| CheckpointIdentity {
+                sha256: sha256.clone(),
+                source: None,
+                training_dataset_version: self.version.training_dataset_version.clone(),
+            });
+        let manifest = ExpertModelManifest {
+            schema_version: annotagent_core::EXPERT_MODEL_MANIFEST_SCHEMA_VERSION.to_string(),
+            model_id: self.model_id.clone(),
+            display_name: self.display_name.clone(),
+            architecture: self.version.architecture.clone(),
+            model_version: self.version.model_version.clone(),
+            connection: ModelConnection::VisionWorkerModel {
+                worker_id: self.id.clone(),
+                worker_model_id: self.model_id.clone(),
+            },
+            capabilities,
+            input_contracts,
+            output_contracts: vec![ArtifactContract::artifact(
+                "output",
+                output_kind,
+                true,
+                true,
+            )],
+            prompt_contracts,
+            score_semantics: self.score_semantics,
+            geometry_semantics: annotagent_core::default_geometry_semantics(
+                &self.expected_capabilities,
+            ),
+            label_space: (!self.label_space.is_empty()).then(|| self.label_space.clone()),
+            checkpoint,
+            runtime_requirements: self.runtime_requirements.clone(),
+            license: self.license.clone(),
+            availability,
+            availability_evidence,
+            metadata: BTreeMap::from([
+                ("worker_endpoint".to_owned(), json!(self.base_url)),
+                ("worker_enabled".to_owned(), json!(self.enabled)),
+                ("allow_remote".to_owned(), json!(self.allow_remote)),
+            ]),
+        };
+        manifest.validate().map_err(anyhow::Error::from)?;
+        Ok(manifest)
+    }
 }
 
 fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
@@ -333,6 +517,94 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
                     "This metadata is informational and is not legal advice.".to_owned(),
                 ],
                 verified_from_official_source: true,
+            },
+            timeout_seconds: 120,
+            max_request_bytes: 44_000_000,
+            max_response_bytes: 2_000_000,
+            max_retries: 0,
+            cost_per_request: rust_decimal::Decimal::ZERO,
+        },
+        DetectionWorkerSettings {
+            id: "annotagent-sam2".to_owned(),
+            display_name: "SAM 2.1 Prompted Segmentation".to_owned(),
+            model_id: "sam2.1-hiera-tiny".to_owned(),
+            base_url: "http://127.0.0.1:8790".to_owned(),
+            enabled: false,
+            allow_remote: false,
+            requires_checkpoint_metadata: true,
+            expected_capabilities: vec![VisionCapability::PromptedSegmentation],
+            score_semantics: ScoreSemantics::NotProvided,
+            version: ModelVersionMetadata {
+                architecture: Some("sam2.1-hiera-tiny".to_owned()),
+                model_version: "unconfigured".to_owned(),
+                checkpoint_sha256: None,
+                training_dataset_version: None,
+                backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION
+                    .to_string(),
+            },
+            label_space: Vec::new(),
+            runtime_requirements: RuntimeRequirements {
+                devices: vec!["cuda".to_owned()],
+                minimum_gpu_memory_mb: None,
+                dependencies: vec![
+                    "SAM 2 compatible Python package".to_owned(),
+                    "PyTorch CUDA".to_owned(),
+                ],
+                supports_batch: false,
+            },
+            license: LicenseMetadata {
+                code_license: Some("Apache-2.0 for the official SAM 2 implementation".to_owned()),
+                weight_license: None,
+                source_url: Some("https://github.com/facebookresearch/sam2".to_owned()),
+                commercial_use: LicensePermission::Unknown,
+                redistribution: LicensePermission::Unknown,
+                usage_notes: vec![
+                    "Configure and verify the concrete checkpoint license before enabling."
+                        .to_owned(),
+                ],
+                verified_from_official_source: true,
+            },
+            timeout_seconds: 120,
+            max_request_bytes: 44_000_000,
+            max_response_bytes: 16_000_000,
+            max_retries: 0,
+            cost_per_request: rust_decimal::Decimal::ZERO,
+        },
+        DetectionWorkerSettings {
+            id: "annotagent-yolo".to_owned(),
+            display_name: "YOLO HTTP Worker".to_owned(),
+            model_id: "yolo-http-worker".to_owned(),
+            base_url: "http://127.0.0.1:8793".to_owned(),
+            enabled: false,
+            allow_remote: false,
+            requires_checkpoint_metadata: true,
+            expected_capabilities: vec![VisionCapability::ObjectDetection],
+            score_semantics: ScoreSemantics::RelativeConfidence,
+            version: ModelVersionMetadata {
+                architecture: Some("yolo".to_owned()),
+                model_version: "unconfigured".to_owned(),
+                checkpoint_sha256: None,
+                training_dataset_version: None,
+                backend_protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION
+                    .to_string(),
+            },
+            label_space: Vec::new(),
+            runtime_requirements: RuntimeRequirements {
+                devices: vec!["cpu".to_owned(), "cuda".to_owned()],
+                minimum_gpu_memory_mb: None,
+                dependencies: vec!["A protocol-compatible YOLO implementation".to_owned()],
+                supports_batch: false,
+            },
+            license: LicenseMetadata {
+                code_license: None,
+                weight_license: None,
+                source_url: None,
+                commercial_use: LicensePermission::Unknown,
+                redistribution: LicensePermission::Unknown,
+                usage_notes: vec![
+                    "License depends on the configured implementation and weights.".to_owned(),
+                ],
+                verified_from_official_source: false,
             },
             timeout_seconds: 120,
             max_request_bytes: 44_000_000,
@@ -1087,6 +1359,278 @@ fn sync_label_step_model(draft: &mut WorkflowDraft, node_id: &str, model_id: &st
     }
 }
 
+fn unique_workflow_node_id(existing: &BTreeSet<String>, preferred: &str) -> String {
+    if !existing.contains(preferred) {
+        return preferred.to_owned();
+    }
+    (2..=1_000_000)
+        .map(|suffix| format!("{preferred}-{suffix}"))
+        .find(|candidate| !existing.contains(candidate))
+        .expect("one million duplicate compatibility node ids are unsupported")
+}
+
+/// Expands the former opaque `RoboCup` SAM refiner into the public, typed Artifact chain. The
+/// compatibility check intentionally lives in the Application layer so Core remains model-brand
+/// agnostic. The legacy node id is retained for downstream edges and becomes Mask-to-BBox.
+fn migrate_legacy_expert_workflow(draft: &mut WorkflowDraft) -> Result<bool> {
+    let legacy_ids = draft
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "sam_prompted_refiner")
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    if legacy_ids.is_empty() {
+        return Ok(false);
+    }
+    let image_node_id = draft
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == WorkflowNodeKind::ImageInput
+                || node
+                    .outputs
+                    .iter()
+                    .any(|port| port.artifact_type == ArtifactKind::Image)
+        })
+        .map(|node| node.id.clone())
+        .ok_or_else(|| {
+            anyhow!(
+                "legacy SAM Workflow migration requires an Image input for prompted segmentation"
+            )
+        })?;
+
+    for legacy_id in legacy_ids {
+        let existing = draft
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<BTreeSet<_>>();
+        let prompts_id = unique_workflow_node_id(&existing, &format!("{legacy_id}-box-prompts"));
+        let mut with_prompts = existing;
+        with_prompts.insert(prompts_id.clone());
+        let segment_id = unique_workflow_node_id(&with_prompts, &format!("{legacy_id}-segment"));
+        let legacy_index = draft
+            .nodes
+            .iter()
+            .position(|node| node.id == legacy_id)
+            .expect("legacy node id came from this Draft");
+        let legacy = draft.nodes[legacy_index].clone();
+
+        let incoming = draft
+            .edges
+            .iter()
+            .filter(|edge| edge.to_node == legacy_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        draft.edges.retain(|edge| edge.to_node != legacy_id);
+        let mut detection_sources = BTreeSet::new();
+        let mut image_edge_present = false;
+        for edge in incoming {
+            let source_is_image = edge.from_node == image_node_id
+                || draft
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.from_node)
+                    .is_some_and(|node| {
+                        node.outputs
+                            .iter()
+                            .any(|port| port.artifact_type == ArtifactKind::Image)
+                    });
+            if source_is_image {
+                image_edge_present = true;
+                draft.edges.push(WorkflowEdge {
+                    from_node: edge.from_node,
+                    from_port: edge.from_port,
+                    to_node: segment_id.clone(),
+                    to_port: "images".to_owned(),
+                    route: edge.route,
+                });
+            } else {
+                detection_sources.insert(edge.from_node.clone());
+                draft.edges.push(WorkflowEdge {
+                    from_node: edge.from_node,
+                    from_port: edge.from_port,
+                    to_node: prompts_id.clone(),
+                    to_port: "detections".to_owned(),
+                    route: edge.route,
+                });
+            }
+        }
+        if detection_sources.is_empty() {
+            for source in &legacy.depends_on {
+                if source != &image_node_id {
+                    detection_sources.insert(source.clone());
+                    if let Some(source_node) = draft.nodes.iter().find(|node| node.id == *source) {
+                        let from_port = source_node
+                            .outputs
+                            .iter()
+                            .find(|port| port.artifact_type == ArtifactKind::DetectionSet)
+                            .map_or_else(|| "detections".to_owned(), |port| port.id.clone());
+                        draft.edges.push(WorkflowEdge {
+                            from_node: source.clone(),
+                            from_port,
+                            to_node: prompts_id.clone(),
+                            to_port: "detections".to_owned(),
+                            route: None,
+                        });
+                    }
+                }
+            }
+        }
+        if !image_edge_present {
+            let from_port = draft
+                .nodes
+                .iter()
+                .find(|node| node.id == image_node_id)
+                .and_then(|node| {
+                    node.outputs
+                        .iter()
+                        .find(|port| port.artifact_type == ArtifactKind::Image)
+                })
+                .map_or_else(|| "image".to_owned(), |port| port.id.clone());
+            draft.edges.push(WorkflowEdge {
+                from_node: image_node_id.clone(),
+                from_port,
+                to_node: segment_id.clone(),
+                to_port: "images".to_owned(),
+                route: None,
+            });
+        }
+
+        let prompt_padding = legacy
+            .parameters
+            .get("prompt_padding")
+            .or_else(|| legacy.parameters.get("padding"))
+            .cloned();
+        let prompt_node = WorkflowDraftNode {
+            id: prompts_id.clone(),
+            node_type: annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            depends_on: detection_sources.into_iter().collect(),
+            inputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            outputs: vec![NodePort {
+                id: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                required: true,
+                multiple: true,
+            }],
+            parameters: prompt_padding
+                .map(|padding| BTreeMap::from([("padding".to_owned(), padding)]))
+                .unwrap_or_default(),
+            ..WorkflowDraftNode::default()
+        };
+        let segment_node = WorkflowDraftNode {
+            id: segment_id.clone(),
+            node_type: "capability.segment".to_owned(),
+            kind: WorkflowNodeKind::VisionModel,
+            depends_on: vec![image_node_id.clone(), prompts_id.clone()],
+            inputs: vec![
+                NodePort {
+                    id: "images".to_owned(),
+                    artifact_type: ArtifactKind::Image,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "box_prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            outputs: vec![NodePort {
+                id: "masks".to_owned(),
+                artifact_type: ArtifactKind::MaskSet,
+                required: true,
+                multiple: true,
+            }],
+            model_binding: Some(
+                legacy
+                    .model_binding
+                    .clone()
+                    .unwrap_or_else(|| "sam2.1-hiera-tiny".to_owned()),
+            ),
+            model_profile_binding: legacy.model_profile_binding,
+            required_skills: legacy.required_skills.clone(),
+            max_retries: legacy.max_retries,
+            retry_policy: legacy.retry_policy,
+            resources: legacy.resources.clone(),
+            ..WorkflowDraftNode::default()
+        };
+        let final_node = &mut draft.nodes[legacy_index];
+        annotagent_runtime::CORE_MASK_TO_BBOX.clone_into(&mut final_node.node_type);
+        final_node.kind = WorkflowNodeKind::Transform;
+        final_node.depends_on = vec![segment_id.clone(), prompts_id.clone()];
+        final_node.inputs = vec![
+            NodePort {
+                id: "masks".to_owned(),
+                artifact_type: ArtifactKind::MaskSet,
+                required: true,
+                multiple: true,
+            },
+            NodePort {
+                id: "box_prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                required: true,
+                multiple: true,
+            },
+        ];
+        final_node.outputs = vec![NodePort {
+            id: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            required: true,
+            multiple: true,
+        }];
+        final_node.model_binding = None;
+        final_node.model_profile_binding = None;
+        final_node.required_skills.clear();
+        final_node.validators.clear();
+        final_node.refiners.clear();
+        final_node.parameters.clear();
+        final_node.max_retries = 0;
+        final_node.retry_policy = RetryPolicy::default();
+        final_node.resources = ResourceRequirements::default();
+
+        draft.nodes.push(prompt_node);
+        draft.nodes.push(segment_node);
+        draft.edges.extend([
+            WorkflowEdge {
+                from_node: prompts_id.clone(),
+                from_port: "prompts".to_owned(),
+                to_node: segment_id.clone(),
+                to_port: "box_prompts".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: prompts_id,
+                from_port: "prompts".to_owned(),
+                to_node: legacy_id.clone(),
+                to_port: "box_prompts".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: segment_id,
+                from_port: "masks".to_owned(),
+                to_node: legacy_id,
+                to_port: "masks".to_owned(),
+                route: None,
+            },
+        ]);
+    }
+    draft.resource_versions.insert(
+        "compatibility.sam_prompted_refiner".to_owned(),
+        "2".to_owned(),
+    );
+    draft.schema_version = WORKFLOW_SCHEMA_VERSION;
+    draft.updated_at = chrono::Utc::now();
+    Ok(true)
+}
+
 pub fn validate_settings(settings: &Settings) -> Result<()> {
     if !matches!(
         settings.default_provider.as_str(),
@@ -1106,26 +1650,18 @@ pub fn validate_settings(settings: &Settings) -> Result<()> {
         }
         if worker.enabled
             && worker.requires_checkpoint_metadata
-            && (worker
-                .version
-                .architecture
-                .as_deref()
-                .is_none_or(str::is_empty)
-                || worker.version.model_version.trim().is_empty()
-                || worker.version.model_version == "unconfigured"
-                || worker.version.checkpoint_sha256.is_none()
-                || worker
-                    .version
-                    .training_dataset_version
-                    .as_deref()
-                    .is_none_or(str::is_empty)
-                || worker.label_space.is_empty()
-                || worker.license.weight_license.is_none())
+            && !worker.checkpoint_identity_complete()
         {
+            if worker.has_fixed_label_space() {
+                bail!(
+                    "enabled fixed-label Vision Workers require architecture, model version, checkpoint SHA-256, training dataset version, label space, and weight license metadata"
+                );
+            }
             bail!(
-                "enabled versioned Detection Workers require architecture, model version, checkpoint SHA-256, training dataset version, label space, and weight license metadata"
+                "enabled Vision Workers require architecture, model version, checkpoint SHA-256, and weight license metadata"
             );
         }
+        worker.expert_manifest()?;
         HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
             id: worker.id.clone(),
             endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
@@ -1603,35 +2139,6 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ..VisionModelDescriptor::default()
     })?;
     for worker in &settings.detection_workers {
-        let supports_text_queries = worker.expected_capabilities.iter().any(|capability| {
-            matches!(
-                capability,
-                VisionCapability::OpenVocabularyDetection | VisionCapability::PhraseGrounding
-            )
-        });
-        let supports_prompts = worker
-            .expected_capabilities
-            .contains(&VisionCapability::PromptedSegmentation);
-        let mut worker_input_types = vec![VisionInputType::Image];
-        if supports_text_queries {
-            worker_input_types.push(VisionInputType::Text);
-        }
-        if supports_prompts {
-            worker_input_types.extend([
-                VisionInputType::Artifact(ArtifactKind::BoxPromptSet),
-                VisionInputType::Artifact(ArtifactKind::PointPromptSet),
-            ]);
-        }
-        let worker_output_types = if supports_prompts {
-            vec![ArtifactKind::MaskSet]
-        } else if worker
-            .expected_capabilities
-            .contains(&VisionCapability::SemanticSegmentation)
-        {
-            vec![ArtifactKind::SemanticMask]
-        } else {
-            vec![ArtifactKind::DetectionSet]
-        };
         models.register_backend(Arc::new(HttpJsonVisionBackend::new(
             HttpJsonVisionBackendConfig {
                 id: worker.id.clone(),
@@ -1645,68 +2152,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
                 allow_remote: worker.allow_remote,
             },
         )?))?;
-        models.register_model(VisionModelDescriptor {
-            id: worker.model_id.clone(),
-            display_name: worker.display_name.clone(),
-            backend_id: worker.id.clone(),
-            provider: "http_vision".to_owned(),
-            backend: BackendDescriptor {
-                kind: Some(VisionBackendKind::HttpVision),
-                protocol_version: Some(worker.version.backend_protocol_version.clone()),
-                endpoint: Some(worker.base_url.clone()),
-            },
-            capabilities: worker.expected_capabilities.clone(),
-            input_types: worker_input_types.clone(),
-            output_types: worker_output_types.clone(),
-            model: worker.model_id.clone(),
-            model_version: worker.version.model_version.clone(),
-            version: worker.version.clone(),
-            endpoint_or_path: Some(worker.base_url.clone()),
-            input_contract: ModelInputContract {
-                input_types: worker_input_types,
-                supports_multiple_queries: supports_text_queries,
-                supports_visual_prompt: supports_prompts,
-                max_queries: supports_text_queries.then_some(100),
-            },
-            output_contract: ModelOutputContract {
-                output_types: worker_output_types,
-                normalized_coordinates: true,
-                allows_empty: true,
-                label_space: worker.label_space.clone(),
-            },
-            score_semantics: worker.score_semantics,
-            runtime_requirements: worker.runtime_requirements.clone(),
-            license: worker.license.clone(),
-            status: if worker.enabled {
-                ModelAvailabilityStatus::Unknown
-            } else {
-                ModelAvailabilityStatus::Disabled
-            },
-            health: VisionModelHealth {
-                status: if worker.enabled {
-                    VisionModelHealthStatus::Unknown
-                } else {
-                    VisionModelHealthStatus::Unavailable
-                },
-                detail: Some(if worker.enabled {
-                    "configured; health and capabilities are discovered from the Worker".to_owned()
-                } else {
-                    "disabled in workspace Settings".to_owned()
-                }),
-                checked_at: None,
-            },
-            limits: VisionModelLimits {
-                max_images: Some(1),
-                max_input_artifacts: Some(if supports_prompts { 10_000 } else { 0 }),
-                max_request_bytes: Some(worker.max_request_bytes as u64),
-                timeout_seconds: Some(worker.timeout_seconds),
-            },
-            configuration: BTreeMap::from([
-                ("allow_remote".to_owned(), json!(worker.allow_remote)),
-                ("worker_enabled".to_owned(), json!(worker.enabled)),
-            ]),
-            ..VisionModelDescriptor::default()
-        })?;
+        models.register_expert_manifest(worker.expert_manifest()?)?;
     }
     for (id, display_name, capability, output_type) in [
         (
@@ -5838,7 +6284,17 @@ impl LocalApplication {
         if let Some(project_id) = project_id {
             validate_project_id(project_id)?;
         }
-        Ok(self.store.list_workflow_drafts(project_id)?)
+        let mut drafts = self.store.list_workflow_drafts(project_id)?;
+        for draft in &mut drafts {
+            if !matches!(
+                draft.status,
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+            ) && migrate_legacy_expert_workflow(draft)?
+            {
+                self.store.save_workflow_draft(draft)?;
+            }
+        }
+        Ok(drafts)
     }
 
     pub fn workflow_advisor_input(
@@ -8218,6 +8674,7 @@ impl LocalApplication {
         }
         draft.status = WorkflowDraftStatus::Editing;
         draft.updated_at = chrono::Utc::now();
+        migrate_legacy_expert_workflow(&mut draft)?;
         if draft.label_pipeline.is_some() {
             let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
             draft = compile_label_projection(draft, &project);
@@ -8282,8 +8739,7 @@ impl LocalApplication {
         draft.status = WorkflowDraftStatus::Editing;
         draft.created_at = now;
         draft.updated_at = now;
-        self.store.save_workflow_draft(&draft)?;
-        Ok(draft)
+        self.save_workflow_draft(draft)
     }
 
     fn validate_workflow_draft(
@@ -8347,7 +8803,14 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
     ) -> Result<WorkflowValidationReport> {
-        let draft = self.store.get_workflow_draft(draft_id)?;
+        let mut draft = self.store.get_workflow_draft(draft_id)?;
+        if !matches!(
+            draft.status,
+            WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+        ) && migrate_legacy_expert_workflow(&mut draft)?
+        {
+            self.store.save_workflow_draft(&draft)?;
+        }
         let report = self.validate_workflow_draft(&draft, settings, false)?;
         if report.valid
             && !matches!(
@@ -11626,9 +12089,13 @@ export:
     #[test]
     fn open_vocabulary_skill_and_models_are_registered_without_contacting_worker() {
         let settings = load_settings(None).expect("default Settings");
-        assert_eq!(settings.detection_workers.len(), 2);
-        assert!(!settings.detection_workers[0].enabled);
-        assert!(!settings.detection_workers[1].enabled);
+        assert_eq!(settings.detection_workers.len(), 4);
+        assert!(
+            settings
+                .detection_workers
+                .iter()
+                .all(|worker| !worker.enabled)
+        );
         validate_settings(&settings).expect("offline Worker configuration remains valid");
         let (nodes, models) = workflow_catalog(&settings).expect("catalog");
         assert!(
@@ -11647,9 +12114,38 @@ export:
                 .models()
                 .iter()
                 .any(|model| model.id == "locate-anything-local"
-                    && model.status == ModelAvailabilityStatus::Disabled)
+                    && model.status == ModelAvailabilityStatus::MissingWeights)
         );
         assert!(models.resolve("locate-anything-local").is_err());
+        let locate = models
+            .expert_manifest("locate-anything-local")
+            .expect("LocateAnything capability manifest");
+        assert_eq!(locate.availability, ModelAvailability::MissingWeights);
+        assert_eq!(locate.score_semantics, ScoreSemantics::NotProvided);
+        assert!(
+            locate
+                .capabilities
+                .contains(&ModelCapability::OpenVocabularyDetection)
+        );
+        assert!(
+            locate
+                .capabilities
+                .contains(&ModelCapability::PhraseGrounding)
+        );
+        let sam = models
+            .expert_manifest("sam2.1-hiera-tiny")
+            .expect("SAM capability manifest");
+        assert_eq!(sam.availability, ModelAvailability::MissingWeights);
+        assert!(
+            sam.capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+        );
+        assert!(sam.input_contracts.iter().any(|contract| {
+            contract.data_type == ContractDataType::Artifact(ArtifactKind::BoxPromptSet)
+        }));
+        assert!(sam.output_contracts.iter().any(|contract| {
+            contract.data_type == ContractDataType::Artifact(ArtifactKind::MaskSet)
+        }));
     }
 
     #[test]
@@ -11736,6 +12232,18 @@ export:
                 .iter()
                 .any(|worker| worker.model_id == "rfdetr-specialist-local")
         );
+        assert!(
+            migrated
+                .detection_workers
+                .iter()
+                .any(|worker| worker.model_id == "sam2.1-hiera-tiny")
+        );
+        assert!(
+            migrated
+                .detection_workers
+                .iter()
+                .any(|worker| worker.model_id == "yolo-http-worker")
+        );
         let specialist_index = settings
             .detection_workers
             .iter()
@@ -11776,6 +12284,141 @@ export:
             vec!["football", "robot"]
         );
         assert!(!descriptor.input_contract.supports_multiple_queries);
+        let rfdetr = models
+            .expert_manifest("rfdetr-specialist-local")
+            .expect("RF-DETR manifest");
+        let yolo = models
+            .expert_manifest("yolo-http-worker")
+            .expect("YOLO manifest");
+        for manifest in [rfdetr, yolo] {
+            assert!(
+                manifest
+                    .capabilities
+                    .contains(&ModelCapability::ObjectDetection)
+            );
+            assert!(manifest.output_contracts.iter().any(|contract| {
+                contract.data_type == ContractDataType::Artifact(ArtifactKind::DetectionSet)
+            }));
+            assert!(matches!(
+                manifest.connection,
+                ModelConnection::VisionWorkerModel { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_sam_refiner_migrates_to_an_auditable_capability_chain() {
+        let now = chrono::Utc::now();
+        let mut draft = WorkflowDraft {
+            schema_version: 1,
+            id: "legacy-sam".to_owned(),
+            project_id: "project".to_owned(),
+            name: "Legacy SAM".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![
+                WorkflowDraftNode {
+                    id: "image".to_owned(),
+                    node_type: "core.image_input".to_owned(),
+                    kind: WorkflowNodeKind::ImageInput,
+                    outputs: vec![NodePort {
+                        id: "image".to_owned(),
+                        artifact_type: ArtifactKind::Image,
+                        required: true,
+                        multiple: false,
+                    }],
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "coarse".to_owned(),
+                    node_type: "capability.detect".to_owned(),
+                    kind: WorkflowNodeKind::VisionModel,
+                    outputs: vec![NodePort {
+                        id: "detections".to_owned(),
+                        artifact_type: ArtifactKind::DetectionSet,
+                        required: true,
+                        multiple: true,
+                    }],
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "refine".to_owned(),
+                    node_type: "sam_prompted_refiner".to_owned(),
+                    kind: WorkflowNodeKind::Refiner,
+                    depends_on: vec!["image".to_owned(), "coarse".to_owned()],
+                    model_binding: Some("sam2.1-hiera-tiny".to_owned()),
+                    outputs: vec![NodePort {
+                        id: "detections".to_owned(),
+                        artifact_type: ArtifactKind::DetectionSet,
+                        required: true,
+                        multiple: true,
+                    }],
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "next".to_owned(),
+                    node_type: "core.select_and_map".to_owned(),
+                    kind: WorkflowNodeKind::Transform,
+                    depends_on: vec!["refine".to_owned()],
+                    ..WorkflowDraftNode::default()
+                },
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    from_node: "image".to_owned(),
+                    from_port: "image".to_owned(),
+                    to_node: "refine".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "coarse".to_owned(),
+                    from_port: "detections".to_owned(),
+                    to_node: "refine".to_owned(),
+                    to_port: "detections".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "refine".to_owned(),
+                    from_port: "detections".to_owned(),
+                    to_node: "next".to_owned(),
+                    to_port: "detections".to_owned(),
+                    route: None,
+                },
+            ],
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        assert!(migrate_legacy_expert_workflow(&mut draft).expect("migration"));
+        assert_eq!(draft.schema_version, WORKFLOW_SCHEMA_VERSION);
+        assert_eq!(
+            draft
+                .nodes
+                .iter()
+                .find(|node| node.id == "refine")
+                .expect("stable downstream node id")
+                .node_type,
+            annotagent_runtime::CORE_MASK_TO_BBOX
+        );
+        let chain = draft
+            .nodes
+            .iter()
+            .map(|node| node.node_type.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(chain.contains(annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS));
+        assert!(chain.contains("capability.segment"));
+        assert!(chain.contains(annotagent_runtime::CORE_MASK_TO_BBOX));
+        assert!(
+            draft
+                .edges
+                .iter()
+                .any(|edge| { edge.from_node == "refine" && edge.to_node == "next" })
+        );
+        assert!(!migrate_legacy_expert_workflow(&mut draft).expect("idempotent migration"));
     }
 
     #[tokio::test]
