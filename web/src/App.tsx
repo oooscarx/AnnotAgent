@@ -917,6 +917,7 @@ function BuildLabels({
       <div className="build-step-heading"><span className="eyebrow">Step 2 · Labels</span><h2>What do you want to annotate?</h2><p>Labels describe the meaning and output you want. Models and execution order belong to the next Automation step.</p></div>
       <div className="build-label-layout">
       <Panel title="Add a Label group" eyebrow="Annotation meaning">
+        <div className="label-group-form">
         <label>What should this group be called?<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
         <label>What kind of annotation?<select value={kind} onChange={(event) => setKind(event.target.value)}>
           <option value="classification">Classification</option>
@@ -936,7 +937,8 @@ function BuildLabels({
           </div>
           <small>The internal task ID is generated from the display name and validated by Core. Raw Schema fields remain an Advanced concern.</small>
         </details>
-        <button className={project.annotation_schema.length === 0 ? "primary" : ""} disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Adding…" : "Add Label group"}</button>
+        <button className={project.annotation_schema.length === 0 ? "primary form-submit-action" : "form-submit-action"} disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Adding…" : "Add Label group"}</button>
+        </div>
       </Panel>
       <Panel title="Current Labels" eyebrow={`${project.task_count} groups`}>
         <div className="label-definition-list">
@@ -1855,7 +1857,7 @@ function ProjectPage({
               ))}
             </div>
             <small>Required Capability Skills are added automatically. Rust Registry validation blocks missing or incompatible versions.</small>
-            <button onClick={saveSkills}>Save Project Skills</button>
+            <button className="form-submit-action" onClick={saveSkills}>Save Project Skills</button>
           </details>
         </Panel>
         <Panel title="Model Bindings" eyebrow="Node execution">
@@ -3554,7 +3556,7 @@ function WorkflowsPage({
                   </article>
                 ))}
               </div>
-              <div className="workflow-nodes">
+              <div className="workflow-nodes editable-workflow">
                 {(draft.edges ?? []).map((edge, index) => (
                   <article key={`${edge.from_node}-${edge.to_node}-${index}`}>
                     <span className="node-index">E{index + 1}</span>

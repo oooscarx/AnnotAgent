@@ -216,6 +216,16 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.screenshot({ path: `${screenshots}/03-project-guidance.png`, fullPage: true });
+  await page.locator("#project-advanced-details > summary").click();
+  const skillSettings = page.locator("details.advanced-settings").filter({ hasText: "Configure Capability and Domain Skills" });
+  await skillSettings.locator("summary").click();
+  const skillActionGap = await skillSettings.evaluate((details) => {
+    const helper = details.querySelector(":scope > small");
+    const action = details.querySelector(":scope > button");
+    if (!helper || !action) return 0;
+    return action.getBoundingClientRect().top - helper.getBoundingClientRect().bottom;
+  });
+  expect(skillActionGap).toBeGreaterThanOrEqual(10);
   await page.reload();
   await expect(page.locator(".guidance-actions .primary")).toHaveText(restoredAction ?? "");
 });
@@ -280,6 +290,13 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/${path}$`));
     if (path === "labels") {
       await expect(page.getByRole("heading", { name: "What do you want to annotate?" })).toBeVisible();
+      const labelForm = page.locator(".label-group-form");
+      await labelForm.locator("summary").click();
+      const labelFormGaps = await labelForm.evaluate((form) => {
+        const children = Array.from(form.children).map((child) => child.getBoundingClientRect());
+        return children.slice(1).map((child, index) => child.top - children[index].bottom);
+      });
+      expect(Math.min(...labelFormGaps)).toBeGreaterThanOrEqual(12);
       await page.screenshot({ path: `${screenshots}/05-build-labels.png`, fullPage: true });
     }
     if (path === "pipeline")
