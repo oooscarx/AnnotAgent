@@ -1,6 +1,7 @@
 @import "./annotagent-tokens.css";
 
 * { box-sizing: border-box; }
+fieldset { min-width: 0; }
 html { background: var(--aa-bg); color: var(--aa-text); font-family: var(--aa-font-sans); }
 body { margin: 0; min-width: 0; min-height: 100vh; background: var(--aa-bg); color: var(--aa-text); text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; }
@@ -679,8 +680,9 @@ main { min-width: 0; padding-bottom: 48px; }
 .workflow-nodes > article { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 13px; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .editable-workflow article { align-items: start; }
 .editable-workflow article > div { display: grid; gap: 10px; width: 100%; }
-.checkbox-line { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
+.checkbox-line { display: flex !important; flex-direction: row !important; align-items: center; gap: 9px; min-width: 0; line-height: 1.4; }
 .checkbox-line input { width: auto; }
+.checkbox-line span { min-width: 0; overflow-wrap: anywhere; }
 .validation-report { margin-top: 18px; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); }
 .validation-report.valid { background: color-mix(in srgb, var(--aa-success) 9%, white); }
 .validation-report.invalid { background: color-mix(in srgb, var(--aa-danger) 8%, white); }
@@ -721,7 +723,9 @@ main { min-width: 0; padding-bottom: 48px; }
 .list-filters label { width: min(240px, 100%); }
 .settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; width: min(100%, var(--aa-content-max, 96rem)); margin-inline: auto; padding: 28px 32px; }
 .settings-grid .panel { display: grid; align-content: start; gap: 16px; }
-.form-grid, .json-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-grid, .json-settings { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; row-gap: 18px; align-items: start; }
+.form-grid > label, .json-settings label { min-width: 0; line-height: 1.35; }
+.form-grid > label > small, .json-settings label > small { color: var(--aa-text-muted); font-weight: 500; line-height: 1.5; }
 .json-settings > div { display: grid; gap: 10px; align-content: start; }
 .provider-summary { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .provider-summary.offline { border-color: var(--aa-success); background: var(--aa-success-soft); }
@@ -802,9 +806,26 @@ main { min-width: 0; padding-bottom: 48px; }
 .registry-default-models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .registry-default-models label { display: grid; gap: 6px; min-width: 0; font-size: 11px; }
 .registry-default-models small { color: var(--aa-text-muted); line-height: 1.45; }
-.registry-check-group { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 13px 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); }
-.registry-check-group legend { padding: 0 6px; color: var(--aa-text-muted); font-size: 10px; font-weight: 700; }
-.registry-check-group .checkbox-line { flex: 0 1 auto; margin: 0; }
+.registry-model-editor { display: grid; gap: 18px; }
+.registry-form-section { display: grid; gap: 12px; min-width: 0; }
+.registry-form-section > header strong, .registry-form-section > header small { display: block; }
+.registry-form-section > header strong { font-size: 12px; }
+.registry-form-section > header small { max-width: 680px; margin-top: 3px; color: var(--aa-text-muted); font-size: 10px; font-weight: 500; line-height: 1.45; }
+.registry-model-identity, .registry-pricing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.registry-model-identity label, .registry-pricing-grid label { min-width: 0; }
+.registry-model-identity label > span, .registry-pricing-grid label > span { display: block; }
+.registry-pricing-grid label { position: relative; }
+.registry-pricing-grid label > small { position: absolute; right: 11px; bottom: 12px; color: var(--aa-text-muted); font-size: 9px; font-weight: 700; pointer-events: none; }
+.registry-pricing-grid input { padding-right: 42px; }
+.registry-option-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.registry-check-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); align-content: start; gap: 7px; margin: 0; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.registry-check-group legend { padding: 0 6px; color: var(--aa-text); font-size: 10px; font-weight: 750; }
+.registry-check-group .checkbox-line { min-height: 38px; margin: 0; padding: 8px 9px; border: 1px solid transparent; border-radius: var(--aa-radius-sm); background: var(--aa-surface); cursor: pointer; }
+.registry-check-group .checkbox-line:has(input:checked) { border-color: color-mix(in srgb, var(--aa-primary) 30%, var(--aa-border)); background: color-mix(in srgb, var(--aa-surface) 92%, var(--aa-primary) 8%); color: var(--aa-text); }
+.registry-capability-group { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.registry-model-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 16px; border-top: 1px solid var(--aa-border); }
+.registry-model-editor-footer p { max-width: 680px; margin: 0; color: var(--aa-text-muted); font-size: 10px; line-height: 1.5; }
+.registry-model-editor-footer button { flex: 0 0 auto; }
 .registry-model-card .tag-group { margin: 0; }
 .registry-usage-list { display: grid; gap: 8px; }
 .registry-usage-list article { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(100px, auto) minmax(100px, auto) auto; align-items: center; gap: 16px; padding: 13px 15px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
@@ -1088,6 +1109,10 @@ main { min-width: 0; padding-bottom: 48px; }
   .workflow-command-grid { grid-template-columns: 1fr; }
   .agent-objective { grid-template-columns: 1fr; }
   .inline-provider-form, .project-model-choices > div:not(.button-row) { grid-template-columns: 1fr; }
+  .registry-model-identity, .registry-pricing-grid, .registry-option-sections { grid-template-columns: 1fr; }
+  .registry-capability-group { grid-column: auto; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .registry-model-editor-footer { align-items: stretch; flex-direction: column; }
+  .registry-model-editor-footer button { width: 100%; }
   .agent-worker-summary { grid-column: auto; }
   .workflow-version-actions { grid-column: auto; }
   .review-action-bar { position: static; inset: auto; order: -1; flex-wrap: wrap; }

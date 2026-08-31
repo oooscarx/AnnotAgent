@@ -16,6 +16,20 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
 
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page.getByRole("button", { name: "Add model" }).click();
+  const modelEditor = page.locator(".registry-model-editor");
+  await expect(modelEditor.getByText("Model identity", { exact: true })).toBeVisible();
+  await expect(modelEditor.getByText("Pricing", { exact: true })).toBeVisible();
+  const desktopIdentityLayout = await modelEditor.locator(".registry-model-identity label").evaluateAll((labels) =>
+    labels.map((label) => {
+      const bounds = label.getBoundingClientRect();
+      return { top: Math.round(bounds.top), width: Math.round(bounds.width) };
+    }),
+  );
+  expect(new Set(desktopIdentityLayout.map((field) => field.top)).size).toBe(1);
+  expect(Math.min(...desktopIdentityLayout.map((field) => field.width))).toBeGreaterThan(180);
+  expect(await modelEditor.locator(".registry-check-group .checkbox-line").evaluateAll((choices) =>
+    choices.every((choice) => choice.scrollWidth <= choice.clientWidth),
+  )).toBeTruthy();
   await page.getByLabel("Display name", { exact: true }).fill("Mock Pipeline Builder");
   await page.getByLabel("Remote model ID", { exact: true }).fill("mock-builder");
   await page.getByLabel("image", { exact: true }).check();
@@ -249,6 +263,13 @@ test("Settings registry remains reachable without horizontal page overflow on a 
   const remoteCard = page.locator(".registry-provider-card").filter({ hasText: "Remote lifecycle fixture" });
   await remoteCard.getByText("Rotate or remove credential", { exact: true }).click();
   await expect(remoteCard.locator(".credential-actions")).toHaveCSS("grid-template-columns", /\d+px/);
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Add model" }).click();
+  await expect(page.locator(".registry-model-identity")).toHaveCSS("grid-template-columns", /\d+px/);
+  expect(await page.locator(".registry-model-editor").evaluate((editor) => editor.scrollWidth <= editor.clientWidth)).toBeTruthy();
+  expect(await page.locator(".registry-check-group .checkbox-line").evaluateAll((choices) =>
+    choices.every((choice) => choice.scrollWidth <= choice.clientWidth),
+  )).toBeTruthy();
   const widths = await page.evaluate(() => ({
     body: document.body.scrollWidth,
     viewport: window.innerWidth,

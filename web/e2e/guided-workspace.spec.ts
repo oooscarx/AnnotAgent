@@ -1243,6 +1243,20 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
 });
 
 test("release surfaces keep one primary action and remain operable at compact viewports", async ({ page }) => {
+  const expectVisibleFormsToFit = async (route: string) => {
+    const overflowingGroups = await page
+      .locator("form:visible, fieldset:visible, .form-grid:visible, .agent-objective:visible")
+      .evaluateAll((elements) =>
+        elements
+          .filter((element) => element.scrollWidth > element.clientWidth + 1)
+          .map((element) => ({
+            className: element.className,
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+          })),
+      );
+    expect(overflowingGroups, `${route} overflowing form groups`).toEqual([]);
+  };
   const routes = [
     "/",
     "/projects",
@@ -1262,6 +1276,7 @@ test("release surfaces keep one primary action and remain operable at compact vi
     await page.goto(route);
     await expect(page.locator("#main-content")).toHaveAttribute("aria-busy", "false");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
+    await expectVisibleFormsToFit(route);
     expect(await page.locator("button.primary:visible").count(), `${route} primary actions`).toBeLessThanOrEqual(1);
     expect(await page.locator(".panel .panel").count(), `${route} nested panels`).toBe(0);
     for (const metrics of await page.locator(".metrics-grid, .run-result-metrics, .sample-outcome-metrics, .export-readiness-metrics").all()) {
@@ -1294,6 +1309,7 @@ test("release surfaces keep one primary action and remain operable at compact vi
     await page.goto(route);
     await expect(page.locator("#main-content")).toHaveAttribute("aria-busy", "false");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
+    await expectVisibleFormsToFit(route);
     const lastControl = page.locator("#main-content button:enabled:visible").last();
     if (await lastControl.count()) {
       await lastControl.scrollIntoViewIfNeeded();

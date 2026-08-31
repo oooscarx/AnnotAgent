@@ -3034,22 +3034,22 @@ function WorkflowsPage({
           )}
           <fieldset className="agent-objective" aria-label="Pipeline Builder objective">
             <legend>Objective</legend>
-            <select aria-label="Target task" value={targetTaskId} onChange={(event) => {
+            <label>Target task<select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
               setTargetLabel(activeProject?.annotation_schema.find((task) => task.id === taskId)?.labels[0] ?? "");
             }}>
               {(activeProject?.annotation_schema ?? []).map((task) => <option key={task.id} value={task.id}>{task.id} · {task.kind}</option>)}
-            </select>
-            <select aria-label="Target Label" value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
+            </select></label>
+            <label>Target Label<select aria-label="Target Label" value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
               {(targetTask?.labels ?? []).map((label) => <option key={label} value={label}>{label}</option>)}
-            </select>
-            <select aria-label="Optimization priority" value={builderConstraints.priority} onChange={(event) => setBuilderConstraints((current) => ({ ...current, priority: event.target.value as OptimizationPriority }))}>
+            </select></label>
+            <label>Priority<select aria-label="Optimization priority" value={builderConstraints.priority} onChange={(event) => setBuilderConstraints((current) => ({ ...current, priority: event.target.value as OptimizationPriority }))}>
               <option value="balanced">Balanced</option>
               <option value="accurate">Accuracy first</option>
               <option value="fast">Speed first</option>
               <option value="low_cost">Lowest cost</option>
-            </select>
+            </select></label>
             <label>Maximum cost per image<input aria-label="Maximum cost per image" inputMode="decimal" placeholder="No per-image limit" value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
             <label>Maximum latency (ms)<input aria-label="Maximum latency" type="number" min="1" placeholder="No latency limit" value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
             <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
@@ -5295,13 +5295,33 @@ function ModelRegistryPage({
         </div>
       </Panel>
       {adding && <Panel title={editingId ? "Edit Model Profile" : "New Model Profile"} eyebrow="Manual capability declaration">
-        <div className="form-grid"><label>Provider<select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Remote model ID<input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder="Exact Provider model ID" /></label></div>
-        <fieldset className="registry-check-group"><legend>Input modalities</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
-        <fieldset className="registry-check-group"><legend>Task capabilities</legend>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <label className="checkbox-line" key={capability.id}><input type="checkbox" checked={capabilities.includes(capability.id)} onChange={() => toggle(capability.id, capabilities, setCapabilities)} /><span>{capability.label}</span></label>)}</fieldset>
-        <fieldset className="registry-check-group"><legend>Protocol features</legend><label className="checkbox-line"><input type="checkbox" checked={toolCalls} onChange={(event) => setToolCalls(event.target.checked)} /><span>Tool calls</span></label><label className="checkbox-line"><input type="checkbox" checked={structuredOutput} onChange={(event) => setStructuredOutput(event.target.checked)} /><span>Structured output</span></label><label className="checkbox-line"><input type="checkbox" checked={jsonSchema} onChange={(event) => setJsonSchema(event.target.checked)} /><span>JSON Schema</span></label></fieldset>
-        <div className="form-grid"><label>Input / 1M tokens (USD)<input inputMode="decimal" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} placeholder="Unknown" /></label><label>Output / 1M tokens (USD)<input inputMode="decimal" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} placeholder="Unknown" /></label><label>Per request (USD)<input inputMode="decimal" value={requestPrice} onChange={(event) => setRequestPrice(event.target.value)} placeholder="Unknown" /></label></div>
-        <p className="registry-safe-message">Manual capabilities are recorded as user-declared and remain unverified until an explicit active probe succeeds.</p>
-        <button className="primary" disabled={busy === "save" || !providerId || !displayName.trim() || !remoteModelId.trim() || !modalities.length || !capabilities.length} onClick={save}>{busy === "save" ? "Saving…" : editingId ? "Save as next revision if needed" : "Save Model Profile"}</button>
+        <div className="registry-model-editor">
+          <section className="registry-form-section">
+            <header><strong>Model identity</strong><small>Choose the connection and enter the exact model identifier exposed by that Provider.</small></header>
+            <div className="registry-model-identity">
+              <label><span>Provider</span><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label>
+              <label><span>Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+              <label><span>Remote model ID</span><input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder="Exact Provider model ID" /></label>
+            </div>
+          </section>
+          <div className="registry-option-sections">
+            <fieldset className="registry-check-group"><legend>Input modalities</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
+            <fieldset className="registry-check-group"><legend>Protocol features</legend><label className="checkbox-line"><input type="checkbox" checked={toolCalls} onChange={(event) => setToolCalls(event.target.checked)} /><span>Tool calls</span></label><label className="checkbox-line"><input type="checkbox" checked={structuredOutput} onChange={(event) => setStructuredOutput(event.target.checked)} /><span>Structured output</span></label><label className="checkbox-line"><input type="checkbox" checked={jsonSchema} onChange={(event) => setJsonSchema(event.target.checked)} /><span>JSON Schema</span></label></fieldset>
+            <fieldset className="registry-check-group registry-capability-group"><legend>Task capabilities</legend>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <label className="checkbox-line" key={capability.id}><input type="checkbox" checked={capabilities.includes(capability.id)} onChange={() => toggle(capability.id, capabilities, setCapabilities)} /><span>{capability.label}</span></label>)}</fieldset>
+          </div>
+          <section className="registry-form-section">
+            <header><strong>Pricing</strong><small>Optional USD estimates used for Run previews and persisted usage summaries.</small></header>
+            <div className="registry-pricing-grid">
+              <label><span>Input / 1M tokens</span><input aria-label="Input / 1M tokens (USD)" inputMode="decimal" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
+              <label><span>Output / 1M tokens</span><input aria-label="Output / 1M tokens (USD)" inputMode="decimal" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
+              <label><span>Per request</span><input aria-label="Per request (USD)" inputMode="decimal" value={requestPrice} onChange={(event) => setRequestPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
+            </div>
+          </section>
+          <footer className="registry-model-editor-footer">
+            <p>Manual capabilities remain unverified until an explicit active probe succeeds.</p>
+            <button className="primary" disabled={busy === "save" || !providerId || !displayName.trim() || !remoteModelId.trim() || !modalities.length || !capabilities.length} onClick={save}>{busy === "save" ? "Saving…" : editingId ? "Save as next revision if needed" : "Save Model Profile"}</button>
+          </footer>
+        </div>
       </Panel>}
       <div className="registry-filter-bar"><label>Provider<select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}><option value="all">All Providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></label><label>Capability<select value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}><option value="all">All capabilities</option>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <option key={capability.id} value={capability.id}>{capability.label}</option>)}</select></label><label>Health<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="available">Available</option><option value="unverified">Unverified</option><option value="disabled">Disabled</option><option value="unavailable">Unavailable</option></select></label><label>Input modality<select value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}><option value="all">All modalities</option><option value="text">Text</option><option value="image">Image</option><option value="video">Video</option></select></label><label>Enabled<select value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">Enabled and disabled</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Pricing<select value={costFilter} onChange={(event) => setCostFilter(event.target.value)}><option value="all">Any pricing status</option><option value="configured">Configured</option><option value="unknown">Unknown</option></select></label></div>
       {filtered.length ? <div className="registry-card-grid">{filtered.map((model) => {
