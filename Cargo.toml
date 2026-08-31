@@ -75,3 +75,14 @@ unnecessary_literal_bound = "allow"
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# AnnotAgent's workspace tests link several large binaries. Incremental debug
+# artifacts grow much faster than they help this project, especially after
+# repeated all-feature CI runs, so keep local build output bounded.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false

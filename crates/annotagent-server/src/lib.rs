@@ -28,7 +28,7 @@ use annotagent_core::{
     ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
     ProviderId, ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
     RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskKind,
-    UsageTotals, WorkflowConstraints, WorkflowDraft, check_model_compatibility,
+    UsageTotals, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, check_model_compatibility,
 };
 use annotagent_provider::{
     EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
@@ -140,6 +140,7 @@ impl ServerState {
             annotagent_application::load_settings(None)?
         };
         validate_settings(&settings)?;
+        ensure_builtin_mock_registry(application.as_ref())?;
         credential_reference.validate()?;
         default_write_reference.validate()?;
         let (api_key, api_key_persisted, credential_store_error) =
@@ -168,17 +169,129 @@ impl ServerState {
     }
 }
 
-const SECRET_SERVICE: &str = "com.annotagent.provider-api-key";
-
-fn validate_provider_kind(provider: &str) -> anyhow::Result<()> {
-    if matches!(provider, "mock" | "openai_compatible") {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "default_provider must be either \"mock\" or \"openai_compatible\""
-        ))
+fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Result<()> {
+    let store = application.store();
+    let now = Utc::now();
+    let provider = store
+        .list_provider_profiles()?
+        .into_iter()
+        .find(|profile| {
+            profile.adapter == ProviderAdapterKind::Mock
+                && profile.preset_id.as_deref() == Some("mock")
+        })
+        .unwrap_or_else(|| ProviderProfile {
+            id: ProviderId::new(),
+            display_name: "Mock (offline)".to_owned(),
+            preset_id: Some("mock".to_owned()),
+            adapter: ProviderAdapterKind::Mock,
+            base_url: "http://127.0.0.1".parse().expect("static Mock URL"),
+            organization: None,
+            workspace: None,
+            credential_ref: None,
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some("Built-in deterministic offline Provider".to_owned()),
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        });
+    if store
+        .list_provider_profiles()?
+        .iter()
+        .all(|candidate| candidate.id != provider.id)
+    {
+        store.save_provider_profile(&provider)?;
     }
+    let existing_models = store.list_model_profiles(Some(provider.id), false)?;
+    let ensure_model = |remote_model_id: &str,
+                        display_name: &str,
+                        capabilities: BTreeSet<ModelCapability>,
+                        tool_calls: bool|
+     -> anyhow::Result<ModelProfile> {
+        if let Some(model) = existing_models
+            .iter()
+            .find(|profile| profile.remote_model_id == remote_model_id)
+        {
+            return Ok(model.clone());
+        }
+        let model = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id: provider.id,
+            display_name: display_name.to_owned(),
+            remote_model_id: remote_model_id.to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures {
+                tool_calls,
+                structured_output: true,
+                json_schema: true,
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: capabilities,
+            capability_source: CapabilityDeclarationSource::Preset,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: true,
+            created_at: now,
+            updated_at: now,
+        };
+        store.save_model_profile(&model)?;
+        Ok(model)
+    };
+    let vision_model = ensure_model(
+        "mock-vision",
+        "Mock Vision Language (offline)",
+        BTreeSet::from([ModelCapability::VisionLanguage]),
+        true,
+    )?;
+    ensure_model(
+        "mock-classifier",
+        "Mock Classifier (offline)",
+        BTreeSet::from([ModelCapability::ImageClassification]),
+        false,
+    )?;
+    ensure_model(
+        "mock-detector",
+        "Mock Detector (offline)",
+        BTreeSet::from([ModelCapability::ObjectDetection]),
+        false,
+    )?;
+    ensure_model(
+        "mock-grounding",
+        "Mock Open Vocabulary (offline)",
+        BTreeSet::from([
+            ModelCapability::OpenVocabularyDetection,
+            ModelCapability::PhraseGrounding,
+        ]),
+        false,
+    )?;
+    ensure_model(
+        "mock-segmenter",
+        "Mock Segmenter (offline)",
+        BTreeSet::from([
+            ModelCapability::SemanticSegmentation,
+            ModelCapability::PromptedSegmentation,
+            ModelCapability::InstanceSegmentation,
+        ]),
+        false,
+    )?;
+    let mut defaults = store.get_global_model_defaults()?;
+    if defaults.vision_language.is_none() {
+        defaults.vision_language = Some(vision_model.id);
+        store.save_global_model_defaults(&defaults)?;
+    }
+    Ok(())
 }
+
+const SECRET_SERVICE: &str = "com.annotagent.provider-api-key";
 
 fn persist_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
     let parent = path
@@ -1885,7 +1998,7 @@ fn skill_detail(
 }
 
 async fn list_skills(State(state): State<ServerState>) -> ApiResult<Json<Vec<SkillDetail>>> {
-    let projects = product_projects(&state).await?;
+    let projects = product_projects(&state)?;
     Ok(Json(
         state
             .application
@@ -1928,8 +2041,7 @@ async fn get_skill(
         .layered_skills()
         .get(&skill_id)
         .map_err(ApiError::not_found)?;
-    let projects = product_projects(&state)
-        .await?
+    let projects = product_projects(&state)?
         .into_iter()
         .filter(|project| {
             project
@@ -2019,6 +2131,99 @@ fn workspace_model_binding(settings: &Settings) -> ModelBinding {
         label_space: Vec::new(),
         cost_per_request: Some(settings.pricing.per_request),
     }
+}
+
+fn registry_model_binding(model: &ModelProfile, provider: &ProviderProfile) -> ModelBinding {
+    let ready = model.enabled
+        && model.status == ModelProfileStatus::Available
+        && provider.enabled
+        && matches!(
+            provider.health.status,
+            ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+        );
+    let capabilities = model
+        .task_capabilities
+        .iter()
+        .filter_map(|capability| {
+            serde_json::to_value(capability)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+        })
+        .collect::<Vec<_>>();
+    let role = if model
+        .task_capabilities
+        .contains(&ModelCapability::ObjectDetection)
+        || model
+            .task_capabilities
+            .contains(&ModelCapability::OpenVocabularyDetection)
+    {
+        "detection"
+    } else if model
+        .task_capabilities
+        .contains(&ModelCapability::ImageClassification)
+    {
+        "classification"
+    } else if model.task_capabilities.iter().any(|capability| {
+        matches!(
+            capability,
+            ModelCapability::SemanticSegmentation
+                | ModelCapability::PromptedSegmentation
+                | ModelCapability::InstanceSegmentation
+        )
+    }) {
+        "segmentation"
+    } else {
+        "vision"
+    };
+    ModelBinding {
+        id: model.id.to_string(),
+        provider: provider.display_name.clone(),
+        model: model.display_name.clone(),
+        role: role.to_owned(),
+        scope: format!("registry_profile@{}", model.revision),
+        health_status: if ready { "healthy" } else { "unavailable" }.to_owned(),
+        health_detail: Some(format!(
+            "{} · {}",
+            provider.endpoint_summary(),
+            model.remote_model_id
+        )),
+        availability_group: if ready {
+            annotagent_application::ModelAvailabilityGroup::Ready
+        } else {
+            annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable
+        },
+        capabilities,
+        score_semantics: None,
+        model_version: Some(format!("revision {}", model.revision)),
+        endpoint: Some(provider.endpoint_summary()),
+        enabled: Some(model.enabled && provider.enabled),
+        license_summary: None,
+        architecture: None,
+        checkpoint_sha256: None,
+        label_space: Vec::new(),
+        cost_per_request: model.pricing.per_request,
+    }
+}
+
+fn registry_model_bindings(state: &ServerState) -> ApiResult<Vec<ModelBinding>> {
+    let providers = state
+        .application
+        .store()
+        .list_provider_profiles()
+        .map_err(ApiError::internal)?;
+    Ok(state
+        .application
+        .store()
+        .list_model_profiles(None, false)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .filter_map(|model| {
+            providers
+                .iter()
+                .find(|provider| provider.id == model.provider_id)
+                .map(|provider| registry_model_binding(&model, provider))
+        })
+        .collect())
 }
 
 fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
@@ -2145,29 +2350,14 @@ fn labs_model_bindings() -> Vec<ModelBinding> {
     ]
 }
 
-async fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
+fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
     let mut projects = state
         .application
         .list_projects()
         .map_err(ApiError::internal)?;
-    let binding = {
-        let settings = state.settings.read().await;
-        workspace_model_binding(&settings)
-    };
+    let registry_bindings = registry_model_bindings(state)?;
     for project in &mut projects {
-        project.model_bindings = vec![binding.clone()];
-        for workflow in &mut project.available_workflow_versions {
-            for node in &mut workflow.nodes {
-                if node.model_binding.is_some() {
-                    node.model_binding = Some(binding.id.clone());
-                }
-            }
-        }
-        for node in &mut project.active_workflow.nodes {
-            if node.model_binding.is_some() {
-                node.model_binding = Some(binding.id.clone());
-            }
-        }
+        project.model_bindings.clone_from(&registry_bindings);
     }
     Ok(projects)
 }
@@ -2430,7 +2620,7 @@ struct ProjectWorkflow {
 }
 
 async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let projects = product_projects(&state).await?;
+    let projects = product_projects(&state)?;
     let runs = product_runs(&state)?;
     let models = {
         let settings = state.settings.read().await;
@@ -2464,8 +2654,7 @@ async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value
 }
 
 async fn list_workflows(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let workflows = product_projects(&state)
-        .await?
+    let workflows = product_projects(&state)?
         .into_iter()
         .flat_map(|project| {
             let project_id = project.id;
@@ -2717,19 +2906,14 @@ async fn dry_run_workflow(
     payload: Option<Json<DryRunWorkflowRequest>>,
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
-    let compatibility_provider = settings.default_provider.clone();
-    let compatibility_key = state.api_key.read().await.clone();
-    let model_profiles = state
+    let (draft, model_profiles) = state
         .application
-        .workflow_draft_model_profile_snapshots(&draft_id)
+        .resolved_workflow_draft_model_profiles(&draft_id)
         .map_err(ApiError::bad_request)?;
-    let (provider_kind, temporary_api_key) = resolve_runtime_model_profiles(
-        &state,
-        &model_profiles,
-        compatibility_provider,
-        compatibility_key,
-    )
-    .await?;
+    reject_unresolved_registry_model_nodes(&draft)?;
+    let (provider_kind, temporary_api_key) =
+        resolve_runtime_model_profiles(&state, &model_profiles, workflow_uses_model(&draft))
+            .await?;
     let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
     let report = state
         .application
@@ -2756,6 +2940,11 @@ async fn publish_workflow(
     AxumPath(draft_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
+    let (draft, _) = state
+        .application
+        .resolved_workflow_draft_model_profiles(&draft_id)
+        .map_err(ApiError::bad_request)?;
+    reject_unresolved_registry_model_nodes(&draft)?;
     let version = state
         .application
         .publish_workflow(&draft_id, &settings)
@@ -2881,30 +3070,15 @@ async fn get_project(
         .application
         .get_project(&project_id)
         .map_err(ApiError::not_found)?;
-    let binding = {
-        let settings = state.settings.read().await;
-        workspace_model_binding(&settings)
-    };
-    project.model_bindings = vec![binding.clone()];
-    for node in &mut project.active_workflow.nodes {
-        if node.model_binding.is_some() {
-            node.model_binding = Some(binding.id.clone());
-        }
-    }
-    for workflow in &mut project.available_workflow_versions {
-        for node in &mut workflow.nodes {
-            if node.model_binding.is_some() {
-                node.model_binding = Some(binding.id.clone());
-            }
-        }
-    }
+    project.model_bindings = registry_model_bindings(&state)?;
     Ok(Json(json!(project)))
 }
 
 async fn guidance_context(state: &ServerState, project_id: &str) -> ApiResult<(Settings, bool)> {
     let settings = state.settings.read().await.clone();
-    let workspace_model_connected =
-        settings.default_provider == "mock" || *state.api_key_persisted.read().await;
+    let workspace_model_connected = registry_model_bindings(state)?
+        .iter()
+        .any(|binding| binding.health_status == "healthy");
     state
         .application
         .get_project(project_id)
@@ -3161,44 +3335,76 @@ async fn image_content(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartRunRequest {
-    provider: Option<String>,
     idempotency_key: Option<String>,
-    workflow_id: Option<String>,
-    version: Option<u32>,
+    workflow_id: String,
+    version: u32,
 }
 
 async fn resolve_published_runtime_provider(
     state: &ServerState,
-    selected_workflow: Option<(&str, u32)>,
-    compatibility_provider: String,
-    compatibility_key: Option<String>,
+    workflow_id: &str,
+    version: u32,
 ) -> ApiResult<(String, Option<String>)> {
-    let Some((workflow_id, version)) = selected_workflow else {
-        return Ok((compatibility_provider, compatibility_key));
-    };
     let workflow = state
         .application
         .store()
         .get_published_workflow_version(workflow_id, version)
         .map_err(ApiError::not_found)?;
+    reject_unresolved_registry_model_nodes(&workflow.draft)?;
     resolve_runtime_model_profiles(
         state,
         &workflow.snapshot.model_profiles,
-        compatibility_provider,
-        compatibility_key,
+        workflow_uses_model(&workflow.draft),
     )
     .await
+}
+
+fn workflow_uses_model(draft: &WorkflowDraft) -> bool {
+    draft.nodes.iter().any(|node| {
+        matches!(
+            node.kind,
+            WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+        ) || node.model_binding.is_some()
+            || node.model_profile_binding.is_some()
+    })
+}
+
+fn reject_unresolved_registry_model_nodes(draft: &WorkflowDraft) -> ApiResult<()> {
+    let unresolved = draft
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.kind,
+                WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+            ) && node.model_profile_binding.is_none()
+        })
+        .map(|node| node.id.as_str())
+        .collect::<Vec<_>>();
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "Registry Model Profile required for model nodes: {}; bind each node before Dry Run or publish",
+            unresolved.join(", ")
+        )))
+    }
 }
 
 async fn resolve_runtime_model_profiles(
     state: &ServerState,
     model_profiles: &[ModelProfileSnapshot],
-    compatibility_provider: String,
-    compatibility_key: Option<String>,
+    model_required: bool,
 ) -> ApiResult<(String, Option<String>)> {
     let Some(first) = model_profiles.first() else {
-        return Ok((compatibility_provider, compatibility_key));
+        if model_required {
+            return Err(ApiError::bad_request(
+                "Workflow has model nodes but no frozen Model Profile; bind a Registry Model Profile, Dry Run, and publish a new Workflow Version",
+            ));
+        }
+        return Ok(("mock".to_owned(), None));
     };
     if model_profiles.iter().any(|profile| {
         profile.provider_id != first.provider_id
@@ -3234,28 +3440,25 @@ async fn start_run(
         .application
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
-    if let Some(batch) = state
+    let project = state
         .application
         .get_project(&project_id)
-        .map_err(ApiError::internal)?
-        .active_batch
-    {
+        .map_err(ApiError::internal)?;
+    if let Some(batch) = project.active_batch {
         return Err(ApiError::active_batch(&batch));
     }
+    if let Some(run) = project.active_run {
+        return Err(ApiError::active_run(&ActiveRunExists {
+            active_run_id: run.id,
+            status: run.status,
+        }));
+    }
     let settings = state.settings.read().await.clone();
-    let request = payload.map_or(
-        StartRunRequest {
-            provider: None,
-            idempotency_key: None,
-            workflow_id: None,
-            version: None,
-        },
-        |Json(value)| value,
-    );
-    let compatibility_provider = request
-        .provider
-        .clone()
-        .unwrap_or_else(|| settings.default_provider.clone());
+    let request = payload
+        .map(|Json(value)| value)
+        .ok_or_else(|| ApiError::bad_request(
+            "workflow_id and version are required; publish a Registry-backed Workflow Version before starting a Run",
+        ))?;
     let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
@@ -3269,21 +3472,9 @@ async fn start_run(
             "idempotency key must contain between 1 and 200 bytes",
         ));
     }
-    validate_provider_kind(&compatibility_provider).map_err(ApiError::bad_request)?;
-    let compatibility_key = state.api_key.read().await.clone();
-    if request.workflow_id.is_some() != request.version.is_some() {
-        return Err(ApiError::bad_request(
-            "workflow_id and version must be selected together",
-        ));
-    }
-    let selected_workflow = request.workflow_id.as_deref().zip(request.version);
-    let (provider, api_key) = resolve_published_runtime_provider(
-        &state,
-        selected_workflow,
-        compatibility_provider,
-        compatibility_key,
-    )
-    .await?;
+    let selected_workflow = Some((request.workflow_id.as_str(), request.version));
+    let (provider, api_key) =
+        resolve_published_runtime_provider(&state, &request.workflow_id, request.version).await?;
     let started = state
         .application
         .start_run_path_with_settings_idempotent_workflow(
@@ -3305,11 +3496,11 @@ async fn start_run(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartBatchRequest {
-    provider: Option<String>,
     limit: Option<usize>,
-    workflow_id: Option<String>,
-    version: Option<u32>,
+    workflow_id: String,
+    version: u32,
 }
 
 async fn start_batch(
@@ -3334,39 +3525,19 @@ async fn start_batch(
             status: run.status,
         }));
     }
-    let request = payload.map_or(
-        StartBatchRequest {
-            provider: None,
-            limit: None,
-            workflow_id: None,
-            version: None,
-        },
-        |Json(value)| value,
-    );
+    let request = payload
+        .map(|Json(value)| value)
+        .ok_or_else(|| ApiError::bad_request(
+            "workflow_id and version are required; publish a Registry-backed Workflow Version before starting a Batch",
+        ))?;
     if request.limit == Some(0) {
         return Err(ApiError::bad_request(
             "batch limit must be greater than zero",
         ));
     }
-    if request.workflow_id.is_some() != request.version.is_some() {
-        return Err(ApiError::bad_request(
-            "workflow_id and version must be selected together",
-        ));
-    }
-    let selected_workflow = request.workflow_id.as_deref().zip(request.version);
-    let settings = state.settings.read().await.clone();
-    let compatibility_provider = request
-        .provider
-        .unwrap_or_else(|| settings.default_provider.clone());
-    validate_provider_kind(&compatibility_provider).map_err(ApiError::bad_request)?;
-    let compatibility_key = state.api_key.read().await.clone();
-    let (provider, api_key) = resolve_published_runtime_provider(
-        &state,
-        selected_workflow,
-        compatibility_provider,
-        compatibility_key,
-    )
-    .await?;
+    let selected_workflow = Some((request.workflow_id.as_str(), request.version));
+    let (provider, api_key) =
+        resolve_published_runtime_provider(&state, &request.workflow_id, request.version).await?;
     let config_path = state
         .settings_path
         .is_file()
@@ -4839,11 +5010,13 @@ export:
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
+        assert_eq!(
             app.store()
                 .list_provider_profiles()
                 .expect("Providers")
-                .is_empty()
+                .len(),
+            1,
+            "the only Provider is the built-in Registry Mock"
         );
 
         let (status, imported) = call_json(
@@ -4863,14 +5036,14 @@ export:
                 .list_provider_profiles()
                 .expect("Providers")
                 .len(),
-            1
+            2
         );
         assert_eq!(
             app.store()
                 .list_model_profiles(None, false)
                 .expect("Models")
                 .len(),
-            1
+            6
         );
 
         let (_, repeated) = call_json(
@@ -4946,10 +5119,9 @@ export:
         };
         let frozen = ModelProfileSnapshot::frozen(&model, &provider).expect("snapshot");
 
-        let (provider_kind, credential) =
-            resolve_runtime_model_profiles(&state, &[frozen], "mock".to_owned(), None)
-                .await
-                .expect("resolved Draft Runtime");
+        let (provider_kind, credential) = resolve_runtime_model_profiles(&state, &[frozen], true)
+            .await
+            .expect("resolved Draft Runtime");
         assert_eq!(provider_kind, "openai_compatible");
         assert_eq!(credential.as_deref(), Some("draft-runtime-secret"));
 
@@ -5449,7 +5621,6 @@ export:
                 axum::http::Method::POST,
                 "/api/projects/workflow-ui/runs",
                 Some(json!({
-                    "provider": "mock",
                     "workflow_id": workflow_id,
                     "version": version
                 })),
@@ -5483,7 +5654,7 @@ export:
                 .is_some_and(|count| count > 0)
         );
         assert_eq!(run["checkpoint_present"], json!(true));
-        assert_eq!(run["model_identity"], json!("mock/vision-model"));
+        assert_eq!(run["model_identity"], json!("mock/mock-vision"));
         assert!(run["current_node"].as_str().is_some());
         assert!(run["current_node_status"].as_str().is_some());
         assert!(run["validation_issue_codes"].as_array().is_some());
@@ -5495,7 +5666,6 @@ export:
                 axum::http::Method::POST,
                 "/api/projects/workflow-ui/batches",
                 Some(json!({
-                    "provider": "mock",
                     "workflow_id": workflow_id,
                     "version": version
                 })),
@@ -5572,6 +5742,9 @@ export:
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
+        let project_path = application
+            .project_path("review-demo")
+            .expect("review Project path");
 
         let dashboard =
             response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
@@ -5581,10 +5754,20 @@ export:
         assert_eq!(project["enabled_skills"][0]["id"], json!("robocup"));
         assert_eq!(
             project["active_workflow"]["name"],
-            json!("Configured task graph")
+            json!("Unpublished Project task graph")
         );
-        assert_eq!(project["active_workflow"]["status"], json!("published"));
-        assert_eq!(project["model_bindings"][0]["id"], json!("default-vision"));
+        assert_eq!(project["active_workflow"]["status"], json!("draft"));
+        assert!(project["default_workflow_version"].is_null());
+        assert!(
+            project["model_bindings"]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings.iter().any(|binding| {
+                        binding["model"] == json!("Mock Vision Language (offline)")
+                            && binding["scope"] == json!("registry_profile@1")
+                    })
+                })
+        );
 
         let workflows =
             response_json(request(&service, axum::http::Method::GET, "/api/workflows", None).await)
@@ -5640,17 +5823,15 @@ export:
         assert_eq!(sse.status(), StatusCode::OK);
         let mut event_stream = sse.into_body().into_data_stream();
 
-        let started = response_json(
-            request(
-                &service,
-                axum::http::Method::POST,
-                "/api/projects/review-demo/runs",
-                Some(json!({})),
+        let started = application
+            .start_run_path_with_settings(
+                &project_path,
+                "mock",
+                state.settings.read().await.clone(),
+                None,
             )
-            .await,
-        )
-        .await;
-        let run_id = started["run_id"].as_str().expect("run id");
+            .expect("low-level compatibility Run used only by this history test");
+        let run_id = started.run_id.to_string();
         let first_event = tokio::time::timeout(Duration::from_secs(2), event_stream.next())
             .await
             .expect("SSE timeout")
@@ -5658,7 +5839,7 @@ export:
             .expect("SSE body");
         assert!(String::from_utf8_lossy(&first_event).contains("run_"));
 
-        wait_for_status(&application, run_id, RunStatus::CompletedWithReview).await;
+        wait_for_status(&application, &run_id, RunStatus::CompletedWithReview).await;
         let runs =
             response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
                 .await;
@@ -5899,19 +6080,17 @@ export:
         )
         .await;
         assert_eq!(settings_response.status(), StatusCode::OK);
-        let budget_run = response_json(
-            request(
-                &service,
-                axum::http::Method::POST,
-                "/api/projects/review-demo/runs",
-                Some(json!({"provider": "mock"})),
+        let budget_run = application
+            .start_run_path_with_settings(
+                &project_path,
+                "mock",
+                state.settings.read().await.clone(),
+                None,
             )
-            .await,
-        )
-        .await;
+            .expect("low-level budget compatibility Run");
         wait_for_status(
             &application,
-            budget_run["run_id"].as_str().expect("budget run id"),
+            &budget_run.run_id.to_string(),
             RunStatus::BudgetExceeded,
         )
         .await;
@@ -6171,14 +6350,33 @@ export:
             .reserve_project_run(project_id, active_run_id, None)
             .expect("active reservation");
         let service = router(
-            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
             None,
         );
+        let settings = annotagent_application::load_settings(None).expect("Settings");
+        let draft = application
+            .create_workflow_draft_with_template(
+                "duplicate-demo",
+                &settings,
+                false,
+                Some("robocup.ball.vlm-bootstrap"),
+            )
+            .expect("Workflow Draft");
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("Published Workflow");
         let response = request(
             &service,
             axum::http::Method::POST,
             "/api/projects/duplicate-demo/runs",
-            Some(json!({"provider": "mock"})),
+            Some(json!({
+                "workflow_id": published.workflow_id,
+                "version": published.version
+            })),
         )
         .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -6186,6 +6384,44 @@ export:
         assert_eq!(body["code"], json!("active_run_exists"));
         assert_eq!(body["active_run_id"], json!(active_run_id));
         assert_eq!(body["status"], json!("pending"));
+    }
+
+    #[tokio::test]
+    async fn formal_execution_rejects_legacy_provider_fallback_requests() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "registry-only",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let service = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+
+        let missing_version = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/registry-only/runs",
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(missing_version.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let legacy_provider = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/registry-only/batches",
+            Some(json!({
+                "provider": "mock",
+                "workflow_id": "not-a-published-version",
+                "version": 1
+            })),
+        )
+        .await;
+        assert_eq!(legacy_provider.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
@@ -6252,7 +6488,7 @@ export:
             &service,
             axum::http::Method::POST,
             "/api/projects/batch-api/runs",
-            Some(json!({"provider": "mock"})),
+            Some(json!({"workflow_id": "unused", "version": 1})),
         )
         .await;
         assert_eq!(duplicate_run.status(), StatusCode::CONFLICT);
@@ -6264,7 +6500,7 @@ export:
             &service,
             axum::http::Method::POST,
             "/api/projects/batch-api/batches",
-            Some(json!({"provider": "mock"})),
+            Some(json!({"workflow_id": "unused", "version": 1})),
         )
         .await;
         assert_eq!(duplicate_batch.status(), StatusCode::CONFLICT);
@@ -6477,7 +6713,6 @@ export:
                 axum::http::Method::POST,
                 "/api/projects/http-label/runs",
                 Some(json!({
-                    "provider": "mock",
                     "workflow_id": workflow_id,
                     "version": version
                 })),

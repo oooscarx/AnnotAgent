@@ -99,6 +99,12 @@ Each SSE event name is the serialized `RunEventKind`; data is the complete versi
 
 ## Settings
 
-`GET /api/settings` exposes safe provider/pricing/budget metadata, the default run provider, persistence status, settings path, and booleans indicating whether an API key is configured and persisted. It never returns the key.
+`GET /api/settings` exposes the legacy migration source plus non-secret pricing, budget, Vision Worker and persistence metadata. The Settings page no longer edits a singleton Run Provider. Reusable connections are managed through `/api/providers`, `/api/model-profiles`, and Project/Agent bindings.
 
-`PUT /api/settings` accepts the full settings object plus optional write-only `api_key` or `clear_saved_api_key: true`. Non-secret settings are atomically stored at `<workspace>/.annotagent/settings.toml`. New GUI keys are stored in the native system credential store and are never returned by the API or written to TOML or SQLite. A legacy workspace file may be read for compatibility but is not migrated or deleted automatically. A run request may still provide an explicit `provider`; when omitted, the saved `default_provider` is used.
+`PUT /api/settings` persists non-secret runtime, pricing, budget and Vision Worker settings atomically at `<workspace>/.annotagent/settings.toml`. The compatibility write-only `api_key` fields remain available only so an existing installation can be imported explicitly through `/api/registry-migrations/legacy`; they are not consulted by formal Run, Batch, or Dry Run execution.
+
+## Formal execution admission
+
+`POST /api/projects/{project_id}/runs` requires `workflow_id` and `version`. `POST /api/projects/{project_id}/batches` requires the same pair and accepts an optional positive `limit`. Unknown legacy fields such as `provider` are rejected.
+
+The selected Published Workflow Version must freeze every Model Profile used by a model node. Runtime resolves the current credential only through that frozen Profile's Provider reference and fails closed if the Provider/Profile is missing, disabled, unavailable, or incompatible. A model-free Workflow uses the deterministic Core adapter and does not read singleton Provider settings. Older unversioned Project task graphs remain readable for migration and history, but are not runnable until cloned or rebuilt, bound, Dry Run, and published.

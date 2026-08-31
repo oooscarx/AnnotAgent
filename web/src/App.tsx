@@ -1,15 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
-import {
-  CUSTOM_MODEL,
-  PROVIDER_PRESETS,
-  applyProviderPreset,
-  getProviderPreset,
-  inferConfiguredProviderPreset,
-  inferProviderPreset,
-  isCatalogModel,
-} from "./providerCatalog";
+import { PROVIDER_PRESETS } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
@@ -1484,20 +1476,26 @@ function ProjectPage({
       (workflow) =>
         `${workflow.workflow_id}:${workflow.version}` === workflowKey,
     ) ?? project.active_workflow;
+  const selectedPublishedWorkflow =
+    selectedWorkflow.status === "published" &&
+    selectedWorkflow.source.startsWith("published draft")
+      ? selectedWorkflow
+      : undefined;
   const guidance = activeWorkspace.guidance;
   const startBatch = () => {
+    if (!selectedPublishedWorkflow) {
+      onError("Publish a Registry-backed Workflow Version before starting a Run.");
+      return;
+    }
     setStarting(true);
     void api
       .startBatch(
         project.id,
         undefined,
-        undefined,
-        selectedWorkflow.source.startsWith("published draft")
-          ? {
-              workflow_id: selectedWorkflow.workflow_id,
-              version: Number(selectedWorkflow.version),
-            }
-          : undefined,
+        {
+          workflow_id: selectedPublishedWorkflow.workflow_id,
+          version: Number(selectedPublishedWorkflow.version),
+        },
       )
       .then(refreshWorkspace)
       .catch((error: Error) => onError(error.message))
@@ -7162,19 +7160,14 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
 function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const [settings, setSettings] = useState<Record<string, any>>();
   const [savedSignature, setSavedSignature] = useState("");
-  const [presetId, setPresetId] = useState("mock");
-  const [key, setKey] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-  const credentialPresetRef = useRef("custom");
   useEffect(() => {
     void api
       .settings()
       .then((value) => {
         setSettings(value);
         setSavedSignature(JSON.stringify(value));
-        setPresetId(inferProviderPreset(value).id);
-        credentialPresetRef.current = inferConfiguredProviderPreset(value).id;
       })
       .catch((error: Error) => onError(error.message));
   }, []);
@@ -7187,21 +7180,11 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
         />
       </section>
     );
-  const provider = settings.provider ?? {};
   const pricing = settings.pricing ?? {};
   const budget = settings.budget ?? {};
   const detectionWorkers = Array.isArray(settings.detection_workers)
     ? settings.detection_workers
     : [];
-  const preset = getProviderPreset(presetId);
-  const providerChanged =
-    !preset.offline && credentialPresetRef.current !== preset.id;
-  const customModel =
-    !preset.custom &&
-    !preset.offline &&
-    !isCatalogModel(preset, provider.model);
-  const setProvider = (field: string, value: unknown) =>
-    setSettings({ ...settings, provider: { ...provider, [field]: value } });
   const setDetectionWorker = (index: number, field: string, value: unknown) =>
     setSettings({
       ...settings,
@@ -7271,278 +7254,22 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
     ...settings,
     detection_workers: detectionWorkers.filter((_: unknown, workerIndex: number) => workerIndex !== index),
   });
-  const chooseProvider = (id: string) => {
-    setPresetId(id);
-    setSettings(applyProviderPreset(settings, id));
-    setKey("");
-    setMessage("");
-  };
-  const finish = (
-    value: Record<string, unknown>,
-    nextMessage: string,
-    updateCredential = false,
-  ) => {
+  const finish = (value: Record<string, unknown>, nextMessage: string) => {
     setSettings(value);
     setSavedSignature(JSON.stringify(value));
-    setKey("");
     setMessage(nextMessage);
-    if (updateCredential && !preset.offline)
-      credentialPresetRef.current = preset.id;
   };
   const save = () => {
     setSaving(true);
-    const clearMismatchedKey =
-      providerChanged && settings.api_key_persisted && !key;
     void api
-      .saveSettings({
-        ...settings,
-        api_key: key || undefined,
-        clear_saved_api_key: clearMismatchedKey || undefined,
-      })
-      .then((value) =>
-        finish(
-          value,
-          clearMismatchedKey
-            ? `Saved ${preset.shortLabel}. The previous provider key was removed; add a ${preset.shortLabel} key before running.`
-            : `Saved ${preset.shortLabel} locally. Future runs will use this workspace model binding.`,
-          true,
-        ),
-      )
+      .saveSettings(settings)
+      .then((value) => finish(value, "Saved runtime and storage settings locally."))
       .catch((error: Error) => onError(error.message))
       .finally(() => setSaving(false));
   };
-  const clearKey = () => {
-    setSaving(true);
-    void api
-      .saveSettings({ ...settings, clear_saved_api_key: true })
-      .then((value) =>
-        finish(value, "Saved API key removed from the active secret source.", true),
-      )
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setSaving(false));
-  };
-  const dirty = Boolean(key) || JSON.stringify(settings) !== savedSignature;
+  const dirty = JSON.stringify(settings) !== savedSignature;
   return (
     <section className="settings-grid">
-      <Panel title="Legacy Run fallback" eyebrow="Compatibility settings">
-        <div className="boundary-note"><i>i</i><span><strong>Registry compatibility boundary</strong><small>New reusable connections live in Providers and Models. This fallback remains for older unversioned Runs; Published Workflows use frozen Model Profile revisions.</small></span></div>
-        <label>
-          Provider
-          <select
-            value={presetId}
-            onChange={(event) => chooseProvider(event.target.value)}
-          >
-            {PROVIDER_PRESETS.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className={`provider-summary ${preset.offline ? "offline" : ""}`}>
-          <span className="provider-monogram" aria-hidden="true">
-            {preset.shortLabel.slice(0, 2).toUpperCase()}
-          </span>
-          <span>
-            <strong>{preset.shortLabel}</strong>
-            <small>{preset.description}</small>
-          </span>
-          {preset.docsUrl && (
-            <a href={preset.docsUrl} target="_blank" rel="noreferrer">
-              Provider docs ↗
-            </a>
-          )}
-        </div>
-        {!preset.offline && (
-          <>
-            {preset.custom ? (
-              <div className="form-grid">
-                <label>
-                  Endpoint
-                  <input
-                    type="url"
-                    value={provider.endpoint ?? ""}
-                    onChange={(event) =>
-                      setProvider("endpoint", event.target.value)
-                    }
-                    placeholder="https://provider.example/v1"
-                  />
-                </label>
-                <label>
-                  Model
-                  <input
-                    value={provider.model ?? ""}
-                    onChange={(event) =>
-                      setProvider("model", event.target.value)
-                    }
-                    placeholder="vision-model-id"
-                  />
-                </label>
-              </div>
-            ) : (
-              <>
-                <label>
-                  Vision model
-                  <select
-                    value={customModel ? CUSTOM_MODEL : (provider.model ?? "")}
-                    onChange={(event) =>
-                      setProvider(
-                        "model",
-                        event.target.value === CUSTOM_MODEL
-                          ? ""
-                          : event.target.value,
-                      )
-                    }
-                  >
-                    {preset.models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label} — {model.hint}
-                      </option>
-                    ))}
-                    <option value={CUSTOM_MODEL}>Another model ID…</option>
-                  </select>
-                </label>
-                {customModel && (
-                  <label>
-                    Custom model ID
-                    <input
-                      autoFocus
-                      value={provider.model ?? ""}
-                      onChange={(event) =>
-                        setProvider("model", event.target.value)
-                      }
-                      placeholder="Enter the exact model ID"
-                    />
-                  </label>
-                )}
-              </>
-            )}
-            {providerChanged && settings.api_key_persisted && !key && (
-              <div className="credential-notice" role="status">
-                The saved key belongs to the previous provider. Paste your{" "}
-                {preset.shortLabel} key now, or saving will safely remove the
-                old key.
-              </div>
-            )}
-            <label>
-              {preset.shortLabel} API key
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={key}
-                onChange={(event) => setKey(event.target.value)}
-                placeholder={
-                  settings.api_key_persisted && !providerChanged
-                    ? `${settings.credential_store === "session_only" ? "Kept for this server session" : "Stored in the selected secret source"} · paste to replace`
-                    : `Paste your ${preset.shortLabel} key once`
-                }
-              />
-            </label>
-            <div className="button-row">
-              <button
-                onClick={clearKey}
-                disabled={saving || !settings.api_key_persisted}
-              >
-                Clear saved key
-              </button>
-              <small>
-                {settings.api_key_persisted && !providerChanged
-                  ? `${settings.credential_store === "session_only" ? "Process-only session" : settings.credential_store?.replaceAll("_", " ") ?? "Secret reference"} · never returned by the API`
-                  : `Environment fallback: ${provider.api_key_env ?? "ANNOTAGENT_API_KEY"}`}
-              </small>
-            </div>
-            <details className="advanced-settings">
-              <summary>Advanced settings</summary>
-              <div className="form-grid">
-                {!preset.custom && (
-                  <label>
-                    Endpoint
-                    <input readOnly value={provider.endpoint ?? ""} />
-                  </label>
-                )}
-                <label>
-                  API key environment
-                  <input
-                    value={provider.api_key_env ?? ""}
-                    onChange={(event) =>
-                      setProvider("api_key_env", event.target.value)
-                    }
-                  />
-                </label>
-                <label>
-                  Temperature
-                  <input
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.05"
-                    value={provider.temperature ?? 0.1}
-                    onChange={(event) =>
-                      setProvider("temperature", Number(event.target.value))
-                    }
-                  />
-                </label>
-                <label>
-                  Timeout seconds
-                  <input
-                    type="number"
-                    min="1"
-                    value={provider.request_timeout_seconds ?? 120}
-                    onChange={(event) =>
-                      setProvider(
-                        "request_timeout_seconds",
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Max output tokens
-                  <input
-                    type="number"
-                    min="1"
-                    value={provider.max_output_tokens ?? 4096}
-                    onChange={(event) =>
-                      setProvider(
-                        "max_output_tokens",
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Retries
-                  <input
-                    type="number"
-                    min="0"
-                    value={provider.max_retries ?? 2}
-                    onChange={(event) =>
-                      setProvider("max_retries", Number(event.target.value))
-                    }
-                  />
-                </label>
-              </div>
-              <small>
-                Protocol: OpenAI Chat Completions · image input + function tools
-              </small>
-            </details>
-          </>
-        )}
-        {preset.offline && (
-          <div className="offline-note">
-            Ready to run immediately. Mock keeps your real provider
-            configuration and saved key untouched.
-          </div>
-        )}
-        {settings.credential_store_error && (
-          <div className="error-banner" role="alert">
-            <span>
-              Local credential storage unavailable:{" "}
-              {String(settings.credential_store_error)}
-            </span>
-          </div>
-        )}
-      </Panel>
       <Panel title="Detection Workers" eyebrow="Optional local model processes">
         <div className="worker-collection-actions">
           <p>Register any protocol v1 detection process. Workers stay disabled until their contract is complete.</p>
@@ -7644,14 +7371,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               : "Save once to keep these settings across restarts.")}
         </span>
         {dirty && (
-          <button
-            className="primary"
-            onClick={save}
-            disabled={
-              saving ||
-              (!preset.offline && (!provider.endpoint || !provider.model))
-            }
-          >
+          <button className="primary" onClick={save} disabled={saving}>
             {saving ? "Saving…" : "Save settings"}
           </button>
         )}
@@ -7741,10 +7461,6 @@ function CreateProject({
   const [targetReviewRate, setTargetReviewRate] = useState("10");
   const [offlineOnly, setOfflineOnly] = useState(false);
   const [modelRegistry, setModelRegistry] = useState<ModelBinding[]>([]);
-  const [settings, setSettings] = useState<Record<string, any>>();
-  const [providerId, setProviderId] = useState("mock");
-  const [customModel, setCustomModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   useEffect(() => {
@@ -7755,12 +7471,6 @@ function CreateProject({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
   useEffect(() => {
-    void api.settings()
-      .then((value) => {
-        setSettings(value);
-        setProviderId(inferProviderPreset(value).id);
-      })
-      .catch((error: Error) => onError(error.message));
     void api.models()
       .then((value) => setModelRegistry(value.models))
       .catch((error: Error) => onError(error.message));
@@ -7778,12 +7488,6 @@ function CreateProject({
         : intent === "detection"
           ? "bounding_box"
           : customKind;
-  const preset = getProviderPreset(offlineOnly ? "mock" : providerId);
-  const provider = settings?.provider ?? {};
-  const selectedModel = provider.model === CUSTOM_MODEL ? customModel.trim() : provider.model;
-  const modelConnected =
-    preset.offline ||
-    (Boolean(selectedModel) && (settings?.api_key_persisted || Boolean(apiKey.trim())));
   const specialistModel = modelRegistry.find((model) =>
     model.enabled && model.capabilities?.includes("object_detection") &&
     (model.label_space?.length ?? 0) > 0 &&
@@ -7792,40 +7496,11 @@ function CreateProject({
   const openVocabularyModel = modelRegistry.find((model) =>
     model.enabled && model.capabilities?.includes("open_vocabulary_detection"),
   );
-  const chooseProvider = (id: string) => {
-    setProviderId(id);
-    setSettings((current) => {
-      const next = applyProviderPreset(current ?? {}, id);
-      const providerPreset = getProviderPreset(id);
-      return providerPreset.offline
-        ? next
-        : {
-            ...next,
-            provider: {
-              ...next.provider,
-              model: providerPreset.models[0]?.id ?? next.provider?.model,
-            },
-          };
-    });
-  };
   const finish = async (customize: boolean) => {
-    if (!settings || !projectName.trim() || !labelName.trim()) return;
+    if (!projectName.trim() || !labelName.trim()) return;
     setBusy(true);
-    setProgress("Saving model connection…");
+    setProgress("Creating the Project…");
     try {
-      let configured = offlineOnly ? applyProviderPreset(settings, "mock") : settings;
-      if (!preset.offline) {
-        configured = {
-          ...configured,
-          provider: {
-            ...configured.provider,
-            model: selectedModel || preset.models[0]?.id,
-          },
-          ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-        };
-      }
-      await api.saveSettings(configured);
-      setProgress("Creating the Project…");
       await api.createProject(
         resolvedWorkspaceId,
         guidedProjectYaml({
@@ -7873,8 +7548,7 @@ function CreateProject({
     }
   };
   const nextDisabled =
-    (step === 1 && (!projectName.trim() || !labelName.trim())) ||
-    (step === 4 && (!settings || !modelConnected));
+    step === 1 && (!projectName.trim() || !labelName.trim());
   return (
     <div className="modal-backdrop">
       <div className="modal guided-project-wizard" role="dialog" aria-modal="true" aria-label="Create Project">
@@ -7954,7 +7628,7 @@ function CreateProject({
               </> : kind === "bounding_box" ? <>
                 <li>Use a registered open-vocabulary detector to find {labelName} from its description.</li>
                 <li>No training data is required. Configure the Worker before a live Run.</li>
-              </> : <li>Use <strong>{preset.offline ? "the deterministic Mock model" : selectedModel || preset.models[0]?.label}</strong> through the registered model binding.</li>}
+              </> : <li>Bind a compatible <strong>Registry Model Profile</strong> in Automation before publishing.</li>}
               {kind === "bounding_box" && <li>Keep the detector output as editable bounding boxes.</li>}
               <li>Automatically accept high-confidence results.</li>
               <li>Send uncertain results to Review.</li>
@@ -7962,14 +7636,9 @@ function CreateProject({
             <div className="recommendation-estimate"><span><b>{priority === "faster" ? "Low" : priority === "accuracy" ? "Higher" : "Medium"}</b> latency</span><span><b>Low</b> setup effort</span><span><b>{targetReviewRate || "10"}%</b> target review</span></div>
           </div>
           <div className="inline-model-connection">
-            <div><span className="eyebrow">Model connection</span><strong>{modelConnected ? "Ready" : "Connection required"}</strong></div>
-            <label>Provider<select value={offlineOnly ? "mock" : providerId} disabled={offlineOnly} onChange={(event) => chooseProvider(event.target.value)}>{PROVIDER_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-            {!preset.offline && <>
-              <label>Vision model<select value={provider.model ?? ""} onChange={(event) => setSettings((current) => ({ ...current, provider: { ...current?.provider, model: event.target.value } }))}>{preset.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}<option value={CUSTOM_MODEL}>Another model ID…</option></select></label>
-              {provider.model === CUSTOM_MODEL && <label>Model ID<input value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="provider/model-name" /></label>}
-              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Kept for this server session; not written to Keychain" /></label>}
-            </>}
-            {!modelConnected && <small role="alert">Enter a key, select Mock, or choose Offline only before using the recommendation.</small>}
+            <div><span className="eyebrow">Registry-first execution</span><strong>Bind in Automation</strong></div>
+            <p>The wizard creates only the Project Schema and an editable Draft. Choose a reusable Model Profile on the Automation page, Dry Run it, then publish an immutable Workflow Version.</p>
+            <small>{offlineOnly ? "Offline only is recorded as a design constraint; choose a Mock or local Registry Model Profile." : "Provider credentials are configured once under Settings → Providers and are never copied into the Project."}</small>
           </div>
           <details className="advanced-settings"><summary>Generated Project definition</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
         </div>}

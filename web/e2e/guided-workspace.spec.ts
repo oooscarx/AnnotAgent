@@ -115,7 +115,6 @@ export:
   const started = await request.post(`/api/projects/${cropProjectId}/runs`, {
     headers: { "idempotency-key": `crop-e2e-${stamp}` },
     data: {
-      provider: "mock",
       workflow_id: version.workflow_id,
       version: version.version,
     },
@@ -159,7 +158,8 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByText("Balanced", { exact: true }).click();
   await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByLabel("Provider").selectOption("mock");
+  await expect(dialog.getByText("Registry-first execution")).toBeVisible();
+  await expect(dialog.getByText("Bind in Automation")).toBeVisible();
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.screenshot({ path: `${screenshots}/02-guided-project-wizard.png` });
   await page.setViewportSize({ width: 720, height: 450 });
@@ -515,7 +515,6 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   const started = await request.post(`/api/projects/${projectId}/runs`, {
     headers: { "idempotency-key": `e2e-${stamp}` },
     data: {
-      provider: "mock",
       workflow_id: project.default_workflow_version.workflow_id,
       version: Number(project.default_workflow_version.version),
     },

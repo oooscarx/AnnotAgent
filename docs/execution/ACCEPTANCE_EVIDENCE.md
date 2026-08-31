@@ -981,3 +981,27 @@ accuracy remains `LIVE-CONDITIONAL`; native 200% browser zoom remains `MANUAL`.
 Provider Registry + Pipeline Builder Alpha offline release status: `PASS`. Real Qwen/OpenAI/
 OpenRouter/Gemini-compatible calls, external network behavior and native unlocked system Keyring
 remain `LIVE-CONDITIONAL`; no credential, push or remote mutation was used.
+## Registry-only execution admission — 2026-08-31
+
+1. Settings no longer renders `Legacy Run fallback`; New Project creates only Project Schema plus an
+   editable Draft and directs Model binding to Automation/Registry.
+2. Compatibility Project task graphs are no longer marked Published/default, so readiness and
+   Guidance block Run until a real immutable version exists.
+3. Run and Batch request DTOs require `workflow_id` plus `version`, reject the former `provider`
+   override, and resolve credentials exclusively through frozen Model Profile snapshots.
+4. Model-bearing Draft Dry Run and publication fail with an actionable binding error when no
+   Registry Model Profile is frozen; model-free Core workflows remain deterministic and offline.
+5. Empty workspaces receive a formal built-in Mock Provider plus capability-specific Model Profiles.
+   They are resolved and frozen like every other Registry entry; no runtime reads the old Settings
+   Provider as an execution fallback.
+6. `formal_execution_rejects_legacy_provider_fallback_requests` proves the HTTP boundary rejects
+   provider overrides and missing versions. The Web API test proves Run and Batch serialize only the
+   exact Published Workflow ID/version.
+7. Release verification passes strict workspace/all-target/all-feature Clippy, all-feature Rust and
+   doc tests (one explicitly billable smoke ignored), 39 Vitest tests, production Web build and all
+   31 Chromium scenarios. `git diff --check` is clean.
+8. Local build cleanup removed 893,011 reproducible files (158.0 GiB logical size). Dev/test profiles
+   now disable incremental compilation and use bounded debug symbols; a clean all-feature test build
+   occupies about 3.5 GiB instead of retaining the former unbounded cache.
+
+Registry-only execution admission status: `PASS`.

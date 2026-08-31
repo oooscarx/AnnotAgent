@@ -1398,12 +1398,21 @@ impl DagNodeRunner for BoundDetectionRunner {
                         })?,
                     )
                 };
-            let runner =
-                ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
-                    .map_err(|error| {
-                        DagNodeFailure::terminal("detection_binding", error.to_string())
-                    })?;
-            runner.run(context).await?
+            if context.node.node_type == VLM_DETECTION_OPERATION {
+                let runner =
+                    VlmDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+                        .map_err(|error| {
+                            DagNodeFailure::terminal("detection_binding", error.to_string())
+                        })?;
+                runner.run(context).await?
+            } else {
+                let runner =
+                    ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+                        .map_err(|error| {
+                            DagNodeFailure::terminal("detection_binding", error.to_string())
+                        })?;
+                runner.run(context).await?
+            }
         };
         add_execution_metadata(&mut output, execution);
         Ok(output)

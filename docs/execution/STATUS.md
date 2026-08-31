@@ -428,3 +428,21 @@ of improvement, not a dataset-wide accuracy claim.
   (9 passed, 1 fixture-dependent test skipped).
 
 Review priority-rendering status: `PASS`.
+
+## Registry-only execution admission — 2026-08-31
+
+- Legacy Run fallback removal: the GUI no longer exposes a singleton Provider Run card or writes it
+  from the New Project wizard. Project task graphs without an actual published version are shown as
+  unpublished and block Run admission. Formal Run/Batch requests now require an exact Published
+  Workflow Version; model nodes must carry frozen Registry Model Profiles, while old Settings remain
+  only an explicit migration source. Draft Dry Run uses the same fail-closed Registry resolution.
+- A built-in offline Mock Provider and capability-specific Model Profiles bootstrap an empty
+  workspace through the same Registry, frozen-snapshot, publication and exact-version path as live
+  Providers; Mock is no longer a Settings fallback.
+- Local dev/test profiles disable incremental compilation and use bounded debug symbols. The change
+  removed 893,011 stale build files (158.0 GiB logical size) and prevents repeated all-feature runs
+  from recreating unbounded incremental caches; SAM models and the active Project database remain.
+- Strict workspace Clippy, all-feature Rust tests, 39 Web unit tests, production build and all 31
+  Chromium E2E scenarios pass.
+
+Registry-only execution admission status: `PASS`.

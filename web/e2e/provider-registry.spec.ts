@@ -8,8 +8,6 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Providers", exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Add provider" }).click();
-  await page.getByRole("button", { name: "Save Provider" }).click();
   const provider = page.locator(".registry-provider-card").filter({ hasText: "Mock (offline)" });
   await expect(provider).toContainText("Not required");
   await provider.getByRole("button", { name: "Check connection" }).click();

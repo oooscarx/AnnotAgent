@@ -1335,15 +1335,15 @@ fn compatibility_workflow(
                     .join("+")
             }
         ),
-        name: "Configured task graph".to_owned(),
+        name: "Unpublished Project task graph".to_owned(),
         version: project.version.to_string(),
-        status: WorkflowStatus::Published,
-        validation_status: "valid".to_owned(),
-        is_default: true,
+        status: WorkflowStatus::Draft,
+        validation_status: "publish required".to_owned(),
+        is_default: false,
         source: if skills.is_empty() {
-            "project tasks".to_owned()
+            "Project Schema only".to_owned()
         } else {
-            "project tasks + registered Skill graphs".to_owned()
+            "Project Schema + registered Skill graphs only".to_owned()
         },
         nodes,
     }
@@ -1381,6 +1381,72 @@ fn published_workflow_summary(
             })
             .collect(),
     }
+}
+
+fn registry_requirement_for_node(
+    node: &annotagent_core::WorkflowDraftNode,
+) -> Option<(ModelCapability, ModelBindingRole)> {
+    let requirement = match node.node_type.as_str() {
+        annotagent_skill_classification::CLASSIFICATION_OPERATION | "capability.classify" => (
+            ModelCapability::ImageClassification,
+            ModelBindingRole::Classification,
+        ),
+        annotagent_skill_classification::CLASSIFICATION_VERIFY_OPERATION => (
+            ModelCapability::ImageClassification,
+            ModelBindingRole::Verification,
+        ),
+        annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION => (
+            ModelCapability::OpenVocabularyDetection,
+            ModelBindingRole::Detection,
+        ),
+        annotagent_skill_open_vocabulary::PHRASE_GROUNDING_OPERATION => (
+            ModelCapability::PhraseGrounding,
+            ModelBindingRole::Detection,
+        ),
+        annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION
+        | annotagent_skill_yolo::YOLO_DETECTION_OPERATION
+        | "capability.detect" => (
+            ModelCapability::ObjectDetection,
+            ModelBindingRole::Detection,
+        ),
+        annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION | "vision_language" => (
+            ModelCapability::VisionLanguage,
+            ModelBindingRole::PrimaryInference,
+        ),
+        "capability.segment" | "semantic_segmentation" => (
+            ModelCapability::SemanticSegmentation,
+            ModelBindingRole::Segmentation,
+        ),
+        "prompted_segmentation" => (
+            ModelCapability::PromptedSegmentation,
+            ModelBindingRole::Segmentation,
+        ),
+        "instance_segmentation" => (
+            ModelCapability::InstanceSegmentation,
+            ModelBindingRole::Segmentation,
+        ),
+        _ if node.kind == WorkflowNodeKind::VisionLanguageModel => (
+            ModelCapability::VisionLanguage,
+            ModelBindingRole::PrimaryInference,
+        ),
+        _ if node.kind == WorkflowNodeKind::VisionModel
+            && node
+                .model_binding
+                .as_deref()
+                .is_some_and(|binding| binding.contains("classif")) =>
+        {
+            (
+                ModelCapability::ImageClassification,
+                ModelBindingRole::Classification,
+            )
+        }
+        _ if node.kind == WorkflowNodeKind::VisionModel => (
+            ModelCapability::ObjectDetection,
+            ModelBindingRole::Detection,
+        ),
+        _ => return None,
+    };
+    Some(requirement)
 }
 
 fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
@@ -8447,22 +8513,46 @@ impl LocalApplication {
         let project_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
         let project_bindings = self.store.list_project_model_bindings(project_id)?;
         let defaults = self.store.get_global_model_defaults()?;
+        let registry_models = self.store.list_model_profiles(None, false)?;
+        let providers = self.store.list_provider_profiles()?;
         let mut referenced = BTreeSet::new();
         for node in &mut draft.nodes {
             if node.model_profile_binding.is_none()
-                && node.model_binding.as_deref() == Some("default-vision")
-                && let Ok(resolved) = resolve_model_binding(
-                    None,
-                    &project_bindings,
-                    &defaults,
-                    ModelCapability::VisionLanguage,
-                    ModelBindingRole::PrimaryInference,
-                )
+                && let Some((capability, role)) = registry_requirement_for_node(node)
             {
-                node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
-                    model_profile_id: resolved.model_profile_id,
-                    locked: resolved.locked,
-                });
+                let resolved =
+                    resolve_model_binding(None, &project_bindings, &defaults, capability, role)
+                        .ok()
+                        .or_else(|| {
+                            let legacy_binding = node.model_binding.as_deref()?;
+                            if !legacy_binding.starts_with("mock") {
+                                return None;
+                            }
+                            registry_models
+                                .iter()
+                                .find(|model| {
+                                    model.enabled
+                                        && model.status == ModelProfileStatus::Available
+                                        && model.task_capabilities.contains(&capability)
+                                        && providers.iter().any(|provider| {
+                                            provider.id == model.provider_id
+                                                && provider.enabled
+                                                && provider.adapter == ProviderAdapterKind::Mock
+                                                && provider.preset_id.as_deref() == Some("mock")
+                                        })
+                                })
+                                .map(|model| annotagent_core::ResolvedModelBinding {
+                                    model_profile_id: model.id,
+                                    source: annotagent_core::ModelBindingSource::GlobalDefault,
+                                    locked: false,
+                                })
+                        });
+                if let Some(resolved) = resolved {
+                    node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                        model_profile_id: resolved.model_profile_id,
+                        locked: resolved.locked,
+                    });
+                }
             }
             if let Some(binding) = node.model_profile_binding.as_ref() {
                 referenced.insert(binding.model_profile_id);
@@ -8487,8 +8577,17 @@ impl LocalApplication {
         &self,
         draft_id: &str,
     ) -> Result<Vec<ModelProfileSnapshot>> {
+        self.resolved_workflow_draft_model_profiles(draft_id)
+            .map(|(_, profiles)| profiles)
+    }
+
+    pub fn resolved_workflow_draft_model_profiles(
+        &self,
+        draft_id: &str,
+    ) -> Result<(WorkflowDraft, Vec<ModelProfileSnapshot>)> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
-        self.freeze_registry_model_profiles(&mut draft)
+        let profiles = self.freeze_registry_model_profiles(&mut draft)?;
+        Ok((draft, profiles))
     }
 
     fn validate_published_registry_models(
@@ -13309,12 +13408,21 @@ export:
                 .iter()
                 .any(|issue| issue.code == "no_images" && issue.next_step == "data")
         );
-        assert!(summary.default_workflow_version.is_some());
+        assert!(summary.default_workflow_version.is_none());
+        assert!(
+            summary
+                .blocking_issues
+                .iter()
+                .any(|issue| issue.code == "no_published_pipeline" && issue.next_step == "pipeline")
+        );
         assert_eq!(summary.enabled_skills.len(), 1);
         assert_eq!(summary.enabled_skills[0].id, "robocup");
         assert_eq!(summary.enabled_skills[0].display_name, "RoboCup Ball");
-        assert_eq!(summary.active_workflow.name, "Configured task graph");
-        assert_eq!(summary.active_workflow.status, WorkflowStatus::Published);
+        assert_eq!(
+            summary.active_workflow.name,
+            "Unpublished Project task graph"
+        );
+        assert_eq!(summary.active_workflow.status, WorkflowStatus::Draft);
         assert_eq!(
             summary.workflows[0].node_count,
             summary.annotation_schema.len()

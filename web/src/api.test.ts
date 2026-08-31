@@ -69,4 +69,21 @@ describe("API client", () => {
     expect(JSON.stringify(fetch.mock.calls)).not.toContain("Authorization");
     vi.unstubAllGlobals();
   });
+
+  it("starts formal execution with only an exact Published Workflow Version", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ run_id: "run", batch: { id: "batch" } }),
+    });
+    vi.stubGlobal("fetch", fetch);
+    const workflow = { workflow_id: "workflow", version: 3 };
+    await api.startRun("demo", workflow, "idempotent-run");
+    await api.startBatch("demo", 5, workflow);
+    const runBody = JSON.parse(fetch.mock.calls[0][1].body);
+    const batchBody = JSON.parse(fetch.mock.calls[1][1].body);
+    expect(runBody).toEqual(workflow);
+    expect(batchBody).toEqual({ limit: 5, ...workflow });
+    expect(JSON.stringify([runBody, batchBody])).not.toContain("provider");
+    vi.unstubAllGlobals();
+  });
 });

@@ -264,9 +264,8 @@ export const api = {
     }),
   startRun: (
     projectId: string,
-    provider?: string,
-    idempotencyKey = crypto.randomUUID(),
-    workflow?: { workflow_id: string; version: number },
+    workflow: { workflow_id: string; version: number },
+    idempotencyKey: string = crypto.randomUUID(),
   ) =>
     request<{
       run_id: string;
@@ -276,20 +275,18 @@ export const api = {
     }>(`/api/projects/${projectId}/runs`, {
       method: "POST",
       headers: { "idempotency-key": idempotencyKey },
-      body: JSON.stringify({ ...(provider ? { provider } : {}), ...workflow }),
+      body: JSON.stringify(workflow),
     }),
   startBatch: (
     projectId: string,
-    provider?: string,
-    limit?: number,
-    workflow?: { workflow_id: string; version: number },
+    limit: number | undefined,
+    workflow: { workflow_id: string; version: number },
   ) =>
     request<{ batch: { id: string; status: string } }>(
       `/api/projects/${projectId}/batches`,
       {
         method: "POST",
         body: JSON.stringify({
-          ...(provider ? { provider } : {}),
           ...(limit ? { limit } : {}),
           ...workflow,
         }),
