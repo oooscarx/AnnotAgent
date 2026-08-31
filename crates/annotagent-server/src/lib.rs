@@ -4465,9 +4465,18 @@ async fn patch_annotation(
         .store()
         .update_annotation(&request.annotation, request.reason.as_deref())
         .map_err(ApiError::bad_request)?;
-    Ok(Json(
-        json!({"annotation": request.annotation, "revision": revision}),
-    ))
+    let geometry_metrics = revision
+        .before
+        .as_ref()
+        .zip(revision.after.as_ref())
+        .map_or_else(BTreeMap::new, |(before, after)| {
+            annotagent_core::manual_geometry_feature_map(before, after)
+        });
+    Ok(Json(json!({
+        "annotation": request.annotation,
+        "revision": revision,
+        "geometry_metrics": geometry_metrics,
+    })))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -4502,6 +4511,21 @@ async fn apply_review_decision(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("review was not found"))?;
     let original = annotation.snapshot();
+    let geometry_revision = state
+        .application
+        .store()
+        .list_revisions(id)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .rev()
+        .find(|revision| {
+            revision
+                .before
+                .as_ref()
+                .zip(revision.after.as_ref())
+                .and_then(|(before, after)| annotagent_core::manual_geometry_metrics(before, after))
+                .is_some()
+        });
     let requested_status = match request.decision.as_str() {
         "accept" => ReviewStatus::HumanAccepted,
         "reject" | "delete" => ReviewStatus::Rejected,
@@ -4552,6 +4576,11 @@ async fn apply_review_decision(
     let correction_id = if already_applied {
         None
     } else if let Some(skill_id) = requested_skill_id {
+        let correction_original = geometry_revision
+            .as_ref()
+            .and_then(|revision| revision.before.clone())
+            .unwrap_or_else(|| original.clone());
+        let corrected = annotation.snapshot();
         let record = CorrectionRecord {
             id: uuid::Uuid::new_v4(),
             project_id: stable_project_id(
@@ -4564,11 +4593,14 @@ async fn apply_review_decision(
             predicted_label: original.label.clone(),
             corrected_label: annotation.label.clone(),
             reason_code: request.reason_code.clone(),
-            original_annotation: Some(original),
-            corrected_annotation: Some(annotation.snapshot()),
+            original_annotation: Some(correction_original.clone()),
+            corrected_annotation: Some(corrected.clone()),
             note: request.note.clone(),
             image_features: CorrectionFeatures {
-                geometry: BTreeMap::new(),
+                geometry: annotagent_core::manual_geometry_feature_map(
+                    &correction_original,
+                    &corrected,
+                ),
                 colors: BTreeMap::new(),
             },
             created_at: Utc::now(),
@@ -6225,6 +6257,23 @@ export:
         )
         .await;
         assert_eq!(revisions["revisions"].as_array().map(Vec::len), Some(1));
+        let mut adjusted_annotation = reviews["reviews"][0]["annotation"].clone();
+        adjusted_annotation["value"]["rect"] = json!([0.56, 0.74, 0.03, 0.04]);
+        let adjusted = response_json(
+            request(
+                &service,
+                axum::http::Method::PATCH,
+                &format!("/api/annotations/{review_id}"),
+                Some(json!({
+                    "annotation": adjusted_annotation,
+                    "reason": "tighten_bbox"
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert!(adjusted["geometry_metrics"]["manual_center_shift"].is_number());
+        assert!(adjusted["geometry_metrics"]["manual_area_change"].is_number());
         let accepted = request(
             &service,
             axum::http::Method::POST,
@@ -6244,6 +6293,24 @@ export:
         assert_eq!(accepted["progress"]["reviewed_count"], json!(2));
         assert_eq!(accepted["progress"]["remaining_count"], json!(1));
         assert_eq!(accepted["progress"]["total_count"], json!(3));
+        let memory_after_adjustment = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/review-demo/correction-memory",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            memory_after_adjustment["records"]
+                .as_array()
+                .is_some_and(|records| records.iter().any(|record| {
+                    record["image_features"]["geometry"]["manual_center_shift"].is_number()
+                        && record["image_features"]["geometry"]["manual_area_change"].is_number()
+                }))
+        );
 
         let mut settings =
             response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)
@@ -6854,6 +6921,12 @@ export:
         assert_eq!(dry_run["summary"]["image_count"], json!(1));
         assert_eq!(dry_run["summary"]["auto_accepted_count"], json!(1));
         assert_eq!(dry_run["summary"]["empty_count"], json!(0));
+        assert_eq!(dry_run["summary"]["provider_failure_count"], json!(0));
+        assert_eq!(dry_run["summary"]["no_candidate_count"], json!(0));
+        assert_eq!(
+            dry_run["summary"]["geometry_quality"]["total_candidates"],
+            json!(0)
+        );
         assert_eq!(
             dry_run["summary"]["estimated_full_run"]["image_count"],
             json!(1)

@@ -18,20 +18,21 @@ use std::{
 
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
-    AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationSource,
-    ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor, BatchBudgetLedger,
-    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
-    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, CapabilityDeclarationSource,
-    CredentialReference, CredentialSource, DatasetExporter, DatasetImporter, DomainSkill,
-    EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, GenerationDefaults, ImageId,
-    ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
-    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
-    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
-    ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelInputContract,
-    ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
-    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
-    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
+    AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationFailureClass,
+    AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor,
+    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
+    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
+    CapabilityDeclarationSource, CredentialReference, CredentialSource, DatasetExporter,
+    DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate,
+    GenerationDefaults, GeometryQualityReport, ImageId, ImportIssue, ImportReport, ImportRequest,
+    InputModality, LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
+    LicenseMetadata, LicensePermission, ModelAvailabilityStatus,
+    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
+    ModelBindingSource, ModelCapability, ModelInputContract, ModelLimits, ModelMessage,
+    ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata,
+    NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry, NodeSideEffect,
+    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
     PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
     PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
     PortDefinition, PricingConfig, PricingSource, ProjectId, ProjectModelBinding, ProjectSchema,
@@ -629,7 +630,7 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         read(
             PipelineBuilderTool::InspectDryRunSummary,
-            "Read bounded review rate, failures, empty results, cost, and latency from the latest Dry Run.",
+            "Read bounded Provider/Worker failures, no-candidate, semantic/geometry/domain review, missing-score, manual-correction and refiner metrics from the latest Dry Run.",
             no_arguments(),
         ),
         read(
@@ -8519,6 +8520,15 @@ impl LocalApplication {
                             .try_into()
                             .unwrap_or(u64::MAX),
                         estimated_cost: "0".to_owned(),
+                        failure_classes: node_issues
+                            .iter()
+                            .map(|issue| {
+                                annotagent_core::classify_annotation_failure(
+                                    &issue.code,
+                                    &issue.message,
+                                )
+                            })
+                            .collect(),
                         issues: node_issues,
                     });
                 }
@@ -8537,6 +8547,12 @@ impl LocalApplication {
                     failed: node_results.iter().any(|node| !node.issues.is_empty()),
                     empty: node_results.iter().all(|node| node.issues.is_empty()),
                     outcomes: Vec::new(),
+                    failure_classes: node_results
+                        .iter()
+                        .flat_map(|node| node.failure_classes.iter().copied())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
                     nodes: node_results,
                 });
             }
@@ -8557,6 +8573,16 @@ impl LocalApplication {
             empty_count: samples.iter().filter(|sample| sample.empty).count(),
             ..SampleTestSummary::default()
         };
+        for node in samples.iter().flat_map(|sample| sample.nodes.iter()) {
+            for failure_class in &node.failure_classes {
+                let worker_failure = node.issues.iter().any(|issue| {
+                    format!("{} {}", issue.code, issue.message)
+                        .to_ascii_lowercase()
+                        .contains("worker")
+                });
+                record_dry_run_failure(&mut summary, *failure_class, worker_failure);
+            }
+        }
         finish_sample_test_summary(&mut summary, images.len(), total_latency_ms, "0");
         let report = WorkflowDryRunReport {
             sandbox: true,
@@ -8629,6 +8655,20 @@ impl LocalApplication {
             .parent()
             .unwrap_or(&self.workspace)
             .to_path_buf();
+        let historical_corrections = self
+            .store
+            .list_project_corrections(stable_project_id(&project_root), 500)?;
+        let geometry_correction_count = historical_corrections
+            .iter()
+            .filter(|record| {
+                record
+                    .image_features
+                    .geometry
+                    .contains_key("manual_center_shift")
+            })
+            .count();
+        let historical_geometry_correction_rate = (!historical_corrections.is_empty())
+            .then(|| geometry_correction_count as f32 / historical_corrections.len() as f32);
         let mut samples = Vec::new();
         let mut execution_issues = Vec::new();
         let mut summary = SampleTestSummary::default();
@@ -8678,6 +8718,22 @@ impl LocalApplication {
                         PipelineArtifact::DetectionSet(set) => {
                             sample_detections = sample_detections.max(set.detections.len());
                             for detection in &set.detections {
+                                let status = sample_test_outcome_status(Some(set.validation_state));
+                                let mut geometry_quality = GeometryQualityReport::from_detection(
+                                    set.reference.artifact_id.clone(),
+                                    detection,
+                                );
+                                geometry_quality.historical_correction_rate =
+                                    historical_geometry_correction_rate;
+                                let mut failure_classes = Vec::new();
+                                if detection.score.value.is_none() {
+                                    failure_classes.push(AnnotationFailureClass::MissingScore);
+                                }
+                                if status == SampleTestOutcomeStatus::NeedsReview
+                                    && geometry_quality.has_geometry_issue()
+                                {
+                                    failure_classes.push(AnnotationFailureClass::GeometryError);
+                                }
                                 detection_outcomes.insert(
                                     detection.detection_id.clone(),
                                     SampleTestOutcome {
@@ -8692,12 +8748,12 @@ impl LocalApplication {
                                             ToString::to_string,
                                         ),
                                         confidence: detection.score.comparable_confidence(),
-                                        status: sample_test_outcome_status(Some(
-                                            set.validation_state,
-                                        )),
+                                        status,
                                         value: Some(VisionArtifactValue::BoundingBox {
                                             rect: detection.bbox,
                                         }),
+                                        failure_classes,
+                                        geometry_quality: Some(geometry_quality),
                                     },
                                 );
                             }
@@ -8715,6 +8771,8 @@ impl LocalApplication {
                                             candidate.validation_state,
                                         ),
                                         value: candidate.value.clone(),
+                                        failure_classes: Vec::new(),
+                                        geometry_quality: None,
                                     },
                                 );
                             }
@@ -8733,6 +8791,8 @@ impl LocalApplication {
                                         value: Some(VisionArtifactValue::Classification {
                                             labels: vec![classification.label.clone()],
                                         }),
+                                        failure_classes: Vec::new(),
+                                        geometry_quality: None,
                                     },
                                 );
                             }
@@ -8763,6 +8823,8 @@ impl LocalApplication {
                                         value: Some(VisionArtifactValue::BoundingBox {
                                             rect: candidate.representative_bbox,
                                         }),
+                                        failure_classes: Vec::new(),
+                                        geometry_quality: None,
                                     },
                                 );
                             }
@@ -8792,10 +8854,39 @@ impl LocalApplication {
                 .filter(|outcome| outcome.status == SampleTestOutcomeStatus::NeedsReview)
                 .count();
             let sample_empty = outcomes.is_empty() && !sample_failed;
+            for outcome in &outcomes {
+                for failure_class in &outcome.failure_classes {
+                    record_dry_run_failure(&mut summary, *failure_class, false);
+                }
+                if let Some(report) = &outcome.geometry_quality {
+                    summary.geometry_quality.add_report(
+                        report,
+                        outcome.status == SampleTestOutcomeStatus::NeedsReview,
+                    );
+                    if let Some(iou) = report.iou_with_refiner {
+                        summary.refiner_usage_count += 1;
+                        let count = summary.refiner_usage_count;
+                        summary.geometry_quality.mean_refiner_iou = Some(
+                            summary
+                                .geometry_quality
+                                .mean_refiner_iou
+                                .map_or(iou, |mean| mean + (iou - mean) / count as f32),
+                        );
+                        if iou < 1.0 - f32::EPSILON {
+                            summary.refiner_success_count += 1;
+                        } else {
+                            summary.refiner_fallback_count += 1;
+                        }
+                    }
+                }
+            }
             summary.auto_accepted_count += sample_auto_accepted;
             summary.needs_review_count += sample_review;
             summary.empty_count += usize::from(sample_empty);
-            let nodes = result
+            if sample_empty {
+                summary.no_candidate_count += 1;
+            }
+            let nodes: Vec<WorkflowDryRunNodeResult> = result
                 .checkpoint
                 .traces
                 .iter()
@@ -8810,6 +8901,24 @@ impl LocalApplication {
                             blocking: true,
                         })
                         .collect::<Vec<_>>();
+                    let failure_classes = trace
+                        .error
+                        .iter()
+                        .map(|error| {
+                            annotagent_core::classify_annotation_failure(
+                                &error.code,
+                                &error.summary,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    for failure_class in &failure_classes {
+                        let worker_failure = trace.error.as_ref().is_some_and(|error| {
+                            format!("{} {}", error.code, error.summary)
+                                .to_ascii_lowercase()
+                                .contains("worker")
+                        });
+                        record_dry_run_failure(&mut summary, *failure_class, worker_failure);
+                    }
                     execution_issues.extend(issues.clone());
                     WorkflowDryRunNodeResult {
                         node_id: trace.node_id.clone(),
@@ -8825,10 +8934,23 @@ impl LocalApplication {
                             .try_into()
                             .unwrap_or(u64::MAX),
                         estimated_cost: trace.usage.cost.to_string(),
+                        failure_classes,
                         issues,
                     }
                 })
                 .collect();
+            let mut sample_failure_classes = nodes
+                .iter()
+                .flat_map(|node| node.failure_classes.iter().copied())
+                .chain(
+                    outcomes
+                        .iter()
+                        .flat_map(|outcome| outcome.failure_classes.iter().copied()),
+                )
+                .collect::<BTreeSet<_>>();
+            if sample_empty {
+                sample_failure_classes.insert(AnnotationFailureClass::NoCandidate);
+            }
             samples.push(WorkflowDryRunSampleResult {
                 image_index: *index,
                 image_name: path
@@ -8844,10 +8966,25 @@ impl LocalApplication {
                 failed: sample_failed,
                 empty: sample_empty,
                 outcomes,
+                failure_classes: sample_failure_classes.into_iter().collect(),
                 nodes,
             });
         }
         let total_latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+        for record in &historical_corrections {
+            let geometry = &record.image_features.geometry;
+            if let (Some(center_shift), Some(area_change)) = (
+                geometry.get("manual_center_shift"),
+                geometry.get("manual_area_change"),
+            ) {
+                summary
+                    .geometry_quality
+                    .add_manual_adjustment(*center_shift as f32, *area_change as f32);
+            }
+        }
+        summary.manual_resize_count = summary.geometry_quality.human_adjustment_count as usize;
+        summary.average_center_shift = summary.geometry_quality.mean_manual_center_shift;
+        summary.average_area_adjustment = summary.geometry_quality.mean_manual_area_change;
         let total_cost = total_cost.to_string();
         finish_sample_test_summary(&mut summary, images.len(), total_latency_ms, &total_cost);
         Ok(WorkflowDryRunReport {
@@ -10375,6 +10512,27 @@ fn sample_test_outcome_status(
     }
 }
 
+fn record_dry_run_failure(
+    summary: &mut SampleTestSummary,
+    failure_class: AnnotationFailureClass,
+    worker_failure: bool,
+) {
+    match failure_class {
+        AnnotationFailureClass::ProviderFailure => summary.provider_failure_count += 1,
+        AnnotationFailureClass::NoCandidate => summary.no_candidate_count += 1,
+        AnnotationFailureClass::SemanticError => summary.semantic_review_count += 1,
+        AnnotationFailureClass::GeometryError => summary.geometry_review_count += 1,
+        AnnotationFailureClass::MissingScore => summary.missing_score_count += 1,
+        AnnotationFailureClass::DomainRisk => summary.domain_risk_count += 1,
+        AnnotationFailureClass::InfrastructureFailure
+        | AnnotationFailureClass::InvalidArtifact
+        | AnnotationFailureClass::BudgetLimit => {}
+    }
+    if worker_failure {
+        summary.worker_failure_count += 1;
+    }
+}
+
 fn finish_sample_test_summary(
     summary: &mut SampleTestSummary,
     full_image_count: usize,
@@ -10538,6 +10696,17 @@ fn agent_dry_run_summary(
         auto_accepted_count: as_u32(report.summary.auto_accepted_count),
         review_count: as_u32(report.summary.needs_review_count),
         rejected_count: as_u32(rejected_count),
+        provider_failure_count: as_u32(report.summary.provider_failure_count),
+        worker_failure_count: as_u32(report.summary.worker_failure_count),
+        no_candidate_count: as_u32(report.summary.no_candidate_count),
+        semantic_review_count: as_u32(report.summary.semantic_review_count),
+        geometry_review_count: as_u32(report.summary.geometry_review_count),
+        missing_score_count: as_u32(report.summary.missing_score_count),
+        domain_risk_count: as_u32(report.summary.domain_risk_count),
+        refiner_usage_count: as_u32(report.summary.refiner_usage_count),
+        refiner_success_count: as_u32(report.summary.refiner_success_count),
+        refiner_fallback_count: as_u32(report.summary.refiner_fallback_count),
+        geometry_quality: report.summary.geometry_quality.clone(),
         warning_counts,
         model_calls: as_u32(model_calls),
         duration_ms: report.total_latency_ms,
@@ -11721,6 +11890,108 @@ export:
             dry_run.samples[0].nodes.iter().any(|node| {
                 node.node_id == "detector" && node.status == "completed_in_sandbox"
             })
+        );
+        let quality_draft = application
+            .suggest_label_pipeline(
+                "object-detection",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("controlled detection Pipeline")
+            .draft;
+        application
+            .save_workflow_draft(quality_draft.clone())
+            .expect("save quality Draft");
+        let quality_dry_run = application
+            .dry_run_workflow_samples(&quality_draft.id, &settings, &[0])
+            .await
+            .expect("quality-aware detection Dry Run");
+        assert_eq!(quality_dry_run.summary.provider_failure_count, 0);
+        assert_eq!(quality_dry_run.summary.missing_score_count, 0);
+        assert_eq!(quality_dry_run.summary.geometry_quality.total_candidates, 1);
+        assert_eq!(
+            quality_dry_run.samples[0].outcomes[0]
+                .geometry_quality
+                .as_ref()
+                .map(|report| report.geometry_semantics),
+            Some(annotagent_core::GeometrySemantics::PredictedGeometry)
+        );
+        let mut empty_draft = quality_draft.clone();
+        empty_draft.id = "object-detection-empty-quality".to_owned();
+        let composition = empty_draft.label_pipeline.as_mut().expect("Label Pipeline");
+        for step in composition
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| stage.steps.iter_mut())
+            .chain(
+                composition
+                    .label_pipelines
+                    .iter_mut()
+                    .flat_map(|pipeline| pipeline.steps.iter_mut()),
+            )
+            .filter(|step| step.kind == WorkflowNodeKind::VisionModel)
+        {
+            step.node_type =
+                annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION.to_owned();
+            step.model_binding
+                .as_mut()
+                .expect("detector binding")
+                .model_id = "mock-object-detector".to_owned();
+            step.parameters.insert("mock_empty".to_owned(), json!(true));
+        }
+        let empty_draft = application
+            .save_workflow_draft(empty_draft)
+            .expect("save empty-result Draft");
+        let empty_dry_run = application
+            .dry_run_workflow_samples(&empty_draft.id, &settings, &[0])
+            .await
+            .expect("empty-result Dry Run");
+        assert_eq!(
+            empty_dry_run.summary.no_candidate_count, 1,
+            "{empty_dry_run:#?}"
+        );
+        assert_eq!(
+            empty_dry_run.samples[0].failure_classes,
+            vec![AnnotationFailureClass::NoCandidate]
+        );
+        let mut provider_failure_draft = quality_draft;
+        provider_failure_draft.id = "object-detection-provider-failure".to_owned();
+        for step in provider_failure_draft
+            .label_pipeline
+            .as_mut()
+            .expect("Label Pipeline")
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| stage.steps.iter_mut())
+            .filter(|step| step.kind == WorkflowNodeKind::VisionModel)
+        {
+            step.node_type =
+                annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION.to_owned();
+            step.model_binding
+                .as_mut()
+                .expect("detector binding")
+                .model_id = "mock-object-detector".to_owned();
+            step.parameters
+                .insert("mock_backend_error".to_owned(), json!(true));
+        }
+        let provider_failure_draft = application
+            .save_workflow_draft(provider_failure_draft)
+            .expect("save Provider-failure Draft");
+        let provider_failure_dry_run = application
+            .dry_run_workflow_samples(&provider_failure_draft.id, &settings, &[0])
+            .await
+            .expect("Provider-failure Dry Run remains inspectable");
+        assert_eq!(
+            provider_failure_dry_run.summary.provider_failure_count, 1,
+            "{provider_failure_dry_run:#?}"
+        );
+        assert_eq!(provider_failure_dry_run.summary.no_candidate_count, 0);
+        assert!(
+            provider_failure_dry_run.samples[0]
+                .failure_classes
+                .contains(&AnnotationFailureClass::ProviderFailure)
         );
         let published = application
             .publish_workflow(&draft.id, &settings)

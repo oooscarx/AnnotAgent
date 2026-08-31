@@ -341,6 +341,8 @@ pub struct WorkflowDryRunNodeResult {
     pub latency_ms: u64,
     pub estimated_cost: String,
     pub issues: Vec<WorkflowValidationIssue>,
+    #[serde(default)]
+    pub failure_classes: Vec<crate::AnnotationFailureClass>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -362,6 +364,8 @@ pub struct WorkflowDryRunSampleResult {
     pub empty: bool,
     #[serde(default)]
     pub outcomes: Vec<SampleTestOutcome>,
+    #[serde(default)]
+    pub failure_classes: Vec<crate::AnnotationFailureClass>,
     pub nodes: Vec<WorkflowDryRunNodeResult>,
 }
 
@@ -380,6 +384,10 @@ pub struct SampleTestOutcome {
     pub confidence: Option<f32>,
     pub status: SampleTestOutcomeStatus,
     pub value: Option<crate::VisionArtifactValue>,
+    #[serde(default)]
+    pub failure_classes: Vec<crate::AnnotationFailureClass>,
+    #[serde(default)]
+    pub geometry_quality: Option<crate::GeometryQualityReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -393,7 +401,7 @@ pub struct WorkflowDryRunReport {
     pub estimated_cost: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SampleTestSummary {
     pub image_count: usize,
     pub detection_count: usize,
@@ -412,6 +420,34 @@ pub struct SampleTestSummary {
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default)]
+    pub provider_failure_count: usize,
+    #[serde(default)]
+    pub worker_failure_count: usize,
+    #[serde(default)]
+    pub no_candidate_count: usize,
+    #[serde(default)]
+    pub semantic_review_count: usize,
+    #[serde(default)]
+    pub geometry_review_count: usize,
+    #[serde(default)]
+    pub missing_score_count: usize,
+    #[serde(default)]
+    pub domain_risk_count: usize,
+    #[serde(default)]
+    pub manual_resize_count: usize,
+    #[serde(default)]
+    pub average_center_shift: Option<f32>,
+    #[serde(default)]
+    pub average_area_adjustment: Option<f32>,
+    #[serde(default)]
+    pub refiner_usage_count: usize,
+    #[serde(default)]
+    pub refiner_success_count: usize,
+    #[serde(default)]
+    pub refiner_fallback_count: usize,
+    #[serde(default)]
+    pub geometry_quality: crate::GeometryQualitySummary,
+    #[serde(default)]
     pub usage: UsageSummary,
     #[serde(default)]
     pub estimated_full_run: Option<FullRunEstimate>,
@@ -422,6 +458,7 @@ pub type WorkflowDryRunSummary = SampleTestSummary;
 
 /// Bounded quality/cost observation returned to Pipeline Builder policies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct AgentDryRunSummary {
     pub image_count: u32,
     pub successful_images: u32,
@@ -431,6 +468,18 @@ pub struct AgentDryRunSummary {
     pub auto_accepted_count: u32,
     pub review_count: u32,
     pub rejected_count: u32,
+    pub provider_failure_count: u32,
+    pub worker_failure_count: u32,
+    pub no_candidate_count: u32,
+    pub semantic_review_count: u32,
+    pub geometry_review_count: u32,
+    pub missing_score_count: u32,
+    pub domain_risk_count: u32,
+    pub refiner_usage_count: u32,
+    pub refiner_success_count: u32,
+    pub refiner_fallback_count: u32,
+    #[serde(default)]
+    pub geometry_quality: crate::GeometryQualitySummary,
     #[serde(default)]
     pub warning_counts: BTreeMap<String, u32>,
     pub model_calls: u32,

@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-01 CST
 
+## Expert Vision SDK M4 — 2026-09-01
+
+- Added stable failure classes so Provider/Worker outages, no candidate, semantic mistakes, geometry
+  errors, missing scores, domain risks, invalid Artifacts and budget limits cannot be conflated.
+- Detection geometry semantics, per-candidate reports and Dry Run aggregates keep VLM confidence
+  separate from bbox quality and expose real prompted-segmentation comparison metrics.
+- Human bbox edits now return and persist center shift, relative area adjustment and IoU evidence;
+  Pipeline Builder can read bounded quality statistics without receiving image bodies.
+- Strict Clippy/Rustfmt, 294 Rust tests, Web typecheck and all 40 Web tests pass. One explicitly
+  billable Provider smoke remains ignored.
+
 ## Expert Vision SDK M3 — 2026-09-01
 
 - Added explicit Box/Point Prompt, Mask and Polygon Set Artifacts plus a capability-neutral

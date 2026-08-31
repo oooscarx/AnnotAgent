@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M3 — Artifact Conversion Registry (complete)
+M4 — Geometry quality and failure classification (complete)
 
 ## Completed
 
@@ -61,19 +61,29 @@ M3 — Artifact Conversion Registry (complete)
 - Added a Published Runtime end-to-end test that executes the complete offline prompt-segmentation
   chain and persists the refined bounding box as an explicit human-review candidate.
 - Extended Node Inspector geometry extraction and authoring types for prompt/mask/polygon Artifacts.
+- Added stable failure classes that keep Provider/Worker failure, empty candidates, semantic error,
+  geometry error, missing score, domain risk, invalid Artifact and budget exhaustion distinct.
+- Added per-candidate `GeometryQualityReport` and aggregate `GeometryQualitySummary`; VLM boxes now
+  default to coarse hypotheses while prompted-segmentation boxes are mask-refined geometry.
+- Extended Dry Run and the bounded Agent summary with failure, review, manual-adjustment and refiner
+  metrics. Existing sample-test records remain backward compatible.
+- Bounding-box edits now return normalized center-shift/area-change/IoU through the API and persist
+  those metrics into Correction Memory when review is resolved.
+- Added deterministic Dry Run cases proving a Provider failure is classified without becoming a
+  no-candidate/geometry claim, while a successful terminal empty result is `NoCandidate`.
 
 ## In progress
 
-- None. M3 is ready for its independent local commit.
+- None. M4 is ready for its independent local commit.
 
 ## Next
 
-- M4: add unified failure classes, geometry-quality reports, correction/refiner metrics and Dry Run
-  evidence APIs.
+- M5: make Pipeline Builder decisions and revision policy consume availability, conversion paths,
+  failure classes and geometry-quality evidence.
 
 ## Latest Rust tests
 
-- `cargo test --workspace --all-features`: PASS — 291 tests; zero failures; one opt-in billable
+- `cargo test --workspace --all-features`: PASS — 294 tests; zero failures; one opt-in billable
   smoke ignored.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
@@ -108,11 +118,12 @@ M3 — Artifact Conversion Registry (complete)
 - M0: `127d0de docs: establish expert vision integration baseline`.
 - M1: `4faed86 feat(models): add capability-driven expert model manifests`.
 - M2: `561de50 feat(workers): add an extensible expert vision worker sdk`.
-- M3 commit pending: `feat(workflow): compose expert models through typed artifact conversions`.
+- M3: `b98ceaa feat(workflow): compose expert models through typed artifact conversions`.
+- M4 commit pending: `feat(evaluation): distinguish semantic, geometry and provider failures`.
 
 ## Release-blocking remainder
 
-- M4–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
+- M5–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Live-conditional
 

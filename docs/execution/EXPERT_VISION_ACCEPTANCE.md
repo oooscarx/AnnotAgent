@@ -36,10 +36,11 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## D — VLM geometry quality
 
-- PARTIAL — Manifest migration maps Vision Language capability to `CoarseHypothesis`; propagation
-  onto every produced Detection Artifact remains M4.
+- PASS — Every Detection carries geometry semantics; Vision Language maps to `CoarseHypothesis`,
+  detector output to `PredictedGeometry`, and prompted segmentation to `MaskRefinedGeometry`.
 - PASS — Detection score semantics preserve missing/unknown values without fabrication.
-- PENDING — Geometry report, human-adjustment and refiner Dry Run metrics.
+- PASS — Geometry reports and Dry Run summaries expose geometry, human-adjustment and refiner
+  metrics independently from score confidence.
 - PENDING — Evidence-driven refiner selection.
 
 ## E — Advisor
@@ -115,3 +116,17 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   added to Core or Runtime.
 - Full Rust gate passes 291 tests with zero failures and one explicit billable smoke ignored;
   strict workspace Clippy and Rustfmt also pass.
+
+## M4 evidence
+
+- `AnnotationFailureClass` deterministically distinguishes all nine required failure classes;
+  Provider failure and no-candidate are not geometry evidence.
+- `GeometryQualityReport` records geometry semantics, bounded deterministic checks, explicit unknown
+  measurements, refiner comparison and historical correction rate.
+- The Generic Object Detection Dry Run test exposes predicted geometry and aggregate quality through
+  the real Application path, then separately proves Provider failure and terminal no-candidate
+  results remain distinct.
+- The Server review regression drags a bbox, observes API geometry metrics, resolves review, and
+  verifies center-shift/area-change metrics persisted in Correction Memory.
+- Full Rust workspace: 294 passed, zero failed, one explicitly billable smoke ignored. Strict Clippy,
+  Rustfmt, Web typecheck and all 40 Web tests pass.

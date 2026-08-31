@@ -824,7 +824,10 @@ export interface WorkflowDryRunReport {
       confidence?: number | null;
       status: "ready_to_accept" | "needs_review" | "invalid";
       value?: AnnotationValue | null;
+      failure_classes?: AnnotationFailureClass[];
+      geometry_quality?: GeometryQualityReport | null;
     }[];
+    failure_classes?: AnnotationFailureClass[];
     nodes: {
       node_id: string;
       status: string;
@@ -832,6 +835,7 @@ export interface WorkflowDryRunReport {
       latency_ms: number;
       estimated_cost: string;
       issues: WorkflowValidationReport["issues"];
+      failure_classes?: AnnotationFailureClass[];
     }[];
   }[];
   summary: {
@@ -847,6 +851,20 @@ export interface WorkflowDryRunReport {
     duration_ms: number;
     input_tokens: number;
     output_tokens: number;
+    provider_failure_count?: number;
+    worker_failure_count?: number;
+    no_candidate_count?: number;
+    semantic_review_count?: number;
+    geometry_review_count?: number;
+    missing_score_count?: number;
+    domain_risk_count?: number;
+    manual_resize_count?: number;
+    average_center_shift?: number | null;
+    average_area_adjustment?: number | null;
+    refiner_usage_count?: number;
+    refiner_success_count?: number;
+    refiner_fallback_count?: number;
+    geometry_quality?: GeometryQualitySummary;
     usage: {
       input_tokens: number;
       output_tokens: number;
@@ -862,6 +880,52 @@ export interface WorkflowDryRunReport {
   };
   total_latency_ms: number;
   estimated_cost: string;
+}
+
+export type AnnotationFailureClass =
+  | "infrastructure_failure"
+  | "provider_failure"
+  | "no_candidate"
+  | "semantic_error"
+  | "geometry_error"
+  | "missing_score"
+  | "domain_risk"
+  | "invalid_artifact"
+  | "budget_limit";
+
+export interface GeometryQualityReport {
+  artifact_id: string;
+  geometry_semantics:
+    | "not_applicable"
+    | "coarse_hypothesis"
+    | "predicted_geometry"
+    | "mask_refined_geometry"
+    | "calibrated_geometry"
+    | "human_verified";
+  clipped_to_image: boolean;
+  aspect_ratio_outlier: boolean;
+  area_ratio?: number | null;
+  foreground_occupancy?: number | null;
+  edge_support?: number | null;
+  mask_support?: number | null;
+  center_shift_from_refiner?: number | null;
+  area_change_from_refiner?: number | null;
+  iou_with_refiner?: number | null;
+  manual_center_shift?: number | null;
+  manual_area_change?: number | null;
+  historical_correction_rate?: number | null;
+  issue_codes: string[];
+}
+
+export interface GeometryQualitySummary {
+  total_candidates: number;
+  coarse_geometry_count: number;
+  geometry_review_count: number;
+  human_adjustment_count: number;
+  mean_manual_center_shift?: number | null;
+  mean_manual_area_change?: number | null;
+  mean_refiner_iou?: number | null;
+  inaccurate_bbox_reason_count: number;
 }
 
 export interface WorkflowVersionComparison {

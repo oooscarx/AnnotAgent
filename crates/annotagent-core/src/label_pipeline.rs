@@ -203,6 +203,8 @@ pub struct DetectionArtifactItem {
     #[serde(default = "default_object_detection_capability")]
     pub source_capability: VisionCapability,
     #[serde(default)]
+    pub geometry_semantics: crate::GeometrySemantics,
+    #[serde(default)]
     pub evidence: Vec<DetectionEvidence>,
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
@@ -233,6 +235,7 @@ impl DetectionArtifactItem {
             source_capability: source.capability,
             raw_output_ref: None,
         };
+        let geometry_semantics = crate::default_geometry_semantics(&[source.capability]);
         Ok(Self {
             detection_id: detection_id.into(),
             query_id,
@@ -242,6 +245,7 @@ impl DetectionArtifactItem {
             score,
             source_model_id: source.model_id,
             source_capability: source.capability,
+            geometry_semantics,
             evidence: vec![evidence],
             attributes: BTreeMap::new(),
         })
@@ -397,6 +401,10 @@ impl<'de> Deserialize<'de> for DetectionSetArtifact {
                     source_capability: detection.source_capability,
                     raw_output_ref: None,
                 });
+            }
+            if detection.geometry_semantics == crate::GeometrySemantics::NotApplicable {
+                detection.geometry_semantics =
+                    crate::default_geometry_semantics(&[detection.source_capability]);
             }
         }
         Ok(Self {

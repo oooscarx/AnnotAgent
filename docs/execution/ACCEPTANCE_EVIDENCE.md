@@ -1007,6 +1007,21 @@ remain `LIVE-CONDITIONAL`; no credential, push or remote mutation was used.
 4. `cargo fmt --all -- --check`, strict all-target/all-feature Clippy and the complete 291-test Rust
    workspace pass; one explicitly billable Provider smoke remains ignored.
 5. Python Worker SDK tests pass 14/14. Web typecheck, 40 tests and production build pass.
+
+## Expert Vision SDK M4 — 2026-09-01
+
+1. Core tests cover all nine `AnnotationFailureClass` values and prove that Provider failure,
+   no-candidate and geometry error remain distinct.
+2. Vision-language Detection geometry defaults to `coarse_hypothesis`; semantic confidence remains
+   a separate score field. Refiner metrics compare original and mask-refined boxes without replacing
+   either Artifact.
+3. Generic Detection Dry Run exposes per-result geometry reports plus the aggregate quality/failure
+   summary through the Application path. Deterministic variants prove Provider failure is not
+   counted as no-candidate, while a successful terminal empty DetectionSet is.
+4. The HTTP review regression patches an editable bbox, receives geometry metrics, resolves review,
+   and finds manual center-shift and area-change evidence in persisted Correction Memory.
+5. `cargo test --workspace --all-features`: 294 passed, zero failed, one opt-in billable smoke
+   ignored. Strict Clippy/Rustfmt, Web typecheck and all 40 Web tests pass.
 ## Registry-only execution admission — 2026-08-31
 
 1. Settings no longer renders `Legacy Run fallback`; New Project creates only Project Schema plus an
