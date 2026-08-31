@@ -24,3 +24,20 @@ mask-refined geometry. Human edits are human-verified, not model-calibrated.
 
 The canonical types are in `crates/annotagent-core/src/expert_model.rs`. Existing generic Vision
 descriptors migrate through this boundary without promoting an untested HTTP Worker to Available.
+
+## Guided registration
+
+Open **Settings → Vision Workers → Add expert model**. The six-step setup supports a known preset,
+a generic HTTP Vision Protocol Worker, or the already-registered offline Mock. HTTP setup records
+an endpoint, remote-access policy, timeout, and optional `env:VARIABLE_NAME` bearer-token
+reference; secrets are resolved at request time and never serialized into Settings.
+
+Discovery actively reads `/health`, `/v1/capabilities`, `/v1/models`, and `/v1/contracts`. A
+selected-image sample then shows the input, bounded raw summary, converted typed Artifact,
+normalized coordinates, score semantics, geometry semantics, duration, and warnings. The observed
+evidence is persisted in the Git-ignored workspace Settings and survives Server restarts.
+
+Registration is disabled unless health, protocol, contracts, immutable model identity/weights,
+and sample conversion all pass. Discovery failure records the exact stage. Missing checkpoint
+identity remains `MissingWeights`; stale or incomplete evidence can never be upgraded to
+`Available` merely by enabling a checkbox.

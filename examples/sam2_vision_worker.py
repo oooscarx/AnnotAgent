@@ -21,6 +21,10 @@ MODEL_CONFIG = os.environ.get(
     "ANNOTAGENT_SAM_MODEL_CONFIG", "configs/sam2.1/sam2.1_hiera_t.yaml"
 )
 MODEL_IDENTITY = os.environ.get("ANNOTAGENT_SAM_MODEL", "sam2.1-hiera-tiny")
+MODEL_VERSION = os.environ.get("ANNOTAGENT_SAM_MODEL_VERSION", "unconfigured")
+CHECKPOINT_SHA256 = os.environ.get("ANNOTAGENT_SAM_CHECKPOINT_SHA256", "") or None
+TRAINING_DATASET_VERSION = os.environ.get("ANNOTAGENT_SAM_TRAINING_DATASET_VERSION", "") or None
+WEIGHT_LICENSE = os.environ.get("ANNOTAGENT_SAM_WEIGHT_LICENSE", "") or None
 PREDICTOR: Any = None
 DEVICE = "unknown"
 LOAD_ERROR: str | None = None
@@ -99,6 +103,9 @@ def get_box(request: dict[str, Any]) -> list[float]:
 
 
 def get_boxes(request: dict[str, Any]) -> list[list[float]]:
+    pipeline_prompts = pipeline_prompt_context(request)
+    if pipeline_prompts is not None:
+        return [item[1] for item in pipeline_prompts[1]]
     prompts = request.get("parameters", {}).get("box_prompts")
     if prompts is None:
         return [get_box(request)]
@@ -114,6 +121,111 @@ def get_boxes(request: dict[str, Any]) -> list[list[float]]:
             raise ValueError("box prompt must be a valid normalized rectangle")
         boxes.append(values)
     return boxes
+
+
+def pipeline_prompt_context(
+    request: dict[str, Any],
+) -> tuple[dict[str, Any], list[tuple[str, list[float]]]] | None:
+    for envelope in request.get("input_artifacts", []):
+        if envelope.get("kind") != "box_prompt_set":
+            continue
+        artifact = envelope.get("artifact", {})
+        reference = artifact.get("reference")
+        prompts = artifact.get("prompts")
+        if not isinstance(reference, dict) or not isinstance(prompts, list) or not prompts:
+            raise ValueError("BoxPromptSet must include a set reference and at least one prompt")
+        parsed: list[tuple[str, list[float]]] = []
+        for prompt in prompts:
+            prompt_id = prompt.get("id")
+            bbox = prompt.get("bbox")
+            if not isinstance(prompt_id, str) or not prompt_id or not isinstance(bbox, list) or len(bbox) != 4:
+                raise ValueError("BoxPromptSet prompts require id and normalized bbox")
+            values = [float(item) for item in bbox]
+            x, y, width, height = values
+            if min(values) < 0 or width <= 0 or height <= 0 or x + width > 1.00001 or y + height > 1.00001:
+                raise ValueError("BoxPromptSet contains an invalid normalized rectangle")
+            parsed.append((prompt_id, values))
+        return reference, parsed
+    return None
+
+
+def model_availability() -> str:
+    return "unknown" if PREDICTOR is not None else "missing_weights"
+
+
+def model_summary() -> dict[str, Any]:
+    return {
+        "model_id": MODEL_IDENTITY,
+        "display_name": "SAM 2 prompted segmentation",
+        "architecture": "sam2.1",
+        "model_version": MODEL_VERSION,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "capabilities": ["prompted_segmentation"],
+        "availability": model_availability(),
+    }
+
+
+def model_manifest() -> dict[str, Any]:
+    weights_ready = PREDICTOR is not None and CHECKPOINT_SHA256 is not None and WEIGHT_LICENSE is not None
+    return {
+        "schema_version": "1",
+        "model_id": MODEL_IDENTITY,
+        "display_name": "SAM 2 prompted segmentation",
+        "architecture": "sam2.1",
+        "model_version": MODEL_VERSION,
+        "connection": {
+            "kind": "vision_worker_model",
+            "worker_id": "annotagent-sam2",
+            "worker_model_id": MODEL_IDENTITY,
+        },
+        "capabilities": ["prompted_segmentation"],
+        "input_contracts": [
+            {"name": "image", "data_type": {"artifact": "image"}, "required": True, "multiple": False},
+            {"name": "box_prompts", "data_type": {"artifact": "box_prompt_set"}, "required": False, "multiple": True},
+            {"name": "point_prompts", "data_type": {"artifact": "point_prompt_set"}, "required": False, "multiple": True},
+        ],
+        "output_contracts": [
+            {"name": "masks", "data_type": {"artifact": "mask_set"}, "required": True, "multiple": True},
+        ],
+        "prompt_contracts": [
+            {"kind": "box", "required": False, "multiple": True},
+            {"kind": "point", "required": False, "multiple": True},
+        ],
+        "score_semantics": "relative_confidence",
+        "geometry_semantics": "mask_refined_geometry",
+        "label_space": None,
+        "checkpoint": None if CHECKPOINT_SHA256 is None else {
+            "sha256": CHECKPOINT_SHA256,
+            "source": MODEL_PATH or None,
+            "training_dataset_version": TRAINING_DATASET_VERSION,
+        },
+        "runtime_requirements": {
+            "devices": ["cuda", "mps", "cpu"],
+            "minimum_gpu_memory_mb": None,
+            "dependencies": ["sam2", "torch", "numpy", "Pillow"],
+            "supports_batch": False,
+        },
+        "license": {
+            "code_license": "Apache-2.0",
+            "weight_license": WEIGHT_LICENSE,
+            "source_url": "https://github.com/facebookresearch/sam2",
+            "commercial_use": "unknown",
+            "redistribution": "unknown",
+            "usage_notes": ["Verify the concrete checkpoint license before use."],
+            "verified_from_official_source": False,
+        },
+        "availability": "unknown" if weights_ready else "missing_weights",
+        "availability_evidence": {
+            "health_passed": PREDICTOR is not None,
+            "protocol_compatible": True,
+            "contracts_validated": True,
+            "sample_conversion_passed": False,
+            "weights_ready": weights_ready,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "detail": "AnnotAgent must run a selected-image sample conversion before registration.",
+        },
+        "metadata": {"device": DEVICE},
+    }
 
 
 def uncompressed_coco_rle(mask) -> str:
@@ -167,52 +279,95 @@ def infer(request: dict[str, Any]) -> dict[str, Any]:
         inference_ms = int((time.perf_counter() - inference_started) * 1000)
         if not candidates:
             raise ValueError("SAM2 returned an empty mask")
-        input_ids = [item.get("id") for item in request.get("input_artifacts", []) if item.get("id")]
-        artifacts = []
-        for prompt_index, mask_index, normalized_box, mask, score in candidates:
-            ys, xs = np.where(mask)
-            tight = [
-                float(xs.min() / width),
-                float(ys.min() / height),
-                float((xs.max() - xs.min() + 1) / width),
-                float((ys.max() - ys.min() + 1) / height),
-            ]
-            artifacts.append({
-                "id": str(uuid.uuid4()),
-                "image_id": request["image_id"],
-                "task_id": request["task_id"],
-                "label": "ball",
-                "role": "candidate",
-                "value": {
-                    "kind": "instance_mask",
+        pipeline_prompts = pipeline_prompt_context(request)
+        if pipeline_prompts is not None:
+            source_prompts, prompt_items = pipeline_prompts
+            masks = []
+            for prompt_index, mask_index, normalized_box, mask, score in candidates:
+                prompt_id = prompt_items[prompt_index][0]
+                masks.append({
+                    "mask_id": f"sam-mask:{prompt_id}:{mask_index}",
+                    "prompt": {**source_prompts, "item_id": prompt_id},
                     "mask": {
                         "encoding": "coco_rle",
                         "width": width,
                         "height": height,
                         "counts": uncompressed_coco_rle(mask),
                     },
+                    "score": {"value": score, "semantics": "relative_confidence"},
+                    "attributes": {
+                        "prompt_bbox": normalized_box,
+                        "prompt_index": prompt_index,
+                        "mask_index": mask_index,
+                        "mask_area_pixels": int(mask.sum()),
+                        "device": DEVICE,
+                    },
+                })
+            artifacts = [{
+                "kind": "mask_set",
+                "artifact": {
+                    "reference": {
+                        "artifact_id": f"sam-mask-set:{uuid.uuid4()}",
+                        "source_node": request["node_id"],
+                        "port": "masks",
+                        "artifact_type": "mask_set",
+                        "item_id": None,
+                    },
+                    "image_id": request["image_id"],
+                    "model_binding": request["model_id"],
+                    "source_prompts": source_prompts,
+                    "validation_state": "unvalidated",
+                    "masks": masks,
+                    "metadata": {"worker": "annotagent-sam2", "device": DEVICE},
                 },
-                "source_node": request["node_id"],
-                "confidence": score,
-                "metadata": {
-                    "tight_bbox": tight,
-                    "prompt_bbox": normalized_box,
-                    "prompt_index": prompt_index,
-                    "mask_index": mask_index,
-                    "mask_area_pixels": int(mask.sum()),
-                    "device": DEVICE,
-                },
-                "validation_state": "unvalidated",
-                "provenance": {
-                    "provider": "sam2_http_worker",
-                    "model": MODEL_IDENTITY,
-                    "request_id": request.get("request_id"),
-                    "input_artifact_ids": input_ids,
-                },
-                "revision": 1,
-                "replaces_artifact_id": None,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+            }]
+        else:
+            input_ids = [item.get("id") for item in request.get("input_artifacts", []) if item.get("id")]
+            artifacts = []
+            for prompt_index, mask_index, normalized_box, mask, score in candidates:
+                ys, xs = np.where(mask)
+                tight = [
+                    float(xs.min() / width),
+                    float(ys.min() / height),
+                    float((xs.max() - xs.min() + 1) / width),
+                    float((ys.max() - ys.min() + 1) / height),
+                ]
+                artifacts.append({
+                    "id": str(uuid.uuid4()),
+                    "image_id": request["image_id"],
+                    "task_id": request.get("task_id"),
+                    "label": "ball",
+                    "role": "candidate",
+                    "value": {
+                        "kind": "instance_mask",
+                        "mask": {
+                            "encoding": "coco_rle",
+                            "width": width,
+                            "height": height,
+                            "counts": uncompressed_coco_rle(mask),
+                        },
+                    },
+                    "source_node": request["node_id"],
+                    "confidence": score,
+                    "metadata": {
+                        "tight_bbox": tight,
+                        "prompt_bbox": normalized_box,
+                        "prompt_index": prompt_index,
+                        "mask_index": mask_index,
+                        "mask_area_pixels": int(mask.sum()),
+                        "device": DEVICE,
+                    },
+                    "validation_state": "unvalidated",
+                    "provenance": {
+                        "provider": "sam2_http_worker",
+                        "model": MODEL_IDENTITY,
+                        "request_id": request.get("request_id"),
+                        "input_artifact_ids": input_ids,
+                    },
+                    "revision": 1,
+                    "replaces_artifact_id": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
         total_ms = int((time.perf_counter() - started) * 1000)
         return response(
             artifacts=artifacts,
@@ -246,9 +401,22 @@ class Handler(BaseHTTPRequestHandler):
                 "worker_id": "annotagent-sam2",
                 "model_identity": MODEL_IDENTITY,
                 "capabilities": ["prompted_segmentation"],
-                "input_types": ["image", {"artifact": "bounding_box"}],
-                "output_types": ["instance_mask"],
+                "input_types": ["image", {"artifact": "box_prompt_set"}, {"artifact": "point_prompt_set"}],
+                "output_types": ["mask_set"],
                 "limits": {"max_images": 1, "max_input_artifacts": 8, "max_request_bytes": MAX_IMAGE_BYTES, "timeout_seconds": 120},
+                "models": [model_summary()],
+            })
+        elif self.path == "/v1/models":
+            self.send_json(200, {
+                "protocol_version": 1,
+                "worker_id": "annotagent-sam2",
+                "models": [model_summary()],
+            })
+        elif self.path == "/v1/contracts":
+            self.send_json(200, {
+                "protocol_version": 1,
+                "worker_id": "annotagent-sam2",
+                "models": [model_manifest()],
             })
         else:
             self.send_json(404, {"error": "not_found"})

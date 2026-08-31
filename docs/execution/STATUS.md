@@ -2,6 +2,21 @@
 
 Last updated: 2026-09-01 CST
 
+## Expert Vision SDK M7 — 2026-09-01
+
+- Added a guided, six-step Expert Model setup for SAM and other capability-compatible Workers:
+  endpoint trust, live discovery, immutable identity, selected-image sample evidence and explicit
+  registration.
+- Availability is now durable evidence rather than a toggle. Health, protocol, contracts, weights
+  identity and typed sample conversion must all pass; unresolved credential references invalidate
+  stale availability after restart without persisting the secret.
+- The SAM reference Worker now consumes exact Box Prompt references and emits a generic MaskSet.
+  No checkpoint was downloaded or claimed, so real SAM inference remains live-conditional.
+- Settings → Vision Workers is directly reachable and the setup UI was verified at desktop and
+  480 × 760 without horizontal overflow or browser console errors.
+- Full verification passes 299 Rust tests, strict all-target/all-feature Clippy and Rustfmt, 40 Web
+  tests, production Web build and 16 Python SDK/SAM tests; one billable smoke remains ignored.
+
 ## Expert Vision SDK M4 — 2026-09-01
 
 - Added stable failure classes so Provider/Worker outages, no candidate, semantic mistakes, geometry

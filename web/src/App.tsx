@@ -27,6 +27,7 @@ import type {
   Annotation,
   CorrectionMemoryRecord,
   DetectionWorkerTestResult,
+  DetectionWorkerSampleTestResult,
   DetectionEvidenceDto,
   EvidenceGateReportDto,
   HistoryRun,
@@ -1149,9 +1150,9 @@ function SettingsWorkspace({
         <ModelRegistryPage onOpenProviders={() => onNavigate("providers")} onError={onError} />
       )}
       {section === "vision-workers" && (
-        <VisionWorkersRegistryPage models={models} onOpenSettings={() => onNavigate("storage")} onError={onError} />
+        <SettingsPage view="workers" onError={onError} />
       )}
-      {section === "storage" && <SettingsPage onError={onError} />}
+      {section === "storage" && <SettingsPage view="storage" onError={onError} />}
       {section === "usage" && <RegistryUsagePage onError={onError} />}
     </section>
   );
@@ -5405,7 +5406,7 @@ function VisionWorkersRegistryPage({
     setTesting(worker.id);
     void api.testModel(worker.id).then((result) => setResults((current) => ({ ...current, [worker.id]: result }))).catch((error: Error) => onError(error.message)).finally(() => setTesting(""));
   };
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Specialist CV processes</span><h2>Vision Workers</h2><p>YOLO, SAM, RF-DETR, and other HTTP Vision Protocol workers are managed separately from credentialed LLM/VLM Providers.</p></div><button onClick={onOpenSettings}>Configure Workers</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={!worker.enabled || testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Testing…" : "Test connection"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>Live · {results[worker.id].health.status}</strong><span>{results[worker.id].capabilities.capabilities.join(" · ")}</span><span>Confidence {results[worker.id].capabilities.score_semantics.replaceAll("_", " ")}</span></div>}</article>)}</div> : <Empty title="No Vision Workers enabled" detail="Configure a versioned HTTP Vision Protocol worker in Storage settings." />}</section>;
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Specialist CV processes</span><h2>Vision Workers</h2><p>YOLO, SAM, RF-DETR, and other HTTP Vision Protocol workers are managed separately from credentialed LLM/VLM Providers.</p></div><button onClick={onOpenSettings}>Configure Workers</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Discovering…" : "Refresh discovery"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? "Discovery passed" : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No Vision Workers configured" detail="Add a versioned Expert Model from Settings → Vision Workers." />}</section>;
 }
 
 function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
@@ -5553,30 +5554,16 @@ function ModelsPage({
                     {binding.scope === "workspace_worker" && <div className="worker-actions">
                       <button
                         onClick={() => testWorker(binding.id)}
-                        disabled={!binding.enabled || testingModel === binding.id}
-                        title={binding.enabled ? "Read live health and capabilities from the Worker" : "Enable this Worker in Provider & budgets first"}
+                        disabled={testingModel === binding.id}
+                        title="Read health, capabilities, models, and contracts from the Worker"
                       >
-                        {testingModel === binding.id ? "Testing…" : "Test connection"}
+                        {testingModel === binding.id ? "Discovering…" : "Refresh discovery"}
                       </button>
-                      <button
-                        onClick={() => testWorker(binding.id)}
-                        disabled={!binding.enabled || testingModel === binding.id}
-                        title="Refresh live capability, score, batch, and label-space metadata"
-                      >Refresh capabilities</button>
-                      <button
-                        disabled
-                        title={testResults[binding.id]
-                          ? testResults[binding.id].capabilities.supports_visual_prompt
-                            ? "Worker reports support, but visual-prompt Workflow editing is not implemented in this Alpha"
-                            : "Worker reports supports_visual_prompt=false; this Alpha accepts text queries only"
-                          : "Test Worker to discover visual prompt capability"}
-                      >Visual prompt</button>
                     </div>}
                     {testResults[binding.id] && <div className="worker-discovery" role="status">
-                      <strong>Live · {testResults[binding.id].health.status}</strong>
-                      <small>{testResults[binding.id].capabilities.capabilities.join(" · ")}</small>
-                      <small>Confidence {testResults[binding.id].capabilities.score_semantics.replaceAll("_", " ")}</small>
-                      {!testResults[binding.id].capabilities.supports_visual_prompt && <small>Visual prompt unavailable in this Worker</small>}
+                      <strong>{testResults[binding.id].passed ? "Discovery passed" : `Stopped at ${testResults[binding.id].failed_stage ?? "discovery"}`}</strong>
+                      <small>{testResults[binding.id].capabilities?.capabilities.join(" · ") || testResults[binding.id].error}</small>
+                      <small>{testResults[binding.id].evidence?.detail}</small>
                     </div>}
                     {binding.scope === "workspace_worker" && <details className="worker-setup-instructions">
                       <summary>View setup instructions</summary>
@@ -7290,11 +7277,247 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
   );
 }
 
-function SettingsPage({ onError }: { onError: (value: string) => void }) {
+type ExpertWorkerDraft = Record<string, any>;
+
+const EXPERT_WORKER_PRESETS = [
+  ["sam", "SAM", "Prompted segmentation from a box or point prompt"],
+  ["yolo", "YOLO", "Fixed-label object detection"],
+  ["rfdetr", "RF-DETR", "Specialist object detection"],
+  ["locate_anything", "LocateAnything", "Open-vocabulary detection and phrase grounding"],
+  ["pidnet", "PIDNet", "Semantic segmentation"],
+  ["grounding_dino", "Grounding DINO", "Open-vocabulary detection and phrase grounding"],
+  ["custom", "Custom", "A protocol-compatible Expert Vision Worker"],
+] as const;
+
+function expertWorkerPreset(preset: string, suffix: number): ExpertWorkerDraft {
+  const profiles: Record<string, { name: string; model: string; port: number; capabilities: string[]; score: string; architecture: string }> = {
+    sam: { name: "SAM prompted segmentation", model: "sam2.1-hiera-tiny", port: 8790, capabilities: ["prompted_segmentation"], score: "not_provided", architecture: "sam2.1-hiera-tiny" },
+    yolo: { name: "YOLO detector", model: "yolo-specialist", port: 8793, capabilities: ["object_detection"], score: "relative_confidence", architecture: "yolo" },
+    rfdetr: { name: "RF-DETR specialist", model: "rfdetr-specialist", port: 8792, capabilities: ["object_detection"], score: "relative_confidence", architecture: "rf-detr" },
+    locate_anything: { name: "LocateAnything", model: "locate-anything", port: 8791, capabilities: ["open_vocabulary_detection", "phrase_grounding"], score: "not_provided", architecture: "locateanything" },
+    pidnet: { name: "PIDNet semantic segmentation", model: "pidnet-specialist", port: 8794, capabilities: ["semantic_segmentation"], score: "not_provided", architecture: "pidnet" },
+    grounding_dino: { name: "Grounding DINO", model: "grounding-dino", port: 8795, capabilities: ["open_vocabulary_detection", "phrase_grounding"], score: "relative_confidence", architecture: "grounding-dino" },
+    custom: { name: `Expert Vision Worker ${suffix}`, model: `expert-model-${suffix}`, port: 8795 + suffix, capabilities: ["object_detection"], score: "unknown", architecture: "" },
+  };
+  const profile = profiles[preset] ?? profiles.custom;
+  return {
+    id: `expert-${preset.replaceAll("_", "-")}-${suffix}`,
+    display_name: profile.name,
+    model_id: profile.model,
+    base_url: `http://127.0.0.1:${profile.port}`,
+    authentication_reference: null,
+    enabled: false,
+    allow_remote: false,
+    requires_checkpoint_metadata: true,
+    expected_capabilities: profile.capabilities,
+    score_semantics: profile.score,
+    version: {
+      architecture: profile.architecture || null,
+      model_version: "unconfigured",
+      checkpoint_sha256: null,
+      training_dataset_version: null,
+      backend_protocol_version: "1",
+    },
+    label_space: [],
+    runtime_requirements: { devices: ["cpu", "cuda"], dependencies: [], supports_batch: false },
+    license: {
+      code_license: null,
+      weight_license: null,
+      source_url: null,
+      commercial_use: "unknown",
+      redistribution: "unknown",
+      usage_notes: [],
+      verified_from_official_source: false,
+    },
+    timeout_seconds: 120,
+    max_request_bytes: 44_000_000,
+    max_response_bytes: preset === "sam" ? 16_000_000 : 2_000_000,
+    max_retries: 0,
+    cost_per_request: "0",
+    availability: "missing_weights",
+    availability_evidence: {
+      health_passed: false,
+      protocol_compatible: false,
+      contracts_validated: false,
+      sample_conversion_passed: false,
+      weights_ready: false,
+    },
+  };
+}
+
+function ExpertModelSetupWizard({
+  settings,
+  onSaved,
+  onClose,
+  onError,
+}: {
+  settings: Record<string, any>;
+  onSaved: (value: Record<string, any>, message: string) => void;
+  onClose: () => void;
+  onError: (value: string) => void;
+}) {
+  const existingWorkers = Array.isArray(settings.detection_workers) ? settings.detection_workers : [];
+  const [step, setStep] = useState(1);
+  const [method, setMethod] = useState<"preset" | "http" | "mock">("preset");
+  const [preset, setPreset] = useState("sam");
+  const [worker, setWorker] = useState<ExpertWorkerDraft>(() => expertWorkerPreset("sam", existingWorkers.length + 1));
+  const [discovery, setDiscovery] = useState<DetectionWorkerTestResult>();
+  const [sample, setSample] = useState<DetectionWorkerSampleTestResult>();
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [imageIndex, setImageIndex] = useState(0);
+  const [query, setQuery] = useState("football");
+  const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    if (step === 5 && projects.length === 0) {
+      void api.dashboard().then((value) => {
+        const available = value.projects.filter((project) => project.image_count > 0);
+        setProjects(available);
+        if (available[0]) setProjectId(available[0].id);
+      }).catch((error: Error) => onError(error.message));
+    }
+  }, [step]);
+  useEffect(() => {
+    if (!projectId) {
+      setImages([]);
+      return;
+    }
+    void api.images(projectId).then((value) => {
+      setImages(value.images);
+      setImageIndex(value.images[0]?.index ?? 0);
+    }).catch((error: Error) => onError(error.message));
+  }, [projectId]);
+
+  const choosePreset = (value: string) => {
+    setPreset(value);
+    setWorker(expertWorkerPreset(value, existingWorkers.length + 1));
+    setDiscovery(undefined);
+    setSample(undefined);
+  };
+  const setField = (field: string, value: unknown) => setWorker((current) => ({ ...current, [field]: value }));
+  const setVersion = (field: string, value: unknown) => setWorker((current) => ({ ...current, version: { ...(current.version ?? {}), [field]: value || null } }));
+  const setLicense = (field: string, value: unknown) => setWorker((current) => ({ ...current, license: { ...(current.license ?? {}), [field]: value || null } }));
+
+  const persistDraft = async (draft: ExpertWorkerDraft) => {
+    const latest = await api.settings();
+    const latestWorkers = Array.isArray(latest.detection_workers) ? latest.detection_workers : [];
+    const existingIndex = latestWorkers.findIndex((candidate: ExpertWorkerDraft) => candidate.id === draft.id || candidate.model_id === draft.model_id);
+    const observed = existingIndex >= 0 ? latestWorkers[existingIndex] : undefined;
+    const merged = observed ? {
+      ...observed,
+      ...draft,
+      availability: observed.availability ?? draft.availability,
+      availability_evidence: observed.availability_evidence ?? draft.availability_evidence,
+    } : draft;
+    const nextWorkers = existingIndex >= 0
+      ? latestWorkers.map((candidate: ExpertWorkerDraft, index: number) => index === existingIndex ? merged : candidate)
+      : [...latestWorkers, merged];
+    const saved = await api.saveSettings({ ...latest, detection_workers: nextWorkers });
+    onSaved(saved, "Saved Expert Model setup locally.");
+    const savedWorkers = Array.isArray(saved.detection_workers) ? saved.detection_workers : [];
+    const savedWorker = savedWorkers.find((candidate: ExpertWorkerDraft) => candidate.id === merged.id) ?? merged;
+    setWorker(savedWorker);
+    return savedWorker;
+  };
+
+  const discover = async () => {
+    setBusy("discovery");
+    try {
+      const savedWorker = await persistDraft(worker);
+      const result = await api.testModel(String(savedWorker.model_id));
+      setDiscovery(result);
+      const latest = await api.settings();
+      const latestWorkers = Array.isArray(latest.detection_workers) ? latest.detection_workers : [];
+      const observed = latestWorkers.find((candidate: ExpertWorkerDraft) => candidate.model_id === savedWorker.model_id);
+      if (observed) setWorker(observed);
+      setStep(3);
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const saveIdentity = async () => {
+    setBusy("identity");
+    try {
+      await persistDraft(worker);
+      setStep(5);
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const runSample = async () => {
+    if (!projectId || !images.length) return;
+    setBusy("sample");
+    try {
+      const savedWorker = await persistDraft(worker);
+      const refreshedDiscovery = await api.testModel(String(savedWorker.model_id));
+      setDiscovery(refreshedDiscovery);
+      if (!refreshedDiscovery.passed) {
+        throw new Error(refreshedDiscovery.error ?? refreshedDiscovery.evidence?.detail ?? "Worker discovery no longer matches the saved model identity.");
+      }
+      const result = await api.sampleTestModel(String(savedWorker.model_id), {
+        project_id: projectId,
+        image_index: imageIndex,
+        query: query.trim() || undefined,
+        box_prompt: savedWorker.expected_capabilities?.includes("prompted_segmentation") ? [0.25, 0.25, 0.5, 0.5] : undefined,
+      });
+      setSample(result);
+      const latest = await api.settings();
+      const latestWorkers = Array.isArray(latest.detection_workers) ? latest.detection_workers : [];
+      const observed = latestWorkers.find((candidate: ExpertWorkerDraft) => candidate.model_id === savedWorker.model_id);
+      if (observed) setWorker(observed);
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const readyEvidence = sample?.evidence;
+  const canRegister = Boolean(readyEvidence?.health_passed && readyEvidence.protocol_compatible && readyEvidence.contracts_validated && readyEvidence.sample_conversion_passed && readyEvidence.weights_ready);
+  const register = async () => {
+    setBusy("register");
+    try {
+      const latest = await api.settings();
+      const latestWorkers = Array.isArray(latest.detection_workers) ? latest.detection_workers : [];
+      const nextWorkers = latestWorkers.map((candidate: ExpertWorkerDraft) => candidate.model_id === worker.model_id ? { ...candidate, enabled: true } : candidate);
+      const saved = await api.saveSettings({ ...latest, detection_workers: nextWorkers });
+      onSaved(saved, `${worker.display_name} is registered and available to the Pipeline Builder.`);
+      onClose();
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const title = ["Choose an integration", "Connect the Worker", "Discover live capabilities", "Complete model identity", "Run a selected-image sample", "Register the Expert Model"][step - 1];
+  return <div className="modal-backdrop"><div className="modal expert-model-wizard" role="dialog" aria-modal="true" aria-labelledby="expert-model-wizard-title">
+    <header><span className="eyebrow">Expert Model · Step {step} of 6</span><h2 id="expert-model-wizard-title">{title}</h2><div className="wizard-progress six" aria-label={`Step ${step} of 6`}>{[1, 2, 3, 4, 5, 6].map((item) => <i key={item} className={item <= step ? "complete" : ""} />)}</div></header>
+    {step === 1 && <div className="wizard-step"><div className="choice-grid expert-methods" role="radiogroup" aria-label="Expert Model integration method">{([
+      ["preset", "Use preset", "Start with a known capability contract"],
+      ["http", "Generic HTTP Worker", "Connect any Vision Protocol v1 service"],
+      ["mock", "Use mock Worker", "Use the built-in offline test model"],
+    ] as const).map(([value, label, detail]) => <label className={method === value ? "selected" : ""} key={value}><input type="radio" name="expert-method" checked={method === value} onChange={() => { setMethod(value); if (value === "http") choosePreset("custom"); }} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>{method === "preset" && <label>Preset<select value={preset} onChange={(event) => choosePreset(event.target.value)}>{EXPERT_WORKER_PRESETS.map(([value, label, detail]) => <option key={value} value={value}>{label} — {detail}</option>)}</select></label>}{method === "mock" && <div className="wizard-summary"><strong>Built-in mock is already registered</strong><span>Use <code>mock-prompted-segmenter</code> for deterministic, offline Pipeline and Replay tests. It never claims to represent real SAM quality.</span></div>}</div>}
+    {step === 2 && <div className="wizard-step"><div className="form-grid"><label>Endpoint<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setField("base_url", event.target.value)} /></label><label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setField("timeout_seconds", Number(event.target.value))} /></label><label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setField("authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_SAM_TOKEN" /></label><label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setField("allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label></div><div className="wizard-summary"><strong>Trust boundary</strong><span>Loopback is allowed by default. Remote endpoints require HTTPS and explicit permission. Authentication is a reference; no secret is written to Settings.</span></div></div>}
+    {step === 3 && <div className="wizard-step"><div className={`expert-test-banner ${discovery?.passed ? "passed" : "failed"}`} role="status"><strong>{discovery?.passed ? "Discovery passed" : `Discovery stopped at ${discovery?.failed_stage ?? "an unknown stage"}`}</strong><span>{discovery?.error ?? discovery?.evidence?.detail ?? "The Worker returned all required protocol resources."}</span></div><div className="expert-check-grid"><Fact label="Health" value={discovery?.health?.status ?? "Not available"} /><Fact label="Protocol" value={discovery?.evidence?.protocol_compatible ? "Compatible" : "Not verified"} /><Fact label="Models" value={discovery?.models?.models.length ?? 0} /><Fact label="Contracts" value={discovery?.evidence?.contracts_validated ? "Valid" : "Not verified"} /></div>{discovery?.capabilities && <div className="tag-group">{discovery.capabilities.capabilities.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div>}<details className="advanced-settings"><summary>Raw discovery response</summary><pre>{JSON.stringify(discovery, null, 2)}</pre></details></div>}
+    {step === 4 && <div className="wizard-step"><div className="form-grid"><label>Display name<input value={String(worker.display_name ?? "")} onChange={(event) => setField("display_name", event.target.value)} /></label><label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setField("model_id", event.target.value)} /></label><label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setVersion("architecture", event.target.value)} /></label><label>Version<input value={String(worker.version?.model_version ?? "")} onChange={(event) => setVersion("model_version", event.target.value)} /></label><label>Checkpoint SHA-256<input value={String(worker.version?.checkpoint_sha256 ?? "")} onChange={(event) => setVersion("checkpoint_sha256", event.target.value.trim())} placeholder="64 hexadecimal characters" /></label><label>Training dataset version<input value={String(worker.version?.training_dataset_version ?? "")} onChange={(event) => setVersion("training_dataset_version", event.target.value)} /></label><label>Label space<input value={Array.isArray(worker.label_space) ? worker.label_space.join(", ") : ""} onChange={(event) => setField("label_space", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="football, robot" /></label><label>Checkpoint license<input value={String(worker.license?.weight_license ?? "")} onChange={(event) => setLicense("weight_license", event.target.value)} /></label></div><div className="expert-test-banner missing"><strong>Missing weights until identity is complete</strong><span>A filename is not a checkpoint identity. SAM and specialist models remain unavailable without a version, SHA-256, and concrete weight license.</span></div></div>}
+    {step === 5 && <div className="wizard-step"><div className="form-grid"><label>Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Choose a Project with images</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label>Sample image<select value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>{images.map((image) => <option key={image.index} value={image.index}>{image.name}</option>)}</select></label><label>Text query<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="football" /></label></div>{projectId && images.length > 0 && <div className="expert-sample-layout"><img src={`/api/projects/${projectId}/images/${imageIndex}/content`} alt="Selected Worker sample input" /><div><button className="primary" disabled={busy === "sample"} onClick={() => void runSample()}>{busy === "sample" ? "Running sample…" : "Run sample test"}</button><small>Prompted segmentation uses a visible centered sample box. Detection Workers use the selected image and query.</small></div></div>}{sample && <div className="expert-sample-result"><div className={`expert-test-banner ${sample.passed ? "passed" : "failed"}`} role="status"><strong>{sample.passed ? "Sample conversion passed" : "Sample conversion failed"}</strong><span>{sample.error ?? sample.evidence.detail}</span></div>{sample.input?.image_url && <img src={sample.input.image_url} alt="Worker sample result source" />}<div className="expert-check-grid"><Fact label="Artifacts" value={Array.isArray(sample.converted_artifacts) ? sample.converted_artifacts.length : 0} /><Fact label="Duration" value={`${sample.duration_ms} ms`} /><Fact label="Score semantics" value={sample.score_semantics?.replaceAll("_", " ") ?? "Unknown"} /><Fact label="Geometry" value={sample.geometry_semantics?.replaceAll("_", " ") ?? "Unknown"} /></div><details className="advanced-settings"><summary>Converted Artifact and coordinates</summary><pre>{JSON.stringify({ raw_output_summary: sample.raw_output_summary, converted_artifacts: sample.converted_artifacts, coordinates: sample.coordinates, warnings: sample.warnings }, null, 2)}</pre></details></div>}</div>}
+    {step === 6 && <div className="wizard-step"><div className={`expert-test-banner ${canRegister ? "passed" : "missing"}`}><strong>{canRegister ? "Ready to register" : "Registration is blocked"}</strong><span>{canRegister ? "Health, protocol, contracts, model identity, weights, and sample conversion all have active evidence." : sample?.evidence.detail ?? "Run a successful selected-image sample after discovery and identity setup."}</span></div><div className="expert-checklist">{[["Health", readyEvidence?.health_passed], ["Protocol", readyEvidence?.protocol_compatible], ["Contracts", readyEvidence?.contracts_validated], ["Weights", readyEvidence?.weights_ready], ["Sample conversion", readyEvidence?.sample_conversion_passed]].map(([label, passed]) => <span key={String(label)} className={passed ? "complete" : "blocked"}><b>{passed ? "✓" : "—"}</b>{label}</span>)}</div></div>}
+    <div className="wizard-actions"><button disabled={Boolean(busy)} onClick={step === 1 ? onClose : () => setStep((value) => value - 1)}>{step === 1 ? "Cancel" : "Back"}</button>{step === 1 ? <button className="primary" onClick={() => method === "mock" ? onClose() : setStep(2)}>{method === "mock" ? "Use built-in mock" : "Continue"}</button> : step === 2 ? <button className="primary" disabled={busy === "discovery" || !String(worker.base_url ?? "").trim()} onClick={() => void discover()}>{busy === "discovery" ? "Discovering…" : "Save and discover"}</button> : step === 3 ? <button className="primary" onClick={() => setStep(4)}>Configure identity</button> : step === 4 ? <button className="primary" disabled={busy === "identity"} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving…" : "Save identity and test"}</button> : step === 5 ? <button className="primary" disabled={!sample?.passed} onClick={() => setStep(6)}>Review registration</button> : <button className="primary" disabled={!canRegister || busy === "register"} onClick={() => void register()}>{busy === "register" ? "Registering…" : "Register Expert Model"}</button>}</div>
+  </div></div>;
+}
+
+function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError: (value: string) => void }) {
   const [settings, setSettings] = useState<Record<string, any>>();
   const [savedSignature, setSavedSignature] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showExpertWizard, setShowExpertWizard] = useState(false);
   useEffect(() => {
     void api
       .settings()
@@ -7343,46 +7566,6 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
           : worker,
       ),
     });
-  const addDetectionWorker = () => {
-    const suffix = detectionWorkers.length + 1;
-    setSettings({
-      ...settings,
-      detection_workers: [...detectionWorkers, {
-        id: `http-detection-worker-${suffix}`,
-        display_name: `Detection Worker ${suffix}`,
-        model_id: `detection-model-${suffix}`,
-        base_url: `http://127.0.0.1:${8792 + suffix}`,
-        enabled: false,
-        allow_remote: false,
-        requires_checkpoint_metadata: false,
-        expected_capabilities: ["object_detection"],
-        score_semantics: "unknown",
-        version: {
-          architecture: null,
-          model_version: "unversioned",
-          checkpoint_sha256: null,
-          training_dataset_version: null,
-          backend_protocol_version: "1",
-        },
-        label_space: [],
-        runtime_requirements: { devices: [], dependencies: [], supports_batch: false },
-        license: {
-          code_license: null,
-          weight_license: null,
-          source_url: null,
-          commercial_use: "unknown",
-          redistribution: "unknown",
-          usage_notes: [],
-          verified_from_official_source: false,
-        },
-        timeout_seconds: 120,
-        max_request_bytes: 44_000_000,
-        max_response_bytes: 2_000_000,
-        max_retries: 0,
-        cost_per_request: "0",
-      }],
-    });
-  };
   const removeDetectionWorker = (index: number) => setSettings({
     ...settings,
     detection_workers: detectionWorkers.filter((_: unknown, workerIndex: number) => workerIndex !== index),
@@ -7403,17 +7586,26 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const dirty = JSON.stringify(settings) !== savedSignature;
   return (
     <section className="settings-grid">
-      <Panel title="Detection Workers" eyebrow="Optional local model processes">
+      {view === "workers" && <Panel title="Vision Workers" eyebrow="Expert models with verified capabilities">
         <div className="worker-collection-actions">
-          <p>Register any protocol v1 detection process. Workers stay disabled until their contract is complete.</p>
-          <button onClick={addDetectionWorker}>Add Worker</button>
+          <p>Add SAM, YOLO, RF-DETR, LocateAnything, PIDNet, Grounding DINO, or another protocol v1 Worker. Only actively verified models become Available.</p>
+          <button className="primary" onClick={() => setShowExpertWizard(true)}>Add expert model</button>
         </div>
         {detectionWorkers.length ? <div className="detection-worker-settings">
-          {detectionWorkers.map((worker: Record<string, any>, index: number) => <article key={String(worker.id)}>
+          {detectionWorkers.map((worker: Record<string, any>, index: number) => {
+            const evidence = worker.availability_evidence ?? {};
+            const registrationReady = Boolean(
+              evidence.health_passed
+              && evidence.protocol_compatible
+              && evidence.contracts_validated
+              && evidence.sample_conversion_passed
+              && evidence.weights_ready,
+            );
+            return <article key={String(worker.id)}>
             <div className="worker-setting-heading">
               <span><strong>{String(worker.display_name)}</strong><small>{String(worker.model_id)}</small></span>
               <div className="worker-setting-actions">
-                <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.enabled)} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
+                <label className="checkbox-line" title={!registrationReady && !worker.enabled ? "Complete discovery, model identity, and a selected-image sample before enabling this Worker." : undefined}><input type="checkbox" checked={Boolean(worker.enabled)} disabled={!registrationReady && !worker.enabled} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
                 <button className="text-button" onClick={() => removeDetectionWorker(index)}>Remove</button>
               </div>
             </div>
@@ -7422,18 +7614,20 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               <label>Registry ID<input value={String(worker.id ?? "")} onChange={(event) => setDetectionWorker(index, "id", event.target.value)} /></label>
               <label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setDetectionWorker(index, "model_id", event.target.value)} /></label>
               <label>Worker URL<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setDetectionWorker(index, "base_url", event.target.value)} /></label>
-              <label>Capability<select value={String(worker.expected_capabilities?.[0] ?? "object_detection")} onChange={(event) => setDetectionWorker(index, "expected_capabilities", [event.target.value])}><option value="object_detection">Object detection</option><option value="open_vocabulary_detection">Open-vocabulary detection</option><option value="phrase_grounding">Phrase grounding</option></select></label>
+              <label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setDetectionWorker(index, "authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_WORKER_TOKEN" /></label>
+              <label>Capability<select value={String(worker.expected_capabilities?.[0] ?? "object_detection")} onChange={(event) => setDetectionWorker(index, "expected_capabilities", [event.target.value])}><option value="object_detection">Object detection</option><option value="open_vocabulary_detection">Open-vocabulary detection</option><option value="phrase_grounding">Phrase grounding</option><option value="prompted_segmentation">Prompted segmentation</option><option value="semantic_segmentation">Semantic segmentation</option></select></label>
               <label>Score semantics<select value={String(worker.score_semantics ?? "unknown")} onChange={(event) => setDetectionWorker(index, "score_semantics", event.target.value)}><option value="calibrated_probability">Calibrated probability</option><option value="relative_confidence">Relative confidence</option><option value="ranking_score">Ranking score</option><option value="not_provided">Not provided</option><option value="unknown">Unknown</option></select></label>
               <label>Estimated cost / request<input inputMode="decimal" value={String(worker.cost_per_request ?? "0")} onChange={(event) => setDetectionWorker(index, "cost_per_request", event.target.value)} /></label>
               <label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setDetectionWorker(index, "timeout_seconds", Number(event.target.value))} /></label>
             </div>
             <div className="worker-contract-summary">
+              <small>Availability · {String(worker.availability ?? "unknown").replaceAll("_", " ")}</small>
               <small>Expected contract · {(worker.expected_capabilities ?? []).join(" · ")}</small>
               <small>Score · {String(worker.score_semantics ?? "unknown").replaceAll("_", " ")}</small>
               <small>Version · {String(worker.version?.model_version ?? "unversioned")}</small>
             </div>
             <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.requires_checkpoint_metadata)} onChange={(event) => setDetectionWorker(index, "requires_checkpoint_metadata", event.target.checked)} /><span>Require specialist checkpoint identity</span></label>
-            {Boolean(worker.requires_checkpoint_metadata) && <details className="advanced-settings" open>
+            {Boolean(worker.requires_checkpoint_metadata) && <details className="advanced-settings">
               <summary>Required model identity</summary>
               <div className="form-grid">
                 <label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setDetectionWorkerVersion(index, "architecture", event.target.value)} placeholder="rfdetr-small" /></label>
@@ -7447,10 +7641,11 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
             </details>}
             <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setDetectionWorker(index, "allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label>
             <small>Loopback is the default trust boundary. Live capabilities are read from the Worker on the Models page; expected values here are validation constraints.</small>
-          </article>)}
+          </article>})}
         </div> : <Empty title="No Detection Workers" detail="Add a versioned HTTP Detection Worker to use a local model process." />}
-      </Panel>
-      <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">
+      </Panel>}
+      {view === "workers" && showExpertWizard && <ExpertModelSetupWizard settings={settings} onSaved={finish} onClose={() => setShowExpertWizard(false)} onError={onError} />}
+      {view === "storage" && <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">
         <div className="json-settings">
           <div>
             <h3>Pricing</h3>
@@ -7493,7 +7688,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
             ))}
           </div>
         </div>
-      </Panel>
+      </Panel>}
       <div className="settings-save" aria-live="polite">
         <span>
           {dirty

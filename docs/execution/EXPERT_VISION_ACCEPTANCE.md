@@ -67,12 +67,18 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## F — Product
 
-- PARTIAL — Models/Settings currently expose Detection Worker configuration and Test Worker.
-- PENDING — Guided Add Expert Model flow with discovery, identity, explicit sample smoke and
-  availability gate.
-- PENDING — Advisor reasons for adding or withholding prompted segmentation.
-- PARTIAL — Node Inspector accepts prompt/mask/polygon Artifacts and renders their bounds; dedicated
-  quality presentation remains M7.
+- PASS — Settings → Vision Workers exposes a responsive six-step Add Expert Model flow for known
+  presets, generic protocol Workers and the built-in offline Mock.
+- PASS — Active discovery verifies health, capabilities, model identity and complete contracts and
+  reports the exact failed stage.
+- PASS — Selected-image smoke testing shows input, bounded raw output summary, converted typed
+  Artifacts, normalized coordinates, score/geometry semantics, duration and warnings.
+- PASS — Registration and the advanced Enabled control require health, protocol, contracts,
+  immutable weights identity and sample conversion evidence; evidence survives Server restart.
+- PASS — Advisor output explains the structured evidence for adding or withholding prompted
+  segmentation and keeps unavailable models as setup-only alternatives.
+- PARTIAL — Node Inspector accepts prompt/mask/polygon Artifacts and renders their bounds; a
+  dedicated side-by-side mask quality comparison remains future product work.
 
 ## G — RoboCup
 
@@ -170,3 +176,21 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   white-footwear risk routes semantic verification before geometry refinement.
 - Full Rust workspace: 297 passed, zero failed, one explicitly billable smoke ignored. Strict
   workspace Clippy and Rustfmt pass.
+
+## M7 evidence
+
+- Application settings persist Worker availability evidence additively and invalidate a stale
+  `Available` state when an environment credential reference can no longer be resolved.
+- Live Worker model/version/checkpoint/license identity is reconciled before every sample; missing
+  fields are filled from discovery while conflicting local identity is rejected.
+- The Server discovery action calls `/health`, `/v1/capabilities`, `/v1/models`, and
+  `/v1/contracts`, records the exact failed stage, and saves the resulting evidence before return.
+- The selected-image sample action uses the Project's real image and the generic protocol backend;
+  prompted segmentation sends an explicit BoxPromptSet and accepts only a converted non-empty
+  typed Artifact.
+- The reference SAM Worker advertises Image+Box/PointPromptSet → MaskSet contracts and its Python
+  regression proves the exact prompt set/item reference reaches the emitted Mask.
+- Browser verification covered the direct Vision Workers route, desktop wizard and 480 × 760
+  responsive layout with no console errors. Web typecheck, 40 tests and production build pass.
+- Full workspace verification passes 299 Rust tests with zero failures and one explicitly billable
+  smoke ignored; strict all-target/all-feature Clippy and Rustfmt pass.

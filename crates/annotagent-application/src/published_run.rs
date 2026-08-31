@@ -280,7 +280,7 @@ impl PublishedWorkflowRuntime {
             bail!("Detection Worker model {model_id:?} does not provide {capability:?}");
         }
         Ok(Arc::new(HttpVisionDetectionBackend::new(
-            worker.http_config(),
+            worker.http_config()?,
             capability,
         )?))
     }
@@ -1417,7 +1417,9 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                     endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
                     capability: annotagent_core::VisionCapability::PromptedSegmentation,
                     request_timeout: std::time::Duration::from_secs(worker.timeout_seconds),
-                    authorization: None,
+                    authorization: worker.authorization_header().map_err(|error| {
+                        DagNodeFailure::terminal("segmentation_credential", error.to_string())
+                    })?,
                     expected_model_identity: Some(worker.model_id.clone()),
                     max_retries: worker.max_retries,
                     max_response_bytes: worker.max_response_bytes,
@@ -1491,7 +1493,9 @@ impl DagNodeRunner for BoundDetectionRunner {
                     }
                     Arc::new(
                         HttpVisionDetectionBackend::new(
-                            worker.http_config(),
+                            worker.http_config().map_err(|error| {
+                                DagNodeFailure::terminal("detection_credential", error.to_string())
+                            })?,
                             annotagent_core::VisionCapability::ObjectDetection,
                         )
                         .map_err(|error| {

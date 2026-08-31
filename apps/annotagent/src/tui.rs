@@ -637,7 +637,7 @@ impl TuiState {
             return Ok(());
         }
         let started = std::time::Instant::now();
-        let client = HttpVisionWorkerClient::new(worker.http_config())?;
+        let client = HttpVisionWorkerClient::new(worker.http_config()?)?;
         match client.health().await {
             Ok(health) => {
                 let latency = started.elapsed().as_millis();

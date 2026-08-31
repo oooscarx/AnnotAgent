@@ -45,6 +45,12 @@ validation, or human Review rather than boundary refinement.
 - Generated `sam2` Worker scaffolds remain `missing_weights` until the user supplies legal local
   weights, implements inference, passes health/contracts/sample conversion, and explicitly enables
   the model.
+- `examples/sam2_vision_worker.py` now exposes health, capability, model and full contract
+  discovery. Its current Pipeline response consumes the exact `BoxPromptSet` item references and
+  emits one typed `MaskSet`; the legacy Vision Artifact response remains accepted for old callers.
+- The Worker reads checkpoint identity and license from explicit environment configuration. It
+  does not download weights, and its setup card stays `MissingWeights` until AnnotAgent verifies
+  identity and a selected-image sample.
 
 ## Replay and inspection
 

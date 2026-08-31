@@ -188,6 +188,10 @@ pub struct DetectionWorkerSettings {
     pub display_name: String,
     pub model_id: String,
     pub base_url: String,
+    /// Optional bearer credential locator. The Alpha accepts `env:VARIABLE_NAME` only; the
+    /// resolved secret is never serialized into workspace Settings or model metadata.
+    #[serde(default)]
+    pub authentication_reference: Option<String>,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
@@ -212,12 +216,67 @@ pub struct DetectionWorkerSettings {
     /// User-configured estimate used for planning and display. Runtime usage remains actual-first.
     #[serde(default)]
     pub cost_per_request: rust_decimal::Decimal,
+    /// Last actively observed state and the evidence that produced it. Registration never
+    /// upgrades a Worker to `Available` from configuration alone.
+    #[serde(default)]
+    pub availability: ModelAvailability,
+    #[serde(default)]
+    pub availability_evidence: ModelAvailabilityEvidence,
 }
 
 impl DetectionWorkerSettings {
-    #[must_use]
-    pub fn http_config(&self) -> HttpVisionWorkerConfig {
-        HttpVisionWorkerConfig {
+    pub fn authorization_header(&self) -> Result<Option<String>> {
+        let Some(reference) = self
+            .authentication_reference
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let name = reference.strip_prefix("env:").ok_or_else(|| {
+            anyhow!("Vision Worker authentication reference must use env:VARIABLE_NAME")
+        })?;
+        if name.is_empty()
+            || !name.bytes().enumerate().all(|(index, byte)| {
+                byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+            })
+        {
+            bail!("Vision Worker environment credential locator must be a valid variable name");
+        }
+        let secret = std::env::var(name).with_context(|| {
+            format!("Vision Worker credential environment variable {name:?} is not set")
+        })?;
+        if secret.trim().is_empty() {
+            bail!("Vision Worker credential environment variable {name:?} is empty");
+        }
+        Ok(Some(format!("Bearer {}", secret.trim())))
+    }
+
+    pub fn validate_authentication_reference(&self) -> Result<()> {
+        let Some(reference) = self
+            .authentication_reference
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
+        let name = reference.strip_prefix("env:").ok_or_else(|| {
+            anyhow!("Vision Worker authentication reference must use env:VARIABLE_NAME")
+        })?;
+        if name.is_empty()
+            || !name.bytes().enumerate().all(|(index, byte)| {
+                byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+            })
+        {
+            bail!("Vision Worker environment credential locator must be a valid variable name");
+        }
+        Ok(())
+    }
+
+    pub fn http_config(&self) -> Result<HttpVisionWorkerConfig> {
+        Ok(HttpVisionWorkerConfig {
             id: self.id.clone(),
             base_url: self.base_url.clone(),
             expected_model_id: self.model_id.clone(),
@@ -229,8 +288,8 @@ impl DetectionWorkerSettings {
             max_response_bytes: self.max_response_bytes,
             max_retries: self.max_retries,
             allow_remote: self.allow_remote,
-            authorization: None,
-        }
+            authorization: self.authorization_header()?,
+        })
     }
 
     #[must_use]
@@ -344,29 +403,41 @@ impl DetectionWorkerSettings {
         let weights_ready = if self.requires_checkpoint_metadata {
             self.checkpoint_identity_complete()
         } else {
-            self.enabled
+            self.availability_evidence.weights_ready
         };
-        let availability_evidence = ModelAvailabilityEvidence {
-            health_passed: false,
-            protocol_compatible: false,
-            contracts_validated: true,
-            sample_conversion_passed: false,
-            weights_ready,
-            checked_at: None,
-            detail: Some(if !weights_ready {
+        let mut availability_evidence = self.availability_evidence.clone();
+        availability_evidence.weights_ready = weights_ready;
+        let authentication_ready =
+            self.authentication_reference.is_none() || self.authorization_header().is_ok();
+        if !authentication_ready {
+            availability_evidence.health_passed = false;
+            availability_evidence.detail = Some(
+                "Configured Vision Worker authentication reference cannot be resolved".to_owned(),
+            );
+        } else if availability_evidence.detail.is_none() {
+            availability_evidence.detail = Some(if !weights_ready {
                 "Model weights or immutable model identity are not configured".to_owned()
             } else if !self.enabled {
                 "Worker is disabled in workspace Settings".to_owned()
             } else {
                 "Configured; run discovery and a sample conversion before publishing".to_owned()
-            }),
-        };
+            });
+        }
         let availability = if !weights_ready {
             ModelAvailability::MissingWeights
         } else if !self.enabled {
             ModelAvailability::Disabled
-        } else {
+        } else if !authentication_ready {
             ModelAvailability::Unknown
+        } else if availability_evidence.available() {
+            ModelAvailability::Available
+        } else {
+            match self.availability {
+                ModelAvailability::Available
+                | ModelAvailability::MissingWeights
+                | ModelAvailability::Disabled => ModelAvailability::Unknown,
+                observed => observed,
+            }
         };
         let checkpoint = self
             .version
@@ -410,6 +481,10 @@ impl DetectionWorkerSettings {
                 ("worker_endpoint".to_owned(), json!(self.base_url)),
                 ("worker_enabled".to_owned(), json!(self.enabled)),
                 ("allow_remote".to_owned(), json!(self.allow_remote)),
+                (
+                    "authentication_reference".to_owned(),
+                    json!(self.authentication_reference),
+                ),
             ]),
         };
         manifest.validate().map_err(anyhow::Error::from)?;
@@ -424,6 +499,7 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             display_name: "LocateAnything Local".to_owned(),
             model_id: "locate-anything-local".to_owned(),
             base_url: "http://127.0.0.1:8791".to_owned(),
+            authentication_reference: None,
             enabled: false,
             allow_remote: false,
             requires_checkpoint_metadata: false,
@@ -474,12 +550,15 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             max_response_bytes: 2_000_000,
             max_retries: 0,
             cost_per_request: rust_decimal::Decimal::ZERO,
+            availability: ModelAvailability::MissingWeights,
+            availability_evidence: ModelAvailabilityEvidence::default(),
         },
         DetectionWorkerSettings {
             id: "annotagent-rfdetr".to_owned(),
             display_name: "RF-DETR Specialist Local".to_owned(),
             model_id: "rfdetr-specialist-local".to_owned(),
             base_url: "http://127.0.0.1:8792".to_owned(),
+            authentication_reference: None,
             enabled: false,
             allow_remote: false,
             requires_checkpoint_metadata: true,
@@ -523,12 +602,15 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             max_response_bytes: 2_000_000,
             max_retries: 0,
             cost_per_request: rust_decimal::Decimal::ZERO,
+            availability: ModelAvailability::MissingWeights,
+            availability_evidence: ModelAvailabilityEvidence::default(),
         },
         DetectionWorkerSettings {
             id: "annotagent-sam2".to_owned(),
             display_name: "SAM 2.1 Prompted Segmentation".to_owned(),
             model_id: "sam2.1-hiera-tiny".to_owned(),
             base_url: "http://127.0.0.1:8790".to_owned(),
+            authentication_reference: None,
             enabled: false,
             allow_remote: false,
             requires_checkpoint_metadata: true,
@@ -569,12 +651,15 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             max_response_bytes: 16_000_000,
             max_retries: 0,
             cost_per_request: rust_decimal::Decimal::ZERO,
+            availability: ModelAvailability::MissingWeights,
+            availability_evidence: ModelAvailabilityEvidence::default(),
         },
         DetectionWorkerSettings {
             id: "annotagent-yolo".to_owned(),
             display_name: "YOLO HTTP Worker".to_owned(),
             model_id: "yolo-http-worker".to_owned(),
             base_url: "http://127.0.0.1:8793".to_owned(),
+            authentication_reference: None,
             enabled: false,
             allow_remote: false,
             requires_checkpoint_metadata: true,
@@ -611,6 +696,8 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
             max_response_bytes: 2_000_000,
             max_retries: 0,
             cost_per_request: rust_decimal::Decimal::ZERO,
+            availability: ModelAvailability::MissingWeights,
+            availability_evidence: ModelAvailabilityEvidence::default(),
         },
     ]
 }
@@ -1741,12 +1828,15 @@ pub fn validate_settings(settings: &Settings) -> Result<()> {
                 "enabled Vision Workers require architecture, model version, checkpoint SHA-256, and weight license metadata"
             );
         }
+        worker.validate_authentication_reference()?;
         worker.expert_manifest()?;
         HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
             id: worker.id.clone(),
             endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
             capabilities: worker.expected_capabilities.clone(),
             request_timeout: Duration::from_secs(worker.timeout_seconds),
+            // Syntax is validated here; a missing runtime secret remains a live availability
+            // condition and does not prevent saving the workspace configuration.
             authorization: None,
             expected_model_identity: Some(worker.model_id.clone()),
             max_retries: worker.max_retries,
@@ -2219,13 +2309,14 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ..VisionModelDescriptor::default()
     })?;
     for worker in &settings.detection_workers {
+        let authorization = worker.authorization_header().ok().flatten();
         models.register_backend(Arc::new(HttpJsonVisionBackend::new(
             HttpJsonVisionBackendConfig {
                 id: worker.id.clone(),
                 endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
                 capabilities: worker.expected_capabilities.clone(),
                 request_timeout: Duration::from_secs(worker.timeout_seconds),
-                authorization: None,
+                authorization,
                 expected_model_identity: Some(worker.model_id.clone()),
                 max_retries: worker.max_retries,
                 max_response_bytes: worker.max_response_bytes,
@@ -13393,6 +13484,64 @@ export:
     }
 
     #[test]
+    fn expert_worker_registration_requires_persisted_live_evidence() {
+        let mut settings = load_settings(None).expect("default Settings");
+        let sam = settings
+            .detection_workers
+            .iter_mut()
+            .find(|worker| worker.model_id == "sam2.1-hiera-tiny")
+            .expect("SAM profile");
+        sam.enabled = true;
+        sam.version.model_version = "sam2.1-hiera-tiny-v1".to_owned();
+        sam.version.checkpoint_sha256 = Some("b".repeat(64));
+        sam.license.weight_license = Some("checkpoint-owner-supplied".to_owned());
+        sam.availability = ModelAvailability::Available;
+        sam.availability_evidence = ModelAvailabilityEvidence {
+            health_passed: true,
+            protocol_compatible: true,
+            contracts_validated: true,
+            sample_conversion_passed: true,
+            weights_ready: true,
+            checked_at: Some(chrono::Utc::now()),
+            detail: Some("selected-image sample conversion passed".to_owned()),
+        };
+        assert_eq!(
+            sam.expert_manifest()
+                .expect("verified SAM manifest")
+                .availability,
+            ModelAvailability::Available
+        );
+
+        let serialized = toml::to_string_pretty(&settings).expect("serialized Settings");
+        let restored: Settings = toml::from_str(&serialized).expect("restored Settings");
+        let restored_sam = restored
+            .detection_workers
+            .iter()
+            .find(|worker| worker.model_id == "sam2.1-hiera-tiny")
+            .expect("restored SAM profile");
+        assert!(restored_sam.availability_evidence.sample_conversion_passed);
+        assert_eq!(
+            restored_sam
+                .expert_manifest()
+                .expect("restored verified manifest")
+                .availability,
+            ModelAvailability::Available
+        );
+
+        let mut untested = restored_sam.clone();
+        untested.availability_evidence.sample_conversion_passed = false;
+        assert_eq!(
+            untested
+                .expert_manifest()
+                .expect("untested manifest")
+                .availability,
+            ModelAvailability::Unknown
+        );
+        untested.authentication_reference = Some("workspace-secret".to_owned());
+        assert!(untested.validate_authentication_reference().is_err());
+    }
+
+    #[test]
     fn legacy_sam_refiner_migrates_to_an_auditable_capability_chain() {
         let now = chrono::Utc::now();
         let mut draft = WorkflowDraft {
@@ -16519,7 +16668,13 @@ export:
                 },
             )
             .expect_err("unverified Labs Worker must not be recommended");
-        assert!(error.to_string().contains("not ready"));
+        let message = error.to_string();
+        assert!(
+            message.contains("not ready")
+                || message.contains("unavailable")
+                || message.contains("not executable"),
+            "unexpected unready-model error: {message}"
+        );
 
         let input = application
             .workflow_advisor_input_for_label(

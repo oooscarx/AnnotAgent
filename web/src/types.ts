@@ -130,7 +130,19 @@ export interface ModelBinding {
   model: string;
   role: string;
   scope: string;
-  health_status: "healthy" | "degraded" | "unavailable" | "unknown";
+  health_status:
+    | "healthy"
+    | "degraded"
+    | "unavailable"
+    | "unknown"
+    | "available"
+    | "missing_weights"
+    | "unconfigured"
+    | "disabled"
+    | "unreachable"
+    | "incompatible_protocol"
+    | "invalid_contract"
+    | "failed_smoke_test";
   health_detail?: string;
   availability_group: "ready" | "configured_unavailable" | "labs" | "disabled";
   capabilities?: string[];
@@ -147,17 +159,61 @@ export interface ModelBinding {
 
 export interface DetectionWorkerTestResult {
   model_id: string;
-  health: {
+  passed: boolean;
+  availability: string;
+  failed_stage?: string;
+  error?: string;
+  health?: {
     status: "healthy" | "degraded" | "unavailable" | "unknown";
     detail?: string;
+    checked_at?: string;
   };
-  capabilities: {
+  capabilities?: {
+    protocol_version: number;
+    worker_id: string;
+    model_identity: string;
     capabilities: string[];
-    score_semantics: string;
-    supports_visual_prompt: boolean;
-    supports_batch: boolean;
-    label_space: string[];
+    input_types: unknown[];
+    output_types: string[];
+    models?: unknown[];
   };
+  models?: { models: { model_id: string; display_name: string; model_version: string; availability: string }[] };
+  contracts?: { models: unknown[] };
+  evidence?: ModelAvailabilityEvidence;
+}
+
+export interface ModelAvailabilityEvidence {
+  health_passed: boolean;
+  protocol_compatible: boolean;
+  contracts_validated: boolean;
+  sample_conversion_passed: boolean;
+  weights_ready: boolean;
+  checked_at?: string;
+  detail?: string;
+}
+
+export interface DetectionWorkerSampleTestResult {
+  model_id: string;
+  passed: boolean;
+  availability: string;
+  error?: string;
+  evidence: ModelAvailabilityEvidence;
+  input?: {
+    project_id: string;
+    image_index: number;
+    image_url: string;
+    width: number;
+    height: number;
+    query?: string;
+    box_prompt?: number[];
+  };
+  raw_output_summary?: Record<string, unknown>;
+  converted_artifacts?: unknown[];
+  coordinates?: unknown[];
+  score_semantics?: string;
+  geometry_semantics?: string;
+  duration_ms: number;
+  warnings?: string[];
 }
 
 export type ProviderAdapterKind = "open_ai_compatible" | "mock";

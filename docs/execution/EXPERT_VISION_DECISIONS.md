@@ -76,3 +76,11 @@ The system prompt explains VLM geometry limits and failure-specific actions, but
 the sole control. The Builder receives typed availability/contracts/quality data; Expert Model
 binding rejects every state except `Available`; and the prompted-segmentation guided revision checks
 candidate, failure, geometry, conversion-path and model evidence before changing a Draft.
+
+## D13 — Discovery and sample evidence are durable, secrets are not
+
+The guided Worker setup persists only model configuration, an optional environment credential
+reference, and active availability evidence. It never stores the resolved bearer secret. Four
+discovery resources and one user-selected image conversion are required before registration; a
+Server restart re-evaluates an unresolved credential reference and cannot keep a stale Worker
+`Available`.

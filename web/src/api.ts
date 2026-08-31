@@ -4,6 +4,7 @@ import type {
   CorrectionMemoryRecord,
   DashboardData,
   DetectionWorkerTestResult,
+  DetectionWorkerSampleTestResult,
   CredentialSource,
   HistoryRun,
   ImageItem,
@@ -462,6 +463,14 @@ export const api = {
     request<DetectionWorkerTestResult>(`/api/models/${encodeURIComponent(modelId)}/test`, {
       method: "POST",
     }),
+  sampleTestModel: (
+    modelId: string,
+    value: { project_id: string; image_index: number; query?: string; box_prompt?: number[] },
+  ) =>
+    request<DetectionWorkerSampleTestResult>(
+      `/api/models/${encodeURIComponent(modelId)}/sample-test`,
+      { method: "POST", body: JSON.stringify(value) },
+    ),
   reviews: (projectId?: string) =>
     request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
       `/api/reviews${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,

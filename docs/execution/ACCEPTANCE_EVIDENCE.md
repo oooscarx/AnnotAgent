@@ -1064,3 +1064,23 @@ Registry-only execution admission status: `PASS`.
    Chromium Provider Registry coverage pass. Secret-shaped diff and formatting checks are clean.
 
 Persistent workspace Provider credentials status: `PASS`.
+
+## Expert Vision SDK M7 — guided setup and SAM evidence — 2026-09-01
+
+1. Settings → Vision Workers presents one six-step Expert Model onboarding flow for SAM, known
+   detector/segmenter presets, a generic HTTP protocol Worker and the existing offline Mock.
+2. Discovery reads health, capabilities, models and contracts and persists stage-specific
+   evidence. Registration remains disabled until health, protocol, contracts, immutable
+   weights identity and selected-image conversion all pass.
+3. Environment Worker authentication persists only the variable reference. Restart-time Manifest
+   construction resolves it again and cannot retain stale `Available` state without the secret.
+4. Selected-image sampling reads a real Project image and exposes input, bounded raw summary,
+   typed converted Artifacts, normalized coordinates, score/geometry semantics, duration and
+   warnings. SAM sampling uses the explicit Image + BoxPromptSet → MaskSet contract.
+5. The reference SAM Worker preserves exact prompt set/item lineage, exposes all discovery
+   resources and never downloads or claims a checkpoint. Real quality remains live-conditional.
+6. Live model/version/checkpoint/license identity is authoritative. Missing identity is copied from
+   discovery, conflicting local identity is rejected, and discovery is repeated before sampling.
+7. Desktop and 480 × 760 Browser verification passes on the direct Vision Workers route with no
+   console errors. Full verification passes 299 Rust tests, strict Clippy/Rustfmt, all 40 Web unit
+   tests, the production build and 16 Python SDK/SAM tests; one billable smoke remains ignored.

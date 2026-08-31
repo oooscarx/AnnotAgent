@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M6 — Evidence-driven Pipeline Builder Agent (complete)
+M7 — Guided model setup and product flow (complete)
 
 ## Completed
 
@@ -100,22 +100,41 @@ M6 — Evidence-driven Pipeline Builder Agent (complete)
   do not trigger segmentation, while geometry correction evidence does.
 - Updated the RoboCup Advisor resource to express capability preferences and hard-negative policy
   without selecting concrete model brands.
+- Added a six-step Add Expert Model flow for SAM, YOLO, RF-DETR, LocateAnything, PIDNet, Grounding
+  DINO, a generic HTTP Worker, and the truthful built-in offline Mock.
+- Discovery now verifies health, capabilities, model identity and complete Artifact contracts;
+  failures identify the exact stage instead of collapsing to a generic connectivity error.
+- Added a selected-Project-image smoke test that displays the input, bounded raw output summary,
+  converted typed Artifacts, normalized coordinates, score/geometry semantics, duration and
+  warnings before a model can be registered.
+- Persisted active availability evidence in Git-ignored workspace Settings. Authentication stores
+  only an `env:VARIABLE_NAME` reference, and an unresolved reference invalidates stale availability
+  after Server restart.
+- Migrated the SAM reference Worker to the generic Pipeline request/response contract: it consumes
+  exact Box Prompt item references and emits a typed MaskSet while retaining the legacy Vision
+  response for compatibility.
+- Moved the editable Worker collection to the direct Settings → Vision Workers route, added
+  responsive wizard layouts, and closed both the wizard and advanced Enabled controls behind the
+  same five-part registration evidence gate.
+- Live model/version/checkpoint/license discovery is authoritative: setup auto-fills missing
+  identity, rejects conflicting local identity, and re-runs discovery immediately before the
+  selected-image sample so stale evidence cannot register a different Worker.
 
 ## In progress
 
-- None. M6 is ready for its independent local commit.
+- None. M7 is ready for its independent local commit.
 
 ## Next
 
-- M7: implement guided Expert Model onboarding, discovery, sample smoke evidence and accessible
-  setup/recommendation UI.
+- M8: run the complete offline release matrix, dedicated Agent/RoboCup scenarios, architecture and
+  secret scans, and final documentation closure.
 
 ## Latest Rust tests
 
-- `cargo test --workspace --all-features`: PASS — 297 tests; zero failures; one opt-in billable
+- `cargo test --workspace --all-features`: PASS — 299 tests; zero failures; one opt-in billable
   smoke ignored.
-- `cargo fmt --all --check`: PASS after M6.
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M6.
+- `cargo fmt --all --check`: PASS after M7.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M7.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
@@ -141,7 +160,9 @@ M6 — Evidence-driven Pipeline Builder Agent (complete)
 
 ## Latest browser verification
 
-- Not run for M0; no product UI changed yet.
+- PASS — Settings → Vision Workers lands on the editable Worker collection rather than Storage.
+- PASS — the six-step Expert Model wizard is readable at desktop width and 480 × 760, with no
+  horizontal overflow or Browser console error.
 
 ## Latest local commit
 
@@ -152,11 +173,13 @@ M6 — Evidence-driven Pipeline Builder Agent (complete)
 - M3: `b98ceaa feat(workflow): compose expert models through typed artifact conversions`.
 - M4: `e8eb285 feat(evaluation): distinguish semantic, geometry and provider failures`.
 - M5: `07c0675 refactor(models): register existing vision backends through capabilities`.
-- M6 commit pending: `feat(agent): build evidence-driven expert vision pipelines`.
+- M6: `506bde6 feat(agent): build evidence-driven expert vision pipelines`.
+- M7: `feat(settings): guide expert vision model onboarding` (this milestone commit).
 
 ## Release-blocking remainder
 
-- M7–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
+- M8 and every non-live-conditional item that remains incomplete in
+  `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Live-conditional
 

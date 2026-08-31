@@ -11,27 +11,35 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use annotagent_application::load_settings;
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, DetectionWorkerSettings,
     LocalApplication, ModelBinding, ProjectSummary, Settings, WorkflowVersion, stable_project_id,
     validate_settings,
 };
 use annotagent_core::{
-    Annotation, AnnotationId, AnnotationValue, ArtifactValidationState, AttributeDefinition,
-    BatchId, BindingMutationActor, CandidateAgreement, CapabilityDeclarationSource,
-    CorrectionFeatures, CorrectionRecord, CredentialReference, CredentialSource, DetectionEvidence,
-    EnabledSkillConfig, GenerationDefaults, GlobalModelDefaults, InputModality, LabelId,
-    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelCapability, ModelLimits,
-    ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot, ModelProfileStatus,
-    ModelRequirements, NormalizedRect, PipelineArtifact, PipelineBuilderConstraints,
+    Annotation, AnnotationId, AnnotationValue, ArtifactKind, ArtifactRef, ArtifactValidationState,
+    AttributeDefinition, BatchId, BindingMutationActor, BoxPrompt, BoxPromptSetArtifact,
+    CandidateAgreement, CapabilityDeclarationSource, CorrectionFeatures, CorrectionRecord,
+    CredentialReference, CredentialSource, DetectionEvidence, EnabledSkillConfig,
+    ExpertModelManifest, GenerationDefaults, GlobalModelDefaults, ImageArtifact, ImageId,
+    InputModality, LabelId, ModelAvailability, ModelBindingId, ModelBindingMatch, ModelBindingRole,
+    ModelCapability, ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ModelProfileStatus, ModelRequirements, NormalizedRect, PipelineArtifact,
+    PipelineBuilderConstraints, PipelineInferenceRequest, PipelineModelBackend,
     ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
     ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
     ProviderId, ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskKind,
-    UsageTotals, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, check_model_compatibility,
+    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskId,
+    TaskKind, UsageTotals, VisionCapability, VisionInferenceRequest, VisionModelBackend,
+    VisionModelHealthStatus, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind,
+    check_model_compatibility,
 };
+use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_provider::{
-    EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
+    EnvironmentSecretStore, HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig,
+    HttpJsonVisionBackend, HttpJsonVisionBackendConfig, KeyringSecretStore,
     LegacyWorkspaceFileSecretStore, OpenAiCompatibleProvider, SecretStoreRouter,
     SessionSecretStore, WorkspaceFileSecretStore, active_provider_probe, discover_provider_models,
     passive_provider_check,
@@ -536,6 +544,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/workflows/compare", post(compare_workflow_versions))
         .route("/api/models", get(list_models))
         .route("/api/models/{model_id}/test", post(test_detection_worker))
+        .route(
+            "/api/models/{model_id}/sample-test",
+            post(sample_test_detection_worker),
+        )
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route(
@@ -3027,32 +3039,663 @@ async fn test_detection_worker(
     State(state): State<ServerState>,
     AxumPath(model_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
-    let worker = {
-        let settings = state.settings.read().await;
-        settings
-            .detection_workers
-            .iter()
-            .find(|worker| worker.model_id == model_id)
-            .cloned()
-    }
-    .ok_or_else(|| ApiError::not_found(format!("unknown Detection Worker model {model_id:?}")))?;
-    if !worker.enabled {
-        return Err(ApiError::bad_request(format!(
-            "Detection Worker model {model_id:?} is disabled"
-        )));
-    }
-    let client =
-        HttpVisionWorkerClient::new(worker.http_config()).map_err(ApiError::bad_request)?;
-    let health = client.health().await.map_err(ApiError::bad_request)?;
-    let capabilities = client
-        .discover_capabilities()
-        .await
-        .map_err(ApiError::bad_request)?;
+    let mut worker = configured_detection_worker(&state, &model_id).await?;
+    let backend = worker_discovery_backend(&worker)?;
+    let checked_at = Utc::now();
+
+    let health = match backend.health().await {
+        Ok(health) => health,
+        Err(error) => {
+            worker.availability = ModelAvailability::Unreachable;
+            worker.availability_evidence.health_passed = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.to_string());
+            persist_detection_worker(&state, worker).await?;
+            return Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "failed_stage": "health",
+                "availability": "unreachable",
+                "error": error.to_string(),
+            })));
+        }
+    };
+    let capabilities = match backend.discover_capabilities().await {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            worker.availability = ModelAvailability::IncompatibleProtocol;
+            worker.availability_evidence.health_passed =
+                health.status == VisionModelHealthStatus::Healthy;
+            worker.availability_evidence.protocol_compatible = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.to_string());
+            persist_detection_worker(&state, worker).await?;
+            return Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "failed_stage": "capabilities",
+                "availability": "incompatible_protocol",
+                "health": health,
+                "error": error.to_string(),
+            })));
+        }
+    };
+    let models = match backend.discover_models().await {
+        Ok(models) => models,
+        Err(error) => {
+            worker.availability = ModelAvailability::InvalidContract;
+            worker.availability_evidence.health_passed =
+                health.status == VisionModelHealthStatus::Healthy;
+            worker.availability_evidence.protocol_compatible = true;
+            worker.availability_evidence.contracts_validated = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.to_string());
+            persist_detection_worker(&state, worker).await?;
+            return Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "failed_stage": "models",
+                "availability": "invalid_contract",
+                "health": health,
+                "capabilities": capabilities,
+                "error": error.to_string(),
+            })));
+        }
+    };
+    let contracts = match backend.discover_contracts().await {
+        Ok(contracts) => contracts,
+        Err(error) => {
+            worker.availability = ModelAvailability::InvalidContract;
+            worker.availability_evidence.health_passed =
+                health.status == VisionModelHealthStatus::Healthy;
+            worker.availability_evidence.protocol_compatible = true;
+            worker.availability_evidence.contracts_validated = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.to_string());
+            persist_detection_worker(&state, worker).await?;
+            return Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "failed_stage": "contracts",
+                "availability": "invalid_contract",
+                "health": health,
+                "capabilities": capabilities,
+                "models": models,
+                "error": error.to_string(),
+            })));
+        }
+    };
+    let discovered_manifest = contracts
+        .models
+        .iter()
+        .find(|manifest| manifest.model_id == worker.model_id)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "Worker contracts do not include configured model {:?}",
+                worker.model_id
+            ))
+        })?;
+    let weights_ready = match reconcile_discovered_worker_identity(&mut worker, discovered_manifest)
+    {
+        Ok(weights_ready) => weights_ready,
+        Err(error) => {
+            worker.availability = ModelAvailability::InvalidContract;
+            worker.availability_evidence.health_passed =
+                health.status == VisionModelHealthStatus::Healthy;
+            worker.availability_evidence.protocol_compatible = true;
+            worker.availability_evidence.contracts_validated = false;
+            worker.availability_evidence.weights_ready = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.clone());
+            persist_detection_worker(&state, worker).await?;
+            return Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "failed_stage": "model_identity",
+                "availability": "invalid_contract",
+                "health": health,
+                "capabilities": capabilities,
+                "models": models,
+                "contracts": contracts,
+                "error": error,
+            })));
+        }
+    };
+    let declared_capabilities_match = worker.expected_capabilities.iter().all(|capability| {
+        capabilities.capabilities.contains(capability)
+            && models.models.iter().any(|model| {
+                model.model_id == worker.model_id && model.capabilities.contains(capability)
+            })
+    });
+    worker.availability_evidence.health_passed = health.status == VisionModelHealthStatus::Healthy;
+    worker.availability_evidence.protocol_compatible = declared_capabilities_match;
+    worker.availability_evidence.contracts_validated = declared_capabilities_match;
+    worker.availability_evidence.weights_ready = weights_ready;
+    worker.availability_evidence.checked_at = Some(checked_at);
+    worker.availability_evidence.detail = Some(if !weights_ready {
+        "Discovery passed, but model weights or immutable identity are incomplete".to_owned()
+    } else if !declared_capabilities_match {
+        "Worker discovery does not satisfy the configured capability contract".to_owned()
+    } else if health.status != VisionModelHealthStatus::Healthy {
+        "Worker health is not healthy".to_owned()
+    } else if !worker.availability_evidence.sample_conversion_passed {
+        "Discovery passed; run a selected-image sample conversion before registration".to_owned()
+    } else {
+        "Health, protocol, contracts, identity and sample conversion passed".to_owned()
+    });
+    worker.availability = if !weights_ready {
+        ModelAvailability::MissingWeights
+    } else if !declared_capabilities_match {
+        ModelAvailability::InvalidContract
+    } else if health.status != VisionModelHealthStatus::Healthy {
+        ModelAvailability::Unreachable
+    } else if worker.availability_evidence.available() {
+        ModelAvailability::Available
+    } else {
+        ModelAvailability::Unknown
+    };
+    let availability = worker.availability;
+    let evidence = worker.availability_evidence.clone();
+    persist_detection_worker(&state, worker).await?;
     Ok(Json(json!({
         "model_id": model_id,
+        "passed": evidence.health_passed && evidence.protocol_compatible && evidence.contracts_validated,
+        "availability": availability,
         "health": health,
         "capabilities": capabilities,
+        "models": models,
+        "contracts": contracts,
+        "evidence": evidence,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct VisionWorkerSampleTestRequest {
+    project_id: String,
+    #[serde(default)]
+    image_index: usize,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    box_prompt: Option<[f32; 4]>,
+}
+
+async fn sample_test_detection_worker(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+    Json(request): Json<VisionWorkerSampleTestRequest>,
+) -> ApiResult<Json<Value>> {
+    let mut worker = configured_detection_worker(&state, &model_id).await?;
+    let images = state
+        .application
+        .list_project_images(&request.project_id)
+        .map_err(ApiError::bad_request)?;
+    let image_path = images.get(request.image_index).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "image_index {} is outside Project {:?}",
+            request.image_index, request.project_id
+        ))
+    })?;
+    let frame = load_image(image_path, 40_000_000).map_err(ApiError::bad_request)?;
+    let model_image =
+        to_model_image("expert-worker-sample", &frame, 1280).map_err(ApiError::bad_request)?;
+    let image_id = ImageId::new();
+    let run_id = RunId::new();
+    let task_id = TaskId::new("expert-worker-sample");
+    let node_id = "expert-worker-sample".to_owned();
+    let operation = worker
+        .expected_capabilities
+        .first()
+        .copied()
+        .ok_or_else(|| ApiError::bad_request("Vision Worker has no configured capability"))?;
+    let started = std::time::Instant::now();
+
+    let result = if operation == VisionCapability::PromptedSegmentation {
+        let prompt_rect = request.box_prompt.unwrap_or([0.25, 0.25, 0.5, 0.5]);
+        let prompt_rect = NormalizedRect::new(
+            prompt_rect[0],
+            prompt_rect[1],
+            prompt_rect[2],
+            prompt_rect[3],
+        )
+        .map_err(ApiError::bad_request)?;
+        let source_detections = ArtifactRef {
+            artifact_id: format!("sample-detections:{run_id}"),
+            source_node: "sample-prompt".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let prompts = BoxPromptSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: format!("sample-box-prompts:{run_id}"),
+                source_node: "sample-prompt".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            image_id,
+            source_detections: source_detections.clone(),
+            prompts: vec![BoxPrompt {
+                id: "sample-box-prompt".to_owned(),
+                subject: source_detections.item("sample-candidate"),
+                bbox: prompt_rect,
+                attributes: BTreeMap::new(),
+            }],
+        };
+        let input_image = sample_image_artifact(&node_id, image_id, &frame, image_path);
+        let backend = HttpJsonPipelineBackend::new(HttpJsonPipelineBackendConfig {
+            id: worker.id.clone(),
+            endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+            capability: operation,
+            request_timeout: Duration::from_secs(worker.timeout_seconds),
+            authorization: worker
+                .authorization_header()
+                .map_err(ApiError::bad_request)?,
+            expected_model_identity: Some(worker.model_id.clone()),
+            max_retries: worker.max_retries,
+            max_response_bytes: worker.max_response_bytes,
+            allow_remote: worker.allow_remote,
+        })
+        .map_err(ApiError::bad_request)?;
+        backend
+            .infer_pipeline(
+                PipelineInferenceRequest {
+                    protocol_version: annotagent_core::PIPELINE_VISION_PROTOCOL_VERSION,
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    run_id,
+                    image_id,
+                    node_id: node_id.clone(),
+                    model_id: worker.model_id.clone(),
+                    operation,
+                    image: Some(model_image.clone()),
+                    input_artifacts: vec![
+                        PipelineArtifact::Image(input_image),
+                        PipelineArtifact::BoxPromptSet(prompts),
+                    ],
+                    parameters: BTreeMap::new(),
+                    timeout_ms: Some(worker.timeout_seconds.saturating_mul(1_000)),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .map(|response| {
+                let artifacts =
+                    serde_json::to_value(&response.artifacts).unwrap_or_else(|_| json!([]));
+                let coordinates = response
+                    .artifacts
+                    .iter()
+                    .map(pipeline_artifact_coordinates)
+                    .collect::<Vec<_>>();
+                (
+                    response.artifacts.len(),
+                    artifacts,
+                    coordinates,
+                    response.model_identity,
+                    response.request_id,
+                    response.timings.total_ms,
+                    response.warnings,
+                    response.metadata,
+                )
+            })
+    } else {
+        let backend = worker_discovery_backend(&worker)?;
+        backend
+            .infer(
+                VisionInferenceRequest {
+                    protocol_version: annotagent_core::VISION_WORKER_PROTOCOL_VERSION,
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    operation,
+                    run_id,
+                    image_id,
+                    task_id,
+                    node_id: node_id.clone(),
+                    model_id: worker.model_id.clone(),
+                    image: Some(model_image.clone()),
+                    input_artifacts: Vec::new(),
+                    prompt: request.query.clone(),
+                    parameters: BTreeMap::new(),
+                    timeout_ms: Some(worker.timeout_seconds.saturating_mul(1_000)),
+                    cancellation_requested: false,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .map(|response| {
+                let coordinates = response
+                    .artifacts
+                    .iter()
+                    .filter_map(|artifact| match &artifact.value {
+                        annotagent_core::VisionArtifactValue::BoundingBox { rect } => {
+                            Some(json!(rect))
+                        }
+                        annotagent_core::VisionArtifactValue::InstanceMask { mask }
+                        | annotagent_core::VisionArtifactValue::SemanticMask { mask } => {
+                            Some(json!({
+                                "mask": mask,
+                                "tight_bbox": annotagent_core::mask_tight_bbox(mask).ok(),
+                            }))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let artifacts =
+                    serde_json::to_value(&response.artifacts).unwrap_or_else(|_| json!([]));
+                (
+                    response.artifacts.len(),
+                    artifacts,
+                    coordinates,
+                    response.model_identity,
+                    response.request_id,
+                    response.timings.total_ms,
+                    response.warnings,
+                    response.metadata,
+                )
+            })
+    };
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let checked_at = Utc::now();
+    match result {
+        Ok((
+            artifact_count,
+            artifacts,
+            coordinates,
+            model_identity,
+            request_id,
+            worker_ms,
+            warnings,
+            metadata,
+        )) if artifact_count > 0 => {
+            worker.availability_evidence.sample_conversion_passed = true;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            let weights_ready = worker
+                .expert_manifest()
+                .map_err(ApiError::bad_request)?
+                .availability_evidence
+                .weights_ready;
+            worker.availability_evidence.weights_ready = weights_ready;
+            worker.availability = if worker.availability_evidence.available() {
+                ModelAvailability::Available
+            } else if !weights_ready {
+                ModelAvailability::MissingWeights
+            } else {
+                ModelAvailability::Unknown
+            };
+            worker.availability_evidence.detail = Some(
+                if worker.availability_evidence.available() {
+                    "Health, protocol, contracts, identity and sample conversion passed".to_owned()
+                } else {
+                    "Sample conversion passed; complete discovery and model identity before registration"
+                    .to_owned()
+                },
+            );
+            let availability = worker.availability;
+            let evidence = worker.availability_evidence.clone();
+            let manifest = worker.expert_manifest().map_err(ApiError::bad_request)?;
+            persist_detection_worker(&state, worker).await?;
+            Ok(Json(json!({
+                "model_id": model_id,
+                "passed": true,
+                "availability": availability,
+                "evidence": evidence,
+                "input": {
+                    "project_id": request.project_id,
+                    "image_index": request.image_index,
+                    "image_url": format!("/api/projects/{}/images/{}/content", request.project_id, request.image_index),
+                    "width": frame.metadata.width,
+                    "height": frame.metadata.height,
+                    "query": request.query,
+                    "box_prompt": request.box_prompt.unwrap_or([0.25, 0.25, 0.5, 0.5]),
+                },
+                "raw_output_summary": {
+                    "request_id": request_id,
+                    "model_identity": model_identity,
+                    "artifact_count": artifact_count,
+                    "metadata": metadata,
+                },
+                "converted_artifacts": artifacts,
+                "coordinates": coordinates,
+                "score_semantics": manifest.score_semantics,
+                "geometry_semantics": manifest.geometry_semantics,
+                "duration_ms": worker_ms.unwrap_or(elapsed_ms),
+                "warnings": warnings,
+            })))
+        }
+        Ok((_, _, _, _, _, _, warnings, _)) => {
+            worker.availability = ModelAvailability::FailedSmokeTest;
+            worker.availability_evidence.sample_conversion_passed = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail =
+                Some("Sample request returned no convertible Artifact".to_owned());
+            let evidence = worker.availability_evidence.clone();
+            persist_detection_worker(&state, worker).await?;
+            Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "availability": "failed_smoke_test",
+                "evidence": evidence,
+                "duration_ms": elapsed_ms,
+                "warnings": warnings,
+                "error": "Sample request returned no convertible Artifact",
+            })))
+        }
+        Err(error) => {
+            worker.availability = ModelAvailability::FailedSmokeTest;
+            worker.availability_evidence.sample_conversion_passed = false;
+            worker.availability_evidence.checked_at = Some(checked_at);
+            worker.availability_evidence.detail = Some(error.to_string());
+            let evidence = worker.availability_evidence.clone();
+            persist_detection_worker(&state, worker).await?;
+            Ok(Json(json!({
+                "model_id": model_id,
+                "passed": false,
+                "availability": "failed_smoke_test",
+                "evidence": evidence,
+                "duration_ms": elapsed_ms,
+                "error": error.to_string(),
+            })))
+        }
+    }
+}
+
+async fn configured_detection_worker(
+    state: &ServerState,
+    model_id: &str,
+) -> ApiResult<DetectionWorkerSettings> {
+    state
+        .settings
+        .read()
+        .await
+        .detection_workers
+        .iter()
+        .find(|worker| worker.model_id == model_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("unknown Vision Worker model {model_id:?}")))
+}
+
+fn worker_discovery_backend(worker: &DetectionWorkerSettings) -> ApiResult<HttpJsonVisionBackend> {
+    HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
+        id: worker.id.clone(),
+        endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+        capabilities: worker.expected_capabilities.clone(),
+        request_timeout: Duration::from_secs(worker.timeout_seconds),
+        authorization: worker
+            .authorization_header()
+            .map_err(ApiError::bad_request)?,
+        expected_model_identity: Some(worker.model_id.clone()),
+        max_retries: worker.max_retries,
+        max_response_bytes: worker.max_response_bytes,
+        allow_remote: worker.allow_remote,
+    })
+    .map_err(ApiError::bad_request)
+}
+
+fn reconcile_discovered_worker_identity(
+    worker: &mut DetectionWorkerSettings,
+    manifest: &ExpertModelManifest,
+) -> Result<bool, String> {
+    let configured_version = worker.version.model_version.trim();
+    if configured_version.is_empty() || matches!(configured_version, "unconfigured" | "unversioned")
+    {
+        worker
+            .version
+            .model_version
+            .clone_from(&manifest.model_version);
+    } else if configured_version != manifest.model_version {
+        return Err(format!(
+            "configured model version {:?} does not match live Worker version {:?}",
+            configured_version, manifest.model_version
+        ));
+    }
+    if worker.version.architecture.is_none() {
+        worker
+            .version
+            .architecture
+            .clone_from(&manifest.architecture);
+    }
+
+    match (
+        worker.version.checkpoint_sha256.as_deref(),
+        manifest.checkpoint.as_ref(),
+    ) {
+        (Some(configured), Some(discovered))
+            if !configured.eq_ignore_ascii_case(&discovered.sha256) =>
+        {
+            return Err(
+                "configured checkpoint SHA-256 does not match the live Worker checkpoint"
+                    .to_owned(),
+            );
+        }
+        (Some(_), None) => {
+            return Err(
+                "configured checkpoint SHA-256 is not reported by the live Worker".to_owned(),
+            );
+        }
+        (None, Some(discovered)) => {
+            worker.version.checkpoint_sha256 = Some(discovered.sha256.clone());
+        }
+        _ => {}
+    }
+    if worker.version.training_dataset_version.is_none() {
+        worker.version.training_dataset_version = manifest
+            .checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.training_dataset_version.clone());
+    }
+
+    match (
+        worker.license.weight_license.as_deref(),
+        manifest.license.weight_license.as_deref(),
+    ) {
+        (Some(configured), Some(discovered)) if configured != discovered => {
+            return Err(
+                "configured checkpoint license does not match the live Worker license".to_owned(),
+            );
+        }
+        (Some(_), None) => {
+            return Err(
+                "configured checkpoint license is not reported by the live Worker".to_owned(),
+            );
+        }
+        (None, Some(discovered)) => {
+            worker.license.weight_license = Some(discovered.to_owned());
+        }
+        _ => {}
+    }
+    if worker.label_space.is_empty() {
+        worker.label_space = manifest.label_space.clone().unwrap_or_default();
+    }
+
+    let immutable_identity_ready = !worker.requires_checkpoint_metadata
+        || (!matches!(
+            worker.version.model_version.trim(),
+            "" | "unconfigured" | "unversioned"
+        ) && worker
+            .version
+            .checkpoint_sha256
+            .as_deref()
+            .is_some_and(|value| value.len() == 64)
+            && worker
+                .license
+                .weight_license
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()));
+    Ok(manifest.availability_evidence.weights_ready && immutable_identity_ready)
+}
+
+async fn persist_detection_worker(
+    state: &ServerState,
+    worker: DetectionWorkerSettings,
+) -> ApiResult<()> {
+    let saved_settings = {
+        let mut settings = state.settings.write().await;
+        let target = settings
+            .detection_workers
+            .iter_mut()
+            .find(|candidate| candidate.model_id == worker.model_id)
+            .ok_or_else(|| ApiError::not_found("Vision Worker disappeared while testing"))?;
+        *target = worker;
+        validate_settings(&settings).map_err(ApiError::bad_request)?;
+        settings.clone()
+    };
+    let settings_path = state.settings_path.clone();
+    tokio::task::spawn_blocking(move || persist_settings(&settings_path, &saved_settings))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::internal)?;
+    *state.settings_persisted.write().await = true;
+    Ok(())
+}
+
+fn sample_image_artifact(
+    source_node: &str,
+    image_id: ImageId,
+    frame: &annotagent_core::ImageFrame,
+    image_path: &Path,
+) -> ImageArtifact {
+    ImageArtifact {
+        reference: ArtifactRef {
+            artifact_id: format!("sample-image:{image_id}"),
+            source_node: source_node.to_owned(),
+            port: "image".to_owned(),
+            artifact_type: ArtifactKind::Image,
+            item_id: None,
+        },
+        image_id,
+        width: frame.metadata.width,
+        height: frame.metadata.height,
+        mime_type: frame.metadata.mime_type.clone(),
+        blob_ref: image_path.display().to_string(),
+        parent: None,
+        root_region: None,
+    }
+}
+
+fn pipeline_artifact_coordinates(artifact: &PipelineArtifact) -> Value {
+    match artifact {
+        PipelineArtifact::DetectionSet(detections) => json!(
+            detections
+                .detections
+                .iter()
+                .map(|detection| detection.bbox)
+                .collect::<Vec<_>>()
+        ),
+        PipelineArtifact::MaskSet(masks) => json!(
+            masks
+                .masks
+                .iter()
+                .map(|mask| json!({
+                    "mask": mask.mask,
+                    "tight_bbox": annotagent_core::mask_tight_bbox(&mask.mask).ok(),
+                }))
+                .collect::<Vec<_>>()
+        ),
+        PipelineArtifact::CropSet(crops) => {
+            json!(crops.crops.iter().map(|crop| crop.rect).collect::<Vec<_>>())
+        }
+        _ => json!([]),
+    }
 }
 
 async fn list_run_summaries(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
@@ -5006,6 +5649,50 @@ mod tests {
         (status, value)
     }
 
+    #[test]
+    fn discovered_worker_identity_is_authoritative_for_registration() {
+        let settings = load_settings(None).expect("default Settings");
+        let mut worker = settings
+            .detection_workers
+            .into_iter()
+            .find(|worker| worker.model_id == "sam2.1-hiera-tiny")
+            .expect("SAM Worker");
+        let mut manifest = worker.expert_manifest().expect("SAM Manifest");
+        manifest.model_version = "sam2.1-test-v1".to_owned();
+        manifest.checkpoint = Some(annotagent_core::CheckpointIdentity {
+            sha256: "a".repeat(64),
+            source: Some("owner-supplied checkpoint".to_owned()),
+            training_dataset_version: Some("sam2.1-upstream".to_owned()),
+        });
+        manifest.license.weight_license = Some("owner-verified terms".to_owned());
+        manifest.availability = ModelAvailability::Unknown;
+        manifest.availability_evidence.weights_ready = true;
+
+        assert!(
+            reconcile_discovered_worker_identity(&mut worker, &manifest)
+                .expect("live identity should reconcile")
+        );
+        assert_eq!(worker.version.model_version, "sam2.1-test-v1");
+        assert_eq!(worker.version.checkpoint_sha256, Some("a".repeat(64)));
+        assert_eq!(
+            worker.license.weight_license.as_deref(),
+            Some("owner-verified terms")
+        );
+
+        worker.version.model_version = "forged-local-version".to_owned();
+        assert!(reconcile_discovered_worker_identity(&mut worker, &manifest).is_err());
+        worker.version.model_version = manifest.model_version.clone();
+        worker.version.checkpoint_sha256 = Some("b".repeat(64));
+        assert!(reconcile_discovered_worker_identity(&mut worker, &manifest).is_err());
+
+        worker.version.checkpoint_sha256 = Some("a".repeat(64));
+        manifest.availability_evidence.weights_ready = false;
+        assert!(
+            !reconcile_discovered_worker_identity(&mut worker, &manifest)
+                .expect("unready live identity remains non-publishable")
+        );
+    }
+
     #[tokio::test]
     async fn legacy_registry_import_requires_confirmation_and_is_idempotent() {
         let temp = tempfile::tempdir().expect("temp");
@@ -5987,17 +6674,19 @@ export:
         assert_eq!(models["models"][3]["availability_group"], json!("labs"));
         assert_eq!(models["models"][4]["id"], json!("yolo-http-worker"));
         assert_eq!(models["models"][4]["availability_group"], json!("labs"));
-        assert_eq!(
+        let setup_probe = response_json(
             request(
                 &service,
                 axum::http::Method::POST,
                 "/api/models/locate-anything-local/test",
                 None,
             )
-            .await
-            .status(),
-            StatusCode::BAD_REQUEST
-        );
+            .await,
+        )
+        .await;
+        assert_eq!(setup_probe["model_id"], json!("locate-anything-local"));
+        assert!(setup_probe["passed"].is_boolean());
+        assert_ne!(setup_probe["availability"], json!("available"));
 
         let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
         assert_eq!(sse.status(), StatusCode::OK);
