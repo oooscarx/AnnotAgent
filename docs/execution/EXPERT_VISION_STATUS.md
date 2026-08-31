@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M0 — Baseline and model inventory (complete)
+M1 — Expert Model Manifest (complete)
 
 ## Completed
 
@@ -22,19 +22,38 @@ M0 — Baseline and model inventory (complete)
 - Verified all four tracked Python reference workers parse without importing dependencies or
   loading/downloading weights.
 - Published the audited capability-state matrix below.
+- Added a versioned, credential-free `ExpertModelManifest` with Provider/Worker/Mock connections,
+  typed input/output and prompt contracts, model/version/checkpoint/runtime/license facts, score
+  semantics and geometry semantics.
+- Added the full availability lifecycle and a strict evidence gate: an Expert Model cannot validate
+  as `Available` without health, protocol, contract, weights and sample-conversion evidence.
+- Added `CoarseHypothesis`, `PredictedGeometry`, `MaskRefinedGeometry`, calibrated and
+  human-verified geometry semantics independently from score confidence.
+- Extended the existing Model Registry to ingest arbitrary Worker-backed manifests, project them
+  into the legacy descriptor boundary and expose the original manifest without adding a Core model
+  enum or runtime branch.
+- Added a safe descriptor migration: untested HTTP Workers are never promoted to `Available`,
+  while healthy in-process Mock/deterministic fixtures retain truthful offline availability.
+- Added an extensibility test registering a fictional `Test Edge Detector` solely from capability
+  and contract metadata.
 
 ## In progress
 
-- None. M0 is ready for its independent local commit.
+- None. M1 is ready for its independent local commit.
 
 ## Next
 
-- M1: introduce one validated Expert Model Manifest/connection boundary and complete availability
-  and geometry semantics without adding model-branded Core nodes.
+- M2: extend the existing HTTP Worker protocol and add the Python Worker SDK, scaffold CLI and
+  conformance tests.
 
 ## Latest Rust tests
 
 - `cargo test --workspace --all-features`: PASS; zero failures; one opt-in billable smoke ignored.
+- M1 `cargo fmt --all --check`: PASS.
+- M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
+- M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
+  smoke ignored.
+- M1 focused Core suite: 67 passed.
 
 ## Latest Web tests
 
@@ -55,7 +74,8 @@ M0 — Baseline and model inventory (complete)
 ## Latest local commit
 
 - Pre-task head: `8a1cbb1 fix(agent): harden pipeline builder tool protocol`.
-- M0 commit pending: `docs: establish expert vision integration baseline`.
+- M0: `127d0de docs: establish expert vision integration baseline`.
+- M1 commit pending: `feat(models): add capability-driven expert model manifests`.
 
 ## Release-blocking remainder
 

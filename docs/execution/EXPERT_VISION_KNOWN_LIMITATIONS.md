@@ -4,10 +4,11 @@ Updated: 2026-09-01
 
 ## Baseline limitations before M1
 
-- Provider-backed `ModelProfile` records contain only a Provider connection; expert worker models
-  live in a separate descriptor/settings projection.
-- Model availability lacks explicit `Unconfigured`, `InvalidContract` and `FailedSmokeTest` states
-  and is not yet derived from a complete registration gate.
+- Provider-backed `ModelProfile` records expose the shared Provider connection abstraction and
+  Worker-backed profiles are represented by Expert Manifests in the existing Model Registry, but
+  persistent Settings/SQLite still use the older Detection Worker projection until M5/M7.
+- The complete availability enum and validation gate now exist, but live discovery/smoke evidence
+  is not persisted through Settings until M2/M7.
 - The detection-specific Worker protocol exposes health, capabilities, infer and cancel; generic
   model/contract discovery and warmup are absent.
 - There is no reusable Python package or CLI scaffold for third-party workers.

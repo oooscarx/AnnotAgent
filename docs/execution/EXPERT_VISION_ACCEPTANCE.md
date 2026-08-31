@@ -6,13 +6,15 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## A — Extension architecture
 
-- PENDING — Expert model registration through a versioned Manifest.
-- PENDING — Unknown expert detector works without a Core enum/runtime branch.
+- PASS — Expert model registration through a versioned Manifest.
+- PASS — Unknown expert detector works without a Core enum/runtime branch; the Test Edge Detector
+  fixture registers from a Manifest and the existing generic backend.
 - PENDING — Python Worker SDK/scaffold and conformance tests.
 - PARTIAL — Capability and input/output discovery exists, but model/contract endpoints and unified
   worker manifests are incomplete.
-- PARTIAL — Availability/health exists but does not yet require all identity, contract and sample
-  conversion gates.
+- PASS — Manifest validation requires health, protocol, contract, weights and sample-conversion
+  evidence before `Available`; descriptor migration fails closed to `Unknown` for untested HTTP
+  Workers.
 
 ## B — Expert models
 
@@ -20,7 +22,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
   vocabulary detection without model-branded Core node kinds.
 - PENDING — SAM/YOLO/RF-DETR/LocateAnything/PIDNet/Grounding DINO manifests and truthful state
   projections.
-- PENDING — Missing weights reliably prevent `Available` across every worker-backed Model Profile.
+- PASS — `MissingWeights` is a non-publishable Manifest state and conflicts with `weights_ready`;
+  `Available` requires `weights_ready` plus the other registration evidence.
 
 ## C — SAM legal path
 
@@ -32,7 +35,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## D — VLM geometry quality
 
-- PENDING — VLM Detection carries `CoarseHypothesis` geometry semantics.
+- PARTIAL — Manifest migration maps Vision Language capability to `CoarseHypothesis`; propagation
+  onto every produced Detection Artifact remains M4.
 - PASS — Detection score semantics preserve missing/unknown values without fabrication.
 - PENDING — Geometry report, human-adjustment and refiner Dry Run metrics.
 - PENDING — Evidence-driven refiner selection.
@@ -74,3 +78,11 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - `cmp` against the attached prompt: exact repository copy retained.
 - Source audit confirms a real Rust SAM HTTP adapter exists but is a domain-specific refiner and is
   not the public typed conversion chain requested by this Alpha.
+
+## M1 evidence
+
+- Core focused suite: 67 passed, including strict availability, provider connection projection,
+  legacy HTTP migration and arbitrary Worker manifest registration.
+- Full Rust workspace suite: PASS with zero failures and one explicitly billable smoke ignored.
+- Full workspace strict Clippy and Rustfmt checks: PASS.
+- Production implementation contains no model-brand comparison or model-branded Core Node kind.

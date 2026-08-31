@@ -505,6 +505,7 @@ pub trait VisionModelBackend: Send + Sync {
 #[derive(Default)]
 pub struct ModelRegistry {
     models: BTreeMap<String, VisionModelDescriptor>,
+    expert_manifests: BTreeMap<String, crate::ExpertModelManifest>,
     backends: BTreeMap<String, Arc<dyn VisionModelBackend>>,
 }
 
@@ -525,6 +526,11 @@ impl ModelRegistry {
     }
 
     pub fn register_model(&mut self, mut model: VisionModelDescriptor) -> CoreResult<()> {
+        if self.models.contains_key(&model.id) {
+            return Err(CoreError::Validation(
+                "vision model id is already registered".to_owned(),
+            ));
+        }
         if model.id.trim().is_empty() || model.backend_id.trim().is_empty() {
             return Err(CoreError::Validation(
                 "model id and backend_id cannot be empty".to_owned(),
@@ -672,11 +678,166 @@ impl ModelRegistry {
                 model.backend_id
             )));
         }
-        if self.models.insert(model.id.clone(), model).is_some() {
+        let has_expert_capability = model.capabilities.iter().any(|capability| {
+            !matches!(
+                capability,
+                VisionCapability::VisionLanguage | VisionCapability::Embedding
+            )
+        });
+        let manifest =
+            if backend_kind == VisionBackendKind::OpenAiCompatible || !has_expert_capability {
+                None
+            } else {
+                Some(crate::ExpertModelManifest::from_vision_descriptor(&model)?)
+            };
+        if let Some(manifest) = manifest {
+            self.expert_manifests
+                .insert(manifest.model_id.clone(), manifest);
+        }
+        self.models.insert(model.id.clone(), model);
+        Ok(())
+    }
+
+    /// Registers a Worker-backed or Mock model entirely from a capability manifest. The
+    /// executable backend is still supplied separately by the Worker Registry.
+    pub fn register_expert_manifest(
+        &mut self,
+        manifest: crate::ExpertModelManifest,
+    ) -> CoreResult<()> {
+        manifest.validate()?;
+        if self.models.contains_key(&manifest.model_id) {
             return Err(CoreError::Validation(
                 "vision model id is already registered".to_owned(),
             ));
         }
+        let backend_id = match &manifest.connection {
+            crate::ModelConnection::VisionWorkerModel { worker_id, .. } => worker_id.clone(),
+            crate::ModelConnection::Mock { fixture_id } => fixture_id.clone(),
+            crate::ModelConnection::ProviderModel { .. } => {
+                return Err(CoreError::Validation(
+                    "Provider-backed models must be registered through Model Profiles".to_owned(),
+                ));
+            }
+        };
+        let backend_kind = self
+            .backends
+            .get(&backend_id)
+            .ok_or_else(|| {
+                CoreError::Validation(format!(
+                    "Expert Model {:?} references unknown backend {backend_id:?}",
+                    manifest.model_id
+                ))
+            })?
+            .kind();
+        let input_types = manifest
+            .input_contracts
+            .iter()
+            .map(|contract| match contract.data_type {
+                crate::ContractDataType::Text => VisionInputType::Text,
+                crate::ContractDataType::Artifact(ArtifactKind::Image) => VisionInputType::Image,
+                crate::ContractDataType::Artifact(kind) => VisionInputType::Artifact(kind),
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let output_types = manifest
+            .output_contracts
+            .iter()
+            .filter_map(|contract| match contract.data_type {
+                crate::ContractDataType::Text => None,
+                crate::ContractDataType::Artifact(kind) => Some(kind),
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let capabilities = manifest
+            .capabilities
+            .iter()
+            .copied()
+            .map(crate::vision_capability)
+            .collect::<Vec<_>>();
+        let checkpoint_sha256 = manifest
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.sha256.clone());
+        let training_dataset_version = manifest
+            .checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.training_dataset_version.clone());
+        let health = VisionModelHealth {
+            status: if manifest.availability_evidence.health_passed {
+                VisionModelHealthStatus::Healthy
+            } else if manifest.availability == crate::ModelAvailability::Unreachable {
+                VisionModelHealthStatus::Unavailable
+            } else {
+                VisionModelHealthStatus::Unknown
+            },
+            detail: manifest.availability_evidence.detail.clone(),
+            checked_at: manifest.availability_evidence.checked_at,
+        };
+        let descriptor = VisionModelDescriptor {
+            id: manifest.model_id.clone(),
+            display_name: manifest.display_name.clone(),
+            backend_id,
+            provider: match backend_kind {
+                VisionBackendKind::Mock => "mock",
+                VisionBackendKind::HttpVision => "vision_worker",
+                VisionBackendKind::Onnx => "onnx_worker",
+                VisionBackendKind::DeterministicCv => "deterministic_worker",
+                VisionBackendKind::OpenAiCompatible => "provider",
+            }
+            .to_owned(),
+            backend: BackendDescriptor {
+                kind: Some(backend_kind),
+                protocol_version: Some(manifest.schema_version.clone()),
+                endpoint: None,
+            },
+            capabilities,
+            input_types: input_types.clone(),
+            output_types: output_types.clone(),
+            model: manifest.model_id.clone(),
+            model_version: manifest.model_version.clone(),
+            version: ModelVersionMetadata {
+                architecture: manifest.architecture.clone(),
+                model_version: manifest.model_version.clone(),
+                checkpoint_sha256,
+                training_dataset_version,
+                backend_protocol_version: manifest.schema_version.clone(),
+            },
+            input_contract: ModelInputContract {
+                input_types,
+                supports_multiple_queries: manifest
+                    .prompt_contracts
+                    .iter()
+                    .any(|contract| contract.multiple),
+                supports_visual_prompt: manifest.prompt_contracts.iter().any(|contract| {
+                    matches!(
+                        contract.kind,
+                        crate::PromptKind::Box
+                            | crate::PromptKind::Point
+                            | crate::PromptKind::ExistingAnnotation
+                    )
+                }),
+                max_queries: None,
+            },
+            output_contract: ModelOutputContract {
+                output_types,
+                normalized_coordinates: manifest.geometry_semantics
+                    != crate::GeometrySemantics::NotApplicable,
+                allows_empty: true,
+                label_space: manifest.label_space.clone().unwrap_or_default(),
+            },
+            score_semantics: manifest.score_semantics,
+            runtime_requirements: manifest.runtime_requirements.clone(),
+            license: manifest.license.clone(),
+            status: manifest.availability.legacy_status(),
+            health,
+            configuration: manifest.metadata.clone(),
+            ..VisionModelDescriptor::default()
+        };
+        self.register_model(descriptor)?;
+        self.expert_manifests
+            .insert(manifest.model_id.clone(), manifest);
         Ok(())
     }
 
@@ -692,6 +853,16 @@ impl ModelRegistry {
     #[must_use]
     pub fn models(&self) -> Vec<VisionModelDescriptor> {
         self.models.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn expert_manifests(&self) -> Vec<crate::ExpertModelManifest> {
+        self.expert_manifests.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn expert_manifest(&self, model_id: &str) -> Option<&crate::ExpertModelManifest> {
+        self.expert_manifests.get(model_id)
     }
 
     pub fn resolve(
@@ -1158,6 +1329,68 @@ mod tests {
             panic!("disabled model cannot execute")
         };
         assert!(error.to_string().contains("Disabled"));
+    }
+
+    #[test]
+    fn unknown_worker_model_registers_from_manifest_without_a_core_variant() {
+        let mut registry = registry(
+            VisionBackendKind::HttpVision,
+            vec![VisionCapability::ObjectDetection],
+        );
+        let manifest = crate::ExpertModelManifest {
+            schema_version: "1".to_owned(),
+            model_id: "test-edge-detector".to_owned(),
+            display_name: "Test Edge Detector".to_owned(),
+            architecture: Some("external-test-architecture".to_owned()),
+            model_version: "2026.09".to_owned(),
+            connection: crate::ModelConnection::VisionWorkerModel {
+                worker_id: "fixture".to_owned(),
+                worker_model_id: "test-edge-detector".to_owned(),
+            },
+            capabilities: std::collections::BTreeSet::from([
+                crate::ModelCapability::ObjectDetection,
+            ]),
+            input_contracts: vec![crate::ArtifactContract::artifact(
+                "image",
+                ArtifactKind::Image,
+                true,
+                false,
+            )],
+            output_contracts: vec![crate::ArtifactContract::artifact(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                true,
+            )],
+            prompt_contracts: Vec::new(),
+            score_semantics: ScoreSemantics::RelativeConfidence,
+            geometry_semantics: crate::GeometrySemantics::PredictedGeometry,
+            label_space: Some(vec!["edge".to_owned()]),
+            checkpoint: None,
+            runtime_requirements: RuntimeRequirements::default(),
+            license: LicenseMetadata::default(),
+            availability: crate::ModelAvailability::Unknown,
+            availability_evidence: crate::ModelAvailabilityEvidence::default(),
+            metadata: BTreeMap::new(),
+        };
+
+        registry
+            .register_expert_manifest(manifest)
+            .expect("generic manifest registration");
+
+        let descriptor = &registry.models()[0];
+        assert_eq!(descriptor.id, "test-edge-detector");
+        assert_eq!(
+            descriptor.capabilities,
+            vec![VisionCapability::ObjectDetection]
+        );
+        let stored = registry
+            .expert_manifest("test-edge-detector")
+            .expect("stored manifest");
+        assert_eq!(
+            stored.geometry_semantics,
+            crate::GeometrySemantics::PredictedGeometry
+        );
     }
 
     #[test]

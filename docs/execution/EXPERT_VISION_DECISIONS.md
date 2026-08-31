@@ -47,3 +47,11 @@ model.
 Mock workers and deterministic fixtures may prove registration, contract validation, typed
 execution and Agent policy. They may not be described as evidence that a real checkpoint ran or
 achieved an accuracy level.
+
+## D9 — Preserve the provider-profile storage boundary during migration
+
+Existing provider-backed `ModelProfile` records remain source- and SQLite-compatible and expose a
+derived `ProviderModel` connection. Worker-backed expert profiles are registered through the
+versioned Manifest in the existing Model Registry. Persistent Worker setup will migrate onto this
+boundary in M5/M7 instead of introducing a fake Provider ID or weakening current credential and
+foreign-key guarantees.
