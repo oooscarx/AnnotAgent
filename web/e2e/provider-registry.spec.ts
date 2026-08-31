@@ -40,6 +40,16 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
   const model = page.locator(".registry-model-card").filter({ hasText: "Mock Pipeline Builder" });
   await expect(model.getByText("Unverified", { exact: true })).toBeVisible();
   await expect(model).toContainText("revision 1");
+  const tagGroups = page.locator(".tag-group:visible");
+  expect(await tagGroups.evaluateAll((groups) => groups.every((group) => {
+    if (getComputedStyle(group).display !== "flex") return false;
+    const tags = Array.from(group.children).map((tag) => tag.getBoundingClientRect());
+    return tags.every((tag, index) => {
+      if (index === 0) return true;
+      const previous = tags[index - 1];
+      return Math.abs(tag.top - previous.top) > 2 || tag.left - previous.right >= 5;
+    });
+  }))).toBeTruthy();
 
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain("may incur Provider charges");
