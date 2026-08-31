@@ -42,10 +42,13 @@ impl HttpJsonPipelineBackend {
     pub fn new(config: HttpJsonPipelineBackendConfig) -> CoreResult<Self> {
         if !matches!(
             config.capability,
-            VisionCapability::ObjectDetection | VisionCapability::Classification
+            VisionCapability::ObjectDetection
+                | VisionCapability::Classification
+                | VisionCapability::PromptedSegmentation
         ) {
             return Err(CoreError::Validation(
-                "Pipeline HTTP backend supports Classification or ObjectDetection".to_owned(),
+                "Pipeline HTTP backend supports Classification, ObjectDetection, or PromptedSegmentation"
+                    .to_owned(),
             ));
         }
         let _ = validate_worker_base_url(&config.endpoint, config.allow_remote)?;
@@ -93,6 +96,7 @@ impl HttpJsonPipelineBackend {
         let expected_kind = match self.config.capability {
             VisionCapability::ObjectDetection => ArtifactKind::DetectionSet,
             VisionCapability::Classification => ArtifactKind::ClassificationSet,
+            VisionCapability::PromptedSegmentation => ArtifactKind::MaskSet,
             _ => unreachable!("constructor validates capability"),
         };
         for artifact in &response.artifacts {
@@ -119,6 +123,11 @@ impl HttpJsonPipelineBackend {
                 {
                     return Err(CoreError::Provider(
                         "ClassificationSet model binding mismatch".to_owned(),
+                    ));
+                }
+                PipelineArtifact::MaskSet(value) if value.model_binding != request.model_id => {
+                    return Err(CoreError::Provider(
+                        "MaskSet model binding mismatch".to_owned(),
                     ));
                 }
                 _ => {}

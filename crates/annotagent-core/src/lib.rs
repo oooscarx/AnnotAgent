@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod annotation;
 pub mod artifact;
+pub mod artifact_conversion;
 pub mod batch;
 pub mod error;
 pub mod event;
@@ -25,6 +26,7 @@ pub mod workflow;
 pub use agent::*;
 pub use annotation::*;
 pub use artifact::*;
+pub use artifact_conversion::*;
 pub use batch::*;
 pub use error::*;
 pub use event::*;

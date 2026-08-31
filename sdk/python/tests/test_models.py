@@ -27,12 +27,18 @@ def manifest_value() -> dict[str, object]:
                 "data_type": {"artifact": "image"},
                 "required": True,
                 "multiple": False,
-            }
+            },
+            {
+                "name": "box_prompts",
+                "data_type": {"artifact": "box_prompt_set"},
+                "required": True,
+                "multiple": True,
+            },
         ],
         "output_contracts": [
             {
                 "name": "masks",
-                "data_type": {"artifact": "instance_mask"},
+                "data_type": {"artifact": "mask_set"},
                 "required": True,
                 "multiple": True,
             }

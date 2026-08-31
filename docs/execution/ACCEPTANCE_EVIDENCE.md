@@ -25,6 +25,20 @@ Observed baseline failures: none in the commands above.
 
 Important limitation of this evidence: the current suites do not cover all Workflow Alpha requirements. Green baseline does not prove a typed DAG, checkpoint recovery, annotation-format imports, full Review editing, or the required demos.
 
+## Expert Vision SDK M3 — typed SAM-compatible conversion chain
+
+- `ArtifactConversionRegistry` returns the explicit DetectionSet → BoxPromptSet → MaskSet →
+  DetectionSet cycle only when all three generic nodes are registered.
+- Runtime test `sam_artifact_chain_preserves_original_prompt_mask_and_refined_box` verifies exact
+  source Detection, Box Prompt, Mask and refined geometry lineage plus independent detector and
+  prompted-segmentation evidence.
+- `capability.segment` consumes Image plus one Box/Point PromptSet and returns exactly one scoped
+  MaskSet through mock or bounded protocol-v1 HTTP execution.
+- Python Worker SDK MaskSet serialization and prompt references pass 14/14 tests. Web typecheck and
+  40/40 unit tests pass with prompt/mask/polygon Artifact support.
+- No real SAM availability is claimed: generated adapters remain `missing_weights` until health,
+  contracts, weights and sample conversion all pass.
+
 ## Release blocking matrix
 
 Status values: `PASS`, `INCOMPLETE`, `LIVE-CONDITIONAL`, or `UNVERIFIED`.
@@ -981,6 +995,18 @@ accuracy remains `LIVE-CONDITIONAL`; native 200% browser zoom remains `MANUAL`.
 Provider Registry + Pipeline Builder Alpha offline release status: `PASS`. Real Qwen/OpenAI/
 OpenRouter/Gemini-compatible calls, external network behavior and native unlocked system Keyring
 remain `LIVE-CONDITIONAL`; no credential, push or remote mutation was used.
+
+## Expert Vision SDK M3 — 2026-09-01
+
+1. Typed Box/Point Prompt, Mask and Polygon Artifacts validate exact set/item lineage.
+2. The capability-neutral Conversion Registry finds the explicit Detection → Box Prompt → Prompted
+   Segmentation → Mask → Detection path only when every executable node is registered.
+3. `published_prompted_segmentation_pipeline_runs_end_to_end_offline` publishes and executes that
+   complete chain through the real application Runtime; the refined box reaches human review while
+   retaining the original Detection, prompt and mask evidence.
+4. `cargo fmt --all -- --check`, strict all-target/all-feature Clippy and the complete 291-test Rust
+   workspace pass; one explicitly billable Provider smoke remains ignored.
+5. Python Worker SDK tests pass 14/14. Web typecheck, 40 tests and production build pass.
 ## Registry-only execution admission — 2026-08-31
 
 1. Settings no longer renders `Legacy Run fallback`; New Project creates only Project Schema plus an

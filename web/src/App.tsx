@@ -3712,6 +3712,9 @@ export function workflowNodeTitle(nodeType: string): string {
     "core.filter": "Select detections",
     "core.project_detection_candidates": "Select detections",
     "core.crop": "Crop candidates",
+    "core.detections_to_box_prompts": "Convert detections to box prompts",
+    "core.mask_to_bbox": "Convert masks to bounding boxes",
+    "core.mask_to_polygon": "Convert masks to polygons",
     "core.map_label": "Select detections",
     "core.select_and_map": "Select and map results",
     "core.project_coordinates": "Project coordinates",
@@ -4515,6 +4518,10 @@ export function pipelineNodeOutput(nodeType: string): {
   type: PipelineArtifactType;
 } {
   if (nodeType === "core.crop") return { port: "crops", type: "crop_set" };
+  if (nodeType === "core.detections_to_box_prompts")
+    return { port: "prompts", type: "box_prompt_set" };
+  if (nodeType === "capability.segment") return { port: "masks", type: "mask_set" };
+  if (nodeType === "core.mask_to_polygon") return { port: "polygons", type: "polygon_set" };
   if (nodeType === "core.resize" || nodeType === "core.tile")
     return { port: "images", type: "image" };
   if (nodeType === "classification.classify" || nodeType === "capability.classify")
@@ -4534,7 +4541,7 @@ export function pipelineNodeKind(nodeType: string): NonNullable<PipelineStep["ki
   if (["core.confidence_gate", "core.evidence_gate", "core.decision"].includes(nodeType))
     return "gate";
   if (nodeType === "core.validate") return "validator";
-  if (nodeType.includes("classify") || nodeType.includes("detect"))
+  if (nodeType.includes("classify") || nodeType.includes("detect") || nodeType.includes("segment"))
     return "vision_model";
   return "transform";
 }
@@ -4580,6 +4587,8 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
 function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
   const capability = nodeType === "vlm_detection.detect"
     ? "vision_language"
+    : nodeType === "capability.segment"
+    ? "prompted_segmentation"
     : nodeType.includes("classify")
     ? "classification"
     : nodeType.includes("detect")
@@ -4594,6 +4603,8 @@ function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
       model?.id ??
       (capability === "classification"
         ? "mock-classifier"
+        : capability === "prompted_segmentation"
+          ? "mock-prompted-segmenter"
         : capability === "vision_language"
           ? "default-vision"
           : "mock-detector"),
@@ -4703,15 +4714,56 @@ export function artifactRects(artifacts: PipelineArtifact[]): ArtifactRect[] {
       ? artifact.artifact.detections
       : artifact.kind === "candidate_cluster_set"
         ? artifact.artifact.candidates
+        : artifact.kind === "box_prompt_set"
+          ? artifact.artifact.prompts
         : undefined;
-    if (!Array.isArray(detections)) return [];
-    return detections.flatMap((detection) => {
-      if (!detection || typeof detection !== "object") return [];
-      const record = detection as Record<string, unknown>;
-      const rect = record.representative_bbox ?? record.bbox ?? record.rect;
-      return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
+    if (Array.isArray(detections)) {
+      return detections.flatMap((detection) => {
+        if (!detection || typeof detection !== "object") return [];
+        const record = detection as Record<string, unknown>;
+        const rect = record.representative_bbox ?? record.bbox ?? record.rect;
+        return parseArtifactRect(rect) ? [parseArtifactRect(rect)!] : [];
+      });
+    }
+    const polygonItems = artifact.kind === "mask_set"
+      ? artifact.artifact.masks
+      : artifact.kind === "polygon_set"
+        ? artifact.artifact.polygons
+        : undefined;
+    if (!Array.isArray(polygonItems)) return [];
+    return polygonItems.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as Record<string, unknown>;
+      const bounds = artifactPolygonBounds(
+        artifact.kind === "mask_set" ? record.mask : { rings: record.rings },
+      );
+      return bounds ? [bounds] : [];
     });
   });
+}
+
+function artifactPolygonBounds(value: unknown): ArtifactRect | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const rings = (value as Record<string, unknown>).rings;
+  if (!Array.isArray(rings)) return undefined;
+  const points = rings.flatMap((ring) => Array.isArray(ring) ? ring : []).flatMap((point) => {
+    if (!point || typeof point !== "object") return [];
+    const record = point as Record<string, unknown>;
+    return typeof record.x === "number" && typeof record.y === "number"
+      ? [{ x: record.x, y: record.y }]
+      : [];
+  });
+  if (points.length === 0) return undefined;
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  return {
+    x: left,
+    y: top,
+    width: Math.max(...xs) - left,
+    height: Math.max(...ys) - top,
+  };
 }
 
 export function artifactCrops(artifacts: PipelineArtifact[]): ArtifactRect[] {

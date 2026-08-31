@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId, ModelId,
-    ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedRect, ProjectSchema,
-    ResourceRequirements, RetryPolicy, ReviewGate, RunId, ScoreSemantics, TaskId, ValidationIssue,
-    VisionArtifactValue, VisionBackendError, VisionBackendTimings, VisionBackendUsage,
-    VisionCapability, WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode,
-    WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
+    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId,
+    MaskEncoding, ModelId, ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedPoint,
+    NormalizedRect, ProjectSchema, ResourceRequirements, RetryPolicy, ReviewGate, RunId,
+    ScoreSemantics, TaskId, ValidationIssue, VisionArtifactValue, VisionBackendError,
+    VisionBackendTimings, VisionBackendUsage, VisionCapability, WORKFLOW_SCHEMA_VERSION,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
 };
 
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
@@ -266,6 +266,92 @@ pub struct DetectionSetArtifact {
     pub detections: Vec<Detection>,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+/// A detector result converted into an explicit prompt for a prompted-segmentation model.
+/// `subject` always identifies the exact source Detection item, so conversion never relies on
+/// array order or label matching.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoxPrompt {
+    pub id: String,
+    pub subject: ArtifactRef,
+    pub bbox: NormalizedRect,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoxPromptSetArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub source_detections: ArtifactRef,
+    pub prompts: Vec<BoxPrompt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PromptPoint {
+    pub point: NormalizedPoint,
+    pub positive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PointPrompt {
+    pub id: String,
+    /// The annotation, keypoint, detection, or image region from which this prompt was derived.
+    pub subject: ArtifactRef,
+    pub points: Vec<PromptPoint>,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PointPromptSetArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub source_artifact: ArtifactRef,
+    pub prompts: Vec<PointPrompt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MaskArtifactItem {
+    pub mask_id: String,
+    /// Exact `BoxPromptSet` or `PointPromptSet` item consumed by the segmenter.
+    pub prompt: ArtifactRef,
+    pub mask: MaskEncoding,
+    #[serde(default)]
+    pub score: DetectionScore,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MaskSetArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub model_binding: String,
+    pub source_prompts: ArtifactRef,
+    #[serde(default = "default_unvalidated")]
+    pub validation_state: ArtifactValidationState,
+    pub masks: Vec<MaskArtifactItem>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolygonArtifactItem {
+    pub polygon_id: String,
+    pub parent: ArtifactRef,
+    pub rings: Vec<Vec<NormalizedPoint>>,
+    #[serde(default)]
+    pub score: DetectionScore,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolygonSetArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub source_masks: ArtifactRef,
+    pub polygons: Vec<PolygonArtifactItem>,
 }
 
 impl<'de> Deserialize<'de> for DetectionSetArtifact {
@@ -628,6 +714,10 @@ pub struct AnnotationCandidateSet {
 pub enum PipelineArtifact {
     Image(ImageArtifact),
     DetectionSet(DetectionSetArtifact),
+    BoxPromptSet(BoxPromptSetArtifact),
+    PointPromptSet(PointPromptSetArtifact),
+    MaskSet(MaskSetArtifact),
+    PolygonSet(PolygonSetArtifact),
     CandidateClusterSet(CandidateClusterSetArtifact),
     CropSet(CropSetArtifact),
     ClassificationSet(ClassificationSetArtifact),
@@ -640,6 +730,10 @@ impl PipelineArtifact {
         match self {
             Self::Image(_) => ArtifactKind::Image,
             Self::DetectionSet(_) => ArtifactKind::DetectionSet,
+            Self::BoxPromptSet(_) => ArtifactKind::BoxPromptSet,
+            Self::PointPromptSet(_) => ArtifactKind::PointPromptSet,
+            Self::MaskSet(_) => ArtifactKind::MaskSet,
+            Self::PolygonSet(_) => ArtifactKind::PolygonSet,
             Self::CandidateClusterSet(_) => ArtifactKind::CandidateClusterSet,
             Self::CropSet(_) => ArtifactKind::CropSet,
             Self::ClassificationSet(_) => ArtifactKind::ClassificationSet,
@@ -652,6 +746,10 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => &artifact.reference,
             Self::DetectionSet(artifact) => &artifact.reference,
+            Self::BoxPromptSet(artifact) => &artifact.reference,
+            Self::PointPromptSet(artifact) => &artifact.reference,
+            Self::MaskSet(artifact) => &artifact.reference,
+            Self::PolygonSet(artifact) => &artifact.reference,
             Self::CandidateClusterSet(artifact) => &artifact.reference,
             Self::CropSet(artifact) => &artifact.reference,
             Self::ClassificationSet(artifact) => &artifact.reference,
@@ -664,6 +762,10 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => artifact.image_id,
             Self::DetectionSet(artifact) => artifact.image_id,
+            Self::BoxPromptSet(artifact) => artifact.image_id,
+            Self::PointPromptSet(artifact) => artifact.image_id,
+            Self::MaskSet(artifact) => artifact.image_id,
+            Self::PolygonSet(artifact) => artifact.image_id,
             Self::CandidateClusterSet(artifact) => artifact.image_id,
             Self::CropSet(artifact) => artifact.image_id,
             Self::ClassificationSet(artifact) => artifact.image_id,
@@ -675,6 +777,10 @@ impl PipelineArtifact {
         match self {
             Self::Image(artifact) => artifact.validate(),
             Self::DetectionSet(artifact) => artifact.validate(),
+            Self::BoxPromptSet(artifact) => artifact.validate(),
+            Self::PointPromptSet(artifact) => artifact.validate(),
+            Self::MaskSet(artifact) => artifact.validate(),
+            Self::PolygonSet(artifact) => artifact.validate(),
             Self::CandidateClusterSet(artifact) => artifact.validate(),
             Self::CropSet(artifact) => artifact.validate(),
             Self::ClassificationSet(artifact) => artifact.validate(),
@@ -1468,6 +1574,155 @@ impl DetectionSetArtifact {
     }
 }
 
+impl BoxPromptSetArtifact {
+    pub fn from_detections(
+        reference: ArtifactRef,
+        detections: &DetectionSetArtifact,
+        padding: f32,
+    ) -> Result<Self, String> {
+        detections.validate()?;
+        if !padding.is_finite() || !(0.0..=0.5).contains(&padding) {
+            return Err("Box prompt padding must be finite and within [0,0.5]".to_owned());
+        }
+        let prompts = detections
+            .detections
+            .iter()
+            .map(|detection| {
+                let left = (detection.bbox.x() - padding).max(0.0);
+                let top = (detection.bbox.y() - padding).max(0.0);
+                let right = (detection.bbox.x() + detection.bbox.width() + padding).min(1.0);
+                let bottom = (detection.bbox.y() + detection.bbox.height() + padding).min(1.0);
+                Ok(BoxPrompt {
+                    id: format!("box-prompt:{}", detection.detection_id),
+                    subject: detections.reference.item(&detection.detection_id),
+                    bbox: NormalizedRect::new(left, top, right - left, bottom - top)
+                        .map_err(|error| error.to_string())?,
+                    attributes: BTreeMap::from([
+                        (
+                            "source_detection".to_owned(),
+                            serde_json::to_value(detection).unwrap_or(serde_json::Value::Null),
+                        ),
+                        (
+                            "source_model_id".to_owned(),
+                            serde_json::json!(detection.source_model_id),
+                        ),
+                        (
+                            "source_detection_score".to_owned(),
+                            serde_json::to_value(detection.score)
+                                .unwrap_or(serde_json::Value::Null),
+                        ),
+                    ]),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let artifact = Self {
+            reference,
+            image_id: detections.image_id,
+            source_detections: detections.reference.clone(),
+            prompts,
+        };
+        artifact.validate()?;
+        Ok(artifact)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::BoxPromptSet)?;
+        validate_set_reference(&self.source_detections, ArtifactKind::DetectionSet)?;
+        let mut ids = BTreeSet::new();
+        for prompt in &self.prompts {
+            if prompt.id.trim().is_empty() || !ids.insert(prompt.id.as_str()) {
+                return Err("Box prompt ids must be non-empty and unique".to_owned());
+            }
+            validate_item_reference(&prompt.subject, ArtifactKind::DetectionSet)?;
+            if prompt.subject.artifact_id != self.source_detections.artifact_id {
+                return Err("Box prompt subject must belong to source_detections".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PointPromptSetArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::PointPromptSet)?;
+        if self.source_artifact.artifact_id.trim().is_empty() {
+            return Err("PointPromptSet source_artifact cannot be empty".to_owned());
+        }
+        let mut ids = BTreeSet::new();
+        for prompt in &self.prompts {
+            if prompt.id.trim().is_empty() || !ids.insert(prompt.id.as_str()) {
+                return Err("Point prompt ids must be non-empty and unique".to_owned());
+            }
+            if prompt.points.is_empty() {
+                return Err("Point prompt must contain at least one point".to_owned());
+            }
+            if prompt.subject.artifact_id != self.source_artifact.artifact_id {
+                return Err("Point prompt subject must belong to source_artifact".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl MaskSetArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::MaskSet)?;
+        if self.model_binding.trim().is_empty() {
+            return Err("MaskSet model_binding cannot be empty".to_owned());
+        }
+        if !matches!(
+            self.source_prompts.artifact_type,
+            ArtifactKind::BoxPromptSet | ArtifactKind::PointPromptSet
+        ) || self.source_prompts.item_id.is_some()
+        {
+            return Err("MaskSet source_prompts must reference a prompt set".to_owned());
+        }
+        let mut ids = BTreeSet::new();
+        for item in &self.masks {
+            if item.mask_id.trim().is_empty() || !ids.insert(item.mask_id.as_str()) {
+                return Err("Mask ids must be non-empty and unique".to_owned());
+            }
+            if item.prompt.artifact_type != self.source_prompts.artifact_type
+                || item.prompt.artifact_id != self.source_prompts.artifact_id
+            {
+                return Err("Mask prompt must belong to source_prompts".to_owned());
+            }
+            validate_item_reference(&item.prompt, self.source_prompts.artifact_type)?;
+            item.score.validate()?;
+            crate::AnnotationValue::InstanceMask {
+                mask: item.mask.clone(),
+            }
+            .validate()
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+impl PolygonSetArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::PolygonSet)?;
+        validate_set_reference(&self.source_masks, ArtifactKind::MaskSet)?;
+        let mut ids = BTreeSet::new();
+        for polygon in &self.polygons {
+            if polygon.polygon_id.trim().is_empty() || !ids.insert(polygon.polygon_id.as_str()) {
+                return Err("Polygon ids must be non-empty and unique".to_owned());
+            }
+            validate_item_reference(&polygon.parent, ArtifactKind::MaskSet)?;
+            if polygon.parent.artifact_id != self.source_masks.artifact_id {
+                return Err("Polygon parent must belong to source_masks".to_owned());
+            }
+            polygon.score.validate()?;
+            crate::AnnotationValue::Polygon {
+                rings: polygon.rings.clone(),
+            }
+            .validate()
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
 impl CandidateClusterSetArtifact {
     pub fn validate(&self) -> Result<(), String> {
         validate_set_reference(&self.reference, ArtifactKind::CandidateClusterSet)?;
@@ -1567,6 +1822,7 @@ const fn is_detection_capability(capability: VisionCapability) -> bool {
         VisionCapability::OpenVocabularyDetection
             | VisionCapability::PhraseGrounding
             | VisionCapability::ObjectDetection
+            | VisionCapability::PromptedSegmentation
     )
 }
 

@@ -13,12 +13,12 @@ Updated: 2026-09-01
   detection-specific adapters still emit their legacy capability shape until M5 migration.
 - The reusable Python SDK and native/Python scaffold exist; generated adapters intentionally remain
   unavailable until a developer supplies identity, implementation, weights and sample evidence.
-- `capability.segment` currently treats DetectionSet as an implicit prompt and emits item-level
-  instance masks. Box/Point Prompt Set and Mask Set pipeline Artifacts are not public contracts.
-- Mask-to-bbox is hidden inside the legacy RoboCup SAM refiner instead of represented as a Core DAG
-  node.
-- The public Pipeline Builder has no Artifact conversion-path tool and cannot verify a complete SAM
-  chain before suggesting it.
+- The public prompted-segmentation path now uses explicit Prompt/Mask Artifacts and Core geometry
+  conversion. The legacy RoboCup refiner remains readable for compatibility until M5 migration.
+- Polygon and uncompressed COCO RLE support tight-box conversion. Compressed RLE must be decoded by
+  the Worker; contour extraction from RLE for `core.mask_to_polygon` remains future work.
+- The Builder can verify conversion paths, but M4/M6 still need failure-class and quality evidence
+  before it should conditionally recommend the path.
 - Dry Run reports counts, warnings, cost and duration but not structured failure classes or geometry
   quality/human-adjustment/refiner metrics.
 - Settings can edit existing Detection Workers, but there is no generic discovery-driven Expert

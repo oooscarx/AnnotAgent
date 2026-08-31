@@ -759,12 +759,19 @@ fn built_in_output(
                     PipelineArtifact::CandidateClusterSet(candidates) => {
                         candidates.validation_state = ArtifactValidationState::Valid;
                     }
+                    PipelineArtifact::MaskSet(masks) => {
+                        masks.validation_state = ArtifactValidationState::Valid;
+                    }
                     PipelineArtifact::AnnotationCandidateSet(candidates) => {
                         for candidate in &mut candidates.candidates {
                             candidate.validation_state = Some(ArtifactValidationState::Valid);
                         }
                     }
-                    PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                    PipelineArtifact::Image(_)
+                    | PipelineArtifact::BoxPromptSet(_)
+                    | PipelineArtifact::PointPromptSet(_)
+                    | PipelineArtifact::PolygonSet(_)
+                    | PipelineArtifact::CropSet(_) => {}
                 }
             }
             Ok(DagNodeOutput {
@@ -792,6 +799,9 @@ fn built_in_output(
                         PipelineArtifact::CandidateClusterSet(candidates) => {
                             candidates.validation_state != ArtifactValidationState::Valid
                         }
+                        PipelineArtifact::MaskSet(masks) => {
+                            masks.validation_state != ArtifactValidationState::Valid
+                        }
                         PipelineArtifact::AnnotationCandidateSet(candidates) => {
                             candidates.candidates.iter().any(|candidate| {
                                 candidate.validation_state != Some(ArtifactValidationState::Valid)
@@ -800,7 +810,11 @@ fn built_in_output(
                         // Images and CropSets are supporting evidence/artifact-preview inputs, not
                         // annotation-shaped values. They may share the terminal Commit path so the
                         // graph is observable, but Commit never turns them into annotations.
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::BoxPromptSet(_)
+                        | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PolygonSet(_)
+                        | PipelineArtifact::CropSet(_) => false,
                     })
             {
                 return Err(DagNodeFailure::terminal(

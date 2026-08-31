@@ -34,6 +34,10 @@ class Capability(StrEnum):
 class ArtifactKind(StrEnum):
     IMAGE = "image"
     DETECTION_SET = "detection_set"
+    BOX_PROMPT_SET = "box_prompt_set"
+    POINT_PROMPT_SET = "point_prompt_set"
+    MASK_SET = "mask_set"
+    POLYGON_SET = "polygon_set"
     CANDIDATE_CLUSTER_SET = "candidate_cluster_set"
     CROP_SET = "crop_set"
     CLASSIFICATION_SET = "classification_set"
@@ -193,6 +197,24 @@ class ExpertModelManifest(StrictModel):
             raise ValueError("prompted segmentation requires box or point prompts")
         if prompted and self.geometry_semantics != GeometrySemantics.MASK_REFINED_GEOMETRY:
             raise ValueError("prompted segmentation requires mask-refined geometry semantics")
+        input_kinds = {
+            contract.data_type.root["artifact"]
+            for contract in self.input_contracts
+            if isinstance(contract.data_type.root, dict)
+        }
+        output_kinds = {
+            contract.data_type.root["artifact"]
+            for contract in self.output_contracts
+            if isinstance(contract.data_type.root, dict)
+        }
+        if prompted and (
+            ArtifactKind.IMAGE not in input_kinds
+            or not ({ArtifactKind.BOX_PROMPT_SET, ArtifactKind.POINT_PROMPT_SET} & input_kinds)
+            or ArtifactKind.MASK_SET not in output_kinds
+        ):
+            raise ValueError(
+                "prompted segmentation requires image plus box/point prompt inputs and mask-set output"
+            )
         if self.availability == ModelAvailability.AVAILABLE and not all(
             (
                 self.availability_evidence.health_passed,
@@ -269,7 +291,7 @@ class InferenceRequest(StrictModel):
     operation: str = Field(min_length=1, max_length=120)
     run_id: UUID
     image_id: UUID
-    task_id: str = Field(min_length=1, max_length=MAX_ID_BYTES)
+    task_id: str | None = Field(default=None, min_length=1, max_length=MAX_ID_BYTES)
     node_id: str = Field(min_length=1, max_length=MAX_ID_BYTES)
     model_id: str = Field(min_length=1, max_length=MAX_ID_BYTES)
     image: ModelImage | None = None

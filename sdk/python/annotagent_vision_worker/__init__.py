@@ -1,7 +1,12 @@
 """Public AnnotAgent Vision Worker SDK surface."""
 
 from .app import create_worker_app
-from .artifacts import bounding_box_artifact, instance_mask_artifact
+from .artifacts import (
+    bounding_box_artifact,
+    instance_mask_artifact,
+    mask_set_artifact,
+    polygon_mask_item,
+)
 from .cancellation import CancellationRegistry
 from .conformance import assert_app_conformance
 from .coordinates import (
@@ -23,9 +28,11 @@ __all__ = [
     "decode_pil_image",
     "inference_error",
     "instance_mask_artifact",
+    "mask_set_artifact",
     "load_manifest",
     "map_exception",
     "normalized_xyxy_to_xywh",
     "pixel_xyxy_to_normalized",
+    "polygon_mask_item",
     "validate_normalized_xyxy",
 ]

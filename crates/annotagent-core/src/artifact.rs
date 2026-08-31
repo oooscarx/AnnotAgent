@@ -166,6 +166,18 @@ impl ArtifactEnvelope {
 fn pipeline_parents(artifact: &PipelineArtifact) -> Vec<ArtifactEnvelopeRef> {
     let references = match artifact {
         PipelineArtifact::Image(_) | PipelineArtifact::DetectionSet(_) => Vec::new(),
+        PipelineArtifact::BoxPromptSet(prompts) => std::iter::once(&prompts.source_detections)
+            .chain(prompts.prompts.iter().map(|prompt| &prompt.subject))
+            .collect(),
+        PipelineArtifact::PointPromptSet(prompts) => std::iter::once(&prompts.source_artifact)
+            .chain(prompts.prompts.iter().map(|prompt| &prompt.subject))
+            .collect(),
+        PipelineArtifact::MaskSet(masks) => std::iter::once(&masks.source_prompts)
+            .chain(masks.masks.iter().map(|mask| &mask.prompt))
+            .collect(),
+        PipelineArtifact::PolygonSet(polygons) => std::iter::once(&polygons.source_masks)
+            .chain(polygons.polygons.iter().map(|polygon| &polygon.parent))
+            .collect(),
         PipelineArtifact::CandidateClusterSet(candidates) => {
             candidates.source_detection_sets.iter().collect()
         }

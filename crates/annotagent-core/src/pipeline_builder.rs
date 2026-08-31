@@ -585,6 +585,7 @@ pub enum PipelineBuilderTool {
     LoadSkillResource,
     ListNodeDefinitions,
     InspectNodeDefinition,
+    FindArtifactConversionPath,
     ListPipelineTemplates,
     ListProviderProfiles,
     ListCompatibleModels,
@@ -617,7 +618,7 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 40] = [
         Self::InspectProject,
         Self::InspectLabelSchema,
         Self::InspectLabel,
@@ -628,6 +629,7 @@ impl PipelineBuilderTool {
         Self::LoadSkillResource,
         Self::ListNodeDefinitions,
         Self::InspectNodeDefinition,
+        Self::FindArtifactConversionPath,
         Self::ListPipelineTemplates,
         Self::ListProviderProfiles,
         Self::ListCompatibleModels,
@@ -672,6 +674,7 @@ impl PipelineBuilderTool {
             Self::LoadSkillResource => "load_skill_resource",
             Self::ListNodeDefinitions => "list_node_definitions",
             Self::InspectNodeDefinition => "inspect_node_definition",
+            Self::FindArtifactConversionPath => "find_artifact_conversion_path",
             Self::ListPipelineTemplates => "list_pipeline_templates",
             Self::ListProviderProfiles => "list_provider_profiles",
             Self::ListCompatibleModels => "list_compatible_models",
@@ -737,6 +740,7 @@ impl PipelineBuilderTool {
             | Self::LoadSkillResource
             | Self::ListNodeDefinitions
             | Self::InspectNodeDefinition
+            | Self::FindArtifactConversionPath
             | Self::ListPipelineTemplates
             | Self::ListProviderProfiles
             | Self::ListCompatibleModels
@@ -1974,7 +1978,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 39);
+        assert_eq!(tools.len(), 40);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",

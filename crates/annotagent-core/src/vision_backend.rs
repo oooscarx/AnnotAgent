@@ -159,6 +159,10 @@ pub enum ModelAvailabilityStatus {
 pub enum ArtifactKind {
     Image,
     DetectionSet,
+    BoxPromptSet,
+    PointPromptSet,
+    MaskSet,
+    PolygonSet,
     CandidateClusterSet,
     CropSet,
     ClassificationSet,
@@ -1084,9 +1088,8 @@ const fn capability_output_type(capability: VisionCapability) -> Option<Artifact
         | VisionCapability::PhraseGrounding
         | VisionCapability::ObjectDetection => Some(ArtifactKind::BoundingBox),
         VisionCapability::SemanticSegmentation => Some(ArtifactKind::SemanticMask),
-        VisionCapability::InstanceSegmentation | VisionCapability::PromptedSegmentation => {
-            Some(ArtifactKind::InstanceMask)
-        }
+        VisionCapability::InstanceSegmentation => Some(ArtifactKind::InstanceMask),
+        VisionCapability::PromptedSegmentation => Some(ArtifactKind::MaskSet),
         VisionCapability::Classification => Some(ArtifactKind::Classification),
         VisionCapability::KeypointDetection => Some(ArtifactKind::Keypoints),
         VisionCapability::VisionLanguage | VisionCapability::Embedding => None,

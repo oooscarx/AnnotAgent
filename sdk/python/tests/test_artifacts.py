@@ -7,8 +7,10 @@ import pytest
 from annotagent_vision_worker import (
     bounding_box_artifact,
     instance_mask_artifact,
+    mask_set_artifact,
     normalized_xyxy_to_xywh,
     pixel_xyxy_to_normalized,
+    polygon_mask_item,
 )
 
 
@@ -52,3 +54,31 @@ def test_mask_rle_is_dimension_checked() -> None:
             model_id="test",
             request_id="request",
         )
+
+
+def test_prompted_mask_set_keeps_exact_prompt_reference() -> None:
+    image_id = uuid4()
+    prompt_set = {
+        "artifact_id": "prompts-1",
+        "source_node": "prompt-conversion",
+        "port": "prompts",
+        "artifact_type": "box_prompt_set",
+        "item_id": None,
+    }
+    prompt = {**prompt_set, "item_id": "box-prompt:ball-1"}
+    item = polygon_mask_item(
+        mask_id="mask-1",
+        prompt_ref=prompt,
+        rings=[[(0.2, 0.2), (0.4, 0.2), (0.4, 0.4), (0.2, 0.4)]],
+        confidence=0.95,
+    )
+    artifact = mask_set_artifact(
+        image_id=image_id,
+        source_node="segment",
+        model_id="sam2.1",
+        source_prompts=prompt_set,
+        masks=[item],
+        artifact_id="masks-1",
+    )
+    assert artifact["kind"] == "mask_set"
+    assert artifact["artifact"]["masks"][0]["prompt"]["item_id"] == "box-prompt:ball-1"

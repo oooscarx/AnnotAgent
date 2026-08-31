@@ -59,8 +59,8 @@ use annotagent_export::{
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
 use annotagent_provider::{
-    HttpVisionWorkerConfig, HttpVisionWorkerRegistryBackend, MockResponseSpec, MockScript,
-    MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
+    HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
+    MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
     OpenAiCompatibleProvider, OpenAiProtocol,
 };
 use annotagent_runtime::{
@@ -352,6 +352,10 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         .iter()
         .map(|node| node.id.clone())
         .collect::<Vec<_>>();
+    let artifact_kind_ids = all_artifact_kinds()
+        .into_iter()
+        .filter_map(|kind| serde_json::to_value(kind).ok())
+        .collect::<Vec<_>>();
     let mut template_ids = vec!["safe_default".to_owned()];
     template_ids.extend(
         input
@@ -458,6 +462,19 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             PipelineBuilderTool::InspectNodeDefinition,
             "Inspect one public Node Definition and its configuration schema.",
             json!({"type":"object","additionalProperties":false,"required":["node_type"],"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
+        ),
+        read(
+            PipelineBuilderTool::FindArtifactConversionPath,
+            "Find a legal typed Artifact conversion path using only currently registered executable nodes. Same-type paths may represent geometry refinement cycles.",
+            json!({
+                "type":"object",
+                "additionalProperties":false,
+                "required":["from","to"],
+                "properties":{
+                    "from":{"enum":artifact_kind_ids.clone()},
+                    "to":{"enum":artifact_kind_ids}
+                }
+            }),
         ),
         read(
             PipelineBuilderTool::ListPipelineTemplates,
@@ -1108,8 +1125,18 @@ pub fn validate_settings(settings: &Settings) -> Result<()> {
                 "enabled versioned Detection Workers require architecture, model version, checkpoint SHA-256, training dataset version, label space, and weight license metadata"
             );
         }
-        HttpVisionWorkerRegistryBackend::new(worker.http_config())
-            .map_err(|error| anyhow!(error))?;
+        HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
+            id: worker.id.clone(),
+            endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+            capabilities: worker.expected_capabilities.clone(),
+            request_timeout: Duration::from_secs(worker.timeout_seconds),
+            authorization: None,
+            expected_model_identity: Some(worker.model_id.clone()),
+            max_retries: worker.max_retries,
+            max_response_bytes: worker.max_response_bytes,
+            allow_remote: worker.allow_remote,
+        })
+        .map_err(|error| anyhow!(error))?;
     }
     Ok(())
 }
@@ -1581,13 +1608,41 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
                 VisionCapability::OpenVocabularyDetection | VisionCapability::PhraseGrounding
             )
         });
-        let worker_input_types = if supports_text_queries {
-            vec![VisionInputType::Image, VisionInputType::Text]
+        let supports_prompts = worker
+            .expected_capabilities
+            .contains(&VisionCapability::PromptedSegmentation);
+        let mut worker_input_types = vec![VisionInputType::Image];
+        if supports_text_queries {
+            worker_input_types.push(VisionInputType::Text);
+        }
+        if supports_prompts {
+            worker_input_types.extend([
+                VisionInputType::Artifact(ArtifactKind::BoxPromptSet),
+                VisionInputType::Artifact(ArtifactKind::PointPromptSet),
+            ]);
+        }
+        let worker_output_types = if supports_prompts {
+            vec![ArtifactKind::MaskSet]
+        } else if worker
+            .expected_capabilities
+            .contains(&VisionCapability::SemanticSegmentation)
+        {
+            vec![ArtifactKind::SemanticMask]
         } else {
-            vec![VisionInputType::Image]
+            vec![ArtifactKind::DetectionSet]
         };
-        models.register_backend(Arc::new(HttpVisionWorkerRegistryBackend::new(
-            worker.http_config(),
+        models.register_backend(Arc::new(HttpJsonVisionBackend::new(
+            HttpJsonVisionBackendConfig {
+                id: worker.id.clone(),
+                endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+                capabilities: worker.expected_capabilities.clone(),
+                request_timeout: Duration::from_secs(worker.timeout_seconds),
+                authorization: None,
+                expected_model_identity: Some(worker.model_id.clone()),
+                max_retries: worker.max_retries,
+                max_response_bytes: worker.max_response_bytes,
+                allow_remote: worker.allow_remote,
+            },
         )?))?;
         models.register_model(VisionModelDescriptor {
             id: worker.model_id.clone(),
@@ -1601,7 +1656,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             },
             capabilities: worker.expected_capabilities.clone(),
             input_types: worker_input_types.clone(),
-            output_types: vec![ArtifactKind::DetectionSet],
+            output_types: worker_output_types.clone(),
             model: worker.model_id.clone(),
             model_version: worker.version.model_version.clone(),
             version: worker.version.clone(),
@@ -1609,11 +1664,11 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             input_contract: ModelInputContract {
                 input_types: worker_input_types,
                 supports_multiple_queries: supports_text_queries,
-                supports_visual_prompt: false,
+                supports_visual_prompt: supports_prompts,
                 max_queries: supports_text_queries.then_some(100),
             },
             output_contract: ModelOutputContract {
-                output_types: vec![ArtifactKind::DetectionSet],
+                output_types: worker_output_types,
                 normalized_coordinates: true,
                 allows_empty: true,
                 label_space: worker.label_space.clone(),
@@ -1641,7 +1696,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             },
             limits: VisionModelLimits {
                 max_images: Some(1),
-                max_input_artifacts: Some(0),
+                max_input_artifacts: Some(if supports_prompts { 10_000 } else { 0 }),
                 max_request_bytes: Some(worker.max_request_bytes as u64),
                 timeout_seconds: Some(worker.timeout_seconds),
             },
@@ -1670,6 +1725,12 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
             "Offline mock trained detector",
             VisionCapability::ObjectDetection,
             ArtifactKind::DetectionSet,
+        ),
+        (
+            "mock-prompted-segmenter",
+            "Offline mock prompted segmenter",
+            VisionCapability::PromptedSegmentation,
+            ArtifactKind::MaskSet,
         ),
     ] {
         models.register_model(VisionModelDescriptor {
@@ -1720,7 +1781,7 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         (
             "prompted_segmentation",
             Some(VisionCapability::PromptedSegmentation),
-            vec![ArtifactKind::InstanceMask],
+            vec![ArtifactKind::MaskSet],
             false,
         ),
         (
@@ -1982,18 +2043,38 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
         VisionNodeDescriptor {
             id: "capability.segment".to_owned(),
             display_name: "Segment regions".to_owned(),
-            required_capabilities: vec![VisionCapability::SemanticSegmentation],
+            required_capabilities: vec![VisionCapability::PromptedSegmentation],
             accepts: vec![
                 ArtifactKind::Image,
-                ArtifactKind::CropSet,
-                ArtifactKind::DetectionSet,
+                ArtifactKind::BoxPromptSet,
+                ArtifactKind::PointPromptSet,
             ],
-            produces: vec![
-                ArtifactKind::SemanticMask,
-                ArtifactKind::InstanceMask,
-                ArtifactKind::Polygon,
-            ],
+            produces: vec![ArtifactKind::MaskSet],
             deterministic: false,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS.to_owned(),
+            display_name: "Convert detections to box prompts".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::BoxPromptSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_MASK_TO_BBOX.to_owned(),
+            display_name: "Convert masks to bounding boxes".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::MaskSet, ArtifactKind::BoxPromptSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_MASK_TO_POLYGON.to_owned(),
+            display_name: "Convert masks to polygons".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::MaskSet],
+            produces: vec![ArtifactKind::PolygonSet],
+            deterministic: true,
         },
         VisionNodeDescriptor {
             id: annotagent_runtime::CORE_SELECT_AND_MAP.to_owned(),
@@ -2149,6 +2230,31 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             dry_run_supported: true,
             expert_only: false,
         },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS.to_owned(),
+            display_name: "Detections to box prompts".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "prompts",
+                ArtifactKind::BoxPromptSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "padding": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
         model_node_definition(
             "capability.detect",
             "Detect objects",
@@ -2176,11 +2282,53 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             "Segment regions",
             vec![
                 catalog_port("images", ArtifactKind::Image, true, many),
-                catalog_port("prompts", ArtifactKind::DetectionSet, false, many),
+                catalog_port("box_prompts", ArtifactKind::BoxPromptSet, false, many),
+                catalog_port("point_prompts", ArtifactKind::PointPromptSet, false, many),
             ],
-            catalog_port("masks", ArtifactKind::InstanceMask, true, many),
-            ModelCapability::InstanceSegmentation,
+            catalog_port("masks", ArtifactKind::MaskSet, true, many),
+            ModelCapability::PromptedSegmentation,
         ),
+        NodeDefinition {
+            id: annotagent_runtime::CORE_MASK_TO_BBOX.to_owned(),
+            display_name: "Mask to bounding box".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![
+                catalog_port("masks", ArtifactKind::MaskSet, true, many),
+                catalog_port("box_prompts", ArtifactKind::BoxPromptSet, true, many),
+            ],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_MASK_TO_POLYGON.to_owned(),
+            display_name: "Mask to polygon".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![catalog_port("masks", ArtifactKind::MaskSet, true, many)],
+            output_ports: vec![catalog_port(
+                "polygons",
+                ArtifactKind::PolygonSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "encoding": {"type": "string", "enum": ["polygon"], "default": "polygon"}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: true,
+        },
         NodeDefinition {
             id: "core.select_and_map".to_owned(),
             display_name: "Select and map results".to_owned(),
@@ -4928,7 +5076,12 @@ impl LocalApplication {
                                 );
                             }
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::BoxPromptSet(_)
+                        | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::MaskSet(_)
+                        | PipelineArtifact::PolygonSet(_)
+                        | PipelineArtifact::CropSet(_) => {}
                     }
                 }
             }
@@ -6981,6 +7134,31 @@ impl LocalApplication {
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Inspected Node Definition {node_type}"),
                             serde_json::to_value(definition)?,
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::FindArtifactConversionPath) => {
+                        let from = call
+                            .arguments
+                            .get("from")
+                            .cloned()
+                            .ok_or_else(|| anyhow!("find_artifact_conversion_path requires from"))
+                            .and_then(|value| serde_json::from_value::<ArtifactKind>(value).map_err(Into::into))?;
+                        let to = call
+                            .arguments
+                            .get("to")
+                            .cloned()
+                            .ok_or_else(|| anyhow!("find_artifact_conversion_path requires to"))
+                            .and_then(|value| serde_json::from_value::<ArtifactKind>(value).map_err(Into::into))?;
+                        let paths = annotagent_core::ArtifactConversionRegistry::default()
+                            .find_conversion_path(from, to, &nodes);
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Found {} legal Artifact conversion path(s)", paths.len()),
+                            json!({
+                                "from": from,
+                                "to": to,
+                                "available": !paths.is_empty(),
+                                "paths": paths,
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::ListProviderProfiles) => Ok(
@@ -10966,7 +11144,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 39);
+        assert_eq!(names.len(), 40);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -11325,9 +11503,12 @@ export:
                 "core.commit".to_owned(),
                 "core.crop".to_owned(),
                 "core.decision".to_owned(),
+                "core.detections_to_box_prompts".to_owned(),
                 "core.existing_annotations".to_owned(),
                 "core.human_review".to_owned(),
                 "core.image_input".to_owned(),
+                "core.mask_to_bbox".to_owned(),
+                "core.mask_to_polygon".to_owned(),
                 "core.project_coordinates".to_owned(),
                 "core.resize".to_owned(),
                 "core.select_and_map".to_owned(),
@@ -12180,6 +12361,184 @@ export:
         assert!(execution.results.iter().all(|result| {
             result.result.status == RunStatus::Completed && result.result.committed.len() == 1
         }));
+    }
+
+    #[tokio::test]
+    async fn published_prompted_segmentation_pipeline_runs_end_to_end_offline() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("prompted-segmentation", OBJECT_DETECTION_PROJECT)
+            .expect("detection Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary
+                .path()
+                .join("prompted-segmentation/images/sample.png"),
+        )
+        .expect("sample image");
+        let port = |id: &str, artifact_type| NodePort {
+            id: id.to_owned(),
+            artifact_type,
+            required: true,
+            multiple: false,
+        };
+        let node = |id: &str,
+                    node_type: &str,
+                    kind: WorkflowNodeKind,
+                    inputs: Vec<NodePort>,
+                    outputs: Vec<NodePort>| WorkflowDraftNode {
+            id: id.to_owned(),
+            node_type: node_type.to_owned(),
+            kind,
+            inputs,
+            outputs,
+            ..WorkflowDraftNode::default()
+        };
+        let edge = |from_node: &str, from_port: &str, to_node: &str, to_port: &str| WorkflowEdge {
+            from_node: from_node.to_owned(),
+            from_port: from_port.to_owned(),
+            to_node: to_node.to_owned(),
+            to_port: to_port.to_owned(),
+            route: None,
+        };
+        let now = chrono::Utc::now();
+        let mut detector = node(
+            "detector",
+            "capability.detect",
+            WorkflowNodeKind::VisionModel,
+            vec![port("images", ArtifactKind::Image)],
+            vec![port("detections", ArtifactKind::DetectionSet)],
+        );
+        detector.model_binding = Some("mock-detector".to_owned());
+        detector.parameters = BTreeMap::from([
+            ("target_labels".to_owned(), json!(["ball"])),
+            ("mock_model_label".to_owned(), json!("ball")),
+            ("mock_bbox".to_owned(), json!([0.10, 0.20, 0.40, 0.40])),
+        ]);
+        let mut segment = node(
+            "segment",
+            "capability.segment",
+            WorkflowNodeKind::VisionModel,
+            vec![
+                port("images", ArtifactKind::Image),
+                port("box_prompts", ArtifactKind::BoxPromptSet),
+            ],
+            vec![port("masks", ArtifactKind::MaskSet)],
+        );
+        segment.model_binding = Some("mock-prompted-segmenter".to_owned());
+        segment.parameters = BTreeMap::from([("mock_inset".to_owned(), json!(0.10))]);
+        let draft = WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "prompted-segmentation-draft".to_owned(),
+            project_id: "prompted-segmentation".to_owned(),
+            name: "Prompted Segmentation Demo".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![
+                node(
+                    "image",
+                    annotagent_core::IMAGE_INPUT_OPERATION,
+                    WorkflowNodeKind::ImageInput,
+                    Vec::new(),
+                    vec![port("image", ArtifactKind::Image)],
+                ),
+                detector,
+                node(
+                    "prompts",
+                    annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS,
+                    WorkflowNodeKind::Transform,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("prompts", ArtifactKind::BoxPromptSet)],
+                ),
+                segment,
+                node(
+                    "refine",
+                    annotagent_runtime::CORE_MASK_TO_BBOX,
+                    WorkflowNodeKind::Transform,
+                    vec![
+                        port("masks", ArtifactKind::MaskSet),
+                        port("box_prompts", ArtifactKind::BoxPromptSet),
+                    ],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                ),
+                node(
+                    "review",
+                    "core.human_review",
+                    WorkflowNodeKind::HumanReview,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                ),
+                {
+                    let mut commit = node(
+                        "commit",
+                        "core.commit",
+                        WorkflowNodeKind::Commit,
+                        vec![port("detections", ArtifactKind::DetectionSet)],
+                        Vec::new(),
+                    );
+                    commit.parameters = BTreeMap::from([("task_id".to_owned(), json!("objects"))]);
+                    commit
+                },
+            ],
+            edges: vec![
+                edge("image", "image", "detector", "images"),
+                edge("detector", "detections", "prompts", "detections"),
+                edge("image", "image", "segment", "images"),
+                edge("prompts", "prompts", "segment", "box_prompts"),
+                edge("segment", "masks", "refine", "masks"),
+                edge("prompts", "prompts", "refine", "box_prompts"),
+                edge("refine", "detections", "review", "detections"),
+                edge("review", "detections", "commit", "detections"),
+            ],
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .save_workflow_draft(draft)
+            .expect("save prompted segmentation Draft");
+        let settings = load_settings(None).expect("settings");
+        let published = application
+            .publish_workflow("prompted-segmentation-draft", &settings)
+            .expect("publish prompted segmentation");
+        let started = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("prompted-segmentation/project.yaml"),
+                "mock",
+                settings,
+                None,
+                Some("prompted-segmentation-run"),
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect("start prompted segmentation Run");
+        let result = application.wait_run(started.run_id).await.expect("Run");
+        assert_eq!(
+            result.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            result.issues
+        );
+        assert!(result.committed.is_empty());
+        assert_eq!(result.review_queue.len(), 1);
+        let annotagent_core::AnnotationValue::BoundingBox { rect } = &result.review_queue[0].value
+        else {
+            panic!("refined bounding box")
+        };
+        assert!(rect.width() < 0.40 && rect.height() < 0.40);
+        let inspection = application
+            .inspect_run_pipeline_artifacts(started.run_id)
+            .expect("Pipeline Artifact inspection");
+        let kinds = inspection
+            .nodes
+            .iter()
+            .flat_map(|node| node.outputs.iter().map(PipelineArtifact::artifact_type))
+            .collect::<BTreeSet<_>>();
+        assert!(kinds.contains(&ArtifactKind::BoxPromptSet));
+        assert!(kinds.contains(&ArtifactKind::MaskSet));
+        assert!(kinds.contains(&ArtifactKind::DetectionSet));
     }
 
     #[tokio::test]

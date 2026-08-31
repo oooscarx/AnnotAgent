@@ -11,6 +11,93 @@ MAX_MASK_PIXELS = 100_000_000
 MAX_RLE_COUNTS_BYTES = 16_000_000
 
 
+def polygon_mask_item(
+    *,
+    mask_id: str,
+    prompt_ref: dict[str, Any],
+    rings: list[list[tuple[float, float]]],
+    confidence: float | None = None,
+) -> dict[str, Any]:
+    if not mask_id.strip() or not rings or any(len(ring) < 3 for ring in rings):
+        raise ValueError("polygon mask requires an id and rings with at least three points")
+    serialized_rings: list[list[dict[str, float]]] = []
+    for ring in rings:
+        serialized_ring = []
+        for x, y in ring:
+            if not all(isfinite(value) and 0 <= value <= 1 for value in (x, y)):
+                raise ValueError("polygon mask points must be normalized and finite")
+            serialized_ring.append({"x": x, "y": y})
+        serialized_rings.append(serialized_ring)
+    if confidence is not None and (not isfinite(confidence) or not 0 <= confidence <= 1):
+        raise ValueError("mask confidence must be finite and within [0,1]")
+    _validate_item_ref(prompt_ref, {"box_prompt_set", "point_prompt_set"})
+    return {
+        "mask_id": mask_id,
+        "prompt": prompt_ref,
+        "mask": {"encoding": "polygon", "rings": serialized_rings},
+        "score": {
+            "value": confidence,
+            "semantics": "relative_confidence" if confidence is not None else "not_provided",
+        },
+        "attributes": {},
+    }
+
+
+def mask_set_artifact(
+    *,
+    image_id: UUID,
+    source_node: str,
+    model_id: str,
+    source_prompts: dict[str, Any],
+    masks: list[dict[str, Any]],
+    artifact_id: str | None = None,
+) -> dict[str, Any]:
+    _validate_set_ref(source_prompts, {"box_prompt_set", "point_prompt_set"})
+    if not source_node.strip() or not model_id.strip():
+        raise ValueError("MaskSet requires source_node and model_id")
+    ids = [mask.get("mask_id") for mask in masks]
+    if any(not isinstance(item, str) or not item.strip() for item in ids) or len(ids) != len(set(ids)):
+        raise ValueError("MaskSet mask ids must be non-empty and unique")
+    reference = {
+        "artifact_id": artifact_id or f"mask-set:{uuid4()}",
+        "source_node": source_node,
+        "port": "masks",
+        "artifact_type": "mask_set",
+        "item_id": None,
+    }
+    return {
+        "kind": "mask_set",
+        "artifact": {
+            "reference": reference,
+            "image_id": str(image_id),
+            "model_binding": model_id,
+            "source_prompts": source_prompts,
+            "validation_state": "unvalidated",
+            "masks": masks,
+            "metadata": {},
+        },
+    }
+
+
+def _validate_set_ref(reference: dict[str, Any], kinds: set[str]) -> None:
+    if (
+        reference.get("artifact_type") not in kinds
+        or not reference.get("artifact_id")
+        or not reference.get("source_node")
+        or not reference.get("port")
+        or reference.get("item_id") is not None
+    ):
+        raise ValueError("reference must identify a supported prompt set")
+
+
+def _validate_item_ref(reference: dict[str, Any], kinds: set[str]) -> None:
+    if reference.get("item_id") in (None, ""):
+        raise ValueError("reference must identify a prompt set item")
+    itemless = dict(reference)
+    itemless["item_id"] = None
+    _validate_set_ref(itemless, kinds)
+
+
 def bounding_box_artifact(
     *,
     image_id: UUID,

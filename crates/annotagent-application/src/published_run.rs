@@ -17,18 +17,20 @@ use annotagent_core::{
     WorkflowNodeKind,
 };
 use annotagent_provider::{
-    HttpVisionDetectionBackend, OpenAiCompatiblePipelineClassifier,
-    OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider, OpenAiVisionBackend,
+    HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig, HttpVisionDetectionBackend,
+    OpenAiCompatiblePipelineClassifier, OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider,
+    OpenAiVisionBackend,
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
     CORE_CANDIDATE_MATCH, CORE_COMBINE_EVIDENCE, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_DECISION,
-    CORE_EVIDENCE_GATE, CORE_FILTER, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL,
-    CORE_PROJECT_CANDIDATES, CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE,
-    CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
-    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
-    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
-    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_FILTER, CORE_IMAGE_STATISTICS,
+    CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES,
+    CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE,
+    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
+    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
+    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
+    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -40,6 +42,9 @@ use annotagent_skill_object_detection::{
 use annotagent_skill_open_vocabulary::{
     GroundingSkillRunner, MockGroundingBackend, OPEN_VOCABULARY_DETECTION_OPERATION,
     PHRASE_GROUNDING_OPERATION,
+};
+use annotagent_skill_segmentation::{
+    MockPromptedSegmentationBackend, PROMPTED_SEGMENTATION_OPERATION, PromptedSegmentationRunner,
 };
 use annotagent_skill_vlm_detection::{VLM_DETECTION_OPERATION, VlmDetectionSkillRunner};
 use annotagent_skill_yolo::{MockYoloBackend, YOLO_DETECTION_OPERATION, YoloDetectionSkillRunner};
@@ -326,6 +331,9 @@ impl PublishedWorkflowRuntime {
                 | CORE_RESIZE
                 | CORE_TILE
                 | CORE_CROP
+                | CORE_DETECTIONS_TO_BOX_PROMPTS
+                | CORE_MASK_TO_BBOX
+                | CORE_MASK_TO_POLYGON
                 | CORE_FILTER
                 | CORE_MAP_LABEL
                 | CORE_SELECT_AND_MAP
@@ -412,6 +420,16 @@ impl PublishedWorkflowRuntime {
                         Arc::new(BoundDetectionRunner {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                            detection_workers: self.detection_workers.clone(),
+                        }),
+                        true,
+                    )?;
+                }
+                PROMPTED_SEGMENTATION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(BoundPromptedSegmentationRunner {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                         }),
@@ -1010,6 +1028,9 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_RESIZE
                 | CORE_TILE
                 | CORE_CROP
+                | CORE_DETECTIONS_TO_BOX_PROMPTS
+                | CORE_MASK_TO_BBOX
+                | CORE_MASK_TO_POLYGON
                 | CORE_FILTER
                 | CORE_MAP_LABEL
                 | CORE_SELECT_AND_MAP
@@ -1096,6 +1117,16 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         Arc::new(BoundDetectionRunner {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                            detection_workers: self.detection_workers.clone(),
+                        }),
+                        true,
+                    )?;
+                }
+                PROMPTED_SEGMENTATION_OPERATION => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(BoundPromptedSegmentationRunner {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                         }),
@@ -1332,6 +1363,76 @@ struct BoundDetectionRunner {
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
     detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+struct BoundPromptedSegmentationRunner {
+    model_image: Option<annotagent_core::ModelImage>,
+    detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+#[async_trait]
+impl DagNodeRunner for BoundPromptedSegmentationRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let model_id = context
+            .node
+            .model_binding
+            .as_deref()
+            .unwrap_or("mock-prompted-segmenter");
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if matches!(
+            model_id,
+            "mock-prompted-segmenter" | "mock-sam" | "mock-segmenter"
+        ) {
+            Arc::new(MockPromptedSegmentationBackend::new(
+                "workspace-mock-prompted-segmenter",
+            ))
+        } else {
+            let worker = self
+                .detection_workers
+                .iter()
+                .find(|worker| worker.model_id == model_id)
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "segmentation_binding",
+                        format!("unknown Vision Worker model {model_id:?}"),
+                    )
+                })?;
+            if !worker.enabled {
+                return Err(DagNodeFailure::terminal(
+                    "segmentation_binding",
+                    format!("Vision Worker model {model_id:?} is disabled"),
+                ));
+            }
+            if !worker
+                .expected_capabilities
+                .contains(&annotagent_core::VisionCapability::PromptedSegmentation)
+            {
+                return Err(DagNodeFailure::terminal(
+                    "segmentation_binding",
+                    format!("Vision Worker model {model_id:?} is not a prompted segmenter"),
+                ));
+            }
+            Arc::new(
+                HttpJsonPipelineBackend::new(HttpJsonPipelineBackendConfig {
+                    id: worker.id.clone(),
+                    endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+                    capability: annotagent_core::VisionCapability::PromptedSegmentation,
+                    request_timeout: std::time::Duration::from_secs(worker.timeout_seconds),
+                    authorization: None,
+                    expected_model_identity: Some(worker.model_id.clone()),
+                    max_retries: worker.max_retries,
+                    max_response_bytes: worker.max_response_bytes,
+                    allow_remote: worker.allow_remote,
+                })
+                .map_err(|error| {
+                    DagNodeFailure::terminal("segmentation_binding", error.to_string())
+                })?,
+            )
+        };
+        PromptedSegmentationRunner::new(backend, model_id, self.model_image.clone())
+            .map_err(|error| DagNodeFailure::terminal("segmentation_binding", error.to_string()))?
+            .run(context)
+            .await
+    }
 }
 
 #[async_trait]
@@ -2097,6 +2198,10 @@ fn mock_artifact(
     let value = match kind {
         ArtifactKind::Image
         | ArtifactKind::DetectionSet
+        | ArtifactKind::BoxPromptSet
+        | ArtifactKind::PointPromptSet
+        | ArtifactKind::MaskSet
+        | ArtifactKind::PolygonSet
         | ArtifactKind::CandidateClusterSet
         | ArtifactKind::CropSet
         | ArtifactKind::ClassificationSet
@@ -2241,6 +2346,10 @@ const fn capability_for_kind(kind: ArtifactKind) -> annotagent_core::VisionCapab
     match kind {
         ArtifactKind::Image
         | ArtifactKind::DetectionSet
+        | ArtifactKind::BoxPromptSet
+        | ArtifactKind::PointPromptSet
+        | ArtifactKind::MaskSet
+        | ArtifactKind::PolygonSet
         | ArtifactKind::CropSet
         | ArtifactKind::ClassificationSet
         | ArtifactKind::AnnotationCandidateSet
@@ -2463,7 +2572,12 @@ fn pipeline_annotations(
                         }
                     }));
                 }
-                PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+                PipelineArtifact::Image(_)
+                | PipelineArtifact::BoxPromptSet(_)
+                | PipelineArtifact::PointPromptSet(_)
+                | PipelineArtifact::MaskSet(_)
+                | PipelineArtifact::PolygonSet(_)
+                | PipelineArtifact::CropSet(_) => {}
             }
         }
     }

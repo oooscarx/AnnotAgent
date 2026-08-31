@@ -26,10 +26,12 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 
 ## C — SAM legal path
 
-- PENDING — DetectionSet → BoxPromptSet conversion.
-- PARTIAL — Generic prompted-segmentation HTTP adapter and a RoboCup-specific legacy refiner exist.
-- PENDING — Worker MaskSet → explicit Core Mask-to-BBox → refined DetectionSet.
-- PENDING — Original box, mask and refined box are all inspectable through the generic DAG.
+- PASS — DetectionSet → BoxPromptSet conversion with exact Detection item subjects.
+- PASS — Generic Image+Box/Point PromptSet → MaskSet prompted-segmentation runner supports mock and
+  protocol-v1 Worker backends.
+- PASS — Explicit Core Mask-to-BBox produces a refined DetectionSet outside the Worker.
+- PASS — Generic DAG Artifacts retain original box, prompt, mask, tight box and both model evidence
+  sources; focused Runtime test verifies the full lineage.
 - PENDING — Builder availability/failure/no-candidate policy tests.
 
 ## D — VLM geometry quality
@@ -45,7 +47,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - PASS — Builder already has constrained Draft mutation, static validation, Dry Run and
   human-approval boundaries.
 - PARTIAL — Compatible Model Profile filtering exists for provider-backed profiles.
-- PENDING — Worker health/contracts/label-space/score/geometry/conversion inspection tools.
+- PARTIAL — Builder now has `find_artifact_conversion_path`; Worker health/contracts/label-space/
+  score/geometry selection evidence remains M5–M7.
 - PENDING — Structured failure diagnosis and evidence-driven revision cases 1–8.
 
 ## F — Product
@@ -54,7 +57,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - PENDING — Guided Add Expert Model flow with discovery, identity, explicit sample smoke and
   availability gate.
 - PENDING — Advisor reasons for adding or withholding prompted segmentation.
-- PENDING — Expert Artifact-chain inspection for prompts and masks.
+- PARTIAL — Node Inspector accepts prompt/mask/polygon Artifacts and renders their bounds; dedicated
+  quality presentation remains M7.
 
 ## G — RoboCup
 
@@ -96,3 +100,18 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - All six presets plus generic capability scaffolding are adapter templates only; no weight,
   Provider credential or external inference was used.
 - Full Rust workspace tests, strict Clippy and Rustfmt checks passed.
+
+## M3 evidence
+
+- `ArtifactConversionRegistry` finds the three-node DetectionSet refinement cycle and returns no
+  path when `capability.segment` is absent.
+- Runtime test `sam_artifact_chain_preserves_original_prompt_mask_and_refined_box` verifies exact
+  Detection subject, prompt item, Mask item, original evidence, SAM evidence and refined box.
+- Application test `published_prompted_segmentation_pipeline_runs_end_to_end_offline` publishes and
+  executes the complete chain, then exposes its refined box in the real review queue.
+- Python SDK 14/14 tests pass, including the wire-compatible MaskSet helper and exact prompt item
+  reference.
+- Public Node Catalog exposes only generic conversion/capability nodes; no SAM brand branch was
+  added to Core or Runtime.
+- Full Rust gate passes 291 tests with zero failures and one explicit billable smoke ignored;
+  strict workspace Clippy and Rustfmt also pass.

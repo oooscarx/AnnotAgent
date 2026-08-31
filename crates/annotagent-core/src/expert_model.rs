@@ -299,6 +299,22 @@ impl ExpertModelManifest {
             .capabilities
             .contains(&ModelCapability::PromptedSegmentation)
         {
+            let input_kinds = self
+                .input_contracts
+                .iter()
+                .filter_map(|contract| match contract.data_type {
+                    ContractDataType::Artifact(kind) => Some(kind),
+                    ContractDataType::Text => None,
+                })
+                .collect::<BTreeSet<_>>();
+            let output_kinds = self
+                .output_contracts
+                .iter()
+                .filter_map(|contract| match contract.data_type {
+                    ContractDataType::Artifact(kind) => Some(kind),
+                    ContractDataType::Text => None,
+                })
+                .collect::<BTreeSet<_>>();
             let prompt_kinds = self
                 .prompt_contracts
                 .iter()
@@ -309,6 +325,16 @@ impl ExpertModelManifest {
             {
                 return Err(CoreError::Validation(
                     "Prompted Segmentation requires a Box or Point Prompt Contract".to_owned(),
+                ));
+            }
+            if !input_kinds.contains(&ArtifactKind::Image)
+                || (!input_kinds.contains(&ArtifactKind::BoxPromptSet)
+                    && !input_kinds.contains(&ArtifactKind::PointPromptSet))
+                || !output_kinds.contains(&ArtifactKind::MaskSet)
+            {
+                return Err(CoreError::Validation(
+                    "Prompted Segmentation requires Image plus BoxPromptSet or PointPromptSet input and MaskSet output"
+                        .to_owned(),
                 ));
             }
             if self.geometry_semantics != GeometrySemantics::MaskRefinedGeometry {
@@ -363,7 +389,7 @@ impl ExpertModelManifest {
             .iter()
             .filter_map(|capability| model_capability(*capability))
             .collect::<BTreeSet<_>>();
-        let input_contracts = descriptor
+        let mut input_contracts = descriptor
             .input_contract
             .input_types
             .iter()
@@ -383,13 +409,38 @@ impl ExpertModelManifest {
                 multiple: false,
             })
             .collect::<Vec<_>>();
+        if capabilities.contains(&ModelCapability::PromptedSegmentation)
+            && !input_contracts.iter().any(|contract| {
+                matches!(
+                    contract.data_type,
+                    ContractDataType::Artifact(
+                        ArtifactKind::BoxPromptSet | ArtifactKind::PointPromptSet
+                    )
+                )
+            })
+        {
+            input_contracts.extend([
+                ArtifactContract::artifact("box_prompts", ArtifactKind::BoxPromptSet, false, true),
+                ArtifactContract::artifact(
+                    "point_prompts",
+                    ArtifactKind::PointPromptSet,
+                    false,
+                    true,
+                ),
+            ]);
+        }
         let output_contracts = descriptor
             .output_contract
             .output_types
             .iter()
             .enumerate()
             .map(|(index, kind)| {
-                ArtifactContract::artifact(format!("output_{index}_{kind:?}"), *kind, true, true)
+                let kind = if capabilities.contains(&ModelCapability::PromptedSegmentation) {
+                    ArtifactKind::MaskSet
+                } else {
+                    *kind
+                };
+                ArtifactContract::artifact(format!("output_{index}_{kind:?}"), kind, true, true)
             })
             .collect::<Vec<_>>();
         let prompt_contracts = if capabilities.contains(&ModelCapability::PromptedSegmentation) {
@@ -588,15 +639,13 @@ mod tests {
                 worker_model_id: "prompted-segmenter-v1".to_owned(),
             },
             capabilities: BTreeSet::from([ModelCapability::PromptedSegmentation]),
-            input_contracts: vec![ArtifactContract::artifact(
-                "image",
-                ArtifactKind::Image,
-                true,
-                false,
-            )],
+            input_contracts: vec![
+                ArtifactContract::artifact("image", ArtifactKind::Image, true, false),
+                ArtifactContract::artifact("box_prompts", ArtifactKind::BoxPromptSet, true, true),
+            ],
             output_contracts: vec![ArtifactContract::artifact(
                 "masks",
-                ArtifactKind::InstanceMask,
+                ArtifactKind::MaskSet,
                 true,
                 true,
             )],

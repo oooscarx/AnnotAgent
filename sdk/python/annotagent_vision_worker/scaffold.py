@@ -22,7 +22,7 @@ class Preset:
 PRESETS: dict[str, Preset] = {
     "sam2": Preset(
         ("prompted_segmentation",),
-        "instance_mask",
+        "mask_set",
         "mask_refined_geometry",
         prompts=("box", "point"),
         architecture="sam2",
@@ -97,7 +97,7 @@ def _generic_preset(capability: str | None) -> Preset | None:
         "open_vocabulary_detection": ("detection_set", "predicted_geometry"),
         "image_classification": ("classification_set", "not_applicable"),
         "semantic_segmentation": ("semantic_mask", "predicted_geometry"),
-        "prompted_segmentation": ("instance_mask", "mask_refined_geometry"),
+        "prompted_segmentation": ("mask_set", "mask_refined_geometry"),
         "instance_segmentation": ("instance_mask", "predicted_geometry"),
         "keypoint_detection": ("keypoints", "predicted_geometry"),
     }
@@ -127,7 +127,25 @@ def _manifest(name: str, preset: Preset) -> dict[str, object]:
                 "data_type": {"artifact": "image"},
                 "required": True,
                 "multiple": False,
-            }
+            },
+            *(
+                [
+                    {
+                        "name": "box_prompts",
+                        "data_type": {"artifact": "box_prompt_set"},
+                        "required": False,
+                        "multiple": True,
+                    },
+                    {
+                        "name": "point_prompts",
+                        "data_type": {"artifact": "point_prompt_set"},
+                        "required": False,
+                        "multiple": True,
+                    },
+                ]
+                if "prompted_segmentation" in preset.capability
+                else []
+            ),
         ],
         "output_contracts": [
             {

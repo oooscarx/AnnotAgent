@@ -4,13 +4,14 @@ use std::{collections::BTreeMap, sync::OnceLock};
 
 use annotagent_core::{
     AnnotationCandidateSet, ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef,
-    ArtifactRole, ArtifactValidationState, AttributeValue, CandidateAgreement, CandidateCluster,
-    CandidateClusterSetArtifact, ClassificationSetArtifact, CorrectionRisk, CropSetArtifact,
-    Detection, DetectionEvidence, DetectionSetArtifact, EvidenceAcceptRule, EvidenceFallbackRule,
-    EvidenceGateConfig, EvidenceGateDecision, EvidenceGateInput, EvidenceGateReason,
-    EvidenceGateReport, EvidenceRejectRule, EvidenceReviewRule, IssueSeverity, LabelId,
-    PipelineArtifact, SuggestedAction, TaskId, ValidationEvidence, ValidationIssue, VisionArtifact,
-    VisionArtifactValue, VisionCapability,
+    ArtifactRole, ArtifactValidationState, AttributeValue, BoxPromptSetArtifact,
+    CandidateAgreement, CandidateCluster, CandidateClusterSetArtifact, ClassificationSetArtifact,
+    CorrectionRisk, CropSetArtifact, Detection, DetectionEvidence, DetectionSetArtifact,
+    EvidenceAcceptRule, EvidenceFallbackRule, EvidenceGateConfig, EvidenceGateDecision,
+    EvidenceGateInput, EvidenceGateReason, EvidenceGateReport, EvidenceRejectRule,
+    EvidenceReviewRule, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact, PipelineArtifact,
+    PolygonArtifactItem, PolygonSetArtifact, SuggestedAction, TaskId, ValidationEvidence,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability, mask_tight_bbox,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -20,6 +21,9 @@ use sha2::{Digest, Sha256};
 use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 
 pub const CORE_CROP: &str = "core.crop";
+pub const CORE_DETECTIONS_TO_BOX_PROMPTS: &str = "core.detections_to_box_prompts";
+pub const CORE_MASK_TO_BBOX: &str = "core.mask_to_bbox";
+pub const CORE_MASK_TO_POLYGON: &str = "core.mask_to_polygon";
 pub const CORE_RESIZE: &str = "core.resize";
 pub const CORE_TILE: &str = "core.tile";
 pub const CORE_FILTER: &str = "core.filter";
@@ -48,6 +52,9 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_RESIZE => run_resize(&context),
             CORE_TILE => run_tile(&context),
             CORE_CROP => run_crop(&context),
+            CORE_DETECTIONS_TO_BOX_PROMPTS => run_detections_to_box_prompts(&context),
+            CORE_MASK_TO_BBOX => run_mask_to_bbox(&context),
+            CORE_MASK_TO_POLYGON => run_mask_to_polygon(&context),
             CORE_FILTER => run_filter(&context),
             CORE_MAP_LABEL => run_map_label(&context),
             CORE_SELECT_AND_MAP => run_select_and_map(&context),
@@ -453,6 +460,180 @@ fn run_crop(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
         .validate()
         .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
     Ok(output(PipelineArtifact::CropSet(crops)))
+}
+
+fn run_detections_to_box_prompts(
+    context: &DagNodeContext<'_>,
+) -> Result<DagNodeOutput, DagNodeFailure> {
+    let detections = one_detection_set(context)?;
+    let padding = number_parameter(context, "padding", 0.0)? as f32;
+    let prompts = BoxPromptSetArtifact::from_detections(
+        output_reference(context, "prompts", ArtifactKind::BoxPromptSet)?,
+        detections,
+        padding,
+    )
+    .map_err(|error| DagNodeFailure::terminal("box_prompt_conversion_failed", error))?;
+    Ok(DagNodeOutput {
+        metadata: BTreeMap::from([
+            (
+                "conversion".to_owned(),
+                serde_json::json!(CORE_DETECTIONS_TO_BOX_PROMPTS),
+            ),
+            (
+                "source_detection_count".to_owned(),
+                serde_json::json!(detections.detections.len()),
+            ),
+            (
+                "prompt_count".to_owned(),
+                serde_json::json!(prompts.prompts.len()),
+            ),
+        ]),
+        pipeline_artifacts: vec![PipelineArtifact::BoxPromptSet(prompts)],
+        ..DagNodeOutput::default()
+    })
+}
+
+fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let masks = one_mask_set(context)?;
+    let prompts = one_box_prompt_set(context)?;
+    masks
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_mask_set", error))?;
+    prompts
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_box_prompt_set", error))?;
+    if masks.image_id != prompts.image_id
+        || masks.source_prompts.artifact_id != prompts.reference.artifact_id
+    {
+        return Err(DagNodeFailure::terminal(
+            "mask_prompt_scope_mismatch",
+            "MaskSet and BoxPromptSet must belong to the same image and lineage",
+        ));
+    }
+    let reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    let mut detections = Vec::with_capacity(masks.masks.len());
+    for mask in &masks.masks {
+        let prompt_id = mask.prompt.item_id.as_deref().ok_or_else(|| {
+            DagNodeFailure::terminal("mask_prompt_missing", "Mask does not identify its prompt")
+        })?;
+        let prompt = prompts
+            .prompts
+            .iter()
+            .find(|prompt| prompt.id == prompt_id)
+            .ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "mask_prompt_missing",
+                    format!("Mask references unknown Box Prompt {prompt_id:?}"),
+                )
+            })?;
+        let original = prompt
+            .attributes
+            .get("source_detection")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Detection>(value).ok())
+            .ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "source_detection_missing",
+                    "Box Prompt does not preserve its source Detection",
+                )
+            })?;
+        let bbox = mask_tight_bbox(&mask.mask)
+            .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
+        let score = if mask.score.value.is_some() {
+            mask.score
+        } else {
+            original.score
+        };
+        let mut refined = Detection::from_source(
+            format!("refined:{}", original.detection_id),
+            original.query_id.clone(),
+            original.model_label.clone(),
+            original.project_label.clone(),
+            bbox,
+            score,
+            annotagent_core::DetectionSource {
+                model_id: masks.model_binding.clone(),
+                capability: VisionCapability::PromptedSegmentation,
+                artifact_id: masks.reference.artifact_id.clone(),
+            },
+        )
+        .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
+        refined.evidence.extend(original.evidence.clone());
+        refined.attributes.clone_from(&original.attributes);
+        refined.attributes.insert(
+            "geometry_refinement".to_owned(),
+            serde_json::json!({
+                "method": "mask_to_bbox",
+                "original_bbox": original.bbox,
+                "box_prompt": mask.prompt,
+                "mask": masks.reference.item(&mask.mask_id),
+                "refined_bbox": bbox,
+            }),
+        );
+        detections.push(refined);
+    }
+    let refined = DetectionSetArtifact {
+        schema_version: annotagent_core::DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference,
+        image_id: masks.image_id,
+        model_binding: masks.model_binding.clone(),
+        validation_state: masks.validation_state,
+        detections,
+        metadata: BTreeMap::from([
+            (
+                "conversion".to_owned(),
+                serde_json::json!(CORE_MASK_TO_BBOX),
+            ),
+            (
+                "source_mask_set".to_owned(),
+                serde_json::json!(masks.reference.artifact_id),
+            ),
+            (
+                "source_prompt_set".to_owned(),
+                serde_json::json!(prompts.reference.artifact_id),
+            ),
+        ]),
+    };
+    refined
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
+    Ok(output(PipelineArtifact::DetectionSet(refined)))
+}
+
+fn run_mask_to_polygon(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let masks = one_mask_set(context)?;
+    masks
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_mask_set", error))?;
+    let reference = output_reference(context, "polygons", ArtifactKind::PolygonSet)?;
+    let polygons = masks
+        .masks
+        .iter()
+        .map(|mask| {
+            let MaskEncoding::Polygon { rings } = &mask.mask else {
+                return Err(DagNodeFailure::terminal(
+                    "mask_polygon_encoding_required",
+                    "Mask to Polygon currently requires a polygon-encoded Mask Artifact",
+                ));
+            };
+            Ok(PolygonArtifactItem {
+                polygon_id: format!("polygon:{}", mask.mask_id),
+                parent: masks.reference.item(&mask.mask_id),
+                rings: rings.clone(),
+                score: mask.score,
+            })
+        })
+        .collect::<Result<Vec<_>, DagNodeFailure>>()?;
+    let polygons = PolygonSetArtifact {
+        reference,
+        image_id: masks.image_id,
+        source_masks: masks.reference.clone(),
+        polygons,
+    };
+    polygons
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("mask_to_polygon_failed", error))?;
+    Ok(output(PipelineArtifact::PolygonSet(polygons)))
 }
 
 fn run_filter(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -1693,7 +1874,15 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
                 Some(ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid)
             )
         }),
-        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+        PipelineArtifact::MaskSet(value) => matches!(
+            value.validation_state,
+            ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
+        ),
+        PipelineArtifact::Image(_)
+        | PipelineArtifact::BoxPromptSet(_)
+        | PipelineArtifact::PointPromptSet(_)
+        | PipelineArtifact::PolygonSet(_)
+        | PipelineArtifact::CropSet(_) => false,
     });
     let route = if !already_requires_review
         && confidence.is_some_and(|confidence| confidence >= threshold)
@@ -1748,7 +1937,14 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                                 candidate.validation_state == Some(ArtifactValidationState::Invalid)
                             })
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+                        PipelineArtifact::MaskSet(value) => {
+                            value.validation_state == ArtifactValidationState::Invalid
+                        }
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::BoxPromptSet(_)
+                        | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PolygonSet(_)
+                        | PipelineArtifact::CropSet(_) => false,
                     });
             let has_review =
                 context
@@ -1770,7 +1966,14 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                                     == Some(ArtifactValidationState::NeedsReview)
                             })
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+                        PipelineArtifact::MaskSet(value) => {
+                            value.validation_state == ArtifactValidationState::NeedsReview
+                        }
+                        PipelineArtifact::Image(_)
+                        | PipelineArtifact::BoxPromptSet(_)
+                        | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PolygonSet(_)
+                        | PipelineArtifact::CropSet(_) => false,
                     });
             Ok(DagNodeOutput {
                 pipeline_artifacts: context.input_pipeline_artifacts.clone(),
@@ -1804,12 +2007,17 @@ fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValida
             PipelineArtifact::CandidateClusterSet(candidates) => {
                 candidates.validation_state = state;
             }
+            PipelineArtifact::MaskSet(masks) => masks.validation_state = state,
             PipelineArtifact::AnnotationCandidateSet(candidates) => {
                 for candidate in &mut candidates.candidates {
                     candidate.validation_state = Some(state);
                 }
             }
-            PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => {}
+            PipelineArtifact::Image(_)
+            | PipelineArtifact::BoxPromptSet(_)
+            | PipelineArtifact::PointPromptSet(_)
+            | PipelineArtifact::PolygonSet(_)
+            | PipelineArtifact::CropSet(_) => {}
         }
     }
 }
@@ -1831,7 +2039,15 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
             .iter()
             .filter_map(|candidate| candidate.confidence)
             .collect(),
+        PipelineArtifact::MaskSet(artifact) => artifact
+            .masks
+            .iter()
+            .filter_map(|mask| mask.score.comparable_confidence())
+            .collect(),
         PipelineArtifact::Image(_)
+        | PipelineArtifact::BoxPromptSet(_)
+        | PipelineArtifact::PointPromptSet(_)
+        | PipelineArtifact::PolygonSet(_)
         | PipelineArtifact::CandidateClusterSet(_)
         | PipelineArtifact::CropSet(_) => Vec::new(),
     }
@@ -1860,6 +2076,32 @@ fn one_detection_set<'a>(
             _ => None,
         },
         "DetectionSet",
+    )
+}
+
+fn one_box_prompt_set<'a>(
+    context: &'a DagNodeContext<'_>,
+) -> Result<&'a BoxPromptSetArtifact, DagNodeFailure> {
+    exactly_one(
+        context,
+        |artifact| match artifact {
+            PipelineArtifact::BoxPromptSet(value) => Some(value),
+            _ => None,
+        },
+        "BoxPromptSet",
+    )
+}
+
+fn one_mask_set<'a>(
+    context: &'a DagNodeContext<'_>,
+) -> Result<&'a MaskSetArtifact, DagNodeFailure> {
+    exactly_one(
+        context,
+        |artifact| match artifact {
+            PipelineArtifact::MaskSet(value) => Some(value),
+            _ => None,
+        },
+        "MaskSet",
     )
 }
 
@@ -2657,6 +2899,119 @@ mod tests {
                 .map(LabelId::as_str),
             Some("ball")
         );
+    }
+
+    #[tokio::test]
+    async fn sam_artifact_chain_preserves_original_prompt_mask_and_refined_box() {
+        let image_id = ImageId::new();
+        let detections = detection_set(
+            image_id,
+            "coarse-detections",
+            "coarse-vlm",
+            vec![detection(
+                "coarse-detections",
+                "ball-1",
+                "ball",
+                [0.10, 0.20, 0.40, 0.40],
+                Some(0.82),
+                "coarse-vlm",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let prompt_node = WorkflowDraftNode {
+            id: "prompts".to_owned(),
+            node_type: CORE_DETECTIONS_TO_BOX_PROMPTS.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let prompt_output = CorePipelineRunner
+            .run(node_context(
+                &prompt_node,
+                vec![detections],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("box prompts");
+        let PipelineArtifact::BoxPromptSet(prompts) = &prompt_output.pipeline_artifacts[0] else {
+            panic!("box prompts")
+        };
+        assert_eq!(
+            prompts.prompts[0].subject.item_id.as_deref(),
+            Some("ball-1")
+        );
+
+        let point = |x, y| annotagent_core::NormalizedPoint::new(x, y).expect("point");
+        let masks = PipelineArtifact::MaskSet(MaskSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "sam-masks".to_owned(),
+                source_node: "sam".to_owned(),
+                port: "masks".to_owned(),
+                artifact_type: ArtifactKind::MaskSet,
+                item_id: None,
+            },
+            image_id,
+            model_binding: "sam2.1-worker".to_owned(),
+            source_prompts: prompts.reference.clone(),
+            validation_state: ArtifactValidationState::Valid,
+            masks: vec![annotagent_core::MaskArtifactItem {
+                mask_id: "ball-mask".to_owned(),
+                prompt: prompts.reference.item(&prompts.prompts[0].id),
+                mask: MaskEncoding::Polygon {
+                    rings: vec![vec![
+                        point(0.16, 0.26),
+                        point(0.42, 0.26),
+                        point(0.42, 0.52),
+                        point(0.16, 0.52),
+                    ]],
+                },
+                score: DetectionScore::relative(0.96).expect("score"),
+                attributes: BTreeMap::new(),
+            }],
+            metadata: BTreeMap::new(),
+        });
+        let bbox_node = WorkflowDraftNode {
+            id: "mask-to-bbox".to_owned(),
+            node_type: CORE_MASK_TO_BBOX.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let refined = CorePipelineRunner
+            .run(node_context(
+                &bbox_node,
+                vec![prompt_output.pipeline_artifacts[0].clone(), masks],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("mask to bbox");
+        let PipelineArtifact::DetectionSet(refined) = &refined.pipeline_artifacts[0] else {
+            panic!("refined detections")
+        };
+        let detection = &refined.detections[0];
+        assert_eq!(
+            detection.source_capability,
+            VisionCapability::PromptedSegmentation
+        );
+        assert_eq!(detection.source_model_id, "sam2.1-worker");
+        assert_eq!(detection.evidence.len(), 2);
+        assert!((detection.bbox.x() - 0.16).abs() < f32::EPSILON);
+        let audit = detection
+            .attributes
+            .get("geometry_refinement")
+            .expect("audit trail");
+        assert_eq!(audit["method"], "mask_to_bbox");
+        assert_eq!(audit["mask"]["artifact_id"], "sam-masks");
     }
 
     fn pipeline_image(

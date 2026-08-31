@@ -1,6 +1,20 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-08-31 CST
+Last updated: 2026-09-01 CST
+
+## Expert Vision SDK M3 — 2026-09-01
+
+- Added explicit Box/Point Prompt, Mask and Polygon Set Artifacts plus a capability-neutral
+  Conversion Registry.
+- The public SAM-compatible flow is now Detection → Box Prompt → Prompted Segmentation → Mask →
+  Core Mask-to-BBox. Original box, prompt, mask and refined box retain exact item lineage.
+- `capability.segment` runs with the offline mock or a protocol-v1 prompted-segmentation Worker;
+  Worker identity, response scope and MaskSet contracts fail closed.
+- Pipeline Builder gained `find_artifact_conversion_path`; it cannot claim the SAM refinement cycle
+  when any executable node is missing.
+- The Published Runtime offline test executes the full SAM-compatible chain and sends its refined
+  box to real human review. All 291 Rust tests, strict Clippy/Rustfmt, Python SDK 14/14 tests, and
+  Web typecheck/40 tests pass. Full M3 gates are recorded in `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Provider Registry + Pipeline Builder Alpha M8 — 2026-08-31
 

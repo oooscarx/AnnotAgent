@@ -4,18 +4,265 @@
 //! healthy Model Descriptor must provide one of the declared capabilities before an authoring
 //! service may bind a segmentation node.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    CoreError, CoreResult, Skill, SkillKind, SkillManifest, SkillProductVisibility, SkillResource,
-    SkillResourceRequest,
+    ArtifactKind, ArtifactRef, ArtifactValidationState, BoxPromptSetArtifact, CoreError,
+    CoreResult, DetectionScore, MaskArtifactItem, MaskEncoding, MaskSetArtifact, ModelImage,
+    NormalizedPoint, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
+    PipelineInferenceResponse, PipelineModelBackend, ScoreSemantics, Skill, SkillKind,
+    SkillManifest, SkillProductVisibility, SkillResource, SkillResourceRequest, VisionCapability,
 };
+use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
+use async_trait::async_trait;
+use rust_decimal::Decimal;
+use tokio_util::sync::CancellationToken;
 
 pub const SEGMENTATION_SKILL_ID: &str = "annotagent.segmentation";
 pub const SEGMENTATION_SKILL_VERSION: &str = "1";
+pub const PROMPTED_SEGMENTATION_OPERATION: &str = "capability.segment";
 
 pub struct SegmentationCapabilitySkill {
     manifest: SkillManifest,
+}
+
+/// Generic prompted-segmentation runner. The backend may be SAM, another compatible Worker, or
+/// the offline test backend below; model branding never changes the node contract.
+pub struct PromptedSegmentationRunner {
+    backend: Arc<dyn PipelineModelBackend>,
+    model_id: String,
+    image: Option<ModelImage>,
+}
+
+impl PromptedSegmentationRunner {
+    pub fn new(
+        backend: Arc<dyn PipelineModelBackend>,
+        model_id: impl Into<String>,
+        image: Option<ModelImage>,
+    ) -> CoreResult<Self> {
+        if backend.capability() != VisionCapability::PromptedSegmentation {
+            return Err(CoreError::Validation(
+                "Prompted Segmentation requires a PromptedSegmentation backend".to_owned(),
+            ));
+        }
+        Ok(Self {
+            backend,
+            model_id: model_id.into(),
+            image,
+        })
+    }
+}
+
+#[async_trait]
+impl DagNodeRunner for PromptedSegmentationRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        if context.node.node_type != PROMPTED_SEGMENTATION_OPERATION {
+            return Err(DagNodeFailure::terminal(
+                "wrong_skill_operation",
+                "Prompted Segmentation runner received another operation",
+            ));
+        }
+        let has_image = context
+            .input_pipeline_artifacts
+            .iter()
+            .any(|artifact| matches!(artifact, PipelineArtifact::Image(_)));
+        let prompt_sets = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter(|artifact| {
+                matches!(
+                    artifact,
+                    PipelineArtifact::BoxPromptSet(_) | PipelineArtifact::PointPromptSet(_)
+                )
+            })
+            .count();
+        if !has_image || prompt_sets != 1 {
+            return Err(DagNodeFailure::terminal(
+                "invalid_segmentation_inputs",
+                "Prompted Segmentation requires Image and exactly one BoxPromptSet or PointPromptSet",
+            ));
+        }
+        let model_id = context
+            .node
+            .model_binding
+            .as_deref()
+            .unwrap_or(&self.model_id);
+        let response = self
+            .backend
+            .infer_pipeline(
+                PipelineInferenceRequest {
+                    protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    run_id: context.run_id,
+                    image_id: context.image_id,
+                    node_id: context.node.id.clone(),
+                    model_id: model_id.to_owned(),
+                    operation: VisionCapability::PromptedSegmentation,
+                    image: self.image.clone(),
+                    input_artifacts: context.input_pipeline_artifacts.clone(),
+                    parameters: context.node.parameters.clone(),
+                    timeout_ms: context
+                        .node
+                        .resources
+                        .timeout_seconds
+                        .map(|seconds| seconds.saturating_mul(1_000)),
+                },
+                context.cancellation.clone(),
+            )
+            .await
+            .map_err(|error| {
+                DagNodeFailure::retryable("prompted_segmentation_backend", error.to_string())
+            })?;
+        if let Some(error) = response.error {
+            return Err(DagNodeFailure {
+                code: error.code,
+                summary: error.message,
+                retryable: error.retryable,
+            });
+        }
+        if response.artifacts.len() != 1
+            || response.artifacts.iter().any(|artifact| {
+                !matches!(artifact, PipelineArtifact::MaskSet(_))
+                    || artifact.image_id() != context.image_id
+                    || artifact.reference().source_node != context.node.id
+            })
+        {
+            return Err(DagNodeFailure::terminal(
+                "invalid_segmentation_output",
+                "Prompted Segmentation backend must return exactly one scoped MaskSet",
+            ));
+        }
+        Ok(DagNodeOutput {
+            pipeline_artifacts: response.artifacts,
+            metadata: response.metadata,
+            usage: annotagent_runtime::DagNodeUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cost: Decimal::ZERO,
+            },
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MockPromptedSegmentationBackend {
+    id: String,
+}
+
+impl MockPromptedSegmentationBackend {
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+#[async_trait]
+impl PipelineModelBackend for MockPromptedSegmentationBackend {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn capability(&self) -> VisionCapability {
+        VisionCapability::PromptedSegmentation
+    }
+
+    async fn infer_pipeline(
+        &self,
+        request: PipelineInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<PipelineInferenceResponse> {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Provider(
+                "mock prompted segmentation cancelled".to_owned(),
+            ));
+        }
+        let prompts = request
+            .input_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::BoxPromptSet(prompts) => Some(prompts),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                CoreError::Validation(
+                    "mock prompted segmentation currently requires BoxPromptSet".to_owned(),
+                )
+            })?;
+        let inset = request
+            .parameters
+            .get("mock_inset")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.08) as f32;
+        if !inset.is_finite() || !(0.0..0.5).contains(&inset) {
+            return Err(CoreError::Validation(
+                "mock_inset must be finite and within [0,0.5)".to_owned(),
+            ));
+        }
+        let masks = prompts
+            .prompts
+            .iter()
+            .map(|prompt| mock_mask(prompt, prompts, inset))
+            .collect::<CoreResult<Vec<_>>>()?;
+        let artifact = MaskSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: format!(
+                    "mask-set:{}:{}:{}",
+                    request.run_id, request.image_id, request.node_id
+                ),
+                source_node: request.node_id.clone(),
+                port: "masks".to_owned(),
+                artifact_type: ArtifactKind::MaskSet,
+                item_id: None,
+            },
+            image_id: request.image_id,
+            model_binding: request.model_id.clone(),
+            source_prompts: prompts.reference.clone(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            masks,
+            metadata: BTreeMap::from([(
+                "backend".to_owned(),
+                serde_json::json!("mock_prompted_segmentation"),
+            )]),
+        };
+        artifact.validate().map_err(CoreError::Validation)?;
+        Ok(PipelineInferenceResponse {
+            protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+            request_id: Some(request.request_id),
+            model_identity: Some(request.model_id),
+            artifacts: vec![PipelineArtifact::MaskSet(artifact)],
+            ..PipelineInferenceResponse::default()
+        })
+    }
+}
+
+fn mock_mask(
+    prompt: &annotagent_core::BoxPrompt,
+    prompts: &BoxPromptSetArtifact,
+    inset: f32,
+) -> CoreResult<MaskArtifactItem> {
+    let dx = prompt.bbox.width() * inset;
+    let dy = prompt.bbox.height() * inset;
+    let left = prompt.bbox.x() + dx;
+    let top = prompt.bbox.y() + dy;
+    let right = prompt.bbox.x() + prompt.bbox.width() - dx;
+    let bottom = prompt.bbox.y() + prompt.bbox.height() - dy;
+    let point = |x, y| NormalizedPoint::new(x, y);
+    Ok(MaskArtifactItem {
+        mask_id: format!("mask:{}", prompt.id),
+        prompt: prompts.reference.item(&prompt.id),
+        mask: MaskEncoding::Polygon {
+            rings: vec![vec![
+                point(left, top)?,
+                point(right, top)?,
+                point(right, bottom)?,
+                point(left, bottom)?,
+            ]],
+        },
+        score: DetectionScore::new(Some(0.95), ScoreSemantics::RelativeConfidence)
+            .map_err(CoreError::Validation)?,
+        attributes: BTreeMap::new(),
+    })
 }
 
 impl Default for SegmentationCapabilitySkill {

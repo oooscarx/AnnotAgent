@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M2 — Worker SDK and Protocol Contract (complete)
+M3 — Artifact Conversion Registry (complete)
 
 ## Completed
 
@@ -47,19 +47,34 @@ M2 — Worker SDK and Protocol Contract (complete)
   capabilities plus SAM 2, YOLO, RF-DETR, LocateAnything, PIDNet and Grounding DINO presets.
 - Verified every preset produces a valid, explicitly unavailable template and never downloads or
   claims model weights.
+- Added typed `BoxPromptSet`, `PointPromptSet`, `MaskSet`, and `PolygonSet` Pipeline Artifacts with
+  strict set/item references and validation.
+- Added a capability-neutral Artifact Conversion Registry and the Builder's bounded
+  `find_artifact_conversion_path` tool. The SAM refinement cycle is returned only when every
+  executable node exists.
+- Replaced the public implicit Detection→instance-mask segment contract with explicit
+  Image+PromptSet→MaskSet `PromptedSegmentation` contracts in Rust and the Python Worker SDK.
+- Added executable `core.detections_to_box_prompts`, `core.mask_to_bbox`, and polygon-mask
+  conversion nodes plus the generic `capability.segment` runner for mock or protocol-v1 Workers.
+- Added an offline full lineage test proving original Detection → Prompt → Mask → refined Detection
+  retains source evidence and auditable geometry.
+- Added a Published Runtime end-to-end test that executes the complete offline prompt-segmentation
+  chain and persists the refined bounding box as an explicit human-review candidate.
+- Extended Node Inspector geometry extraction and authoring types for prompt/mask/polygon Artifacts.
 
 ## In progress
 
-- None. M2 is ready for its independent local commit.
+- None. M3 is ready for its independent local commit.
 
 ## Next
 
-- M3: add Prompt/Mask Pipeline Artifacts, the Artifact Conversion Registry and the explicit
-  Detection → Box Prompt → Prompted Segmentation → Mask → BBox Runtime chain.
+- M4: add unified failure classes, geometry-quality reports, correction/refiner metrics and Dry Run
+  evidence APIs.
 
 ## Latest Rust tests
 
-- `cargo test --workspace --all-features`: PASS; zero failures; one opt-in billable smoke ignored.
+- `cargo test --workspace --all-features`: PASS — 291 tests; zero failures; one opt-in billable
+  smoke ignored.
 - M1 `cargo fmt --all --check`: PASS.
 - M1 `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS.
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
@@ -78,7 +93,7 @@ M2 — Worker SDK and Protocol Contract (complete)
 
 - Existing Rust provider contract tests passed inside the workspace suite.
 - `python3 -m py_compile` for the HTTP, SAM, RF-DETR and LocateAnything reference workers: PASS.
-- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: PASS — 13 tests.
+- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: PASS — 14 tests.
 - Rust generic protocol fixture covers health/capabilities/models/contracts/warmup/infer and rejects
   duplicate/spoofed discovery identities.
 - Native SAM scaffold command plus SDK manifest parse smoke: PASS.
@@ -92,11 +107,12 @@ M2 — Worker SDK and Protocol Contract (complete)
 - Pre-task head: `8a1cbb1 fix(agent): harden pipeline builder tool protocol`.
 - M0: `127d0de docs: establish expert vision integration baseline`.
 - M1: `4faed86 feat(models): add capability-driven expert model manifests`.
-- M2 commit pending: `feat(workers): add an extensible expert vision worker sdk`.
+- M2: `561de50 feat(workers): add an extensible expert vision worker sdk`.
+- M3 commit pending: `feat(workflow): compose expert models through typed artifact conversions`.
 
 ## Release-blocking remainder
 
-- M1–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
+- M4–M8 and every unchecked item in `EXPERT_VISION_ACCEPTANCE.md`.
 
 ## Live-conditional
 
@@ -112,7 +128,7 @@ M2 — Worker SDK and Protocol Contract (complete)
 
 | Backend | Adapter implemented | Worker implemented | Process/weights configured | Health/smoke | Registered execution path | Builder selectable |
 | --- | --- | --- | --- | --- | --- | --- |
-| SAM 2 | Yes: generic HTTP adapter plus legacy RoboCup refiner | Yes: reference worker | No evidence | Not run; Labs/unavailable | Legacy refiner only; public Prompt→Mask→BBox path missing | No |
+| SAM 2 | Yes: generic prompted-segmentation Pipeline adapter plus legacy refiner | SDK scaffold/reference adapter | No evidence | Not run; missing weights | Public Prompt→Mask→BBox path works with mock and any conforming healthy Worker | No until configured, healthy and sample-tested |
 | YOLO | Yes: generic HTTP/Pipeline detection adapters | Reference HTTP worker supports explicit local Ultralytics weights | No evidence | Not run | Generic Object Detection and legacy YOLO Skill paths | Only configured/healthy generic profiles; preset is not available |
 | RF-DETR | Yes: detection Worker adapter | Yes: reference worker | No evidence | Not run; disabled/unavailable | Generic Object Detection | No until configured, healthy and tested |
 | LocateAnything | Yes: detection Worker adapter | Yes: reference worker | No evidence | Not run; disabled/unavailable | Generic Open Vocabulary/Phrase Grounding | No until configured, healthy and tested |

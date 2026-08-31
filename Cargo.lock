@@ -307,6 +307,12 @@ name = "annotagent-skill-segmentation"
 version = "0.1.0"
 dependencies = [
  "annotagent-core",
+ "annotagent-runtime",
+ "async-trait",
+ "rust_decimal",
+ "serde_json",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

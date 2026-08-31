@@ -1461,6 +1461,9 @@ const fn artifact_port(kind: ArtifactKind) -> &'static str {
     match kind {
         ArtifactKind::Image => "image",
         ArtifactKind::DetectionSet => "detections",
+        ArtifactKind::BoxPromptSet | ArtifactKind::PointPromptSet => "prompts",
+        ArtifactKind::MaskSet => "masks",
+        ArtifactKind::PolygonSet => "polygons",
         ArtifactKind::CandidateClusterSet | ArtifactKind::AnnotationCandidateSet => "candidates",
         ArtifactKind::CropSet => "crops",
         ArtifactKind::ClassificationSet => "classifications",
@@ -2103,10 +2106,14 @@ fn topological_order(draft: &WorkflowDraft) -> Result<Vec<String>, String> {
 }
 
 #[must_use]
-pub const fn all_artifact_kinds() -> [ArtifactKind; 15] {
+pub const fn all_artifact_kinds() -> [ArtifactKind; 19] {
     [
         ArtifactKind::Image,
         ArtifactKind::DetectionSet,
+        ArtifactKind::BoxPromptSet,
+        ArtifactKind::PointPromptSet,
+        ArtifactKind::MaskSet,
+        ArtifactKind::PolygonSet,
         ArtifactKind::CandidateClusterSet,
         ArtifactKind::CropSet,
         ArtifactKind::ClassificationSet,

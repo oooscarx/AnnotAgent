@@ -546,6 +546,11 @@ export interface WorkflowNodePort {
     | "relations"
     | "image"
     | "detection_set"
+    | "box_prompt_set"
+    | "point_prompt_set"
+    | "mask_set"
+    | "polygon_set"
+    | "candidate_cluster_set"
     | "crop_set"
     | "classification_set"
     | "annotation_candidate_set";
@@ -733,6 +738,10 @@ export interface CorrectionMemoryRecord {
 export type PipelineArtifactType =
   | "image"
   | "detection_set"
+  | "box_prompt_set"
+  | "point_prompt_set"
+  | "mask_set"
+  | "polygon_set"
   | "candidate_cluster_set"
   | "crop_set"
   | "classification_set"
