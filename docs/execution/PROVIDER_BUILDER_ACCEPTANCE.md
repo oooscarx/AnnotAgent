@@ -108,16 +108,34 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | Audit and budgets | PASS | Every success/failure is recorded through `AgentSession.record_tool` with arguments, sanitized model payload and display summary; existing turn/tool/Dry Run/cost/cancellation limits remain enforced and persisted. |
 | M5 focused validation | PASS | Core Pipeline Builder suite 8/8 and complete Application library suite 38/38 pass, including exact-catalog, redaction and persisted-mutation integration tests. Final fmt, strict all-target/all-feature Clippy, all-feature build, Rust 265/265 plus doc tests, TypeScript, Vitest 36/36 and production Web build pass. API-key-shaped source scan is empty. |
 
+## M6 real LLM Tool Loop
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Registry model selection | PASS | Application resolves explicit Model Profile, then Project capability/role binding, then global Pipeline Builder default. Focused test proves priority, lock propagation and unresolved failure. |
+| Builder model requirements | PASS | Resolution requires enabled/Available Provider and Model, configured credential reference for non-Mock, text input, TextGeneration, ToolCalls and StructuredOutput. Incompatible explicit selection fails before a request. |
+| OpenAI-compatible execution | PASS | Server `advisor=llm` resolves the credential from the selected Provider reference, constructs the adapter from Provider/Profile semantics and runs the same constrained loop. The key is never stored in Agent state. |
+| Correct Tool Call history | PASS | Existing Provider serialization test proves Assistant tool calls and matching Tool messages are emitted in follow-up requests. M6 compaction test proves only complete Assistant + Tool groups are removed and no orphan result remains. |
+| Context management | PASS | Conversation size is bounded by Model Profile context metadata (or a conservative default), while policy/Project messages and four latest complete exchanges remain. Rust state remains authoritative after compaction. |
+| One action per turn | PASS | Requests set `parallel_tool_calls=false`; the Agent loop rejects zero or multiple Tool Calls and resolves every name through the closed 39-tool Registry. |
+| Profile-priced usage audit | PASS | Agent Session persists safe Provider/Profile ID, model revision and binding source plus per-call request ID, tokens, usage source, duration, declared-price cost, currency, retry count and success. Sentinel serialization contains no credential reference or secret. |
+| Budget, cancellation and stop | PASS | Existing persisted turn/tool/token/cost/Dry Run budgets and cancellation tests remain green. Submission requires valid static validation and sandbox Dry Run, saves Suggested and stops at `WaitingForHuman`. |
+| Validation repair | PASS | Scripted integration attempts a text-only Profile on Detect and receives structured `incompatible_model_capability`, queries compatible Models, rebinds a compatible Image/ObjectDetection Profile and reaches valid static validation. |
+| Dry Run revision | PASS | The same integration inspects bounded high-review evidence, adds the controlled crop-classification revision, validates again, runs a second sandbox Dry Run and submits for human approval. No Published Version or formal Run is created. |
+| Scripted Mock | PASS | Stable 20-turn integration exercises discovery, failed and successful binding, graph repair, three validations, two Dry Runs, bounded review inspection, revision and approval. |
+| Real Provider smoke | LIVE-CONDITIONAL | Ignored opt-in test requires an explicit billable flag plus base URL/model/key environment variables. Normal CI never reads a real key or sends a request. |
+| M6 quality gate | PASS | fmt, strict all-target/all-feature Clippy and all-feature build pass. Full Rust suite passes 267/267 with one explicit billable test ignored; all doc-test groups pass. TypeScript, Vitest 36/36 and production Web build pass. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
 |---|---|---|
 | A. Provider | PASS | Multiple persistent Profiles, pure presets, CRUD, passive/active checks, discovery, health, reference protection and Settings lifecycle UI pass offline tests. |
 | B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
-| C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe usage and snapshot contract pass; real publish/runtime call integration remains for M6–M8. |
+| C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe/Agent usage and snapshot contract pass; annotation Run publication/runtime integration remains for M7–M8. |
 | D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility and locks pass; Project/Node binding UI and end-to-end execution remain. |
-| E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M6–M8 before release PASS. |
-| F. Agent | OPEN | M5 Tool Catalog, permissions, safe discovery, real Draft mutation/undo, Dry Run and approval pass. M6 must resolve the Agent's own Model Profile and finish Profile-based usage/context/stop behavior. |
+| E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M7–M8 before release PASS. |
+| F. Agent | PASS | M6 resolves the Agent's own Registry Profile, runs the real OpenAI-compatible multi-turn loop, preserves Tool history, bounds context, records Profile-priced usage, repairs validation/Dry Run feedback and stops for human approval. |
 | G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
 | H. Product | OPEN | Registry Settings IA passes; Project Build still needs compatible Profile selection and Builder integration in later milestones. |
 | I. Regression | OPEN | Existing release tests are strong; full post-migration evidence remains. |

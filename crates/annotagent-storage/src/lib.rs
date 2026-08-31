@@ -3094,6 +3094,7 @@ mod tests {
                 ..ProtocolFeatures::default()
             },
             task_capabilities: BTreeSet::from([
+                ModelCapability::TextGeneration,
                 ModelCapability::VisionLanguage,
                 ModelCapability::ImageClassification,
             ]),

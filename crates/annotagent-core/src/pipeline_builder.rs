@@ -1306,7 +1306,7 @@ impl PipelineDraftTools {
         })?;
         if !model.enabled || model.status != ModelProfileStatus::Available {
             return Err(CoreError::Validation(format!(
-                "Model Profile {:?}@{} is not available",
+                "model_profile_unavailable: Model Profile {:?}@{} is not available",
                 model.id, model.revision
             )));
         }
@@ -1314,7 +1314,7 @@ impl PipelineDraftTools {
             && !model.task_capabilities.contains(&required)
         {
             return Err(CoreError::Validation(format!(
-                "Model Profile {:?}@{} does not provide {required:?}",
+                "incompatible_model_capability: Model Profile {:?}@{} does not provide {required:?}",
                 model.id, model.revision
             )));
         }

@@ -5,6 +5,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::{ModelBindingSource, ModelProfileId, ProviderAdapterKind, ProviderId, UsageSource};
+
 pub const DETECTION_RECOVERY_PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +257,45 @@ pub struct AgentUsage {
     pub cost: Decimal,
 }
 
+/// Credential-free identity of the Registry model selected for an Agent session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModelSelection {
+    pub provider_profile_id: ProviderId,
+    pub provider_display_name: String,
+    pub provider_adapter: ProviderAdapterKind,
+    pub endpoint_summary: String,
+    pub model_profile_id: ModelProfileId,
+    pub model_profile_revision: u64,
+    pub model_display_name: String,
+    pub remote_model_id: String,
+    pub binding_source: ModelBindingSource,
+    pub locked: bool,
+}
+
+/// One auditable Provider request made by an Agent. Secrets and request bodies are excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModelCall {
+    pub sequence: u32,
+    pub provider_profile_id: Option<ProviderId>,
+    pub model_profile_id: Option<ModelProfileId>,
+    pub model_profile_revision: Option<u64>,
+    pub provider_name: String,
+    pub remote_model_id: String,
+    pub request_id: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub usage_source: UsageSource,
+    pub duration_ms: u64,
+    pub cost: Decimal,
+    pub currency: String,
+    pub retry_count: u32,
+    pub succeeded: bool,
+    pub safe_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentToolStep {
     pub sequence: u32,
@@ -277,6 +318,10 @@ pub struct AgentSession {
     pub budget: AgentBudget,
     #[serde(default)]
     pub builder_constraints: Option<crate::PipelineBuilderConstraints>,
+    #[serde(default)]
+    pub model_selection: Option<AgentModelSelection>,
+    #[serde(default)]
+    pub model_calls: Vec<AgentModelCall>,
     pub usage: AgentUsage,
     pub steps: Vec<AgentToolStep>,
     pub stop_reason: Option<String>,
@@ -297,6 +342,8 @@ impl AgentSession {
             status: AgentSessionStatus::Running,
             budget,
             builder_constraints: None,
+            model_selection: None,
+            model_calls: Vec::new(),
             usage: AgentUsage::default(),
             steps: Vec::new(),
             stop_reason: None,
@@ -318,6 +365,12 @@ impl AgentSession {
         constraints: crate::PipelineBuilderConstraints,
     ) -> Self {
         self.builder_constraints = Some(constraints);
+        self
+    }
+
+    #[must_use]
+    pub fn with_model_selection(mut self, selection: AgentModelSelection) -> Self {
+        self.model_selection = Some(selection);
         self
     }
 
@@ -376,6 +429,15 @@ impl AgentSession {
         {
             self.stop_budget("token or cost budget exhausted");
         }
+    }
+
+    pub fn record_model_call(&mut self, mut call: AgentModelCall) {
+        call.sequence = u32::try_from(self.model_calls.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(1);
+        self.add_model_usage(call.input_tokens, call.output_tokens, call.cost);
+        self.model_calls.push(call);
+        self.updated_at = Utc::now();
     }
 
     pub fn wait_for_human(&mut self, action: impl Into<String>) {

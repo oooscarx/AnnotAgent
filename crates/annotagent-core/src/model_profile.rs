@@ -537,15 +537,13 @@ impl GlobalModelDefaults {
             if !model.enabled || model.status != ModelProfileStatus::Available {
                 return Err(ModelBindingError::ModelUnavailable);
             }
-            if !model.task_capabilities.iter().any(|capability| {
-                matches!(
-                    capability,
-                    ModelCapability::TextGeneration | ModelCapability::VisionLanguage
-                )
-            }) {
+            if !model
+                .task_capabilities
+                .contains(&ModelCapability::TextGeneration)
+            {
                 return Err(ModelBindingError::CapabilityMismatch);
             }
-            if !model.protocol_features.tool_calls {
+            if !model.protocol_features.tool_calls || !model.protocol_features.structured_output {
                 return Err(ModelBindingError::ProtocolMismatch);
             }
         }

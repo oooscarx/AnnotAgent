@@ -406,6 +406,9 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             let value: Value = serde_json::from_slice(&bytes)
                 .map_err(|error| CoreError::Provider(format!("invalid provider JSON: {error}")))?;
             let mut parsed = parse_chat_response(&value, request_id)?;
+            parsed
+                .provider_metadata
+                .insert("retry_count".to_owned(), attempt.to_string());
             if self.config.supports_tool_calls {
                 try_promote_json_action(&mut parsed, &request.tools)?;
             } else {

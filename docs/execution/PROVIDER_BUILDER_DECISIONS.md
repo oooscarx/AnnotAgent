@@ -152,3 +152,29 @@ Before a successful mutation, the live Builder retains a bounded prior Draft sna
 that snapshot under the same Draft/Project identity and saves it normally. Runtime Policy lives on
 the Draft outside `nodes`, and structured Diff treats it as a Workflow policy change. This provides
 exact undo/audit behavior without inventing hidden graph nodes or an Agent-specific database path.
+
+## D023 — the Agent's own model is a Registry binding, not legacy Settings
+
+Pipeline Builder execution resolves an explicit Model Profile first, then a Project binding, then
+the global Pipeline Builder default. A usable Profile must declare text input, TextGeneration,
+ToolCalls and StructuredOutput and belong to an enabled, configured Provider. The legacy singleton
+Provider configuration remains a compatibility entry point for CLI callers, but the product
+`advisor=llm` path cannot silently fall back to it. Missing selection produces a Provider setup
+error before any request.
+
+## D024 — model call accounting is part of Agent Session audit
+
+The Agent Session stores a credential-free selection snapshot and one immutable record per Provider
+request: Provider/Profile IDs, semantic revision, remote model ID, request ID, reported token source,
+tokens, duration, retry count, currency, declared-price cost and outcome. Price is evaluated from the
+current Model Profile for the call and is not added to semantic identity. Request bodies, credential
+references, headers and secret values are excluded structurally.
+
+## D025 — context is compacted only at complete Tool exchange boundaries
+
+The first system policy and bounded Project snapshot remain fixed. When the selected Profile's
+context limit is approached, only the oldest complete Assistant Tool Call plus matching Tool result
+groups are removed, while at least four recent groups remain. A short system notice tells the model
+that Rust still owns the authoritative Draft/validation/Dry Run state. Native parallel Tool Calls are
+disabled and the Alpha loop accepts exactly one Tool Call per turn, so compaction cannot create an
+orphaned or ambiguous history.

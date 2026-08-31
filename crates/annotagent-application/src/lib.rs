@@ -13,39 +13,40 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use annotagent_core::{
-    AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentSession, AgentSessionStatus,
-    Annotation, AnnotationSource, ArtifactKind, AttributeDefinition, AttributeValue,
-    BackendDescriptor, BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint,
-    BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
-    DatasetExporter, DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest,
-    FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
+    AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
+    AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationSource,
+    ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor, BatchBudgetLedger,
+    BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
+    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter, DatasetImporter,
+    DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, ImageId,
+    ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
-    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelCapability,
-    ModelInputContract, ModelMessage, ModelOutputContract, ModelProfile, ModelProfileStatus,
-    ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory,
-    NodeDefinition, NodePort, NodeRegistry, NodeSideEffect, PipelineArtifact,
-    PipelineBuilderConstraints, PipelineBuilderProviderProfile, PipelineBuilderTool,
-    PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools,
-    PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality, PortDefinition,
-    PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, ProviderAdapterKind,
-    ProviderHealthStatus, PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements,
-    RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
-    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
-    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
-    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
-    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
-    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingRole,
+    ModelBindingSource, ModelCapability, ModelInputContract, ModelMessage, ModelOutputContract,
+    ModelProfile, ModelProfileId, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
+    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
+    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
+    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
+    PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
+    PortDefinition, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, ProviderAdapterKind,
+    ProviderHealthStatus, ProviderProfile, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
+    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
+    VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
+    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
+    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -56,7 +57,7 @@ use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_
 use annotagent_provider::{
     HttpVisionWorkerConfig, HttpVisionWorkerRegistryBackend, MockResponseSpec, MockScript,
     MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
-    OpenAiCompatibleProvider,
+    OpenAiCompatibleProvider, OpenAiProtocol,
 };
 use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
@@ -89,6 +90,70 @@ pub struct Settings {
     pub budget: Budget,
     #[serde(default = "default_detection_workers")]
     pub detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+/// Registry-backed model and Provider selected to execute a Pipeline Builder session.
+///
+/// This value is intentionally not serializable: the persisted Agent session receives only the
+/// credential-free [`AgentModelSelection`] projection.
+#[derive(Clone)]
+pub struct PipelineBuilderModelRuntime {
+    pub provider: ProviderProfile,
+    pub model: ModelProfile,
+    pub binding_source: ModelBindingSource,
+    pub locked: bool,
+}
+
+impl PipelineBuilderModelRuntime {
+    #[must_use]
+    pub fn safe_selection(&self) -> AgentModelSelection {
+        AgentModelSelection {
+            provider_profile_id: self.provider.id,
+            provider_display_name: self.provider.display_name.clone(),
+            provider_adapter: self.provider.adapter,
+            endpoint_summary: self.provider.endpoint_summary(),
+            model_profile_id: self.model.id,
+            model_profile_revision: self.model.revision,
+            model_display_name: self.model.display_name.clone(),
+            remote_model_id: self.model.remote_model_id.clone(),
+            binding_source: self.binding_source,
+            locked: self.locked,
+        }
+    }
+
+    pub fn openai_compatible_config(&self) -> Result<OpenAiCompatibleConfig> {
+        if self.provider.adapter != ProviderAdapterKind::OpenAiCompatible {
+            bail!("selected Pipeline Builder Provider is not OpenAI-compatible");
+        }
+        let maximum_output_tokens = self
+            .model
+            .generation_defaults
+            .maximum_output_tokens
+            .or(self.model.limits.maximum_output_tokens)
+            .unwrap_or(4_096)
+            .min(u64::from(u32::MAX)) as u32;
+        let temperature = self
+            .model
+            .generation_defaults
+            .temperature
+            .map_or(0.0, |value| value.to_string().parse().unwrap_or(0.0));
+        Ok(OpenAiCompatibleConfig {
+            endpoint: self.provider.base_url.to_string(),
+            api_key_env: "ANNOTAGENT_PIPELINE_BUILDER_API_KEY".to_owned(),
+            model: self.model.remote_model_id.clone(),
+            protocol: OpenAiProtocol::ChatCompletions,
+            request_timeout_seconds: self.provider.connection_policy.request_timeout_seconds,
+            max_output_tokens: maximum_output_tokens,
+            temperature,
+            reasoning_mode: self.model.generation_defaults.reasoning_mode.clone(),
+            supports_tool_calls: self.model.protocol_features.tool_calls,
+            supports_json_schema: self.model.protocol_features.structured_output
+                || self.model.protocol_features.json_schema,
+            custom_headers: self.provider.safe_headers.clone(),
+            extra_request_fields: BTreeMap::new(),
+            max_retries: self.provider.connection_policy.maximum_retries,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -644,6 +709,16 @@ fn required_usize_argument(arguments: &serde_json::Value, name: &str) -> Result<
         .ok_or_else(|| anyhow!("Tool argument {name:?} must be a non-negative integer"))
 }
 
+fn pipeline_builder_tool_error_code(message: &str) -> &'static str {
+    if message.contains("incompatible_model_capability:") {
+        "incompatible_model_capability"
+    } else if message.contains("model_profile_unavailable:") {
+        "model_profile_unavailable"
+    } else {
+        "tool_validation_failed"
+    }
+}
+
 fn compatible_builder_models(
     input: &WorkflowAdvisorInput,
     required_capability: Option<ModelCapability>,
@@ -717,6 +792,92 @@ fn estimate_model_profile_cost_for_counts(
         "pricing_source": model.pricing.source,
         "billable_request_sent": false,
     })
+}
+
+fn pipeline_builder_call_cost(
+    model: Option<&ModelProfile>,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> (rust_decimal::Decimal, String) {
+    let Some(model) = model else {
+        return (rust_decimal::Decimal::ZERO, "USD".to_owned());
+    };
+    let million = rust_decimal::Decimal::from(1_000_000_u64);
+    let input = model.pricing.input_per_million_tokens.unwrap_or_default()
+        * rust_decimal::Decimal::from(input_tokens)
+        / million;
+    let output = model.pricing.output_per_million_tokens.unwrap_or_default()
+        * rust_decimal::Decimal::from(output_tokens)
+        / million;
+    (
+        input + output + model.pricing.per_request.unwrap_or_default(),
+        model.pricing.currency.clone(),
+    )
+}
+
+/// Keep only complete Assistant Tool Call + Tool result groups when an Agent conversation grows
+/// beyond the selected Model Profile's context budget. The initial policy and Project snapshot,
+/// plus the four most recent exchanges, are always retained.
+fn compact_pipeline_builder_messages(
+    messages: &mut Vec<ModelMessage>,
+    context_tokens: Option<u64>,
+) -> bool {
+    const BASE_MESSAGES: usize = 2;
+    const RECENT_GROUPS: usize = 4;
+    let byte_budget = context_tokens
+        .unwrap_or(32_768)
+        .saturating_mul(3)
+        .clamp(16_384, 2_000_000) as usize;
+    let message_size = |message: &ModelMessage| {
+        message.content.len()
+            + message
+                .tool_calls
+                .iter()
+                .map(|call| call.name.len() + call.arguments.to_string().len() + 64)
+                .sum::<usize>()
+            + 96
+    };
+    let mut total = messages.iter().map(message_size).sum::<usize>();
+    if total <= byte_budget || messages.len() <= BASE_MESSAGES {
+        return false;
+    }
+
+    let mut groups = Vec::<(usize, usize)>::new();
+    let mut index = BASE_MESSAGES;
+    while index < messages.len() {
+        let start = index;
+        index += 1;
+        if messages[start].role == ModelRole::Assistant {
+            while index < messages.len() && messages[index].role == ModelRole::Tool {
+                index += 1;
+            }
+        }
+        groups.push((start, index));
+    }
+    let removable = groups.len().saturating_sub(RECENT_GROUPS);
+    let mut remove_until = BASE_MESSAGES;
+    for (_, end) in groups.into_iter().take(removable) {
+        if total <= byte_budget {
+            break;
+        }
+        total = total.saturating_sub(messages[remove_until..end].iter().map(message_size).sum());
+        remove_until = end;
+    }
+    if remove_until == BASE_MESSAGES {
+        return false;
+    }
+    messages.drain(BASE_MESSAGES..remove_until);
+    messages.insert(
+        BASE_MESSAGES,
+        ModelMessage {
+            role: ModelRole::System,
+            content: "Earlier complete tool exchanges were compacted. Rust still enforces the current Draft, validation, Dry Run, and budget state; inspect again when needed."
+                .to_owned(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        },
+    );
+    true
 }
 
 fn workflow_node_from_definition(
@@ -3427,6 +3588,67 @@ impl LocalApplication {
         self.store.clone()
     }
 
+    /// Resolve the model that may drive a Pipeline Builder session without making a Provider
+    /// request. Selection priority is explicit request, Project binding, then global default.
+    pub fn resolve_pipeline_builder_model(
+        &self,
+        project_id: &str,
+        explicit_model_profile_id: Option<ModelProfileId>,
+    ) -> Result<PipelineBuilderModelRuntime> {
+        let project_path = self.project_path(project_id)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let project_bindings = self.store.list_project_model_bindings(stable_id)?;
+        let defaults = self.store.get_global_model_defaults()?;
+        let resolved = resolve_model_binding(
+            explicit_model_profile_id,
+            &project_bindings,
+            &defaults,
+            ModelCapability::TextGeneration,
+            ModelBindingRole::PipelineBuilder,
+        )
+        .map_err(|error| {
+            anyhow!(
+                "Provider setup required: choose a compatible Pipeline Builder Model Profile ({error})"
+            )
+        })?;
+        let model = self
+            .store
+            .get_model_profile(resolved.model_profile_id, None)?;
+        let provider = self.store.get_provider_profile(model.provider_id)?;
+        if !model.enabled || model.status != ModelProfileStatus::Available {
+            bail!("selected Pipeline Builder Model Profile is disabled or unavailable");
+        }
+        if !model.input_modalities.contains(&InputModality::Text)
+            || !model
+                .task_capabilities
+                .contains(&ModelCapability::TextGeneration)
+        {
+            bail!("selected Pipeline Builder Model Profile requires text input and TextGeneration");
+        }
+        if !model.protocol_features.tool_calls || !model.protocol_features.structured_output {
+            bail!(
+                "selected Pipeline Builder Model Profile requires ToolCalls and StructuredOutput"
+            );
+        }
+        if !provider.enabled
+            || !matches!(
+                provider.health.status,
+                ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+            )
+        {
+            bail!("selected Pipeline Builder Provider is disabled or unavailable");
+        }
+        if provider.adapter != ProviderAdapterKind::Mock && provider.credential_ref.is_none() {
+            bail!("Provider setup required: configure a credential reference before using Agent");
+        }
+        Ok(PipelineBuilderModelRuntime {
+            provider,
+            model,
+            binding_source: resolved.source,
+            locked: resolved.locked,
+        })
+    }
+
     /// Runs bounded domain recovery for one risky candidate. Correction records are selected only
     /// from the candidate's exact Project, Skill, task and Label scope. A clean candidate returns
     /// through the fast path without creating or persisting an Agent Session.
@@ -5922,6 +6144,47 @@ impl LocalApplication {
         .await
     }
 
+    /// Run the constrained Agent loop with a Registry-resolved model and an already constructed
+    /// Provider adapter. Credential resolution stays in the caller and never enters this API.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_workflow_advisor_with_selected_model(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        selected_model: &PipelineBuilderModelRuntime,
+        provider: &dyn VisionModelProvider,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        builder_constraints: PipelineBuilderConstraints,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
+        let input = self.workflow_advisor_input_for_label(
+            project_id,
+            settings,
+            constraints.clone(),
+            target.map(|value| value.0),
+            target.map(|value| value.1),
+        )?;
+        let suggestion = if let Some((task_id, label)) = target {
+            self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
+        } else {
+            self.suggest_workflow_preview(project_id, settings, constraints)?
+        };
+        self.run_workflow_advisor_loop(
+            project_id,
+            settings,
+            constraints,
+            target,
+            input,
+            suggestion,
+            provider,
+            Some(selected_model),
+            builder_constraints,
+            cancellation,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn run_workflow_advisor_with_provider(
         &self,
@@ -5935,6 +6198,35 @@ impl LocalApplication {
         builder_constraints: PipelineBuilderConstraints,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
+        self.run_workflow_advisor_loop(
+            project_id,
+            settings,
+            constraints,
+            target,
+            input,
+            safe_suggestion,
+            provider,
+            None,
+            builder_constraints,
+            cancellation,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_workflow_advisor_loop(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        input: WorkflowAdvisorInput,
+        safe_suggestion: WorkflowSuggestion,
+        provider: &dyn VisionModelProvider,
+        selected_model: Option<&PipelineBuilderModelRuntime>,
+        builder_constraints: PipelineBuilderConstraints,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
         let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
         let mut session = AgentSession::start(
             AgentKind::PipelineBuilder,
@@ -5942,6 +6234,9 @@ impl LocalApplication {
         )
         .with_builder_constraints(builder_constraints.clone())
         .with_project(project_id);
+        if let Some(selected_model) = selected_model {
+            session = session.with_model_selection(selected_model.safe_selection());
+        }
         self.agent_cancellations
             .lock()
             .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
@@ -6010,17 +6305,46 @@ impl LocalApplication {
                 session.fail("maximum Pipeline Builder turns reached");
                 break;
             }
+            compact_pipeline_builder_messages(
+                &mut messages,
+                selected_model.and_then(|selected| selected.model.limits.context_tokens),
+            );
+            let remote_model_id = selected_model.map_or_else(
+                || settings.provider.model.clone(),
+                |selected| selected.model.remote_model_id.clone(),
+            );
+            let maximum_output_tokens =
+                selected_model.map_or(settings.provider.max_output_tokens, |selected| {
+                    selected
+                        .model
+                        .generation_defaults
+                        .maximum_output_tokens
+                        .or(selected.model.limits.maximum_output_tokens)
+                        .unwrap_or(u64::from(settings.provider.max_output_tokens))
+                        .min(u64::from(u32::MAX)) as u32
+                });
+            let temperature = selected_model.map_or(0.0, |selected| {
+                selected
+                    .model
+                    .generation_defaults
+                    .temperature
+                    .map_or(0.0, |value| value.to_string().parse().unwrap_or(0.0))
+            });
+            let started_at = Instant::now();
             let response = match provider
                 .complete(
                     ModelRequest {
-                        model: settings.provider.model.clone(),
+                        model: remote_model_id.clone(),
                         task_id: "pipeline_builder".into(),
                         messages: messages.clone(),
                         images: Vec::new(),
                         tools: tools.clone(),
-                        max_output_tokens: settings.provider.max_output_tokens,
-                        temperature: 0.0,
-                        extra: BTreeMap::new(),
+                        max_output_tokens: maximum_output_tokens,
+                        temperature,
+                        extra: BTreeMap::from([(
+                            "parallel_tool_calls".to_owned(),
+                            serde_json::Value::Bool(false),
+                        )]),
                     },
                     cancellation.clone(),
                 )
@@ -6028,20 +6352,76 @@ impl LocalApplication {
             {
                 Ok(response) => response,
                 Err(error) => {
+                    let (cost, currency) = pipeline_builder_call_cost(
+                        selected_model.map(|selected| &selected.model),
+                        0,
+                        0,
+                    );
+                    session.record_model_call(AgentModelCall {
+                        sequence: 0,
+                        provider_profile_id: selected_model.map(|selected| selected.provider.id),
+                        model_profile_id: selected_model.map(|selected| selected.model.id),
+                        model_profile_revision: selected_model
+                            .map(|selected| selected.model.revision),
+                        provider_name: provider.name().to_owned(),
+                        remote_model_id: remote_model_id.clone(),
+                        request_id: None,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        usage_source: UsageSource::Unknown,
+                        duration_ms: u64::try_from(started_at.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        cost,
+                        currency,
+                        retry_count: 0,
+                        succeeded: false,
+                        safe_error: Some("Provider request failed".to_owned()),
+                        created_at: chrono::Utc::now(),
+                    });
                     session.fail(format!("Pipeline Builder provider error: {error}"));
                     break;
                 }
             };
-            session.add_model_usage(
-                response.usage.input_tokens.unwrap_or_default(),
-                response.usage.output_tokens.unwrap_or_default(),
-                rust_decimal::Decimal::ZERO,
+            let input_tokens = response.usage.input_tokens.unwrap_or_default();
+            let output_tokens = response.usage.output_tokens.unwrap_or_default();
+            let retry_count = response
+                .provider_metadata
+                .get("retry_count")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or_default();
+            let (cost, currency) = pipeline_builder_call_cost(
+                selected_model.map(|selected| &selected.model),
+                input_tokens,
+                output_tokens,
             );
+            session.record_model_call(AgentModelCall {
+                sequence: 0,
+                provider_profile_id: selected_model.map(|selected| selected.provider.id),
+                model_profile_id: selected_model.map(|selected| selected.model.id),
+                model_profile_revision: selected_model.map(|selected| selected.model.revision),
+                provider_name: provider.name().to_owned(),
+                remote_model_id,
+                request_id: response.request_id.clone(),
+                input_tokens,
+                output_tokens,
+                usage_source: response.usage.source,
+                duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                cost,
+                currency,
+                retry_count,
+                succeeded: true,
+                safe_error: None,
+                created_at: chrono::Utc::now(),
+            });
             if session.status != AgentSessionStatus::Running {
                 break;
             }
             if response.tool_calls.is_empty() {
                 session.fail("Pipeline Builder provider returned no registered Tool Call");
+                break;
+            }
+            if response.tool_calls.len() != 1 {
+                session.fail("Pipeline Builder requires exactly one Tool Call per turn");
                 break;
             }
             messages.push(ModelMessage {
@@ -7011,13 +7391,20 @@ impl LocalApplication {
 
                 let (result, success) = match outcome {
                     Ok(result) => (result, true),
-                    Err(error) => (
-                        annotagent_core::AgentToolResult::summary(
-                            format!("{} failed", call.name),
-                            json!({"error": error.to_string(), "retryable": true}),
-                        ),
-                        false,
-                    ),
+                    Err(error) => {
+                        let message = error.to_string();
+                        (
+                            annotagent_core::AgentToolResult::summary(
+                                format!("{} failed", call.name),
+                                json!({
+                                    "code": pipeline_builder_tool_error_code(&message),
+                                    "error": message,
+                                    "retryable": true
+                                }),
+                            ),
+                            false,
+                        )
+                    }
                 };
                 let model_payload = result.model_payload.clone();
                 if session
@@ -9561,6 +9948,250 @@ export:
   formats: [native, coco]
 ";
 
+    fn register_pipeline_builder_model(
+        application: &LocalApplication,
+        remote_model_id: &str,
+    ) -> PipelineBuilderModelRuntime {
+        let now = chrono::Utc::now();
+        let provider_id = annotagent_core::ProviderId::new();
+        application
+            .store
+            .save_provider_profile(&ProviderProfile {
+                id: provider_id,
+                display_name: "Scripted Builder Provider".to_owned(),
+                preset_id: Some("mock".to_owned()),
+                adapter: ProviderAdapterKind::Mock,
+                base_url: "https://mock.invalid/v1".parse().expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: annotagent_core::ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: annotagent_core::ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: Some("Scripted test Provider".to_owned()),
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("Provider Profile");
+        let model = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id,
+            display_name: "Scripted Pipeline Builder".to_owned(),
+            remote_model_id: remote_model_id.to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Text]),
+            protocol_features: annotagent_core::ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                usage_reporting: true,
+                ..annotagent_core::ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([ModelCapability::TextGeneration]),
+            capability_source: annotagent_core::CapabilityDeclarationSource::UserDeclared,
+            limits: annotagent_core::ModelLimits {
+                context_tokens: Some(32_768),
+                maximum_output_tokens: Some(2_048),
+                ..annotagent_core::ModelLimits::default()
+            },
+            generation_defaults: annotagent_core::GenerationDefaults::default(),
+            pricing: annotagent_core::ModelPricing {
+                currency: "USD".to_owned(),
+                input_per_million_tokens: Some(rust_decimal::Decimal::from(2)),
+                output_per_million_tokens: Some(rust_decimal::Decimal::from(4)),
+                per_request: Some(rust_decimal::Decimal::new(1, 3)),
+                source: annotagent_core::PricingSource::UserConfigured,
+                updated_at: Some(now),
+                ..annotagent_core::ModelPricing::default()
+            },
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store
+            .save_model_profile(&model)
+            .expect("Model Profile");
+        application
+            .store
+            .save_global_model_defaults(&annotagent_core::GlobalModelDefaults {
+                pipeline_builder: Some(model.id),
+                ..annotagent_core::GlobalModelDefaults::default()
+            })
+            .expect("Pipeline Builder default");
+        PipelineBuilderModelRuntime {
+            provider: application
+                .store
+                .get_provider_profile(provider_id)
+                .expect("Provider Profile"),
+            model,
+            binding_source: ModelBindingSource::GlobalDefault,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn pipeline_builder_model_selection_respects_registry_priority_and_requirements() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("builder-selection", GENERIC_BBOX_PROJECT)
+            .expect("Project");
+        let global = register_pipeline_builder_model(&application, "global-builder");
+        let resolved = application
+            .resolve_pipeline_builder_model("builder-selection", None)
+            .expect("global default");
+        assert_eq!(resolved.model.id, global.model.id);
+        assert_eq!(resolved.binding_source, ModelBindingSource::GlobalDefault);
+
+        let mut project_model = global.model.clone();
+        project_model.id = ModelProfileId::new();
+        project_model.remote_model_id = "project-builder".to_owned();
+        application
+            .store
+            .save_model_profile(&project_model)
+            .expect("Project Model Profile");
+        let project_path = application
+            .project_path("builder-selection")
+            .expect("Project path");
+        application
+            .store
+            .save_project_model_binding(
+                &annotagent_core::ProjectModelBinding {
+                    id: annotagent_core::ModelBindingId::new(),
+                    project_id: stable_project_id(project_path.parent().expect("Project root")),
+                    capability: ModelCapability::TextGeneration,
+                    role: ModelBindingRole::PipelineBuilder,
+                    match_kind: annotagent_core::ModelBindingMatch::Role,
+                    model_profile_id: project_model.id,
+                    locked: true,
+                    created_at: chrono::Utc::now(),
+                },
+                annotagent_core::BindingMutationActor::User,
+            )
+            .expect("Project binding");
+        let resolved = application
+            .resolve_pipeline_builder_model("builder-selection", None)
+            .expect("Project default");
+        assert_eq!(resolved.model.id, project_model.id);
+        assert_eq!(resolved.binding_source, ModelBindingSource::ProjectRole);
+        assert!(resolved.locked);
+
+        let mut live_provider = application
+            .store
+            .get_provider_profile(global.provider.id)
+            .expect("Provider Profile");
+        live_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        live_provider.base_url = "https://provider.example/v1".parse().expect("URL");
+        live_provider.credential_ref = Some(annotagent_core::CredentialReference {
+            provider_id: live_provider.id,
+            source: annotagent_core::CredentialSource::EnvironmentVariable,
+            locator: "PIPELINE_BUILDER_SECRET_FIXTURE".to_owned(),
+        });
+        live_provider.health.status = ProviderHealthStatus::Configured;
+        application
+            .store
+            .save_provider_profile(&live_provider)
+            .expect("OpenAI-compatible Provider Profile");
+
+        let explicit = application
+            .resolve_pipeline_builder_model("builder-selection", Some(global.model.id))
+            .expect("explicit selection");
+        assert_eq!(explicit.model.id, global.model.id);
+        assert_eq!(explicit.binding_source, ModelBindingSource::WorkflowNode);
+        let config = explicit
+            .openai_compatible_config()
+            .expect("OpenAI-compatible runtime config");
+        assert_eq!(config.model, "global-builder");
+        assert_eq!(config.endpoint, "https://provider.example/v1");
+        assert_eq!(config.max_output_tokens, 2_048);
+        assert!(
+            !serde_json::to_string(&explicit.safe_selection())
+                .expect("safe selection")
+                .contains("PIPELINE_BUILDER_SECRET_FIXTURE")
+        );
+
+        let mut incompatible = global.model.clone();
+        incompatible.id = ModelProfileId::new();
+        incompatible.remote_model_id = "no-structured-output".to_owned();
+        incompatible.protocol_features.structured_output = false;
+        application
+            .store
+            .save_model_profile(&incompatible)
+            .expect("incompatible profile remains valid Registry metadata");
+        let error = match application
+            .resolve_pipeline_builder_model("builder-selection", Some(incompatible.id))
+        {
+            Ok(_) => panic!("Builder protocol requirements must fail closed"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("ToolCalls and StructuredOutput"));
+    }
+
+    #[test]
+    fn pipeline_builder_context_compaction_keeps_tool_call_groups_intact() {
+        let mut messages = vec![
+            ModelMessage {
+                role: ModelRole::System,
+                content: "policy".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+            ModelMessage {
+                role: ModelRole::User,
+                content: "project".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+        ];
+        for index in 0..10 {
+            let call_id = annotagent_core::ToolCallId::new(format!("call-{index}"));
+            messages.push(ModelMessage {
+                role: ModelRole::Assistant,
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: vec![annotagent_core::ModelToolCall {
+                    id: call_id.clone(),
+                    name: "inspect_project".to_owned(),
+                    arguments: json!({}),
+                }],
+            });
+            messages.push(ModelMessage {
+                role: ModelRole::Tool,
+                content: format!("result-{index}-{}", "x".repeat(5_000)),
+                tool_call_id: Some(call_id),
+                tool_calls: Vec::new(),
+            });
+        }
+
+        assert!(compact_pipeline_builder_messages(
+            &mut messages,
+            Some(1_000)
+        ));
+        assert_eq!(messages[0].role, ModelRole::System);
+        assert_eq!(messages[1].role, ModelRole::User);
+        assert!(messages.last().is_some_and(|message| {
+            message.role == ModelRole::Tool && message.content.starts_with("result-9-")
+        }));
+        for (index, message) in messages.iter().enumerate() {
+            if message.role != ModelRole::Tool {
+                continue;
+            }
+            let assistant = messages.get(index.saturating_sub(1)).expect("Assistant");
+            assert_eq!(assistant.role, ModelRole::Assistant);
+            assert_eq!(assistant.tool_calls.len(), 1);
+            assert_eq!(
+                message.tool_call_id,
+                Some(assistant.tool_calls[0].id.clone())
+            );
+        }
+    }
+
     #[test]
     fn pipeline_builder_catalog_is_exact_and_provider_context_is_credential_safe() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
@@ -11002,7 +11633,11 @@ export:
             )
             .await
             .expect("Advisor Agent");
-        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.status,
+            AgentSessionStatus::WaitingForHuman,
+            "{report:#?}"
+        );
         assert_eq!(report.session.kind, AgentKind::PipelineBuilder);
         assert!(report.approval_required);
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
@@ -11308,20 +11943,9 @@ export:
             &temporary.path().join("live-builder/images/sample.png"),
         )
         .expect("sample image");
+        let selected_model = register_pipeline_builder_model(&application, "scripted-builder-v1");
         let settings = load_settings(None).expect("settings");
         let constraints = WorkflowConstraints::default();
-        let input = application
-            .workflow_advisor_input_for_label(
-                "live-builder",
-                &settings,
-                constraints.clone(),
-                Some("scene"),
-                Some("day"),
-            )
-            .expect("Advisor input");
-        let safe = application
-            .suggest_label_pipeline_preview("live-builder", &settings, "scene", "day", &constraints)
-            .expect("safe Draft");
         let scripted_step =
             |name: &str, arguments: serde_json::Value, expect_message_contains: Option<&str>| {
                 MockStep {
@@ -11367,14 +11991,13 @@ export:
         });
 
         let report = application
-            .run_workflow_advisor_with_provider(
+            .run_workflow_advisor_with_selected_model(
                 "live-builder",
                 &settings,
+                &selected_model,
+                &provider,
                 &constraints,
                 Some(("scene", "day")),
-                input,
-                safe,
-                &provider,
                 PipelineBuilderConstraints::default(),
                 CancellationToken::new(),
             )
@@ -11387,6 +12010,23 @@ export:
         assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
         assert_eq!(report.session.usage.input_tokens, 110);
         assert_eq!(report.session.usage.output_tokens, 55);
+        assert_eq!(report.session.model_calls.len(), 11);
+        assert_eq!(
+            report
+                .session
+                .model_selection
+                .as_ref()
+                .map(|selection| selection.model_profile_id),
+            Some(selected_model.model.id)
+        );
+        assert!(report.session.model_calls.iter().all(|call| {
+            call.model_profile_id == Some(selected_model.model.id)
+                && call.request_id.is_some()
+                && call.succeeded
+        }));
+        assert!(report.session.usage.cost > rust_decimal::Decimal::ZERO);
+        let session_json = serde_json::to_string(&report.session).expect("Agent Session JSON");
+        assert!(!session_json.contains("credential"));
         assert!(!report.session.steps[0].success);
         assert!(
             report.session.steps[0].result["model_payload"]["error"]
@@ -11436,6 +12076,25 @@ export:
         )
         .expect("sample image");
         let settings = load_settings(None).expect("settings");
+        let selected_builder =
+            register_pipeline_builder_model(&application, "scripted-revision-builder");
+        let incompatible_model = selected_builder.model.clone();
+        let mut compatible_model = incompatible_model.clone();
+        compatible_model.id = ModelProfileId::new();
+        compatible_model.remote_model_id = "mock-detector".to_owned();
+        compatible_model
+            .input_modalities
+            .insert(InputModality::Image);
+        compatible_model.task_capabilities.extend([
+            ModelCapability::VisionLanguage,
+            ModelCapability::ObjectDetection,
+            ModelCapability::OpenVocabularyDetection,
+            ModelCapability::PhraseGrounding,
+        ]);
+        application
+            .store
+            .save_model_profile(&compatible_model)
+            .expect("compatible detection Model Profile");
         let constraints = WorkflowConstraints::default();
         let input = application
             .workflow_advisor_input_for_label(
@@ -11446,7 +12105,7 @@ export:
                 Some("component"),
             )
             .expect("Advisor input");
-        let safe = application
+        let mut safe = application
             .suggest_label_pipeline_preview(
                 "live-revision",
                 &settings,
@@ -11455,6 +12114,20 @@ export:
                 &constraints,
             )
             .expect("safe Draft");
+        let detector = safe
+            .draft
+            .nodes
+            .iter_mut()
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+                )
+            })
+            .expect("detection model node");
+        detector.node_type = "capability.detect".to_owned();
+        let detector_id = detector.id.clone();
+        let detector_type = detector.node_type.clone();
         let scripted_step = |name: &str, arguments: serde_json::Value| MockStep {
             expect_task: Some("pipeline_builder".to_owned()),
             expect_message_contains: None,
@@ -11477,6 +12150,26 @@ export:
                 scripted_step("list_node_definitions", json!({})),
                 scripted_step("list_compatible_models", json!({})),
                 scripted_step("create_draft_from_template", json!({})),
+                scripted_step(
+                    "bind_model_profile",
+                    json!({
+                        "node_id": detector_id,
+                        "model_profile_id": incompatible_model.id,
+                        "locked": true
+                    }),
+                ),
+                scripted_step(
+                    "list_compatible_models",
+                    json!({"node_type": detector_type}),
+                ),
+                scripted_step(
+                    "bind_model_profile",
+                    json!({
+                        "node_id": detector_id,
+                        "model_profile_id": compatible_model.id,
+                        "locked": true
+                    }),
+                ),
                 scripted_step(
                     "disconnect_pipeline_nodes",
                     json!({"from_node": gate, "to_node": commit}),
@@ -11513,13 +12206,13 @@ export:
             ],
         });
         let builder_constraints = PipelineBuilderConstraints {
-            maximum_agent_turns: 20,
-            maximum_tool_calls: 20,
+            maximum_agent_turns: 24,
+            maximum_tool_calls: 24,
             ..PipelineBuilderConstraints::default()
         };
 
         let report = application
-            .run_workflow_advisor_with_provider(
+            .run_workflow_advisor_loop(
                 "live-revision",
                 &settings,
                 &constraints,
@@ -11527,6 +12220,7 @@ export:
                 input,
                 safe,
                 &provider,
+                Some(&selected_builder),
                 builder_constraints,
                 CancellationToken::new(),
             )
@@ -11534,11 +12228,36 @@ export:
             .expect("live revision loop");
 
         assert_eq!(provider.remaining_steps(), 0);
-        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.status,
+            AgentSessionStatus::WaitingForHuman,
+            "{report:#?}"
+        );
         assert!(report.approval_required);
-        assert_eq!(report.session.usage.tool_calls, 17);
-        assert_eq!(report.session.usage.input_tokens, 170);
-        assert_eq!(report.session.usage.output_tokens, 85);
+        assert_eq!(report.session.usage.tool_calls, 20);
+        assert_eq!(report.session.usage.input_tokens, 200);
+        assert_eq!(report.session.usage.output_tokens, 100);
+        let incompatible_binding = report
+            .session
+            .steps
+            .iter()
+            .find(|step| {
+                step.tool_name == "bind_model_profile"
+                    && step.arguments["model_profile_id"] == json!(incompatible_model.id)
+            })
+            .expect("incompatible binding attempt");
+        assert!(!incompatible_binding.success);
+        assert_eq!(
+            incompatible_binding.result["model_payload"]["code"],
+            json!("incompatible_model_capability"),
+            "{result:#?}",
+            result = incompatible_binding.result
+        );
+        assert!(report.session.steps.iter().any(|step| {
+            step.tool_name == "bind_model_profile"
+                && step.success
+                && step.arguments["model_profile_id"] == json!(compatible_model.id)
+        }));
         assert_eq!(
             report
                 .session
@@ -11583,6 +12302,138 @@ export:
                 .is_empty()
         );
         assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    /// Explicitly opt-in because this test sends billable requests to a real Provider. It never
+    /// persists the API key and is excluded from normal CI.
+    #[tokio::test]
+    #[ignore = "set ANNOTAGENT_RUN_BILLABLE_PROVIDER_SMOKE=1 and the PIPELINE_BUILDER_SMOKE_* environment variables"]
+    async fn real_openai_compatible_pipeline_builder_smoke_when_explicitly_enabled() {
+        assert_eq!(
+            std::env::var("ANNOTAGENT_RUN_BILLABLE_PROVIDER_SMOKE").as_deref(),
+            Ok("1"),
+            "billable smoke requires explicit opt-in"
+        );
+        let base_url = std::env::var("PIPELINE_BUILDER_SMOKE_BASE_URL")
+            .expect("PIPELINE_BUILDER_SMOKE_BASE_URL");
+        let remote_model_id =
+            std::env::var("PIPELINE_BUILDER_SMOKE_MODEL").expect("PIPELINE_BUILDER_SMOKE_MODEL");
+        let api_key = std::env::var("PIPELINE_BUILDER_SMOKE_API_KEY")
+            .expect("PIPELINE_BUILDER_SMOKE_API_KEY");
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("provider-smoke", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("provider-smoke/images/sample.png"),
+        )
+        .expect("sample image");
+
+        let now = chrono::Utc::now();
+        let provider_id = annotagent_core::ProviderId::new();
+        let provider_profile = ProviderProfile {
+            id: provider_id,
+            display_name: "Explicit live smoke".to_owned(),
+            preset_id: None,
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: base_url.parse().expect("Provider URL"),
+            organization: None,
+            workspace: None,
+            credential_ref: Some(annotagent_core::CredentialReference {
+                provider_id,
+                source: annotagent_core::CredentialSource::EnvironmentVariable,
+                locator: "PIPELINE_BUILDER_SMOKE_API_KEY".to_owned(),
+            }),
+            safe_headers: BTreeMap::new(),
+            connection_policy: annotagent_core::ProviderConnectionPolicy {
+                maximum_retries: 0,
+                ..annotagent_core::ProviderConnectionPolicy::default()
+            },
+            enabled: true,
+            health: annotagent_core::ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Configured,
+                safe_message: Some("Explicit smoke configuration".to_owned()),
+                checked_at: None,
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store
+            .save_provider_profile(&provider_profile)
+            .expect("Provider Profile");
+        let model_profile = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id,
+            display_name: "Explicit live smoke model".to_owned(),
+            remote_model_id,
+            input_modalities: BTreeSet::from([InputModality::Text]),
+            protocol_features: annotagent_core::ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                json_schema: true,
+                usage_reporting: true,
+                ..annotagent_core::ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([ModelCapability::TextGeneration]),
+            capability_source: annotagent_core::CapabilityDeclarationSource::UserDeclared,
+            limits: annotagent_core::ModelLimits {
+                context_tokens: Some(32_768),
+                maximum_output_tokens: Some(2_048),
+                ..annotagent_core::ModelLimits::default()
+            },
+            generation_defaults: annotagent_core::GenerationDefaults::default(),
+            pricing: annotagent_core::ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: true,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store
+            .save_model_profile(&model_profile)
+            .expect("Model Profile");
+        let selected = PipelineBuilderModelRuntime {
+            provider: provider_profile,
+            model: model_profile,
+            binding_source: ModelBindingSource::WorkflowNode,
+            locked: true,
+        };
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            selected
+                .openai_compatible_config()
+                .expect("Provider config"),
+            Some(api_key.clone()),
+        )
+        .expect("Provider");
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "provider-smoke",
+                &load_settings(None).expect("settings"),
+                &selected,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                PipelineBuilderConstraints {
+                    maximum_agent_turns: 20,
+                    maximum_tool_calls: 20,
+                    maximum_dry_runs: 2,
+                    ..PipelineBuilderConstraints::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("live Pipeline Builder smoke");
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(!report.session.model_calls.is_empty());
+        assert!(
+            !serde_json::to_string(&report.session)
+                .expect("Agent Session")
+                .contains(&api_key)
+        );
     }
 
     #[tokio::test]

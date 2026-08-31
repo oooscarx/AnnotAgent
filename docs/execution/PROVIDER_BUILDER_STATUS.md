@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 6 — real LLM Tool Loop.
+Milestone 7 — Project Guided UX and TUI.
 
 ## 已完成内容
 
@@ -99,16 +99,35 @@ Milestone 6 — real LLM Tool Loop.
 - Added security and integration tests proving the exact catalog, forbidden-tool absence, credential
   locator redaction, compatible Profile binding, Runtime Policy undo, persistent Draft mutation and
   no Published Version/formal Run side effects.
+- Added Registry-backed Pipeline Builder model resolution with deterministic explicit Profile >
+  Project capability/role > global default priority. Selection fails closed unless the Provider and
+  Model are enabled/available, the credential reference exists, and the Model declares text input,
+  TextGeneration, ToolCalls and StructuredOutput.
+- Cut the server `advisor=llm` path over to the selected Provider/Profile. The Server resolves the
+  credential only at adapter construction; no secret enters Agent state or model context.
+- Added credential-free Agent model selection and per-request audit records containing
+  Provider/Profile identity, semantic revision, request ID, usage source, tokens, declared-price
+  cost, duration, retry count and status.
+- Added complete-exchange context compaction that never leaves an Assistant Tool Call without its
+  matching Tool result. Native requests disable parallel Tool Calls and the loop accepts exactly one
+  registered Tool Call per turn.
+- Added stable structured errors for incompatible/unavailable Model Profiles and retained all
+  turn/tool/token/cost/Dry Run budgets, persisted cancellation and human-approval stopping.
+- Added a stable Scripted Mock scenario for incompatible Detect binding, compatible rebind, static
+  validation repair, high-review Dry Run inspection, crop-classification revision, second Dry Run
+  and human approval without publication or a formal Run.
+- Added an ignored, explicitly billable opt-in real OpenAI-compatible end-to-end smoke test. Normal
+  CI never reads a real key or sends its requests.
 
 ## 正在进行内容
 
-- Closing M5 validation and its independent local commit, then resolving the Builder Agent's own
-  Provider/Model Profile and hardening multi-turn context/stop behavior in M6.
+- Adding the selected Agent model and compatible Project bindings to Guided Project UX, then
+  exposing the same safe identity, progress and trace in TUI.
 
 ## 下一步
 
-- Milestone 6: resolve the Agent model through the Registry, use Profile pricing in usage accounting,
-  tighten Tool Call history/context and prove validation/Dry Run revision paths through Scripted Mock.
+- Milestone 7: Project model selection, inline Provider setup, Agent model selector, progress,
+  proposal comparison, human approval and TUI inspection without exposing credentials.
 
 ## 最近 Rust 测试
 
@@ -143,6 +162,11 @@ Milestone 6 — real LLM Tool Loop.
   passed; full Rust suite 265/265 passed and every doc-test group passed.
 - M5 secret-pattern scan across application/source/Web/docs (excluding preserved master prompts):
   no API-key-shaped value found.
+- M6 focused Application tests pass for Registry priority/requirements, complete Tool-history
+  compaction, Profile-priced request audits and the exact incompatible-binding/Dry Run revision.
+- M6 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
+  passed; full Rust suite 267/267 passed, one explicitly billable smoke ignored, and every doc-test
+  group passed.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -154,6 +178,7 @@ Milestone 6 — real LLM Tool Loop.
 - M4 TypeScript check and affected Label Pipeline UI tests: 8 passed.
 - M4 final Web validation: TypeScript, 36/36 Vitest tests and production build passed.
 - M5 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
+- M6 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
 
 ## 最近 E2E 测试
 
@@ -169,7 +194,8 @@ Milestone 6 — real LLM Tool Loop.
 - M2: `f8b4437 feat(models): add reusable model profiles and capability bindings`.
 - M3: `5a750ef feat(settings): manage llm and vlm providers from one registry`.
 - M4: `f3cb72b refactor(workflow): expose a constrained annotation node catalog`.
-- M5 commit pending at this status write; its hash is filled by the next milestone.
+- M5: `6a2a389 feat(agent): let the builder inspect providers and edit real drafts`.
+- M6 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
@@ -177,13 +203,14 @@ Milestone 6 — real LLM Tool Loop.
   final M8 security/source-scan/native evidence. C and D now have lifecycle API/UI, persistence,
   revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
   integration and migration are proven. M4 closes the public Node Catalog contract, but E remains
-  open until later runtime/template milestones prove every public node end to end. M5 closes the
-  bounded Agent Tool contract; F remains open for M6 Agent-profile resolution and real Provider
-  accounting. G–I remain open.
+  open until later runtime/template milestones prove every public node end to end. M6 closes the
+  real constrained Agent Tool Loop and Profile-based accounting; Project/TUI product integration
+  and G–I remain open for M7–M8.
 
 ## Live-conditional 项
 
-- Real Qwen, OpenAI, OpenRouter and Gemini-compatible requests.
+- Real Qwen, OpenAI, OpenRouter and Gemini-compatible requests. An ignored opt-in smoke exists and
+  requires explicit billable environment configuration.
 - Native system Keychain interaction on supported desktop environments.
 - External network, DNS, certificates, rate limits and provider-specific `/models` behavior.
 - Manual native browser confirmation after automated E2E.

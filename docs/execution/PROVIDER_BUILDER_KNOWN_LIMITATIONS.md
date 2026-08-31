@@ -4,8 +4,9 @@ This file records observed baseline limitations and will be narrowed as mileston
 
 ## Baseline limitations
 
-- The compatibility singleton runtime configuration remains under Storage until M8. Registry
-  Providers and Model Profiles are durable and manageable, but existing Runs do not resolve them yet.
+- The compatibility singleton runtime configuration remains under Storage until M8. Pipeline
+  Builder `advisor=llm` now resolves its own Registry Provider/Profile, but existing annotation Runs
+  do not all resolve typed Profile bindings yet.
 - Native Keyring calls are live-conditional on an unlocked desktop credential service; CI covers
   the same contract through an injected backend and in-memory implementation.
 - The legacy workspace credential file is still readable to avoid breaking existing users. The M8
@@ -21,8 +22,9 @@ This file records observed baseline limitations and will be narrowed as mileston
   retained only when the Profile remote ID resolves to an existing runtime descriptor. Complete
   Profile-to-runtime resolution for every Provider is M6–M8 work.
 - TUI lacks Provider and Binding inspection/mutation commands.
-- Active Probe usage persists Provider/Profile revision, tokens, latency and configured pricing.
-  Normal Run usage still needs the same Profile/revision and pricing-snapshot integration in M6–M8.
+- Active Probe and Pipeline Builder Agent usage persist Provider/Profile revision, tokens, latency
+  and configured pricing. Normal annotation Run usage still needs the same Profile/revision and
+  pricing-snapshot integration in M7–M8.
 - Published Workflow snapshots support frozen Model Profile semantics, but the current publication
   service does not populate them until the M3 lifecycle/API integration resolves typed bindings.
 - Resize and Tile currently create typed virtual Image Artifacts and complete coordinate lineage;
@@ -36,9 +38,12 @@ This file records observed baseline limitations and will be narrowed as mileston
 - Builder undo is intentionally scoped to the current Agent session and retains at most 32 prior
   successful mutation snapshots. Durable cross-session recovery remains available through saved
   Draft comparison/clone operations rather than an unbounded hidden undo log.
-- `finish_agent_session` is registered and permissioned, while the current compatibility Tool Loop
-  stops immediately when `submit_draft_for_human_approval` enters `WaitingForHuman`. M6 will
-  normalize explicit finish/stop behavior across real Provider implementations.
+- `submit_draft_for_human_approval` is the normal terminal action and immediately enters
+  `WaitingForHuman`; `finish_agent_session` remains registered for protocol compatibility but is not
+  required after a successful submission.
+- The real OpenAI-compatible Builder smoke is ignored by default because it is billable and depends
+  on external network/provider behavior. It runs only with an explicit billable opt-in and dedicated
+  environment variables; offline release evidence uses Scripted Mock.
 
 ## Explicitly outside this Alpha
 

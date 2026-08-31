@@ -32,8 +32,8 @@ use annotagent_core::{
 };
 use annotagent_provider::{
     EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
-    LegacyWorkspaceFileSecretStore, SecretStoreRouter, SessionSecretStore, active_provider_probe,
-    discover_provider_models, passive_provider_check,
+    LegacyWorkspaceFileSecretStore, OpenAiCompatibleProvider, SecretStoreRouter,
+    SessionSecretStore, active_provider_probe, discover_provider_models, passive_provider_check,
 };
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::{HistoryRun, ProviderProbeUsage, RegistryReference};
@@ -2482,6 +2482,7 @@ struct SuggestWorkflowRequest {
     project_id: String,
     target_task_id: Option<String>,
     target_label: Option<String>,
+    agent_model_profile_id: Option<ModelProfileId>,
     #[serde(default = "default_workflow_advisor")]
     advisor: String,
     #[serde(default)]
@@ -2516,57 +2517,84 @@ async fn suggest_workflow(
         .target_task_id
         .as_deref()
         .zip(request.target_label.as_deref());
-    let (suggestion, agent_report) =
-        match request.advisor.as_str() {
-            "mock" | "agent" => {
-                let report = state
-                    .application
-                    .run_workflow_advisor_agent(
-                        &request.project_id,
-                        &settings,
-                        &workflow_constraints,
-                        target,
-                        request.builder_constraints.clone(),
-                        CancellationToken::default(),
+    let (suggestion, agent_report) = match request.advisor.as_str() {
+        "mock" | "agent" => {
+            let report = state
+                .application
+                .run_workflow_advisor_agent(
+                    &request.project_id,
+                    &settings,
+                    &workflow_constraints,
+                    target,
+                    request.builder_constraints.clone(),
+                    CancellationToken::default(),
+                )
+                .await
+                .map_err(ApiError::bad_request)?;
+            let suggestion =
+                report.suggestion.clone().ok_or_else(|| {
+                    ApiError::bad_request(
+                        report.session.stop_reason.clone().unwrap_or_else(|| {
+                            "Workflow Advisor stopped without a Draft".to_owned()
+                        }),
                     )
-                    .await
-                    .map_err(ApiError::bad_request)?;
-                let suggestion =
-                    report.suggestion.clone().ok_or_else(|| {
-                        ApiError::bad_request(report.session.stop_reason.clone().unwrap_or_else(
-                            || "Workflow Advisor stopped without a Draft".to_owned(),
-                        ))
-                    })?;
-                (suggestion, Some(report))
+                })?;
+            (suggestion, Some(report))
+        }
+        "llm" => {
+            let selected_model = state
+                .application
+                .resolve_pipeline_builder_model(&request.project_id, request.agent_model_profile_id)
+                .map_err(ApiError::bad_request)?;
+            if selected_model.provider.adapter == ProviderAdapterKind::Mock {
+                return Err(ApiError::bad_request(
+                    "Scripted Mock is available through advisor=mock; choose an OpenAI-compatible Model Profile for advisor=llm",
+                ));
             }
-            "llm" => {
-                let report = state
-                    .application
-                    .run_workflow_advisor_live_agent(
-                        &request.project_id,
-                        &settings,
-                        state.api_key.read().await.clone(),
-                        &workflow_constraints,
-                        target,
-                        request.builder_constraints.clone(),
-                        CancellationToken::default(),
+            let credential = resolve_provider_credential(&state, &selected_model.provider)
+                    .await?
+                    .ok_or_else(|| {
+                        ApiError::bad_request(
+                            "Provider setup required: configure a credential before starting Pipeline Builder",
+                        )
+                    })?;
+            let provider = OpenAiCompatibleProvider::new_with_api_key(
+                selected_model
+                    .openai_compatible_config()
+                    .map_err(ApiError::bad_request)?,
+                Some(credential.expose_secret().to_owned()),
+            )
+            .map_err(ApiError::bad_request)?;
+            let report = state
+                .application
+                .run_workflow_advisor_with_selected_model(
+                    &request.project_id,
+                    &settings,
+                    &selected_model,
+                    &provider,
+                    &workflow_constraints,
+                    target,
+                    request.builder_constraints.clone(),
+                    CancellationToken::default(),
+                )
+                .await
+                .map_err(ApiError::bad_request)?;
+            let suggestion =
+                report.suggestion.clone().ok_or_else(|| {
+                    ApiError::bad_request(
+                        report.session.stop_reason.clone().unwrap_or_else(|| {
+                            "Pipeline Builder stopped without a Draft".to_owned()
+                        }),
                     )
-                    .await
-                    .map_err(ApiError::bad_request)?;
-                let suggestion =
-                    report.suggestion.clone().ok_or_else(|| {
-                        ApiError::bad_request(report.session.stop_reason.clone().unwrap_or_else(
-                            || "Pipeline Builder stopped without a Draft".to_owned(),
-                        ))
-                    })?;
-                (suggestion, Some(report))
-            }
-            other => {
-                return Err(ApiError::bad_request(format!(
-                    "unknown Workflow Advisor {other:?}; choose mock or llm"
-                )));
-            }
-        };
+                })?;
+            (suggestion, Some(report))
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown Workflow Advisor {other:?}; choose mock or llm"
+            )));
+        }
+    };
     let mut value = serde_json::to_value(suggestion).map_err(ApiError::internal)?;
     if let (Some(report), Some(object)) = (agent_report, value.as_object_mut()) {
         object.insert("agent_session".to_owned(), json!(report.session));
