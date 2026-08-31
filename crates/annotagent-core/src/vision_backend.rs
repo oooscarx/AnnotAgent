@@ -371,6 +371,56 @@ pub struct VisionWorkerCapabilities {
     pub output_types: Vec<ArtifactKind>,
     #[serde(default)]
     pub limits: VisionModelLimits,
+    /// Multi-model discovery extension. Older single-model Workers may omit this field.
+    #[serde(default)]
+    pub models: Vec<VisionWorkerModelSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionWorkerModelSummary {
+    pub model_id: String,
+    pub display_name: String,
+    pub architecture: Option<String>,
+    pub model_version: String,
+    pub checkpoint_sha256: Option<String>,
+    pub capabilities: Vec<VisionCapability>,
+    pub availability: crate::ModelAvailability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionWorkerModelsResponse {
+    pub protocol_version: u32,
+    pub worker_id: String,
+    pub models: Vec<VisionWorkerModelSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionWorkerContractsResponse {
+    pub protocol_version: u32,
+    pub worker_id: String,
+    pub models: Vec<crate::ExpertModelManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionWorkerWarmupRequest {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionWorkerWarmupResponse {
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub model_id: String,
+    pub ready: bool,
+    pub duration_ms: Option<u64>,
+    pub error: Option<VisionBackendError>,
 }
 
 /// Health response for the versioned detection-worker protocol.

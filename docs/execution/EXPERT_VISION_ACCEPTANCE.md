@@ -9,9 +9,8 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - PASS — Expert model registration through a versioned Manifest.
 - PASS — Unknown expert detector works without a Core enum/runtime branch; the Test Edge Detector
   fixture registers from a Manifest and the existing generic backend.
-- PENDING — Python Worker SDK/scaffold and conformance tests.
-- PARTIAL — Capability and input/output discovery exists, but model/contract endpoints and unified
-  worker manifests are incomplete.
+- PASS — Python Worker SDK/scaffold and 13 deterministic conformance/helper tests.
+- PASS — Capability, model and complete contract discovery are versioned and Rust-validated.
 - PASS — Manifest validation requires health, protocol, contract, weights and sample-conversion
   evidence before `Available`; descriptor migration fails closed to `Unknown` for untested HTTP
   Workers.
@@ -86,3 +85,14 @@ Legend: `PASS`, `PENDING`, `LIVE-CONDITIONAL`, `MANUAL`.
 - Full Rust workspace suite: PASS with zero failures and one explicitly billable smoke ignored.
 - Full workspace strict Clippy and Rustfmt checks: PASS.
 - Production implementation contains no model-brand comparison or model-branded Core Node kind.
+
+## M2 evidence
+
+- Rust protocol fixture completes health, capability, model, contract, warmup and inference calls;
+  invalid duplicate model and spoofed Worker contract identities fail closed.
+- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: 13 passed.
+- Native `annotagent worker scaffold --preset sam2` generated a template whose SDK-parsed Manifest
+  remained `missing_weights`.
+- All six presets plus generic capability scaffolding are adapter templates only; no weight,
+  Provider credential or external inference was used.
+- Full Rust workspace tests, strict Clippy and Rustfmt checks passed.

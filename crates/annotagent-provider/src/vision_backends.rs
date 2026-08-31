@@ -6,6 +6,8 @@ use annotagent_core::{
     VISION_WORKER_PROTOCOL_VERSION, VisionArtifact, VisionArtifactValue, VisionBackendKind,
     VisionCapability, VisionInferenceRequest, VisionInferenceResponse, VisionModelBackend,
     VisionModelHealth, VisionModelHealthStatus, VisionModelProvider, VisionWorkerCapabilities,
+    VisionWorkerContractsResponse, VisionWorkerModelsResponse, VisionWorkerWarmupRequest,
+    VisionWorkerWarmupResponse,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -167,12 +169,174 @@ impl HttpJsonVisionBackend {
         Ok(capabilities)
     }
 
+    pub async fn discover_models(&self) -> CoreResult<VisionWorkerModelsResponse> {
+        let response = self
+            .authorized(self.client.get(format!("{}/v1/models", self.base_url())))
+            .send()
+            .await
+            .map_err(|error| {
+                CoreError::Provider(format!("worker model discovery failed: {error}"))
+            })?;
+        let (status, body) =
+            bounded_response_body(response, self.config.max_response_bytes).await?;
+        if !status.is_success() {
+            return Err(CoreError::Provider(format!(
+                "worker model discovery returned {status}"
+            )));
+        }
+        let models: VisionWorkerModelsResponse = serde_json::from_slice(&body)
+            .map_err(|error| CoreError::Provider(format!("invalid worker models JSON: {error}")))?;
+        validate_worker_models(&models, self.config.expected_model_identity.as_deref())?;
+        Ok(models)
+    }
+
+    pub async fn discover_contracts(&self) -> CoreResult<VisionWorkerContractsResponse> {
+        let response = self
+            .authorized(self.client.get(format!("{}/v1/contracts", self.base_url())))
+            .send()
+            .await
+            .map_err(|error| {
+                CoreError::Provider(format!("worker contract discovery failed: {error}"))
+            })?;
+        let (status, body) =
+            bounded_response_body(response, self.config.max_response_bytes).await?;
+        if !status.is_success() {
+            return Err(CoreError::Provider(format!(
+                "worker contract discovery returned {status}"
+            )));
+        }
+        let contracts: VisionWorkerContractsResponse =
+            serde_json::from_slice(&body).map_err(|error| {
+                CoreError::Provider(format!("invalid worker contracts JSON: {error}"))
+            })?;
+        validate_worker_contracts(&contracts, self.config.expected_model_identity.as_deref())?;
+        Ok(contracts)
+    }
+
+    pub async fn warmup(&self, model_id: &str) -> CoreResult<VisionWorkerWarmupResponse> {
+        if model_id.trim().is_empty() || model_id.len() > 512 || model_id.contains(['\r', '\n']) {
+            return Err(CoreError::Validation(
+                "worker warmup requires a bounded model identity".to_owned(),
+            ));
+        }
+        let request = VisionWorkerWarmupRequest {
+            protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            model_id: model_id.to_owned(),
+        };
+        let response = self
+            .authorized(
+                self.client
+                    .post(format!("{}/v1/warmup", self.base_url()))
+                    .json(&request),
+            )
+            .send()
+            .await
+            .map_err(|error| CoreError::Provider(format!("worker warmup failed: {error}")))?;
+        let (status, body) =
+            bounded_response_body(response, self.config.max_response_bytes).await?;
+        if !status.is_success() {
+            return Err(CoreError::Provider(format!(
+                "worker warmup returned {status}"
+            )));
+        }
+        let response: VisionWorkerWarmupResponse = serde_json::from_slice(&body)
+            .map_err(|error| CoreError::Provider(format!("invalid worker warmup JSON: {error}")))?;
+        if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION
+            || response.request_id != request.request_id
+            || response.model_id != request.model_id
+        {
+            return Err(CoreError::Provider(
+                "worker warmup response scope mismatch".to_owned(),
+            ));
+        }
+        Ok(response)
+    }
+
     fn authorized(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(authorization) = &self.config.authorization {
             request = request.header(reqwest::header::AUTHORIZATION, authorization);
         }
         request
     }
+}
+
+fn validate_worker_models(
+    response: &VisionWorkerModelsResponse,
+    expected_model_id: Option<&str>,
+) -> CoreResult<()> {
+    if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION
+        || response.worker_id.trim().is_empty()
+    {
+        return Err(CoreError::Provider(
+            "worker models response has incompatible protocol or identity".to_owned(),
+        ));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for model in &response.models {
+        if model.model_id.trim().is_empty()
+            || model.display_name.trim().is_empty()
+            || model.model_version.trim().is_empty()
+            || model.capabilities.is_empty()
+            || !ids.insert(model.model_id.as_str())
+        {
+            return Err(CoreError::Provider(
+                "worker models response contains an invalid or duplicate model".to_owned(),
+            ));
+        }
+        if let Some(checkpoint) = &model.checkpoint_sha256
+            && (checkpoint.len() != 64 || !checkpoint.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(CoreError::Provider(
+                "worker model checkpoint identity is invalid".to_owned(),
+            ));
+        }
+    }
+    if expected_model_id.is_some_and(|expected| !ids.contains(expected)) {
+        return Err(CoreError::Provider(
+            "worker models response omitted the configured model identity".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_worker_contracts(
+    response: &VisionWorkerContractsResponse,
+    expected_model_id: Option<&str>,
+) -> CoreResult<()> {
+    if response.protocol_version != VISION_WORKER_PROTOCOL_VERSION
+        || response.worker_id.trim().is_empty()
+    {
+        return Err(CoreError::Provider(
+            "worker contracts response has incompatible protocol or identity".to_owned(),
+        ));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for model in &response.models {
+        model.validate()?;
+        if !ids.insert(model.model_id.as_str()) {
+            return Err(CoreError::Provider(
+                "worker contracts response contains duplicate model identities".to_owned(),
+            ));
+        }
+        match &model.connection {
+            annotagent_core::ModelConnection::VisionWorkerModel {
+                worker_id,
+                worker_model_id,
+            } if worker_id == &response.worker_id && worker_model_id == &model.model_id => {}
+            _ => {
+                return Err(CoreError::Provider(
+                    "worker contract connection identity mismatch".to_owned(),
+                ));
+            }
+        }
+    }
+    if expected_model_id.is_some_and(|expected| !ids.contains(expected)) {
+        return Err(CoreError::Provider(
+            "worker contracts response omitted the configured model identity".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -835,6 +999,84 @@ mod tests {
                 input_types: vec![VisionInputType::Image],
                 output_types: all_artifact_kinds().to_vec(),
                 limits: VisionModelLimits::default(),
+                models: vec![annotagent_core::VisionWorkerModelSummary {
+                    model_id: "fixture".to_owned(),
+                    display_name: "Fixture model".to_owned(),
+                    architecture: Some("fixture".to_owned()),
+                    model_version: "1".to_owned(),
+                    checkpoint_sha256: None,
+                    capabilities: vec![VisionCapability::Classification],
+                    availability: annotagent_core::ModelAvailability::Unknown,
+                }],
+            })
+        }
+        async fn models() -> Json<VisionWorkerModelsResponse> {
+            Json(VisionWorkerModelsResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                worker_id: "fixture-worker".to_owned(),
+                models: vec![annotagent_core::VisionWorkerModelSummary {
+                    model_id: "fixture".to_owned(),
+                    display_name: "Fixture model".to_owned(),
+                    architecture: Some("fixture".to_owned()),
+                    model_version: "1".to_owned(),
+                    checkpoint_sha256: None,
+                    capabilities: vec![VisionCapability::Classification],
+                    availability: annotagent_core::ModelAvailability::Unknown,
+                }],
+            })
+        }
+        async fn contracts() -> Json<VisionWorkerContractsResponse> {
+            Json(VisionWorkerContractsResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                worker_id: "fixture-worker".to_owned(),
+                models: vec![annotagent_core::ExpertModelManifest {
+                    schema_version: "1".to_owned(),
+                    model_id: "fixture".to_owned(),
+                    display_name: "Fixture model".to_owned(),
+                    architecture: Some("fixture".to_owned()),
+                    model_version: "1".to_owned(),
+                    connection: annotagent_core::ModelConnection::VisionWorkerModel {
+                        worker_id: "fixture-worker".to_owned(),
+                        worker_model_id: "fixture".to_owned(),
+                    },
+                    capabilities: std::collections::BTreeSet::from([
+                        annotagent_core::ModelCapability::ImageClassification,
+                    ]),
+                    input_contracts: vec![annotagent_core::ArtifactContract::artifact(
+                        "image",
+                        annotagent_core::ArtifactKind::Image,
+                        true,
+                        false,
+                    )],
+                    output_contracts: vec![annotagent_core::ArtifactContract::artifact(
+                        "classifications",
+                        annotagent_core::ArtifactKind::Classification,
+                        true,
+                        true,
+                    )],
+                    prompt_contracts: Vec::new(),
+                    score_semantics: annotagent_core::ScoreSemantics::RelativeConfidence,
+                    geometry_semantics: annotagent_core::GeometrySemantics::NotApplicable,
+                    label_space: None,
+                    checkpoint: None,
+                    runtime_requirements: annotagent_core::RuntimeRequirements::default(),
+                    license: annotagent_core::LicenseMetadata::default(),
+                    availability: annotagent_core::ModelAvailability::Unknown,
+                    availability_evidence: annotagent_core::ModelAvailabilityEvidence::default(),
+                    metadata: BTreeMap::new(),
+                }],
+            })
+        }
+        async fn warmup(
+            Json(request): Json<VisionWorkerWarmupRequest>,
+        ) -> Json<VisionWorkerWarmupResponse> {
+            Json(VisionWorkerWarmupResponse {
+                protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+                request_id: request.request_id,
+                model_id: request.model_id,
+                ready: true,
+                duration_ms: Some(1),
+                error: None,
             })
         }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -847,6 +1089,9 @@ mod tests {
                 Router::new()
                     .route("/health", get(health))
                     .route("/v1/capabilities", get(capabilities))
+                    .route("/v1/models", get(models))
+                    .route("/v1/contracts", get(contracts))
+                    .route("/v1/warmup", post(warmup))
                     .route("/v1/infer", post(infer)),
             )
             .await
@@ -892,6 +1137,83 @@ mod tests {
                 .capabilities
                 .contains(&VisionCapability::SemanticSegmentation)
         );
+        let models = backend.discover_models().await.expect("worker models");
+        assert_eq!(models.models[0].model_id, "fixture");
+        let contracts = backend
+            .discover_contracts()
+            .await
+            .expect("worker contracts");
+        assert_eq!(
+            contracts.models[0].connection,
+            annotagent_core::ModelConnection::VisionWorkerModel {
+                worker_id: "fixture-worker".to_owned(),
+                worker_model_id: "fixture".to_owned(),
+            }
+        );
+        let warmup = backend.warmup("fixture").await.expect("worker warmup");
+        assert!(warmup.ready);
+    }
+
+    #[test]
+    fn discovery_rejects_duplicate_models_and_worker_contract_spoofing() {
+        let summary = annotagent_core::VisionWorkerModelSummary {
+            model_id: "fixture".to_owned(),
+            display_name: "Fixture".to_owned(),
+            architecture: None,
+            model_version: "1".to_owned(),
+            checkpoint_sha256: None,
+            capabilities: vec![VisionCapability::ObjectDetection],
+            availability: annotagent_core::ModelAvailability::Unknown,
+        };
+        let duplicate = VisionWorkerModelsResponse {
+            protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+            worker_id: "worker".to_owned(),
+            models: vec![summary.clone(), summary],
+        };
+        assert!(validate_worker_models(&duplicate, Some("fixture")).is_err());
+
+        let manifest = annotagent_core::ExpertModelManifest {
+            schema_version: "1".to_owned(),
+            model_id: "fixture".to_owned(),
+            display_name: "Fixture".to_owned(),
+            architecture: None,
+            model_version: "1".to_owned(),
+            connection: annotagent_core::ModelConnection::VisionWorkerModel {
+                worker_id: "spoofed-worker".to_owned(),
+                worker_model_id: "fixture".to_owned(),
+            },
+            capabilities: std::collections::BTreeSet::from([
+                annotagent_core::ModelCapability::ObjectDetection,
+            ]),
+            input_contracts: vec![annotagent_core::ArtifactContract::artifact(
+                "image",
+                annotagent_core::ArtifactKind::Image,
+                true,
+                false,
+            )],
+            output_contracts: vec![annotagent_core::ArtifactContract::artifact(
+                "detections",
+                annotagent_core::ArtifactKind::DetectionSet,
+                true,
+                true,
+            )],
+            prompt_contracts: Vec::new(),
+            score_semantics: annotagent_core::ScoreSemantics::RelativeConfidence,
+            geometry_semantics: annotagent_core::GeometrySemantics::PredictedGeometry,
+            label_space: None,
+            checkpoint: None,
+            runtime_requirements: annotagent_core::RuntimeRequirements::default(),
+            license: annotagent_core::LicenseMetadata::default(),
+            availability: annotagent_core::ModelAvailability::Unknown,
+            availability_evidence: annotagent_core::ModelAvailabilityEvidence::default(),
+            metadata: BTreeMap::new(),
+        };
+        let contracts = VisionWorkerContractsResponse {
+            protocol_version: VISION_WORKER_PROTOCOL_VERSION,
+            worker_id: "worker".to_owned(),
+            models: vec![manifest],
+        };
+        assert!(validate_worker_contracts(&contracts, Some("fixture")).is_err());
     }
 
     #[test]

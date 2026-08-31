@@ -9,9 +9,10 @@ Updated: 2026-09-01
   persistent Settings/SQLite still use the older Detection Worker projection until M5/M7.
 - The complete availability enum and validation gate now exist, but live discovery/smoke evidence
   is not persisted through Settings until M2/M7.
-- The detection-specific Worker protocol exposes health, capabilities, infer and cancel; generic
-  model/contract discovery and warmup are absent.
-- There is no reusable Python package or CLI scaffold for third-party workers.
+- The generic protocol now includes model/contract discovery and optional warmup. Existing
+  detection-specific adapters still emit their legacy capability shape until M5 migration.
+- The reusable Python SDK and native/Python scaffold exist; generated adapters intentionally remain
+  unavailable until a developer supplies identity, implementation, weights and sample evidence.
 - `capability.segment` currently treats DetectionSet as an implicit prompt and emits item-level
   instance masks. Box/Point Prompt Set and Mask Set pipeline Artifacts are not public contracts.
 - Mask-to-bbox is hidden inside the legacy RoboCup SAM refiner instead of represented as a Core DAG

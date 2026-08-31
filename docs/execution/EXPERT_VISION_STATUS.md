@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current milestone
 
-M1 — Expert Model Manifest (complete)
+M2 — Worker SDK and Protocol Contract (complete)
 
 ## Completed
 
@@ -36,15 +36,26 @@ M1 — Expert Model Manifest (complete)
   while healthy in-process Mock/deterministic fixtures retain truthful offline availability.
 - Added an extensibility test registering a fictional `Test Edge Detector` solely from capability
   and contract metadata.
+- Extended the existing protocol v1 compatibly with model and contract discovery, multi-model
+  capability summaries and optional warmup while retaining health, inference and cancellation.
+- Added strict Rust discovery validation for protocol/model/Worker identity, duplicate IDs,
+  checkpoint digests, complete Manifest contracts and warmup response scope.
+- Added `sdk/python/annotagent_vision_worker` with Pydantic schemas, FastAPI helpers, bounded image
+  decode, coordinate normalization, Artifact serialization, cancellation, error mapping,
+  conformance tests and manifest loading.
+- Added native `annotagent worker scaffold` support and matching Python scaffolding for generic
+  capabilities plus SAM 2, YOLO, RF-DETR, LocateAnything, PIDNet and Grounding DINO presets.
+- Verified every preset produces a valid, explicitly unavailable template and never downloads or
+  claims model weights.
 
 ## In progress
 
-- None. M1 is ready for its independent local commit.
+- None. M2 is ready for its independent local commit.
 
 ## Next
 
-- M2: extend the existing HTTP Worker protocol and add the Python Worker SDK, scaffold CLI and
-  conformance tests.
+- M3: add Prompt/Mask Pipeline Artifacts, the Artifact Conversion Registry and the explicit
+  Detection → Box Prompt → Prompted Segmentation → Mask → BBox Runtime chain.
 
 ## Latest Rust tests
 
@@ -54,6 +65,8 @@ M1 — Expert Model Manifest (complete)
 - M1 `cargo test --workspace --all-features --quiet`: PASS; zero failures; one opt-in billable
   smoke ignored.
 - M1 focused Core suite: 67 passed.
+- M2 full workspace Rust tests: PASS; zero failures; one opt-in billable smoke ignored.
+- M2 full workspace strict Clippy and Rustfmt: PASS.
 
 ## Latest Web tests
 
@@ -65,7 +78,10 @@ M1 — Expert Model Manifest (complete)
 
 - Existing Rust provider contract tests passed inside the workspace suite.
 - `python3 -m py_compile` for the HTTP, SAM, RF-DETR and LocateAnything reference workers: PASS.
-- Python SDK/conformance suite does not exist yet and is an M2 deliverable.
+- `uv run --project sdk/python --extra test python -m pytest sdk/python/tests`: PASS — 13 tests.
+- Rust generic protocol fixture covers health/capabilities/models/contracts/warmup/infer and rejects
+  duplicate/spoofed discovery identities.
+- Native SAM scaffold command plus SDK manifest parse smoke: PASS.
 
 ## Latest browser verification
 
@@ -75,7 +91,8 @@ M1 — Expert Model Manifest (complete)
 
 - Pre-task head: `8a1cbb1 fix(agent): harden pipeline builder tool protocol`.
 - M0: `127d0de docs: establish expert vision integration baseline`.
-- M1 commit pending: `feat(models): add capability-driven expert model manifests`.
+- M1: `4faed86 feat(models): add capability-driven expert model manifests`.
+- M2 commit pending: `feat(workers): add an extensible expert vision worker sdk`.
 
 ## Release-blocking remainder
 
