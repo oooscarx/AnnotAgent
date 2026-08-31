@@ -54,18 +54,37 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | M2 Rust validation | PASS | Focused Model tests 5/5; complete Core 60/60 and Storage 11/11; workspace all-feature check, strict all-workspace Clippy and all-workspace tests 255/255 pass. |
 | M2 Web/E2E regression | PASS | TypeScript, 36 Vitest tests, production build and isolated Chromium E2E 26/26 pass. |
 
+## M3 Provider API and GUI
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Provider preset and CRUD API | PASS | Pure-data presets plus list/create/get/patch/delete routes persist `ProviderProfile`; endpoint/adapter changes fail with 409 while Models reference the Provider. |
+| Write-only credential lifecycle | PASS | System credential store, environment and session actions return only configured/source state; API regression asserts a submitted sentinel and Keyring locator are absent from all DTOs. |
+| Explicit legacy migration | PASS | Migration endpoint copies legacy source to system credential storage and deletes the old source only when separately requested. No startup or passive check migrates it. |
+| Passive connection check | PASS | Mock and HTTP `/models` paths are non-generation requests; health and checked timestamp persist. UI labels the operation as non-billable. |
+| Explicit active probe | PASS | API rejects `confirmed_billable=false`; UI presents a possible-charge confirmation; success records Profile revision, request ID, tokens, latency, currency and configured-price cost. |
+| Bounded Provider transport | PASS | Lifecycle client rejects redirects, limits response bodies to one MiB, applies validated headers/timeouts and maps HTTP/transport failures to sanitized structured Provider errors. Fixture tests verify discovery authorization and usage parsing. |
+| Model discovery truthfulness | PASS | Discovery returns sorted remote IDs and an explicit warning that capabilities remain unknown; it does not fabricate capability or pricing claims. |
+| Model Profile lifecycle | PASS | Manual create/edit/disable/lock/delete, semantic next revisions, capability/modality/protocol/pricing inputs and Provider/capability/health/modality/enable/price filters are backed by Registry API. |
+| Reference-safe deletion | PASS | Provider and Model deletion enumerate Project bindings, Drafts, published versions, Run snapshots and active-probe usage and return structured 409 plus remediation. Historical references are not cascaded. |
+| Project and Agent binding API | PASS | Project GET/PUT validates every Profile and user lock boundary; Agent defaults GET/PUT uses typed global defaults and compatibility validation. |
+| Settings information architecture | PASS | Providers, Models, Vision Workers, Storage and Usage are all reachable tabs. LLM/VLM credentials and HTTP Vision Workers remain visibly separate. Legacy `/models` reaches Vision Workers. |
+| Usage surface | PASS | Usage page aggregates persisted confirmed Probe records; passive checks produce no fake usage rows. |
+| M3 Rust validation | PASS | Provider 39/39, Server 11/11 and Storage 11/11 focused suites; full workspace 257/257 plus doc tests; strict all-workspace/all-target/all-feature Clippy, fmt and build pass. |
+| M3 Web/E2E validation | PASS | TypeScript, 36/36 Vitest, production build and isolated Chromium 28/28 pass. New tests cover Provider→Model→Usage and 1024/390 px overflow. In-app browser inspection found no console errors. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
 |---|---|---|
-| A. Provider | OPEN | Reusable Profile contract and SQLite persistence exist; CRUD API, health operations and deletion protection remain for M3. |
+| A. Provider | PASS | Multiple persistent Profiles, pure presets, CRUD, passive/active checks, discovery, health, reference protection and Settings lifecycle UI pass offline tests. |
 | B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
-| C. Model Profile | OPEN | Revisioned profiles, pricing/protocol provenance and snapshot contract pass; real publish/runtime/usage integration and API/UI remain. |
-| D. Project Binding | OPEN | Persistent hierarchy, global/Agent defaults, compatibility and locks pass; Project/Node UI and end-to-end execution remain. |
+| C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe usage and snapshot contract pass; real publish/runtime call integration remains for M6–M8. |
+| D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility and locks pass; Project/Node binding UI and end-to-end execution remain. |
 | E. Node Catalog | OPEN | Typed Registry and guided projection exist; exact Alpha catalog and Resize/Tile/Projection remain. |
 | F. Agent | OPEN | Real bounded loop is reusable; Provider/Profile tools and revision-aware compatible binding remain. |
 | G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
-| H. Product | OPEN | Settings and Project guided flows exist but use singleton Provider/model configuration. |
+| H. Product | OPEN | Registry Settings IA passes; Project Build still needs compatible Profile selection and Builder integration in later milestones. |
 | I. Regression | OPEN | Existing release tests are strong; full post-migration evidence remains. |
 
 No item is marked PASS merely because a UI control, DTO or Mock path exists.

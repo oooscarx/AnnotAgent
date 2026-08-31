@@ -160,6 +160,135 @@ export interface DetectionWorkerTestResult {
   };
 }
 
+export type ProviderAdapterKind = "open_ai_compatible" | "mock";
+export type CredentialSource =
+  | "system_keyring"
+  | "environment_variable"
+  | "session_only"
+  | "legacy_workspace_file";
+export type ProviderHealthStatus =
+  | "unknown"
+  | "configured"
+  | "available"
+  | "unreachable"
+  | "invalid_credential"
+  | "rate_limited"
+  | "incompatible_protocol"
+  | "disabled";
+
+export interface ProviderPresetProfile {
+  id: string;
+  display_name: string;
+  adapter: ProviderAdapterKind;
+  base_url: string;
+  description: string;
+  suggested_models: string[];
+}
+
+export interface ProviderProfile {
+  id: string;
+  display_name: string;
+  preset_id?: string;
+  adapter: ProviderAdapterKind;
+  base_url: string;
+  endpoint_summary: string;
+  organization?: string;
+  workspace?: string;
+  safe_headers: Record<string, string>;
+  connection_policy: {
+    request_timeout_seconds: number;
+    maximum_retries: number;
+    maximum_concurrency: number;
+    minimum_retry_delay_ms: number;
+    maximum_retry_delay_ms: number;
+    allow_remote_http: boolean;
+    allowed_redirects: number;
+  };
+  enabled: boolean;
+  health: {
+    status: ProviderHealthStatus;
+    safe_message?: string;
+    checked_at?: string;
+  };
+  credential_configured: boolean;
+  credential_source?: CredentialSource;
+  model_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type InputModality = "text" | "image" | "video";
+export type ModelCapability =
+  | "text_generation"
+  | "vision_language"
+  | "image_classification"
+  | "object_detection"
+  | "open_vocabulary_detection"
+  | "phrase_grounding"
+  | "semantic_segmentation"
+  | "prompted_segmentation"
+  | "instance_segmentation"
+  | "keypoint_detection";
+
+export interface RegistryModelProfile {
+  id: string;
+  revision: number;
+  provider_id: string;
+  display_name: string;
+  remote_model_id: string;
+  input_modalities: InputModality[];
+  protocol_features: {
+    tool_calls: boolean;
+    parallel_tool_calls: boolean;
+    structured_output: boolean;
+    json_schema: boolean;
+    usage_reporting: boolean;
+    streaming: boolean;
+    reasoning_controls: boolean;
+  };
+  task_capabilities: ModelCapability[];
+  capability_source: "user_declared" | "provider_discovered" | "preset" | "unknown";
+  limits: {
+    context_tokens?: number;
+    maximum_output_tokens?: number;
+    maximum_images_per_request?: number;
+    maximum_image_pixels?: number;
+  };
+  generation_defaults: Record<string, string | number | undefined>;
+  pricing: {
+    currency: string;
+    input_per_million_tokens?: string;
+    output_per_million_tokens?: string;
+    cached_input_per_million_tokens?: string;
+    per_image?: string;
+    per_request?: string;
+    source: "user_configured" | "provider_discovered" | "preset" | "unknown";
+    updated_at?: string;
+  };
+  status: "unknown" | "unverified" | "available" | "unavailable" | "disabled";
+  enabled: boolean;
+  locked: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderProbeUsage {
+  id: string;
+  provider_id: string;
+  model_profile_id: string;
+  model_profile_revision: number;
+  request_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cost: string;
+  currency: string;
+  duration_ms: number;
+  succeeded: boolean;
+  safe_message: string;
+  created_at: string;
+}
+
 export interface WorkflowNodeSummary {
   id: string;
   node_type: string;

@@ -18,19 +18,25 @@ use annotagent_application::{
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactValidationState, AttributeDefinition,
-    BatchId, CandidateAgreement, CorrectionFeatures, CorrectionRecord, CredentialReference,
-    CredentialSource, DetectionEvidence, EnabledSkillConfig, LabelId, NormalizedRect,
-    PipelineArtifact, PipelineBuilderConstraints, ProjectSchema, ProviderId, ReviewStatus,
-    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope,
-    SecretStore, SecretStoreError, SecretValue, TaskKind, UsageTotals, WorkflowConstraints,
-    WorkflowDraft,
+    BatchId, BindingMutationActor, CandidateAgreement, CapabilityDeclarationSource,
+    CorrectionFeatures, CorrectionRecord, CredentialReference, CredentialSource, DetectionEvidence,
+    EnabledSkillConfig, GenerationDefaults, GlobalModelDefaults, InputModality, LabelId,
+    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelCapability, ModelLimits,
+    ModelPricing, ModelProfile, ModelProfileId, ModelProfileStatus, ModelRequirements,
+    NormalizedRect, PipelineArtifact, PipelineBuilderConstraints, ProjectModelBinding,
+    ProjectSchema, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
+    ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus, ProviderId,
+    ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskKind, UsageTotals,
+    WorkflowConstraints, WorkflowDraft, check_model_compatibility,
 };
 use annotagent_provider::{
     EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
-    LegacyWorkspaceFileSecretStore, SecretStoreRouter, SessionSecretStore,
+    LegacyWorkspaceFileSecretStore, SecretStoreRouter, SessionSecretStore, active_provider_probe,
+    discover_provider_models, passive_provider_check,
 };
 use annotagent_runtime::RuntimeStore;
-use annotagent_storage::HistoryRun;
+use annotagent_storage::{HistoryRun, ProviderProbeUsage, RegistryReference};
 use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
@@ -42,6 +48,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures::{Stream, stream};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
@@ -232,6 +239,49 @@ impl ApiError {
         }
     }
 
+    fn conflict(
+        code: &str,
+        error: impl std::fmt::Display,
+        references: &[RegistryReference],
+    ) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": code,
+                "error": error.to_string(),
+                "status": StatusCode::CONFLICT.as_u16(),
+                "references": references,
+                "suggested_action": "Disable this item or rebind every reference before deleting it."
+            }),
+        }
+    }
+
+    fn provider(error: &ProviderErrorDetails) -> Self {
+        let status = match error.code {
+            annotagent_core::ProviderErrorCode::MissingCredential
+            | annotagent_core::ProviderErrorCode::InvalidEndpoint
+            | annotagent_core::ProviderErrorCode::ModelNotFound
+            | annotagent_core::ProviderErrorCode::UnsupportedCapability => StatusCode::BAD_REQUEST,
+            annotagent_core::ProviderErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
+            annotagent_core::ProviderErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            annotagent_core::ProviderErrorCode::Timeout
+            | annotagent_core::ProviderErrorCode::Unreachable
+            | annotagent_core::ProviderErrorCode::IncompatibleProtocol
+            | annotagent_core::ProviderErrorCode::ResponseTooLarge
+            | annotagent_core::ProviderErrorCode::InvalidResponse => StatusCode::BAD_GATEWAY,
+            annotagent_core::ProviderErrorCode::Cancelled => StatusCode::REQUEST_TIMEOUT,
+        };
+        Self {
+            status,
+            body: json!({
+                "error": error.safe_message,
+                "status": status.as_u16(),
+                "details": error,
+                "suggested_action": "Review the Provider connection and credential, then retry."
+            }),
+        }
+    }
+
     fn active_run(conflict: &ActiveRunExists) -> Self {
         Self {
             status: StatusCode::CONFLICT,
@@ -266,6 +316,63 @@ type ApiResult<T> = Result<T, ApiError>;
 pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
+        .route("/api/provider-presets", get(list_provider_presets))
+        .route(
+            "/api/providers",
+            get(list_provider_profiles).post(create_provider_profile),
+        )
+        .route(
+            "/api/providers/{provider_id}",
+            get(get_provider_profile)
+                .patch(update_provider_profile)
+                .delete(delete_provider_profile),
+        )
+        .route(
+            "/api/providers/{provider_id}/credential",
+            post(save_provider_credential).delete(delete_provider_credential),
+        )
+        .route(
+            "/api/providers/{provider_id}/migrate-credential",
+            post(migrate_provider_credential),
+        )
+        .route(
+            "/api/providers/{provider_id}/check",
+            post(check_provider_profile),
+        )
+        .route(
+            "/api/providers/{provider_id}/active-probe",
+            post(probe_provider_profile),
+        )
+        .route(
+            "/api/providers/{provider_id}/discover-models",
+            post(discover_models_for_provider),
+        )
+        .route(
+            "/api/model-profiles",
+            get(list_model_profiles).post(create_model_profile),
+        )
+        .route(
+            "/api/model-profiles/compatible",
+            get(list_compatible_model_profiles),
+        )
+        .route(
+            "/api/model-profiles/{model_id}",
+            get(get_model_profile)
+                .patch(update_model_profile)
+                .delete(delete_model_profile),
+        )
+        .route(
+            "/api/model-profiles/{model_id}/usage",
+            get(get_model_profile_usage),
+        )
+        .route(
+            "/api/projects/{project_id}/model-bindings",
+            get(get_project_model_bindings).put(put_project_model_bindings),
+        )
+        .route(
+            "/api/agent-model-bindings",
+            get(get_agent_model_bindings).put(put_agent_model_bindings),
+        )
         .route("/api/skills", get(list_skills))
         .route("/api/skills/{skill_id}", get(get_skill))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -455,6 +562,1191 @@ async fn health(State(state): State<ServerState>) -> Json<Value> {
         "workspace": state.application.workspace(),
         "database": state.application.database_path(),
     }))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProviderPresetDto {
+    id: &'static str,
+    display_name: &'static str,
+    adapter: ProviderAdapterKind,
+    base_url: &'static str,
+    description: &'static str,
+    suggested_models: &'static [&'static str],
+}
+
+async fn list_provider_presets() -> Json<Value> {
+    let presets = [
+        ProviderPresetDto {
+            id: "mock",
+            display_name: "Mock (offline)",
+            adapter: ProviderAdapterKind::Mock,
+            base_url: "http://127.0.0.1",
+            description: "Deterministic offline Provider for tests and demos.",
+            suggested_models: &["mock-vision", "mock-text"],
+        },
+        ProviderPresetDto {
+            id: "dashscope",
+            display_name: "Alibaba DashScope",
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            description: "OpenAI-compatible DashScope endpoint.",
+            suggested_models: &["qwen3.7-flash", "qwen-max"],
+        },
+        ProviderPresetDto {
+            id: "openai",
+            display_name: "OpenAI",
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://api.openai.com/v1",
+            description: "OpenAI Chat Completions-compatible endpoint.",
+            suggested_models: &[],
+        },
+        ProviderPresetDto {
+            id: "openrouter",
+            display_name: "OpenRouter",
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://openrouter.ai/api/v1",
+            description: "OpenAI-compatible multi-model routing endpoint.",
+            suggested_models: &[],
+        },
+        ProviderPresetDto {
+            id: "gemini-compatible",
+            display_name: "Gemini OpenAI compatibility",
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            description: "Gemini OpenAI compatibility endpoint.",
+            suggested_models: &[],
+        },
+        ProviderPresetDto {
+            id: "custom",
+            display_name: "Custom OpenAI-compatible",
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://provider.example/v1",
+            description: "User-managed compatible endpoint.",
+            suggested_models: &[],
+        },
+    ];
+    Json(json!({"presets": presets}))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProviderProfileDto {
+    id: ProviderId,
+    display_name: String,
+    preset_id: Option<String>,
+    adapter: ProviderAdapterKind,
+    base_url: String,
+    endpoint_summary: String,
+    organization: Option<String>,
+    workspace: Option<String>,
+    safe_headers: BTreeMap<String, String>,
+    connection_policy: ProviderConnectionPolicy,
+    enabled: bool,
+    health: ProviderHealthSnapshot,
+    credential_configured: bool,
+    credential_source: Option<CredentialSource>,
+    model_count: usize,
+    created_at: chrono::DateTime<Utc>,
+    updated_at: chrono::DateTime<Utc>,
+}
+
+async fn provider_profile_dto(
+    state: &ServerState,
+    profile: ProviderProfile,
+) -> ApiResult<ProviderProfileDto> {
+    let credential_configured = match &profile.credential_ref {
+        Some(reference) => state.secret_store.exists(reference).await.unwrap_or(false),
+        None => profile.adapter == ProviderAdapterKind::Mock,
+    };
+    let model_count = state
+        .application
+        .store()
+        .list_model_profiles(Some(profile.id), false)
+        .map_err(ApiError::internal)?
+        .len();
+    let endpoint_summary = profile.endpoint_summary();
+    Ok(ProviderProfileDto {
+        id: profile.id,
+        display_name: profile.display_name,
+        preset_id: profile.preset_id,
+        adapter: profile.adapter,
+        base_url: profile.base_url.to_string(),
+        endpoint_summary,
+        organization: profile.organization,
+        workspace: profile.workspace,
+        safe_headers: profile.safe_headers,
+        connection_policy: profile.connection_policy,
+        enabled: profile.enabled,
+        health: profile.health,
+        credential_configured,
+        credential_source: profile.credential_ref.map(|reference| reference.source),
+        model_count,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateProviderProfileRequest {
+    display_name: String,
+    preset_id: Option<String>,
+    adapter: ProviderAdapterKind,
+    base_url: String,
+    #[serde(default)]
+    organization: Option<String>,
+    #[serde(default)]
+    workspace: Option<String>,
+    #[serde(default)]
+    safe_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    connection_policy: ProviderConnectionPolicy,
+    #[serde(default = "default_true_value")]
+    enabled: bool,
+}
+
+const fn default_true_value() -> bool {
+    true
+}
+
+async fn list_provider_profiles(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let profiles = state
+        .application
+        .store()
+        .list_provider_profiles()
+        .map_err(ApiError::internal)?;
+    let mut result = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        result.push(provider_profile_dto(&state, profile).await?);
+    }
+    Ok(Json(json!({"providers": result})))
+}
+
+async fn create_provider_profile(
+    State(state): State<ServerState>,
+    Json(input): Json<CreateProviderProfileRequest>,
+) -> ApiResult<Json<ProviderProfileDto>> {
+    let now = Utc::now();
+    let profile = ProviderProfile {
+        id: ProviderId::new(),
+        display_name: input.display_name,
+        preset_id: input.preset_id,
+        adapter: input.adapter,
+        base_url: input
+            .base_url
+            .parse()
+            .map_err(|_| ApiError::bad_request("base_url must be a valid URL"))?,
+        organization: input.organization,
+        workspace: input.workspace,
+        credential_ref: None,
+        safe_headers: input.safe_headers,
+        connection_policy: input.connection_policy,
+        enabled: input.enabled,
+        health: if input.enabled {
+            ProviderHealthSnapshot::default()
+        } else {
+            ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Disabled,
+                safe_message: Some("Provider is disabled.".to_owned()),
+                checked_at: None,
+            }
+        },
+        created_at: now,
+        updated_at: now,
+    };
+    profile.validate().map_err(ApiError::bad_request)?;
+    state
+        .application
+        .store()
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    Ok(Json(provider_profile_dto(&state, profile).await?))
+}
+
+async fn get_provider_profile(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+) -> ApiResult<Json<ProviderProfileDto>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let profile = state
+        .application
+        .store()
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(provider_profile_dto(&state, profile).await?))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct UpdateProviderProfileRequest {
+    display_name: Option<String>,
+    preset_id: Option<String>,
+    adapter: Option<ProviderAdapterKind>,
+    base_url: Option<String>,
+    organization: Option<String>,
+    workspace: Option<String>,
+    safe_headers: Option<BTreeMap<String, String>>,
+    connection_policy: Option<ProviderConnectionPolicy>,
+    enabled: Option<bool>,
+}
+
+async fn update_provider_profile(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+    Json(input): Json<UpdateProviderProfileRequest>,
+) -> ApiResult<Json<ProviderProfileDto>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let changes_connection_semantics = input.adapter.is_some_and(|value| value != profile.adapter)
+        || input.base_url.as_ref().is_some_and(|value| {
+            value
+                .parse::<url::Url>()
+                .map_or(true, |value| value != profile.base_url)
+        });
+    if changes_connection_semantics {
+        let models = store
+            .list_model_profiles(Some(provider_id), false)
+            .map_err(ApiError::internal)?;
+        if !models.is_empty() {
+            let references = models
+                .into_iter()
+                .map(|model| RegistryReference {
+                    kind: "model_profile".to_owned(),
+                    location: model.id.to_string(),
+                })
+                .collect::<Vec<_>>();
+            return Err(ApiError::conflict(
+                "provider_semantic_change_requires_rebind",
+                "Endpoint or adapter changes are blocked while Model Profiles use this Provider.",
+                &references,
+            ));
+        }
+    }
+    if let Some(value) = input.display_name {
+        profile.display_name = value;
+    }
+    if let Some(value) = input.preset_id {
+        profile.preset_id = Some(value);
+    }
+    if let Some(value) = input.adapter {
+        profile.adapter = value;
+    }
+    if let Some(value) = input.base_url {
+        profile.base_url = value
+            .parse()
+            .map_err(|_| ApiError::bad_request("base_url must be a valid URL"))?;
+    }
+    if let Some(value) = input.organization {
+        profile.organization = Some(value);
+    }
+    if let Some(value) = input.workspace {
+        profile.workspace = Some(value);
+    }
+    if let Some(value) = input.safe_headers {
+        profile.safe_headers = value;
+    }
+    if let Some(value) = input.connection_policy {
+        profile.connection_policy = value;
+    }
+    if let Some(value) = input.enabled {
+        profile.enabled = value;
+        profile.health = if value {
+            ProviderHealthSnapshot::default()
+        } else {
+            ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Disabled,
+                safe_message: Some("Provider is disabled.".to_owned()),
+                checked_at: Some(Utc::now()),
+            }
+        };
+    }
+    profile.updated_at = Utc::now();
+    profile.validate().map_err(ApiError::bad_request)?;
+    store
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    Ok(Json(provider_profile_dto(&state, profile).await?))
+}
+
+async fn delete_provider_profile(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let references = store
+        .provider_references(provider_id)
+        .map_err(ApiError::internal)?;
+    if !references.is_empty() {
+        return Err(ApiError::conflict(
+            "provider_in_use",
+            "Provider cannot be deleted because durable references still use it.",
+            &references,
+        ));
+    }
+    if let Some(reference) = &profile.credential_ref
+        && matches!(
+            reference.source,
+            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+        )
+    {
+        state
+            .secret_store
+            .delete(reference)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+    store
+        .delete_provider_profile(provider_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"deleted": provider_id})))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveProviderCredentialRequest {
+    source: CredentialSource,
+    #[serde(default)]
+    secret: Option<String>,
+    #[serde(default)]
+    environment_variable: Option<String>,
+}
+
+async fn save_provider_credential(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+    Json(input): Json<SaveProviderCredentialRequest>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let locator = match input.source {
+        CredentialSource::SystemKeyring => format!("provider-{provider_id}"),
+        CredentialSource::SessionOnly => format!("session-provider-{provider_id}"),
+        CredentialSource::EnvironmentVariable => input
+            .environment_variable
+            .ok_or_else(|| ApiError::bad_request("environment_variable is required"))?,
+        CredentialSource::LegacyWorkspaceFile => {
+            return Err(ApiError::bad_request(
+                "legacy credentials can only be attached through explicit migration",
+            ));
+        }
+    };
+    let reference = if input.source == CredentialSource::EnvironmentVariable {
+        let reference = CredentialReference {
+            provider_id,
+            source: input.source,
+            locator,
+        };
+        reference.validate().map_err(ApiError::bad_request)?;
+        if !state
+            .secret_store
+            .exists(&reference)
+            .await
+            .map_err(ApiError::bad_request)?
+        {
+            return Err(ApiError::bad_request(
+                "the selected environment variable is not currently configured",
+            ));
+        }
+        reference
+    } else {
+        let secret = input.secret.ok_or_else(|| {
+            ApiError::bad_request("secret is required for this credential source")
+        })?;
+        state
+            .secret_store
+            .put(
+                SecretScope {
+                    provider_id,
+                    source: input.source,
+                    locator,
+                },
+                SecretValue::new(secret).map_err(ApiError::bad_request)?,
+            )
+            .await
+            .map_err(ApiError::bad_request)?
+    };
+    if let Some(previous) = profile.credential_ref.replace(reference.clone())
+        && previous != reference
+        && matches!(
+            previous.source,
+            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+        )
+    {
+        state
+            .secret_store
+            .delete(&previous)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+    profile.health = ProviderHealthSnapshot {
+        status: ProviderHealthStatus::Configured,
+        safe_message: Some(
+            "Credential is configured; run a passive check to verify the connection.".to_owned(),
+        ),
+        checked_at: None,
+    };
+    profile.updated_at = Utc::now();
+    store
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({
+        "provider_id": provider_id,
+        "credential_configured": true,
+        "credential_source": reference.source
+    })))
+}
+
+async fn delete_provider_credential(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    if let Some(reference) = profile.credential_ref.take()
+        && matches!(
+            reference.source,
+            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+        )
+    {
+        state
+            .secret_store
+            .delete(&reference)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+    profile.health = ProviderHealthSnapshot::default();
+    profile.updated_at = Utc::now();
+    store
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({
+        "provider_id": provider_id,
+        "credential_configured": false
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct MigrateProviderCredentialRequest {
+    delete_source_after_success: bool,
+}
+
+async fn migrate_provider_credential(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+    Json(input): Json<MigrateProviderCredentialRequest>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let legacy = profile
+        .credential_ref
+        .clone()
+        .filter(|reference| reference.source == CredentialSource::LegacyWorkspaceFile)
+        .ok_or_else(|| ApiError::bad_request("Provider does not reference a legacy credential"))?;
+    let secret = state
+        .secret_store
+        .resolve(&legacy)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let migrated = state
+        .secret_store
+        .put(
+            SecretScope {
+                provider_id,
+                source: CredentialSource::SystemKeyring,
+                locator: format!("provider-{provider_id}"),
+            },
+            secret,
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+    profile.credential_ref = Some(migrated);
+    profile.health = ProviderHealthSnapshot {
+        status: ProviderHealthStatus::Configured,
+        safe_message: Some(
+            "Legacy credential migrated to the native system credential store.".to_owned(),
+        ),
+        checked_at: None,
+    };
+    profile.updated_at = Utc::now();
+    store
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    if input.delete_source_after_success {
+        state
+            .secret_store
+            .delete(&legacy)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+    Ok(Json(json!({
+        "provider_id": provider_id,
+        "credential_configured": true,
+        "credential_source": CredentialSource::SystemKeyring,
+        "source_deleted": input.delete_source_after_success
+    })))
+}
+
+async fn resolve_provider_credential(
+    state: &ServerState,
+    profile: &ProviderProfile,
+) -> ApiResult<Option<SecretValue>> {
+    match &profile.credential_ref {
+        Some(reference) => state
+            .secret_store
+            .resolve(reference)
+            .await
+            .map(Some)
+            .map_err(|error| match error {
+                SecretStoreError::NotFound => ApiError::bad_request(
+                    "the Provider credential reference is configured but no credential exists",
+                ),
+                other => ApiError::bad_request(other),
+            }),
+        None if profile.adapter == ProviderAdapterKind::Mock => Ok(None),
+        None => Err(ApiError::bad_request(
+            "configure a Provider credential before making a connection request",
+        )),
+    }
+}
+
+async fn discover_models_for_provider(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let profile = state
+        .application
+        .store()
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let credential = resolve_provider_credential(&state, &profile).await?;
+    let (models, latency_ms) = discover_provider_models(&profile, credential.as_ref())
+        .await
+        .map_err(|error| ApiError::provider(&error))?;
+    Ok(Json(json!({
+        "provider_id": provider_id,
+        "models": models,
+        "latency_ms": latency_ms,
+        "capability_status": "unknown",
+        "warning": "Discovery returns model IDs only. Capabilities must be declared or verified separately."
+    })))
+}
+
+async fn check_provider_profile(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let credential = resolve_provider_credential(&state, &profile).await?;
+    match passive_provider_check(&profile, credential.as_ref()).await {
+        Ok(check) => {
+            profile.health = ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some(check.safe_message.clone()),
+                checked_at: Some(Utc::now()),
+            };
+            profile.updated_at = Utc::now();
+            store
+                .save_provider_profile(&profile)
+                .map_err(ApiError::internal)?;
+            Ok(Json(json!({
+                "provider": provider_profile_dto(&state, profile).await?,
+                "check": check,
+                "billable": false
+            })))
+        }
+        Err(error) => {
+            profile.health = ProviderHealthSnapshot {
+                status: health_status_for_provider_error(&error),
+                safe_message: Some(error.safe_message.clone()),
+                checked_at: Some(Utc::now()),
+            };
+            profile.updated_at = Utc::now();
+            store
+                .save_provider_profile(&profile)
+                .map_err(ApiError::internal)?;
+            Err(ApiError::provider(&error))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActiveProbeRequest {
+    model_profile_id: ModelProfileId,
+    confirmed_billable: bool,
+}
+
+async fn probe_provider_profile(
+    State(state): State<ServerState>,
+    AxumPath(provider_id): AxumPath<String>,
+    Json(input): Json<ActiveProbeRequest>,
+) -> ApiResult<Json<Value>> {
+    if !input.confirmed_billable {
+        return Err(ApiError::bad_request(
+            "active probe may incur Provider charges; set confirmed_billable=true to continue",
+        ));
+    }
+    let provider_id = parse_provider_id(&provider_id)?;
+    let store = state.application.store();
+    let mut profile = store
+        .get_provider_profile(provider_id)
+        .map_err(ApiError::not_found)?;
+    let mut model = store
+        .get_model_profile(input.model_profile_id, None)
+        .map_err(ApiError::not_found)?;
+    if model.provider_id != provider_id {
+        return Err(ApiError::bad_request(
+            "the selected Model Profile belongs to a different Provider",
+        ));
+    }
+    let credential = resolve_provider_credential(&state, &profile).await?;
+    let probe = active_provider_probe(&profile, credential.as_ref(), &model.remote_model_id)
+        .await
+        .map_err(|error| ApiError::provider(&error))?;
+    let cost = calculate_probe_cost(&model.pricing, &probe);
+    let usage = ProviderProbeUsage {
+        id: uuid::Uuid::new_v4(),
+        provider_id,
+        model_profile_id: model.id,
+        model_profile_revision: model.revision,
+        request_id: probe.request_id.clone(),
+        input_tokens: probe.input_tokens,
+        output_tokens: probe.output_tokens,
+        total_tokens: probe.total_tokens,
+        cost: cost.to_string(),
+        currency: model.pricing.currency.clone(),
+        duration_ms: probe.latency_ms,
+        succeeded: true,
+        safe_message: probe.safe_message.clone(),
+        created_at: Utc::now(),
+    };
+    store
+        .record_provider_probe_usage(&usage)
+        .map_err(ApiError::internal)?;
+    profile.health = ProviderHealthSnapshot {
+        status: ProviderHealthStatus::Available,
+        safe_message: Some("Active model probe succeeded.".to_owned()),
+        checked_at: Some(Utc::now()),
+    };
+    profile.updated_at = Utc::now();
+    store
+        .save_provider_profile(&profile)
+        .map_err(ApiError::internal)?;
+    model.status = ModelProfileStatus::Available;
+    model.updated_at = Utc::now();
+    store
+        .save_model_profile(&model)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({
+        "provider_id": provider_id,
+        "model_profile_id": model.id,
+        "billable": true,
+        "probe": probe,
+        "usage": usage
+    })))
+}
+
+fn calculate_probe_cost(
+    pricing: &ModelPricing,
+    probe: &annotagent_provider::ProviderActiveProbe,
+) -> Decimal {
+    let million = Decimal::from(1_000_000_u64);
+    let input = Decimal::from(probe.input_tokens.unwrap_or(0));
+    let output = Decimal::from(probe.output_tokens.unwrap_or(0));
+    pricing.per_request.unwrap_or(Decimal::ZERO)
+        + pricing
+            .input_per_million_tokens
+            .map_or(Decimal::ZERO, |rate| input * rate / million)
+        + pricing
+            .output_per_million_tokens
+            .map_or(Decimal::ZERO, |rate| output * rate / million)
+}
+
+fn health_status_for_provider_error(error: &ProviderErrorDetails) -> ProviderHealthStatus {
+    match error.code {
+        annotagent_core::ProviderErrorCode::InvalidCredential
+        | annotagent_core::ProviderErrorCode::MissingCredential => {
+            ProviderHealthStatus::InvalidCredential
+        }
+        annotagent_core::ProviderErrorCode::RateLimited => ProviderHealthStatus::RateLimited,
+        annotagent_core::ProviderErrorCode::IncompatibleProtocol
+        | annotagent_core::ProviderErrorCode::InvalidResponse
+        | annotagent_core::ProviderErrorCode::ResponseTooLarge => {
+            ProviderHealthStatus::IncompatibleProtocol
+        }
+        _ => ProviderHealthStatus::Unreachable,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateModelProfileRequest {
+    provider_id: ProviderId,
+    display_name: String,
+    remote_model_id: String,
+    input_modalities: BTreeSet<InputModality>,
+    #[serde(default)]
+    protocol_features: ProtocolFeatures,
+    task_capabilities: BTreeSet<ModelCapability>,
+    #[serde(default = "user_declared_capabilities")]
+    capability_source: CapabilityDeclarationSource,
+    #[serde(default)]
+    limits: ModelLimits,
+    #[serde(default)]
+    generation_defaults: GenerationDefaults,
+    #[serde(default)]
+    pricing: ModelPricing,
+    #[serde(default = "default_true_value")]
+    enabled: bool,
+    #[serde(default)]
+    locked: bool,
+}
+
+const fn user_declared_capabilities() -> CapabilityDeclarationSource {
+    CapabilityDeclarationSource::UserDeclared
+}
+
+async fn list_model_profiles(
+    State(state): State<ServerState>,
+    Query(query): Query<ModelProfileListQuery>,
+) -> ApiResult<Json<Value>> {
+    let provider_id = query
+        .provider_id
+        .as_deref()
+        .map(parse_provider_id)
+        .transpose()?;
+    let models = state
+        .application
+        .store()
+        .list_model_profiles(provider_id, query.all_revisions)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"models": models})))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ModelProfileListQuery {
+    provider_id: Option<String>,
+    all_revisions: bool,
+}
+
+async fn create_model_profile(
+    State(state): State<ServerState>,
+    Json(input): Json<CreateModelProfileRequest>,
+) -> ApiResult<Json<ModelProfile>> {
+    state
+        .application
+        .store()
+        .get_provider_profile(input.provider_id)
+        .map_err(ApiError::bad_request)?;
+    let now = Utc::now();
+    let profile = ModelProfile {
+        id: ModelProfileId::new(),
+        revision: 1,
+        provider_id: input.provider_id,
+        display_name: input.display_name,
+        remote_model_id: input.remote_model_id,
+        input_modalities: input.input_modalities,
+        protocol_features: input.protocol_features,
+        task_capabilities: input.task_capabilities,
+        capability_source: input.capability_source,
+        limits: input.limits,
+        generation_defaults: input.generation_defaults,
+        pricing: input.pricing,
+        status: if input.enabled {
+            ModelProfileStatus::Unverified
+        } else {
+            ModelProfileStatus::Disabled
+        },
+        enabled: input.enabled,
+        locked: input.locked,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .application
+        .store()
+        .save_model_profile(&profile)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(profile))
+}
+
+async fn get_model_profile(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    let model = state
+        .application
+        .store()
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    let revisions = state
+        .application
+        .store()
+        .list_model_profiles(Some(model.provider_id), true)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .filter(|revision| revision.id == model_id)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({"model": model, "revisions": revisions})))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct UpdateModelProfileRequest {
+    provider_id: Option<ProviderId>,
+    display_name: Option<String>,
+    remote_model_id: Option<String>,
+    input_modalities: Option<BTreeSet<InputModality>>,
+    protocol_features: Option<ProtocolFeatures>,
+    task_capabilities: Option<BTreeSet<ModelCapability>>,
+    capability_source: Option<CapabilityDeclarationSource>,
+    limits: Option<ModelLimits>,
+    generation_defaults: Option<GenerationDefaults>,
+    pricing: Option<ModelPricing>,
+    enabled: Option<bool>,
+    locked: Option<bool>,
+}
+
+async fn update_model_profile(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+    Json(input): Json<UpdateModelProfileRequest>,
+) -> ApiResult<Json<ModelProfile>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    let store = state.application.store();
+    let previous = store
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    let mut profile = previous.clone();
+    if let Some(value) = input.provider_id {
+        store
+            .get_provider_profile(value)
+            .map_err(ApiError::bad_request)?;
+        profile.provider_id = value;
+    }
+    if let Some(value) = input.display_name {
+        profile.display_name = value;
+    }
+    if let Some(value) = input.remote_model_id {
+        profile.remote_model_id = value;
+    }
+    if let Some(value) = input.input_modalities {
+        profile.input_modalities = value;
+    }
+    if let Some(value) = input.protocol_features {
+        profile.protocol_features = value;
+    }
+    if let Some(value) = input.task_capabilities {
+        profile.task_capabilities = value;
+    }
+    if let Some(value) = input.capability_source {
+        profile.capability_source = value;
+    }
+    if let Some(value) = input.limits {
+        profile.limits = value;
+    }
+    if let Some(value) = input.generation_defaults {
+        profile.generation_defaults = value;
+    }
+    if let Some(value) = input.pricing {
+        profile.pricing = value;
+    }
+    if let Some(value) = input.enabled {
+        profile.enabled = value;
+        profile.status = if value {
+            ModelProfileStatus::Unverified
+        } else {
+            ModelProfileStatus::Disabled
+        };
+    }
+    if let Some(value) = input.locked {
+        profile.locked = value;
+    }
+    if !profile.has_same_semantics(&previous) {
+        profile.revision = previous.revision.saturating_add(1);
+        if profile.enabled {
+            profile.status = ModelProfileStatus::Unverified;
+        }
+    }
+    profile.updated_at = Utc::now();
+    store
+        .save_model_profile(&profile)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(profile))
+}
+
+async fn delete_model_profile(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    let store = state.application.store();
+    store
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    let references = store
+        .model_profile_references(model_id)
+        .map_err(ApiError::internal)?;
+    if !references.is_empty() {
+        return Err(ApiError::conflict(
+            "model_profile_in_use",
+            "Model Profile cannot be deleted because durable references still use it.",
+            &references,
+        ));
+    }
+    store
+        .delete_model_profile(model_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"deleted": model_id})))
+}
+
+async fn get_model_profile_usage(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    state
+        .application
+        .store()
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    let usage = state
+        .application
+        .store()
+        .list_provider_probe_usage(Some(model_id))
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        json!({"model_profile_id": model_id, "active_probes": usage}),
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct CompatibleModelQuery {
+    input_modalities: Option<String>,
+    capabilities: Option<String>,
+    tool_calls: bool,
+    structured_output: bool,
+    json_schema: bool,
+    allow_unverified: bool,
+}
+
+async fn list_compatible_model_profiles(
+    State(state): State<ServerState>,
+    Query(query): Query<CompatibleModelQuery>,
+) -> ApiResult<Json<Value>> {
+    let store = state.application.store();
+    let models = store
+        .list_model_profiles(None, false)
+        .map_err(ApiError::internal)?;
+    let providers = store
+        .list_provider_profiles()
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|provider| (provider.id, provider))
+        .collect::<BTreeMap<_, _>>();
+    let requirements = ModelRequirements {
+        input_modalities: parse_enum_set(query.input_modalities.as_deref())?,
+        protocol_features: ProtocolFeatures {
+            tool_calls: query.tool_calls,
+            structured_output: query.structured_output,
+            json_schema: query.json_schema,
+            ..ProtocolFeatures::default()
+        },
+        task_capabilities: parse_enum_set(query.capabilities.as_deref())?,
+        allow_unverified: query.allow_unverified,
+    };
+    let mut compatible = Vec::new();
+    for model in models {
+        let credential_configured = match providers
+            .get(&model.provider_id)
+            .and_then(|provider| provider.credential_ref.as_ref())
+        {
+            Some(reference) => state.secret_store.exists(reference).await.unwrap_or(false),
+            None => providers
+                .get(&model.provider_id)
+                .is_some_and(|provider| provider.adapter == ProviderAdapterKind::Mock),
+        };
+        let result = check_model_compatibility(
+            &model,
+            providers.get(&model.provider_id),
+            credential_configured,
+            &requirements,
+        );
+        if result.compatible {
+            compatible.push(model);
+        }
+    }
+    Ok(Json(
+        json!({"models": compatible, "requirements": requirements}),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutProjectModelBindingsRequest {
+    bindings: Vec<ProjectModelBindingInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectModelBindingInput {
+    capability: ModelCapability,
+    role: ModelBindingRole,
+    match_kind: ModelBindingMatch,
+    model_profile_id: ModelProfileId,
+    #[serde(default)]
+    locked: bool,
+}
+
+async fn get_project_model_bindings(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let stable_id = registry_project_id(&state, &project_id)?;
+    let bindings = state
+        .application
+        .store()
+        .list_project_model_bindings(stable_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        json!({"project_id": project_id, "bindings": bindings}),
+    ))
+}
+
+async fn put_project_model_bindings(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(input): Json<PutProjectModelBindingsRequest>,
+) -> ApiResult<Json<Value>> {
+    let stable_id = registry_project_id(&state, &project_id)?;
+    let store = state.application.store();
+    let now = Utc::now();
+    let bindings = input
+        .bindings
+        .into_iter()
+        .map(|binding| ProjectModelBinding {
+            id: ModelBindingId::new(),
+            project_id: stable_id,
+            capability: binding.capability,
+            role: binding.role,
+            match_kind: binding.match_kind,
+            model_profile_id: binding.model_profile_id,
+            locked: binding.locked,
+            created_at: now,
+        })
+        .collect::<Vec<_>>();
+    for binding in &bindings {
+        let model = store
+            .get_model_profile(binding.model_profile_id, None)
+            .map_err(ApiError::bad_request)?;
+        binding
+            .validate_for_model(&model)
+            .map_err(ApiError::bad_request)?;
+    }
+    for existing in store
+        .list_project_model_bindings(stable_id)
+        .map_err(ApiError::internal)?
+    {
+        store
+            .delete_project_model_binding(existing.id, BindingMutationActor::User)
+            .map_err(ApiError::internal)?;
+    }
+    for binding in &bindings {
+        store
+            .save_project_model_binding(binding, BindingMutationActor::User)
+            .map_err(ApiError::bad_request)?;
+    }
+    Ok(Json(
+        json!({"project_id": project_id, "bindings": bindings}),
+    ))
+}
+
+async fn get_agent_model_bindings(
+    State(state): State<ServerState>,
+) -> ApiResult<Json<GlobalModelDefaults>> {
+    let defaults = state
+        .application
+        .store()
+        .get_global_model_defaults()
+        .map_err(ApiError::internal)?;
+    Ok(Json(defaults))
+}
+
+async fn put_agent_model_bindings(
+    State(state): State<ServerState>,
+    Json(defaults): Json<GlobalModelDefaults>,
+) -> ApiResult<Json<GlobalModelDefaults>> {
+    state
+        .application
+        .store()
+        .save_global_model_defaults(&defaults)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(defaults))
+}
+
+fn parse_provider_id(value: &str) -> ApiResult<ProviderId> {
+    value
+        .parse()
+        .map_err(|_| ApiError::bad_request("provider_id must be a UUID"))
+}
+
+fn parse_model_profile_id(value: &str) -> ApiResult<ModelProfileId> {
+    value
+        .parse()
+        .map_err(|_| ApiError::bad_request("model_profile_id must be a UUID"))
+}
+
+fn parse_enum_set<T>(value: Option<&str>) -> ApiResult<BTreeSet<T>>
+where
+    T: serde::de::DeserializeOwned + Ord,
+{
+    value
+        .unwrap_or_default()
+        .split(',')
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            serde_json::from_value(Value::String(value.trim().to_owned()))
+                .map_err(ApiError::bad_request)
+        })
+        .collect()
+}
+
+fn registry_project_id(
+    state: &ServerState,
+    project_id: &str,
+) -> ApiResult<annotagent_core::ProjectId> {
+    let project_path = state
+        .application
+        .project_path(project_id)
+        .map_err(ApiError::not_found)?;
+    let project_root = project_path
+        .parent()
+        .ok_or_else(|| ApiError::internal("Project path has no parent"))?;
+    Ok(stable_project_id(project_root))
 }
 
 #[derive(Debug, Serialize)]
@@ -3299,6 +4591,161 @@ mod tests {
         ServerState::with_secret_store(application, secret_store, reference.clone(), reference)
             .await
             .expect("state")
+    }
+
+    async fn call_json(
+        service: &Router,
+        method: axum::http::Method,
+        uri: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let response = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        let value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
+        (status, value)
+    }
+
+    #[tokio::test]
+    async fn registry_api_keeps_credentials_write_only_and_records_confirmed_probes() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let (status, remote_provider) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/providers",
+            json!({
+                "display_name": "Remote fixture",
+                "preset_id": "custom",
+                "adapter": "open_ai_compatible",
+                "base_url": "https://provider.invalid/v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let remote_id = remote_provider["id"].as_str().expect("provider id");
+        let (status, credential) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{remote_id}/credential"),
+            json!({"source": "system_keyring", "secret": "registry-fixture-secret"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(credential["credential_configured"], json!(true));
+        assert!(!credential.to_string().contains("registry-fixture-secret"));
+        let (status, fetched) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/providers/{remote_id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fetched["credential_configured"], json!(true));
+        assert!(fetched.get("credential_ref").is_none());
+        assert!(!fetched.to_string().contains("provider-"));
+
+        let (status, mock_provider) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/providers",
+            json!({
+                "display_name": "Offline fixture",
+                "preset_id": "mock",
+                "adapter": "mock",
+                "base_url": "http://127.0.0.1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let mock_id = mock_provider["id"].as_str().expect("mock id");
+        let (status, model) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/model-profiles",
+            json!({
+                "provider_id": mock_id,
+                "display_name": "Mock builder",
+                "remote_model_id": "mock-builder",
+                "input_modalities": ["text"],
+                "task_capabilities": ["text_generation"],
+                "protocol_features": {
+                    "tool_calls": true,
+                    "structured_output": true
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let model_id = model["id"].as_str().expect("model id");
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{mock_id}/active-probe"),
+            json!({"model_profile_id": model_id, "confirmed_billable": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            error["error"]
+                .as_str()
+                .is_some_and(|value| value.contains("may incur"))
+        );
+        let (status, probe) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{mock_id}/active-probe"),
+            json!({"model_profile_id": model_id, "confirmed_billable": true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(probe["billable"], json!(true));
+        assert_eq!(probe["usage"]["total_tokens"], json!(2));
+        let (status, usage) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/model-profiles/{model_id}/usage"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(usage["active_probes"].as_array().map(Vec::len), Some(1));
+        let (status, conflict) = call_json(
+            &service,
+            axum::http::Method::DELETE,
+            &format!("/api/model-profiles/{model_id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], json!("model_profile_in_use"));
+        let (status, conflict) = call_json(
+            &service,
+            axum::http::Method::DELETE,
+            &format!("/api/providers/{mock_id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], json!("provider_in_use"));
     }
 
     #[tokio::test]

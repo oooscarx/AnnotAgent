@@ -45,6 +45,12 @@ import type {
   PipelineArtifactType,
   PipelineSource,
   PipelineStep,
+  ProviderPresetProfile,
+  ProviderProfile,
+  RegistryModelProfile,
+  ModelCapability,
+  InputModality,
+  ProviderProbeUsage,
   ExportReadiness,
   ProjectExportResult,
   GuidedAction,
@@ -517,7 +523,7 @@ export function App() {
             section={route.section}
             models={models}
             onNavigate={(section) =>
-              navigate(section === "general" ? "/settings" : `/settings/${section}`)
+              navigate(section === "providers" ? "/settings" : `/settings/${section}`)
             }
             onError={setError}
           />
@@ -1079,9 +1085,11 @@ function SettingsWorkspace({
       <nav className="section-tabs" aria-label="Settings sections">
         {(
           [
-            ["general", "Provider & budgets"],
+            ["providers", "Providers"],
             ["models", "Models"],
-            ["capabilities", "Capabilities"],
+            ["vision-workers", "Vision Workers"],
+            ["storage", "Storage"],
+            ["usage", "Usage"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -1094,15 +1102,17 @@ function SettingsWorkspace({
           </button>
         ))}
       </nav>
-      {section === "general" && <SettingsPage onError={onError} />}
-      {section === "models" && (
-        <ModelsPage
-          models={models}
-          onConfigure={() => onNavigate("general")}
-          onError={onError}
-        />
+      {section === "providers" && (
+        <ProviderRegistryPage onOpenModels={() => onNavigate("models")} onError={onError} />
       )}
-      {section === "capabilities" && <SkillsPage onError={onError} />}
+      {section === "models" && (
+        <ModelRegistryPage onOpenProviders={() => onNavigate("providers")} onError={onError} />
+      )}
+      {section === "vision-workers" && (
+        <VisionWorkersRegistryPage models={models} onOpenSettings={() => onNavigate("storage")} onError={onError} />
+      )}
+      {section === "storage" && <SettingsPage onError={onError} />}
+      {section === "usage" && <RegistryUsagePage onError={onError} />}
     </section>
   );
 }
@@ -4132,6 +4142,410 @@ function parseArtifactRect(value: unknown): ArtifactRect | undefined {
     : undefined;
 }
 
+const REGISTRY_MODEL_CAPABILITIES: { id: ModelCapability; label: string }[] = [
+  { id: "text_generation", label: "Text generation" },
+  { id: "vision_language", label: "Vision language" },
+  { id: "image_classification", label: "Image classification" },
+  { id: "object_detection", label: "Object detection" },
+  { id: "open_vocabulary_detection", label: "Open-vocabulary detection" },
+  { id: "phrase_grounding", label: "Phrase grounding" },
+  { id: "semantic_segmentation", label: "Semantic segmentation" },
+  { id: "prompted_segmentation", label: "Prompted segmentation" },
+  { id: "instance_segmentation", label: "Instance segmentation" },
+  { id: "keypoint_detection", label: "Keypoint detection" },
+];
+
+function ProviderRegistryPage({
+  onOpenModels,
+  onError,
+}: {
+  onOpenModels: () => void;
+  onError: (value: string) => void;
+}) {
+  const [providers, setProviders] = useState<ProviderProfile[]>([]);
+  const [presets, setPresets] = useState<ProviderPresetProfile[]>([]);
+  const [models, setModels] = useState<RegistryModelProfile[]>([]);
+  const [presetId, setPresetId] = useState("mock");
+  const [displayName, setDisplayName] = useState("Mock (offline)");
+  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1");
+  const [adapter, setAdapter] = useState<ProviderProfile["adapter"]>("mock");
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const refresh = () =>
+    Promise.all([api.providers(), api.providerPresets(), api.modelProfiles()])
+      .then(([providerResult, presetResult, modelResult]) => {
+        setProviders(providerResult.providers);
+        setPresets(presetResult.presets);
+        setModels(modelResult.models);
+      })
+      .catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    void refresh();
+  }, []);
+  const choosePreset = (id: string) => {
+    const preset = presets.find((candidate) => candidate.id === id);
+    setPresetId(id);
+    if (preset) {
+      setDisplayName(preset.display_name);
+      setBaseUrl(preset.base_url);
+      setAdapter(preset.adapter);
+    }
+  };
+  const create = () => {
+    setBusy("create");
+    void api
+      .createProvider({
+        display_name: displayName,
+        preset_id: presetId,
+        adapter,
+        base_url: baseUrl,
+      })
+      .then(() => {
+        setAdding(false);
+        setNotice(adapter === "mock" ? "Offline Mock Provider is ready." : "Provider saved. Add a credential, then run a passive connection check.");
+        return refresh();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(""));
+  };
+  return (
+    <section className="registry-page">
+      <div className="toolbar-panel">
+        <div>
+          <span className="eyebrow">Reusable connections</span>
+          <h2>Providers</h2>
+          <p>Configure each API connection once. Credentials are write-only and never returned to this page.</p>
+        </div>
+        <button className="primary" onClick={() => setAdding((value) => !value)}>
+          {adding ? "Cancel" : "Add provider"}
+        </button>
+      </div>
+      {notice && <div className="positive-empty" role="status"><strong>{notice}</strong></div>}
+      {adding && (
+        <Panel title="New Provider" eyebrow="Connection profile">
+          <div className="form-grid">
+            <label>Preset<select value={presetId} onChange={(event) => choosePreset(event.target.value)}>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.display_name}</option>)}</select></label>
+            <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+            <label>Adapter<select value={adapter} onChange={(event) => setAdapter(event.target.value as ProviderProfile["adapter"])}><option value="open_ai_compatible">OpenAI compatible</option><option value="mock">Mock</option></select></label>
+            <label>Base URL<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+          </div>
+          <div className="button-row"><button className="primary" disabled={busy === "create" || !displayName.trim() || !baseUrl.trim()} onClick={create}>{busy === "create" ? "Saving…" : "Save Provider"}</button></div>
+        </Panel>
+      )}
+      {providers.length ? (
+        <div className="registry-card-grid">
+          {providers.map((provider) => (
+            <ProviderRegistryCard
+              key={provider.id}
+              provider={provider}
+              models={models.filter((model) => model.provider_id === provider.id)}
+              onChanged={refresh}
+              onOpenModels={onOpenModels}
+              onError={onError}
+            />
+          ))}
+        </div>
+      ) : (
+        <Empty title="No Providers configured" detail="Add Mock for offline work or connect an OpenAI-compatible API." />
+      )}
+    </section>
+  );
+}
+
+function ProviderRegistryCard({
+  provider,
+  models,
+  onChanged,
+  onOpenModels,
+  onError,
+}: {
+  provider: ProviderProfile;
+  models: RegistryModelProfile[];
+  onChanged: () => Promise<void>;
+  onOpenModels: () => void;
+  onError: (value: string) => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [credentialSource, setCredentialSource] = useState<"system_keyring" | "environment_variable" | "session_only">("system_keyring");
+  const [secret, setSecret] = useState("");
+  const [environmentVariable, setEnvironmentVariable] = useState("");
+  const [selectedModel, setSelectedModel] = useState(models[0]?.id ?? "");
+  const [editDisplayName, setEditDisplayName] = useState(provider.display_name);
+  const [editBaseUrl, setEditBaseUrl] = useState(provider.base_url);
+  const [discovery, setDiscovery] = useState<{ models: { remote_model_id: string }[]; warning: string }>();
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!models.some((model) => model.id === selectedModel)) setSelectedModel(models[0]?.id ?? "");
+  }, [models, selectedModel]);
+  const run = (name: string, action: () => Promise<unknown>, success: string) => {
+    setBusy(name);
+    setMessage("");
+    void action()
+      .then(() => onChanged())
+      .then(() => setMessage(success))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(""));
+  };
+  const saveCredential = () =>
+    run(
+      "credential",
+      () => api.saveProviderCredential(provider.id, {
+        source: credentialSource,
+        ...(credentialSource === "environment_variable"
+          ? { environment_variable: environmentVariable }
+          : { secret }),
+      }),
+      "Credential reference saved. Run Check connection next.",
+    );
+  const discover = () => {
+    setBusy("discover");
+    void api.discoverProviderModels(provider.id)
+      .then((result) => {
+        setDiscovery(result);
+        setMessage(`Discovered ${result.models.length} model ID${result.models.length === 1 ? "" : "s"}.`);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(""));
+  };
+  const probe = () => {
+    if (!selectedModel || !window.confirm("This sends a minimal generation request and may incur Provider charges. Continue?")) return;
+    run("probe", () => api.activeProbe(provider.id, selectedModel), "Billable model probe succeeded and usage was recorded.");
+  };
+  const remove = () => {
+    if (!window.confirm(`Delete ${provider.display_name}? Referenced Providers cannot be deleted.`)) return;
+    run("delete", () => api.deleteProvider(provider.id), "Provider deleted.");
+  };
+  return (
+    <article className="registry-provider-card">
+      <header>
+        <span className="registry-monogram" aria-hidden="true">{provider.display_name.slice(0, 2).toUpperCase()}</span>
+        <span><strong>{provider.display_name}</strong><small>{provider.preset_id ?? "custom"} · {provider.adapter.replaceAll("_", " ")}</small></span>
+        <Status status={provider.health.status.replaceAll("_", " ")} />
+      </header>
+      <dl className="registry-facts">
+        <div><dt>Endpoint</dt><dd title={provider.base_url}>{provider.endpoint_summary}</dd></div>
+        <div><dt>Credential</dt><dd>{provider.adapter === "mock" ? "Not required" : provider.credential_configured ? `${provider.credential_source?.replaceAll("_", " ")} configured` : "Missing"}</dd></div>
+        <div><dt>Models</dt><dd>{provider.model_count}</dd></div>
+        <div><dt>Last checked</dt><dd>{provider.health.checked_at ? new Date(provider.health.checked_at).toLocaleString() : "Never"}</dd></div>
+      </dl>
+      {provider.health.safe_message && <p className="registry-safe-message">{provider.health.safe_message}</p>}
+      <div className="registry-card-actions">
+        <button disabled={Boolean(busy) || !provider.enabled} onClick={() => run("check", () => api.checkProvider(provider.id), "Connection check succeeded without a generation request.")}>{busy === "check" ? "Checking…" : "Check connection"}</button>
+        <button disabled={Boolean(busy) || !provider.enabled} onClick={discover}>{busy === "discover" ? "Discovering…" : "Discover models"}</button>
+        <button disabled={Boolean(busy)} onClick={() => run("toggle", () => api.updateProvider(provider.id, { enabled: !provider.enabled }), provider.enabled ? "Provider disabled." : "Provider enabled; run a connection check.")}>{provider.enabled ? "Disable" : "Enable"}</button>
+      </div>
+      <details className="registry-card-section">
+        <summary>Edit connection</summary>
+        <div className="form-grid">
+          <label>Display name<input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} /></label>
+          <label>Base URL<input type="url" value={editBaseUrl} onChange={(event) => setEditBaseUrl(event.target.value)} /></label>
+        </div>
+        <div className="button-row"><button disabled={Boolean(busy) || !editDisplayName.trim() || !editBaseUrl.trim()} onClick={() => run("edit", () => api.updateProvider(provider.id, { display_name: editDisplayName, base_url: editBaseUrl }), "Provider connection updated.")}>{busy === "edit" ? "Saving…" : "Save connection"}</button></div>
+        <small>Changing an endpoint is blocked while Model Profiles reference this Provider; create a new Provider and rebind instead.</small>
+      </details>
+      <details className="registry-card-section">
+        <summary>{provider.credential_configured ? "Rotate or remove credential" : "Add credential"}</summary>
+        {provider.adapter === "mock" ? <p>Mock runs offline and does not need a credential.</p> : <>
+          <div className="form-grid">
+            <label>Storage<select value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as typeof credentialSource)}><option value="system_keyring">System credential store</option><option value="environment_variable">Environment variable</option><option value="session_only">This server session only</option></select></label>
+            {credentialSource === "environment_variable" ? <label>Variable name<input value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="PROVIDER_API_KEY" /></label> : <label>API key<input type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Written once; never returned" /></label>}
+          </div>
+          <div className="button-row"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
+        </>}
+      </details>
+      <details className="registry-card-section">
+        <summary>Billable model test</summary>
+        <p>This is separate from Check connection and sends a real generation request.</p>
+        {models.length ? <div className="button-row"><select aria-label="Model Profile for active probe" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>{models.map((model) => <option key={model.id} value={model.id}>{model.display_name} · r{model.revision}</option>)}</select><button disabled={Boolean(busy) || !provider.enabled} onClick={probe}>{busy === "probe" ? "Testing…" : "Run billable test"}</button></div> : <button onClick={onOpenModels}>Add a Model Profile</button>}
+      </details>
+      {discovery && <details className="registry-discovery" open><summary>Discovered model IDs · {discovery.models.length}</summary><p>{discovery.warning}</p><div className="discovered-model-list">{discovery.models.slice(0, 100).map((model) => <code key={model.remote_model_id}>{model.remote_model_id}</code>)}</div><button onClick={onOpenModels}>Create a verified Model Profile</button></details>}
+      {message && <small className="registry-message" role="status">{message}</small>}
+      <details className="advanced-settings"><summary>Advanced and destructive actions</summary><div className="button-row"><button className="danger-button" disabled={Boolean(busy)} onClick={remove}>Delete Provider</button></div><small>Deletion is blocked when Models, Drafts, published Workflows, Runs, or bindings reference this Provider.</small></details>
+    </article>
+  );
+}
+
+function ModelRegistryPage({
+  onOpenProviders,
+  onError,
+}: {
+  onOpenProviders: () => void;
+  onError: (value: string) => void;
+}) {
+  const [providers, setProviders] = useState<ProviderProfile[]>([]);
+  const [models, setModels] = useState<RegistryModelProfile[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState("");
+  const [busy, setBusy] = useState("");
+  const [providerId, setProviderId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [remoteModelId, setRemoteModelId] = useState("");
+  const [modalities, setModalities] = useState<InputModality[]>(["text"]);
+  const [capabilities, setCapabilities] = useState<ModelCapability[]>(["text_generation"]);
+  const [toolCalls, setToolCalls] = useState(false);
+  const [structuredOutput, setStructuredOutput] = useState(false);
+  const [jsonSchema, setJsonSchema] = useState(false);
+  const [inputPrice, setInputPrice] = useState("");
+  const [outputPrice, setOutputPrice] = useState("");
+  const [requestPrice, setRequestPrice] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [capabilityFilter, setCapabilityFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modalityFilter, setModalityFilter] = useState("all");
+  const [enabledFilter, setEnabledFilter] = useState("all");
+  const [costFilter, setCostFilter] = useState("all");
+  const refresh = () =>
+    Promise.all([api.providers(), api.modelProfiles()])
+      .then(([providerResult, modelResult]) => {
+        setProviders(providerResult.providers);
+        setModels(modelResult.models);
+        setProviderId((current) => current || providerResult.providers[0]?.id || "");
+      })
+      .catch((error: Error) => onError(error.message));
+  useEffect(() => {
+    void refresh();
+  }, []);
+  const toggle = <T,>(value: T, values: T[], update: (values: T[]) => void) =>
+    update(values.includes(value) ? values.filter((candidate) => candidate !== value) : [...values, value]);
+  const resetEditor = () => {
+    setAdding(false);
+    setEditingId("");
+    setDisplayName("");
+    setRemoteModelId("");
+    setModalities(["text"]);
+    setCapabilities(["text_generation"]);
+    setToolCalls(false);
+    setStructuredOutput(false);
+    setJsonSchema(false);
+    setInputPrice("");
+    setOutputPrice("");
+    setRequestPrice("");
+  };
+  const save = () => {
+    setBusy("save");
+    const value = {
+      provider_id: providerId,
+      display_name: displayName,
+      remote_model_id: remoteModelId,
+      input_modalities: modalities,
+      task_capabilities: capabilities,
+      protocol_features: {
+        tool_calls: toolCalls,
+        parallel_tool_calls: false,
+        structured_output: structuredOutput,
+        json_schema: jsonSchema,
+        usage_reporting: true,
+        streaming: false,
+        reasoning_controls: false,
+      },
+      pricing: {
+        currency: "USD",
+        input_per_million_tokens: inputPrice || undefined,
+        output_per_million_tokens: outputPrice || undefined,
+        per_request: requestPrice || undefined,
+        source: inputPrice || outputPrice || requestPrice ? "user_configured" as const : "unknown" as const,
+      },
+    };
+    const operation = editingId
+      ? api.updateModelProfile(editingId, value)
+      : api.createModelProfile(value);
+    void operation.then(() => {
+      resetEditor();
+      return refresh();
+    }).catch((error: Error) => onError(error.message)).finally(() => setBusy(""));
+  };
+  const edit = (model: RegistryModelProfile) => {
+    setEditingId(model.id);
+    setAdding(true);
+    setProviderId(model.provider_id);
+    setDisplayName(model.display_name);
+    setRemoteModelId(model.remote_model_id);
+    setModalities(model.input_modalities);
+    setCapabilities(model.task_capabilities);
+    setToolCalls(model.protocol_features.tool_calls);
+    setStructuredOutput(model.protocol_features.structured_output);
+    setJsonSchema(model.protocol_features.json_schema);
+    setInputPrice(model.pricing.input_per_million_tokens ?? "");
+    setOutputPrice(model.pricing.output_per_million_tokens ?? "");
+    setRequestPrice(model.pricing.per_request ?? "");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const filtered = models.filter((model) =>
+    (providerFilter === "all" || model.provider_id === providerFilter) &&
+    (capabilityFilter === "all" || model.task_capabilities.includes(capabilityFilter as ModelCapability)) &&
+    (statusFilter === "all" || model.status === statusFilter) &&
+    (modalityFilter === "all" || model.input_modalities.includes(modalityFilter as InputModality)) &&
+    (enabledFilter === "all" || model.enabled === (enabledFilter === "enabled")) &&
+    (costFilter === "all" || (costFilter === "configured") === (model.pricing.source !== "unknown")),
+  );
+  const change = (model: RegistryModelProfile, value: Partial<RegistryModelProfile>, success?: string) => {
+    setBusy(model.id);
+    void api.updateModelProfile(model.id, value).then(refresh).then(() => success && undefined).catch((error: Error) => onError(error.message)).finally(() => setBusy(""));
+  };
+  const probe = (model: RegistryModelProfile) => {
+    if (!window.confirm("This sends a minimal generation request and may incur Provider charges. Continue?")) return;
+    setBusy(model.id);
+    void api.activeProbe(model.provider_id, model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy(""));
+  };
+  return (
+    <section className="registry-page">
+      <div className="toolbar-panel"><div><span className="eyebrow">Reusable capability contracts</span><h2>Models</h2><p>Model Profiles bind a Provider model ID to explicit modalities, protocol features, capabilities, pricing, and an immutable revision.</p></div><button className="primary" disabled={!providers.length} onClick={() => adding ? resetEditor() : setAdding(true)}>{adding ? "Cancel" : "Add model"}</button></div>
+      {!providers.length && <div className="guided-callout"><strong>Provider setup required</strong><p>Add a Provider before creating a Model Profile.</p><button onClick={onOpenProviders}>Connect a Provider</button></div>}
+      {adding && <Panel title={editingId ? "Edit Model Profile" : "New Model Profile"} eyebrow="Manual capability declaration">
+        <div className="form-grid"><label>Provider<select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Remote model ID<input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder="Exact Provider model ID" /></label></div>
+        <fieldset className="registry-check-group"><legend>Input modalities</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
+        <fieldset className="registry-check-group"><legend>Task capabilities</legend>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <label className="checkbox-line" key={capability.id}><input type="checkbox" checked={capabilities.includes(capability.id)} onChange={() => toggle(capability.id, capabilities, setCapabilities)} /><span>{capability.label}</span></label>)}</fieldset>
+        <fieldset className="registry-check-group"><legend>Protocol features</legend><label className="checkbox-line"><input type="checkbox" checked={toolCalls} onChange={(event) => setToolCalls(event.target.checked)} /><span>Tool calls</span></label><label className="checkbox-line"><input type="checkbox" checked={structuredOutput} onChange={(event) => setStructuredOutput(event.target.checked)} /><span>Structured output</span></label><label className="checkbox-line"><input type="checkbox" checked={jsonSchema} onChange={(event) => setJsonSchema(event.target.checked)} /><span>JSON Schema</span></label></fieldset>
+        <div className="form-grid"><label>Input / 1M tokens (USD)<input inputMode="decimal" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} placeholder="Unknown" /></label><label>Output / 1M tokens (USD)<input inputMode="decimal" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} placeholder="Unknown" /></label><label>Per request (USD)<input inputMode="decimal" value={requestPrice} onChange={(event) => setRequestPrice(event.target.value)} placeholder="Unknown" /></label></div>
+        <p className="registry-safe-message">Manual capabilities are recorded as user-declared and remain unverified until an explicit active probe succeeds.</p>
+        <button className="primary" disabled={busy === "save" || !providerId || !displayName.trim() || !remoteModelId.trim() || !modalities.length || !capabilities.length} onClick={save}>{busy === "save" ? "Saving…" : editingId ? "Save as next revision if needed" : "Save Model Profile"}</button>
+      </Panel>}
+      <div className="registry-filter-bar"><label>Provider<select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}><option value="all">All Providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></label><label>Capability<select value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}><option value="all">All capabilities</option>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <option key={capability.id} value={capability.id}>{capability.label}</option>)}</select></label><label>Health<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="available">Available</option><option value="unverified">Unverified</option><option value="disabled">Disabled</option><option value="unavailable">Unavailable</option></select></label><label>Input modality<select value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}><option value="all">All modalities</option><option value="text">Text</option><option value="image">Image</option><option value="video">Video</option></select></label><label>Enabled<select value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">Enabled and disabled</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Pricing<select value={costFilter} onChange={(event) => setCostFilter(event.target.value)}><option value="all">Any pricing status</option><option value="configured">Configured</option><option value="unknown">Unknown</option></select></label></div>
+      {filtered.length ? <div className="registry-card-grid">{filtered.map((model) => {
+        const provider = providers.find((candidate) => candidate.id === model.provider_id);
+        return <article className="registry-model-card" key={model.id}><header><span><strong>{model.display_name}</strong><small>{provider?.display_name ?? "Missing Provider"} · revision {model.revision}</small></span><Status status={model.status} /></header><code>{model.remote_model_id}</code><div className="tag-group">{model.input_modalities.map((value) => <span key={value}>{value} input</span>)}{model.task_capabilities.map((value) => <span key={value}>{value.replaceAll("_", " ")}</span>)}</div><dl className="registry-facts"><div><dt>Protocol</dt><dd>{[model.protocol_features.tool_calls && "tools", model.protocol_features.structured_output && "structured", model.protocol_features.json_schema && "JSON Schema"].filter(Boolean).join(" · ") || "basic"}</dd></div><div><dt>Capability source</dt><dd>{model.capability_source.replaceAll("_", " ")}</dd></div><div><dt>Pricing</dt><dd>{model.pricing.source === "unknown" ? "Unknown" : `${model.pricing.currency} · ${model.pricing.source.replaceAll("_", " ")}`}</dd></div><div><dt>Binding lock</dt><dd>{model.locked ? "Locked" : "Editable"}</dd></div></dl><div className="registry-card-actions"><button disabled={busy === model.id} onClick={() => edit(model)}>Edit</button><button disabled={busy === model.id || !provider?.enabled} onClick={() => probe(model)}>{busy === model.id ? "Working…" : "Run billable test"}</button><button disabled={busy === model.id} onClick={() => change(model, { enabled: !model.enabled })}>{model.enabled ? "Disable" : "Enable"}</button><button disabled={busy === model.id} onClick={() => change(model, { locked: !model.locked })}>{model.locked ? "Unlock" : "Lock"}</button></div><details className="advanced-settings"><summary>Revision and destructive actions</summary><pre>{JSON.stringify({ limits: model.limits, generation_defaults: model.generation_defaults, pricing: model.pricing }, null, 2)}</pre><button className="danger-button" disabled={busy === model.id} onClick={() => { if (window.confirm(`Delete ${model.display_name}? Referenced profiles cannot be deleted.`)) { setBusy(model.id); void api.deleteModelProfile(model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy("")); } }}>Delete Model Profile</button></details></article>;
+      })}</div> : <Empty title="No matching Model Profiles" detail="Change the filters or add a manually declared model." />}
+    </section>
+  );
+}
+
+function VisionWorkersRegistryPage({
+  models,
+  onOpenSettings,
+  onError,
+}: {
+  models: ModelBinding[];
+  onOpenSettings: () => void;
+  onError: (value: string) => void;
+}) {
+  const [workers, setWorkers] = useState(models.filter((model) => model.scope === "workspace_worker"));
+  const [testing, setTesting] = useState("");
+  const [results, setResults] = useState<Record<string, DetectionWorkerTestResult>>({});
+  useEffect(() => {
+    void api.models().then((result) => setWorkers(result.models.filter((model) => model.scope === "workspace_worker"))).catch((error: Error) => onError(error.message));
+  }, []);
+  const test = (worker: ModelBinding) => {
+    setTesting(worker.id);
+    void api.testModel(worker.id).then((result) => setResults((current) => ({ ...current, [worker.id]: result }))).catch((error: Error) => onError(error.message)).finally(() => setTesting(""));
+  };
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Specialist CV processes</span><h2>Vision Workers</h2><p>YOLO, SAM, RF-DETR, and other HTTP Vision Protocol workers are managed separately from credentialed LLM/VLM Providers.</p></div><button onClick={onOpenSettings}>Configure Workers</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={!worker.enabled || testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Testing…" : "Test connection"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>Live · {results[worker.id].health.status}</strong><span>{results[worker.id].capabilities.capabilities.join(" · ")}</span><span>Confidence {results[worker.id].capabilities.score_semantics.replaceAll("_", " ")}</span></div>}</article>)}</div> : <Empty title="No Vision Workers enabled" detail="Configure a versioned HTTP Vision Protocol worker in Storage settings." />}</section>;
+}
+
+function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
+  const [models, setModels] = useState<RegistryModelProfile[]>([]);
+  const [usage, setUsage] = useState<ProviderProbeUsage[]>([]);
+  useEffect(() => {
+    void api.modelProfiles().then(async (result) => {
+      setModels(result.models);
+      const records = await Promise.all(result.models.map((model) => api.modelProfileUsage(model.id)));
+      setUsage(records.flatMap((record) => record.active_probes).sort((left, right) => right.created_at.localeCompare(left.created_at)));
+    }).catch((error: Error) => onError(error.message));
+  }, []);
+  const totals = usage.reduce((current, record) => ({ tokens: current.tokens + (record.total_tokens ?? 0), cost: current.cost + Number(record.cost || 0) }), { tokens: 0, cost: 0 });
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Recorded Registry operations</span><h2>Usage</h2><p>Active model probes are listed separately from normal Run usage because each probe requires explicit billable confirmation.</p></div></div><div className="metrics-grid"><Metric label="Active probes" value={usage.length} detail="explicitly confirmed" /><Metric label="Probe tokens" value={totals.tokens.toLocaleString()} detail="reported by Providers" /><Metric label="Estimated probe cost" value={`$${totals.cost.toFixed(6)}`} detail="configured pricing snapshots" /></div>{usage.length ? <div className="registry-usage-list">{usage.map((record) => { const model = models.find((candidate) => candidate.id === record.model_profile_id); return <article key={record.id}><span><strong>{model?.display_name ?? record.model_profile_id}</strong><small>{new Date(record.created_at).toLocaleString()} · revision {record.model_profile_revision}</small></span><span>{record.total_tokens ?? "Unknown"} tokens</span><span>{record.currency} {record.cost}</span><Status status={record.succeeded ? "succeeded" : "failed"} /></article>; })}</div> : <Empty title="No active probe usage" detail="Passive connection checks do not generate usage records." />}</section>;
+}
+
 function WorkflowDetail({
   project,
   workflow,
@@ -6129,7 +6543,8 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
   const dirty = Boolean(key) || JSON.stringify(settings) !== savedSignature;
   return (
     <section className="settings-grid">
-      <Panel title="Vision model provider" eyebrow="Workspace default binding">
+      <Panel title="Legacy Run fallback" eyebrow="Compatibility settings">
+        <div className="boundary-note"><i>i</i><span><strong>Registry migration boundary</strong><small>New reusable connections live in Providers and Models. This fallback keeps existing Projects runnable until published Workflow execution is cut over to Model Profile revisions.</small></span></div>
         <label>
           Provider
           <select
@@ -6844,6 +7259,7 @@ function Status({ status }: { status: string }) {
   const normalized = status.replaceAll(" ", "_").toLowerCase();
   const presentation =
     normalized === "ready" ||
+    normalized === "available" ||
     normalized === "completed" ||
     normalized === "confirmed" ||
     normalized === "auto_accepted" ||
@@ -6852,7 +7268,9 @@ function Status({ status }: { status: string }) {
       ? {
           tone: "auto-accepted",
           label:
-            normalized === "published"
+            normalized === "available"
+              ? "Available"
+              : normalized === "published"
               ? "Published"
               : normalized === "ready"
                 ? "Ready"
@@ -6868,6 +7286,14 @@ function Status({ status }: { status: string }) {
                 ? "Waiting for human"
                 : "Completed with review",
           }
+        : normalized === "configured" || normalized === "unverified" || normalized === "unknown"
+          ? { tone: "draft", label: normalized === "configured" ? "Configured" : normalized === "unverified" ? "Unverified" : "Unknown" }
+        : normalized === "disabled"
+          ? { tone: "rejected", label: "Disabled" }
+        : normalized === "unreachable" || normalized === "invalid_credential" || normalized === "incompatible_protocol" || normalized === "unavailable"
+          ? { tone: "failed", label: normalized.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()) }
+        : normalized === "rate_limited"
+          ? { tone: "needs-review", label: "Rate limited" }
         : normalized === "incomplete"
           ? { tone: "needs-review", label: "Incomplete" }
         : normalized === "configuration_issue"

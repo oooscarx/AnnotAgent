@@ -98,3 +98,23 @@ Compatibility first removes disabled/unhealthy Providers, missing credentials, u
 missing modalities, missing protocol features and missing task capabilities. Ranking happens only
 after this filter. An empty result becomes `unresolved model binding`; no Provider name, preset, or
 remote model string is used as an implicit choice.
+
+## D016 — passive check and active probe are separate protocols
+
+Passive check uses Mock state or an OpenAI-compatible `GET /models` request and records health but
+never generation usage. Active probe requires `confirmed_billable=true`, sends one minimal bounded
+generation request, and records its Profile revision, Provider-reported tokens, latency and cost.
+Neither operation follows redirects or exposes remote response bodies in errors.
+
+## D017 — Registry deletion is fail-closed and never cascades history
+
+Provider and Model deletion searches Model Profiles, Project bindings, Drafts, published versions,
+Run snapshots and probe usage. Any durable reference returns 409 with locations and a rebind/disable
+remedy. Delete does not cascade into Workflow, Run or Usage history.
+
+## D018 — preserve the singleton runtime path as visibly labeled compatibility state until M8
+
+The new Settings tabs own durable Provider and Model lifecycle. The existing singleton runtime
+settings remain under Storage as compatibility configuration until published Workflow resolution is
+cut over in M6–M8. It is not projected into fake Provider/Profile records during M3. Legacy
+`/models` continues to reach the independent Vision Worker page.

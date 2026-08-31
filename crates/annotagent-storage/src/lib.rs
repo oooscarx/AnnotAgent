@@ -32,6 +32,8 @@ const WORKFLOW_SAMPLE_TEST_MIGRATION: &str =
 const PROVIDER_REGISTRY_MIGRATION: &str =
     include_str!("../../../migrations/0006_provider_registry.sql");
 const MODEL_PROFILE_MIGRATION: &str = include_str!("../../../migrations/0007_model_profiles.sql");
+const PROVIDER_PROBE_USAGE_MIGRATION: &str =
+    include_str!("../../../migrations/0008_provider_probe_usage.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -143,6 +145,30 @@ pub struct WorkflowSampleTest {
     pub project_id: String,
     pub report: WorkflowDryRunReport,
     pub completed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RegistryReference {
+    pub kind: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderProbeUsage {
+    pub id: Uuid,
+    pub provider_id: ProviderId,
+    pub model_profile_id: ModelProfileId,
+    pub model_profile_revision: u64,
+    pub request_id: Option<String>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cost: String,
+    pub currency: String,
+    pub duration_ms: u64,
+    pub succeeded: bool,
+    pub safe_message: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +304,13 @@ impl SqliteStore {
                 params!["model_profiles", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(PROVIDER_PROBE_USAGE_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (8, ?1, ?2)",
+                params!["provider_probe_usage", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -362,6 +395,50 @@ impl SqliteStore {
                 return Err(StorageError::ProviderNotFound(provider_id));
             }
             Ok(())
+        })
+    }
+
+    pub fn provider_references(
+        &self,
+        provider_id: ProviderId,
+    ) -> Result<Vec<RegistryReference>, StorageError> {
+        self.with_connection(|connection| {
+            let provider = provider_id.to_string();
+            let mut references = Vec::new();
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT id FROM model_profiles WHERE provider_id = ?1 ORDER BY id",
+            )?;
+            for model_id in statement
+                .query_map([&provider], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+            {
+                references.push(RegistryReference {
+                    kind: "model_profile".to_owned(),
+                    location: model_id,
+                });
+            }
+            append_json_references(
+                connection,
+                "SELECT id, draft_json FROM workflow_drafts",
+                &provider,
+                "workflow_draft",
+                &mut references,
+            )?;
+            append_json_references(
+                connection,
+                "SELECT workflow_id || '@' || version, version_json FROM workflow_versions",
+                &provider,
+                "published_workflow",
+                &mut references,
+            )?;
+            append_json_references(
+                connection,
+                "SELECT id, workflow_snapshot_json FROM runs WHERE workflow_snapshot_json IS NOT NULL",
+                &provider,
+                "run_snapshot",
+                &mut references,
+            )?;
+            Ok(references)
         })
     }
 
@@ -537,6 +614,144 @@ impl SqliteStore {
             rows.into_iter()
                 .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
                 .collect()
+        })
+    }
+
+    pub fn model_profile_references(
+        &self,
+        model_profile_id: ModelProfileId,
+    ) -> Result<Vec<RegistryReference>, StorageError> {
+        self.with_connection(|connection| {
+            let model = model_profile_id.to_string();
+            let mut references = Vec::new();
+            let mut statement = connection.prepare(
+                "SELECT project_id || ':' || match_kind || ':' || match_value
+                 FROM project_model_bindings WHERE model_profile_id = ?1 ORDER BY project_id",
+            )?;
+            for location in statement
+                .query_map([&model], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+            {
+                references.push(RegistryReference {
+                    kind: "project_model_binding".to_owned(),
+                    location,
+                });
+            }
+            let mut statement = connection.prepare(
+                "SELECT id FROM provider_probe_usage WHERE model_profile_id = ?1 ORDER BY created_at",
+            )?;
+            for location in statement
+                .query_map([&model], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+            {
+                references.push(RegistryReference {
+                    kind: "active_probe_usage".to_owned(),
+                    location,
+                });
+            }
+            append_json_references(
+                connection,
+                "SELECT id, draft_json FROM workflow_drafts",
+                &model,
+                "workflow_draft",
+                &mut references,
+            )?;
+            append_json_references(
+                connection,
+                "SELECT workflow_id || '@' || version, version_json FROM workflow_versions",
+                &model,
+                "published_workflow",
+                &mut references,
+            )?;
+            append_json_references(
+                connection,
+                "SELECT id, workflow_snapshot_json FROM runs WHERE workflow_snapshot_json IS NOT NULL",
+                &model,
+                "run_snapshot",
+                &mut references,
+            )?;
+            Ok(references)
+        })
+    }
+
+    pub fn delete_model_profile(
+        &self,
+        model_profile_id: ModelProfileId,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let deleted = connection.execute(
+                "DELETE FROM model_profiles WHERE id = ?1",
+                [model_profile_id.to_string()],
+            )?;
+            if deleted == 0 {
+                return Err(StorageError::ModelProfileNotFound(model_profile_id, 0));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn record_provider_probe_usage(
+        &self,
+        usage: &ProviderProbeUsage,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO provider_probe_usage
+                 (id, provider_id, model_profile_id, model_profile_revision, request_id,
+                  input_tokens, output_tokens, total_tokens, cost, currency, duration_ms,
+                  succeeded, safe_message, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    usage.id.to_string(),
+                    usage.provider_id.to_string(),
+                    usage.model_profile_id.to_string(),
+                    sqlite_u64(usage.model_profile_revision),
+                    usage.request_id,
+                    usage.input_tokens.map(sqlite_u64),
+                    usage.output_tokens.map(sqlite_u64),
+                    usage.total_tokens.map(sqlite_u64),
+                    usage.cost,
+                    usage.currency,
+                    sqlite_u64(usage.duration_ms),
+                    usage.succeeded,
+                    usage.safe_message,
+                    usage.created_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_provider_probe_usage(
+        &self,
+        model_profile_id: Option<ModelProfileId>,
+    ) -> Result<Vec<ProviderProbeUsage>, StorageError> {
+        self.with_connection(|connection| {
+            let sql = if model_profile_id.is_some() {
+                "SELECT id, provider_id, model_profile_id, model_profile_revision, request_id,
+                 input_tokens, output_tokens, total_tokens, cost, currency, duration_ms,
+                 succeeded, safe_message, created_at
+                 FROM provider_probe_usage WHERE model_profile_id = ?1 ORDER BY created_at DESC"
+            } else {
+                "SELECT id, provider_id, model_profile_id, model_profile_revision, request_id,
+                 input_tokens, output_tokens, total_tokens, cost, currency, duration_ms,
+                 succeeded, safe_message, created_at
+                 FROM provider_probe_usage ORDER BY created_at DESC"
+            };
+            let mut statement = connection.prepare(sql)?;
+            let rows = if let Some(model_profile_id) = model_profile_id {
+                statement
+                    .query_map(
+                        [model_profile_id.to_string()],
+                        provider_probe_usage_from_row,
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                statement
+                    .query_map([], provider_probe_usage_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            rows.into_iter().map(parse_provider_probe_usage).collect()
         })
     }
 
@@ -1981,6 +2196,125 @@ fn history_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRun>
         terminal_reason: row.get(9)?,
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
+    })
+}
+
+fn append_json_references(
+    connection: &Connection,
+    sql: &str,
+    registry_id: &str,
+    kind: &str,
+    references: &mut Vec<RegistryReference>,
+) -> Result<(), StorageError> {
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    references.extend(
+        rows.into_iter()
+            .filter(|(_, json)| json.contains(registry_id))
+            .map(|(location, _)| RegistryReference {
+                kind: kind.to_owned(),
+                location,
+            }),
+    );
+    Ok(())
+}
+
+type ProviderProbeUsageRow = (
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    String,
+    String,
+    i64,
+    bool,
+    String,
+    String,
+);
+
+fn provider_probe_usage_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ProviderProbeUsageRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
+    ))
+}
+
+fn parse_provider_probe_usage(
+    row: ProviderProbeUsageRow,
+) -> Result<ProviderProbeUsage, StorageError> {
+    let (
+        id,
+        provider_id,
+        model_profile_id,
+        model_profile_revision,
+        request_id,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cost,
+        currency,
+        duration_ms,
+        succeeded,
+        safe_message,
+        created_at,
+    ) = row;
+    let parse_u64 = |name: &str, value: i64| {
+        u64::try_from(value)
+            .map_err(|_| StorageError::InvalidEnum(format!("invalid {name}: {value}")))
+    };
+    Ok(ProviderProbeUsage {
+        id: id.parse().map_err(|error| {
+            StorageError::InvalidEnum(format!("invalid probe usage id: {error}"))
+        })?,
+        provider_id: provider_id
+            .parse()
+            .map_err(|error| StorageError::InvalidEnum(format!("invalid provider id: {error}")))?,
+        model_profile_id: model_profile_id.parse().map_err(|error| {
+            StorageError::InvalidEnum(format!("invalid model profile id: {error}"))
+        })?,
+        model_profile_revision: parse_u64("model profile revision", model_profile_revision)?,
+        request_id,
+        input_tokens: input_tokens
+            .map(|value| parse_u64("input tokens", value))
+            .transpose()?,
+        output_tokens: output_tokens
+            .map(|value| parse_u64("output tokens", value))
+            .transpose()?,
+        total_tokens: total_tokens
+            .map(|value| parse_u64("total tokens", value))
+            .transpose()?,
+        cost,
+        currency,
+        duration_ms: parse_u64("probe duration", duration_ms)?,
+        succeeded,
+        safe_message,
+        created_at: DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|error| {
+                StorageError::InvalidEnum(format!("invalid probe timestamp: {error}"))
+            })?
+            .with_timezone(&Utc),
     })
 }
 

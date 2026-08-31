@@ -37,7 +37,7 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 keyring = "4.1"
 ratatui = "0.29"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.38", features = ["bundled", "chrono", "uuid"] }
 rust_decimal = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

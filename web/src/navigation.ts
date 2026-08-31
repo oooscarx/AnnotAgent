@@ -1,5 +1,10 @@
 export type BuildStep = "data" | "labels" | "pipeline" | "test";
-export type SettingsSection = "general" | "models" | "capabilities";
+export type SettingsSection =
+  | "providers"
+  | "models"
+  | "vision-workers"
+  | "storage"
+  | "usage";
 
 export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
@@ -42,9 +47,11 @@ const BUILD_STEPS = new Set<BuildStep>([
   "test",
 ]);
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
-  "general",
+  "providers",
   "models",
-  "capabilities",
+  "vision-workers",
+  "storage",
+  "usage",
 ]);
 
 export function parseWorkspaceRoute(
@@ -75,17 +82,23 @@ export function parseWorkspaceRoute(
         }
       : { kind: "projects", canonicalPath: "/projects" };
   }
-  if (clean === "/models" || clean === "/providers" || clean === "/settings/providers")
+  if (clean === "/models")
     return {
       kind: "settings",
-      section: "models",
-      canonicalPath: "/settings/models",
+      section: "vision-workers",
+      canonicalPath: "/settings/vision-workers",
+    };
+  if (clean === "/providers")
+    return {
+      kind: "settings",
+      section: "providers",
+      canonicalPath: "/settings",
     };
   if (clean === "/skills")
     return {
       kind: "settings",
-      section: "capabilities",
-      canonicalPath: "/settings/capabilities",
+      section: "vision-workers",
+      canonicalPath: "/settings/vision-workers",
     };
   const legacyArtifact = clean.match(/^\/(?:artifacts|artifact-inspector)(?:\/([^/]+))?$/);
   if (legacyArtifact) {
@@ -184,13 +197,14 @@ export function parseWorkspaceRoute(
   }
   const settings = clean.match(/^\/settings(?:\/([^/]+))?$/);
   if (settings) {
-    const candidate = (settings[1] ?? "general") as SettingsSection;
-    const section = SETTINGS_SECTIONS.has(candidate) ? candidate : "general";
+    const legacy = settings[1] === "general" ? "storage" : settings[1];
+    const candidate = (legacy ?? "providers") as SettingsSection;
+    const section = SETTINGS_SECTIONS.has(candidate) ? candidate : "providers";
     return {
       kind: "settings",
       section,
       canonicalPath:
-        section === "general" ? "/settings" : `/settings/${section}`,
+        section === "providers" ? "/settings" : `/settings/${section}`,
     };
   }
   return { kind: "home", canonicalPath: "/" };

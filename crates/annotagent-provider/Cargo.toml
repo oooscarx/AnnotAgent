@@ -11,6 +11,7 @@ annotagent-core = { path = "../annotagent-core" }
 async-trait.workspace = true
 base64.workspace = true
 chrono.workspace = true
+futures.workspace = true
 image.workspace = true
 keyring.workspace = true
 reqwest.workspace = true

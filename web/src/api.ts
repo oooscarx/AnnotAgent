@@ -4,6 +4,7 @@ import type {
   CorrectionMemoryRecord,
   DashboardData,
   DetectionWorkerTestResult,
+  CredentialSource,
   HistoryRun,
   ImageItem,
   ModelBinding,
@@ -31,6 +32,12 @@ import type {
   WorkflowDryRunReport,
   WorkflowVersionComparison,
   WorkflowSuggestion,
+  ProviderPresetProfile,
+  ProviderProfile,
+  RegistryModelProfile,
+  InputModality,
+  ModelCapability,
+  ProviderProbeUsage,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,13 +51,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       code?: string;
       active_run_id?: string;
       status?: string;
+      suggested_action?: string;
     };
     const active =
       body.code === "active_run_exists"
         ? `Project already has active Run ${body.active_run_id ?? "unknown"} (${body.status ?? "active"}).`
         : undefined;
+    const actionable = [body.error, body.suggested_action]
+      .filter(Boolean)
+      .join(" ");
     throw new Error(
-      active ?? body.error ?? `${response.status} ${response.statusText}`,
+      active ?? (actionable || `${response.status} ${response.statusText}`),
     );
   }
   return response.json() as Promise<T>;
@@ -58,6 +69,107 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string }>("/api/health"),
+  providerPresets: () =>
+    request<{ presets: ProviderPresetProfile[] }>("/api/provider-presets"),
+  providers: () => request<{ providers: ProviderProfile[] }>("/api/providers"),
+  createProvider: (value: {
+    display_name: string;
+    preset_id?: string;
+    adapter: "open_ai_compatible" | "mock";
+    base_url: string;
+    enabled?: boolean;
+  }) =>
+    request<ProviderProfile>("/api/providers", {
+      method: "POST",
+      body: JSON.stringify(value),
+    }),
+  updateProvider: (providerId: string, value: Partial<{
+    display_name: string;
+    preset_id: string | null;
+    adapter: "open_ai_compatible" | "mock";
+    base_url: string;
+    enabled: boolean;
+  }>) =>
+    request<ProviderProfile>(`/api/providers/${encodeURIComponent(providerId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(value),
+    }),
+  deleteProvider: (providerId: string) =>
+    request<{ deleted: string }>(`/api/providers/${encodeURIComponent(providerId)}`, {
+      method: "DELETE",
+    }),
+  saveProviderCredential: (
+    providerId: string,
+    value: { source: CredentialSource; secret?: string; environment_variable?: string },
+  ) =>
+    request<{ provider_id: string; credential_configured: boolean; credential_source: CredentialSource }>(
+      `/api/providers/${encodeURIComponent(providerId)}/credential`,
+      { method: "POST", body: JSON.stringify(value) },
+    ),
+  deleteProviderCredential: (providerId: string) =>
+    request<{ provider_id: string; credential_configured: boolean }>(
+      `/api/providers/${encodeURIComponent(providerId)}/credential`,
+      { method: "DELETE" },
+    ),
+  migrateProviderCredential: (providerId: string, deleteSourceAfterSuccess: boolean) =>
+    request<{ provider_id: string; credential_configured: boolean; credential_source: CredentialSource; source_deleted: boolean }>(
+      `/api/providers/${encodeURIComponent(providerId)}/migrate-credential`,
+      {
+        method: "POST",
+        body: JSON.stringify({ delete_source_after_success: deleteSourceAfterSuccess }),
+      },
+    ),
+  checkProvider: (providerId: string) =>
+    request<{ provider: ProviderProfile; billable: false; check: { latency_ms: number; discovered_model_count: number; safe_message: string } }>(
+      `/api/providers/${encodeURIComponent(providerId)}/check`,
+      { method: "POST" },
+    ),
+  discoverProviderModels: (providerId: string) =>
+    request<{ provider_id: string; models: { remote_model_id: string }[]; latency_ms: number; warning: string }>(
+      `/api/providers/${encodeURIComponent(providerId)}/discover-models`,
+      { method: "POST" },
+    ),
+  activeProbe: (providerId: string, modelProfileId: string) =>
+    request<{ billable: true; usage: ProviderProbeUsage }>(
+      `/api/providers/${encodeURIComponent(providerId)}/active-probe`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model_profile_id: modelProfileId, confirmed_billable: true }),
+      },
+    ),
+  modelProfiles: (providerId?: string, allRevisions = false) =>
+    request<{ models: RegistryModelProfile[] }>(
+      `/api/model-profiles?${new URLSearchParams({
+        ...(providerId ? { provider_id: providerId } : {}),
+        ...(allRevisions ? { all_revisions: "true" } : {}),
+      }).toString()}`,
+    ),
+  createModelProfile: (value: {
+    provider_id: string;
+    display_name: string;
+    remote_model_id: string;
+    input_modalities: InputModality[];
+    task_capabilities: ModelCapability[];
+    protocol_features: RegistryModelProfile["protocol_features"];
+    pricing?: RegistryModelProfile["pricing"];
+  }) =>
+    request<RegistryModelProfile>("/api/model-profiles", {
+      method: "POST",
+      body: JSON.stringify(value),
+    }),
+  updateModelProfile: (modelId: string, value: Partial<RegistryModelProfile>) =>
+    request<RegistryModelProfile>(`/api/model-profiles/${encodeURIComponent(modelId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(value),
+    }),
+  deleteModelProfile: (modelId: string) =>
+    request<{ deleted: string }>(`/api/model-profiles/${encodeURIComponent(modelId)}`, {
+      method: "DELETE",
+    }),
+  modelProfileUsage: (modelId: string) =>
+    request<{ model_profile_id: string; active_probes: ProviderProbeUsage[] }>(
+      `/api/model-profiles/${encodeURIComponent(modelId)}/usage`,
+    ),
   dashboard: () => request<DashboardData>("/api/projects"),
   createProject: (id: string, yaml: string) =>
     request<ProjectSummary>("/api/projects", {

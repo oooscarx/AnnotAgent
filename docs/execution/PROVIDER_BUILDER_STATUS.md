@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 3 — Provider/Model lifecycle API and Settings GUI.
+Milestone 4 — constrained Node Catalog.
 
 ## 已完成内容
 
@@ -44,16 +44,31 @@ Milestone 3 — Provider/Model lifecycle API and Settings GUI.
   bindings and global defaults, with revision and lock enforcement at the storage boundary.
 - Documented the Provider/Profile/runtime descriptor/Skill/Node/Agent Tool boundaries in
   `docs/PROVIDER_MODEL_REGISTRY.md`.
+- Added safe Provider lifecycle HTTP operations: pure-data presets, CRUD, write-only credential
+  save/remove/explicit legacy migration, passive connection check, explicitly confirmed active
+  probe, `/models` discovery and reference-protected deletion.
+- Added bounded Provider lifecycle transport: no redirects, one MiB response limit, safe-header
+  allow-list, timeout policy, static sanitized errors and no raw remote body/error echo.
+- Added Model Profile lifecycle API, semantic revision creation, filters/compatibility query,
+  Project bindings, Agent defaults and immutable active-probe usage persistence in migration 8.
+- Rebuilt Settings navigation as Providers, Models, Vision Workers, Storage and Usage. Provider and
+  Model forms use the persistent Registry; credential inputs remain write-only; active probes show
+  an explicit possible-charge confirmation; Vision Workers retain their independent protocol UI.
+- Added model/provider filters, manual capability/protocol/pricing authoring, Model revision edits,
+  Provider edit/disable/delete controls, discovery results and truthful empty/unverified states.
+- Preserved legacy `/models` as a redirect to Vision Workers while `/settings/models` is the new
+  revisioned Model Profile surface.
+- Browser validation verified Provider → Model → Usage against an isolated server, no console
+  errors, and no page overflow at 1024 px or 390 px.
 
 ## 正在进行内容
 
-- Closing the M2 local commit, then exposing Provider/Model lifecycle operations through safe HTTP
-  APIs and the Settings information architecture.
+- Closing the M3 local commit, then constraining the public Workflow Node Catalog in M4.
 
 ## 下一步
 
-- Milestone 3: Provider presets and Provider/Profile CRUD, credential actions, passive checks,
-  explicit billable probes, reference-safe deletion, and Providers/Models/Vision Workers UI.
+- Milestone 4: expose only the requested annotation Node Catalog and move Cache/Replay/Retry,
+  Timeout/Budget/Checkpoint/control/history concerns into Runtime Policy surfaces.
 
 ## 最近 Rust 测试
 
@@ -69,6 +84,11 @@ Milestone 3 — Provider/Model lifecycle API and Settings GUI.
 - `cargo check --workspace --all-features`: PASS after M2.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: PASS after M2.
 - `cargo test --workspace --all-features`: 255 passed, 0 failed after M2; doc-test groups passed.
+- M3 affected library suites: Provider 39, Server 11, Storage 11 passed (61 total).
+- M3 strict Clippy for Provider, Storage and Server, all targets: PASS.
+- M3 full `cargo test --workspace --all-features --quiet`: 257 passed, 0 failed; doc-test
+  groups passed.
+- M3 full-workspace all-target/all-feature strict Clippy, fmt check and build: PASS.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -76,24 +96,26 @@ Milestone 3 — Provider/Model lifecycle API and Settings GUI.
 - `npm --prefix web run typecheck`: PASS after M2.
 - `npm --prefix web test -- --run`: 36 passed after M2.
 - `npm --prefix web run build`: PASS after M2.
+- M3 TypeScript check, 36 Vitest tests and production build: PASS.
 
 ## 最近 E2E 测试
 
-- `npm --prefix web run test:e2e`: 26 passed, 0 failed after M2 in an isolated workspace.
+- `npm --prefix web run test:e2e`: 28 passed, 0 failed after M3 in an isolated workspace.
 
 ## 最近本地提交
 
 - Before M0: `5c63a6c fix(web): preserve hero heading spacing on narrow screens`.
 - M0: `39af089 docs: establish provider registry and builder baseline`.
 - M1: `5be1bf3 feat(provider): add reusable provider profiles and secure credentials`.
-- M2 commit pending at this status write; its hash is filled by the next milestone.
+- M2: `f8b4437 feat(models): add reusable model profiles and capability bindings`.
+- M3 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
-- A remains open for lifecycle API/UI. B is implemented offline but awaits final M8 security/E2E
-  evidence. C and D now have contracts, persistence, revision/compatibility/lock tests and snapshot
-  support, but remain open until API/UI, publication/runtime integration and migration are proven.
-  E–I remain open.
+- A now passes offline Provider lifecycle/API/UI acceptance. B is implemented offline but awaits
+  final M8 security/source-scan/native evidence. C and D now have lifecycle API/UI, persistence,
+  revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
+  integration and migration are proven. E–I remain open.
 
 ## Live-conditional 项
 

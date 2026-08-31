@@ -12,13 +12,13 @@ describe("guided workspace routing", () => {
 
   it("migrates legacy registry routes", () => {
     expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/");
-    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
-    expect(parseWorkspaceRoute("/providers").canonicalPath).toBe("/settings/models");
+    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/vision-workers");
+    expect(parseWorkspaceRoute("/providers").canonicalPath).toBe("/settings");
     expect(parseWorkspaceRoute("/settings/providers").canonicalPath).toBe(
-      "/settings/models",
+      "/settings",
     );
     expect(parseWorkspaceRoute("/skills").canonicalPath).toBe(
-      "/settings/capabilities",
+      "/settings/vision-workers",
     );
     expect(
       parseWorkspaceRoute("/workflows", "?project_id=alpha").canonicalPath,
