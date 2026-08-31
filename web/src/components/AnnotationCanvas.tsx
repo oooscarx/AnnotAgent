@@ -324,7 +324,7 @@ function AnnotationShape({
   ) => void;
 }) {
   const color = annotationColor(visual.slot);
-  const strokeWidth = selected ? 4 : 2.5;
+  const strokeWidth = selected ? 2.6 : 2;
   const strokeDasharray = !selected && visual.pattern === "dashed-box" ? "12 8" : undefined;
   const fill = visual.pattern === "diagonal-fill" ? `url(#aa-diagonal-${visual.slot})` : color;
   const label = `${annotation.label ?? annotation.task_id} ${annotation.confidence ? `${Math.round(annotation.confidence * 100)}%` : ""}`;
@@ -362,7 +362,7 @@ function AnnotationShape({
           width={width * canvasWidth}
           height={height * canvasHeight}
           fill={fill}
-          fillOpacity={selected ? 0.18 : 0.09}
+          fillOpacity={selected ? 0.13 : 0.07}
           stroke={color}
           strokeWidth={strokeWidth}
           strokeDasharray={strokeDasharray}
@@ -425,7 +425,7 @@ function AnnotationShape({
       <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
         {rings.map((ring, ringIndex) => (
           <g key={ringIndex}>
-            <polygon points={pointText(ring, canvasWidth, canvasHeight)} fill={fill} fillOpacity={selected ? 0.2 : 0.1} stroke={color} strokeWidth={strokeWidth} strokeDasharray={strokeDasharray} className="aa-annotation-shape" />
+            <polygon points={pointText(ring, canvasWidth, canvasHeight)} fill={fill} fillOpacity={selected ? 0.14 : 0.08} stroke={color} strokeWidth={strokeWidth} strokeDasharray={strokeDasharray} className="aa-annotation-shape" />
             {vertices(ring, ringIndex)}
           </g>
         ))}

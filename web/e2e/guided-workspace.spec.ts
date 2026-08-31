@@ -150,8 +150,35 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
   await expect(dialog).toBeVisible();
-  await dialog.getByText("Classify images", { exact: true }).click();
-  await dialog.getByLabel("Project name").fill(projectName);
+  const classifyIntent = dialog.getByRole("radio", { name: /Classify images/ });
+  await classifyIntent.click();
+  await classifyIntent.focus();
+  const intentPresentation = await classifyIntent.evaluate((element) => {
+    const radioStyle = getComputedStyle(element);
+    const cardStyle = getComputedStyle(element.closest("label")!);
+    return {
+      appearance: radioStyle.appearance,
+      borderRadius: radioStyle.borderRadius,
+      outline: radioStyle.outlineStyle,
+      cardShadow: cardStyle.boxShadow,
+    };
+  });
+  expect(intentPresentation).toEqual({
+    appearance: "none",
+    borderRadius: "50%",
+    outline: "none",
+    cardShadow: "none",
+  });
+  const projectNameInput = dialog.getByLabel("Project name");
+  await projectNameInput.fill(projectName);
+  await projectNameInput.focus();
+  const inputFocus = await projectNameInput.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { outline: style.outlineStyle, borderWidth: style.borderWidth, shadow: style.boxShadow };
+  });
+  expect(inputFocus.outline).toBe("none");
+  expect(inputFocus.borderWidth).toBe("1px");
+  expect(inputFocus.shadow).not.toBe("none");
   await dialog.getByLabel("Class name").fill("Day");
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByLabel("Image file or folder").fill(imageSource);
@@ -766,6 +793,10 @@ test("bbox and crop selection stay linked through parent references", async ({ p
   const overlay = page.locator('svg[aria-label="Annotation overlay"]');
   await expect(overlay.getByRole("button").first()).toBeVisible();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
+  const selectedStrokeWidth = await overlay.locator("g.selected rect").first().evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).strokeWidth),
+  );
+  expect(selectedStrokeWidth).toBeLessThanOrEqual(3);
   await page.getByRole("button", { name: /Crop \(1\)/ }).click();
   await expect(page.locator(".crop-preview-list button.selected")).toHaveCount(1);
   await page.getByRole("button", { name: "Result", exact: true }).click();

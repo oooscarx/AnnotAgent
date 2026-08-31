@@ -786,12 +786,17 @@ function BuildData({
   onError: (value: string) => void;
 }) {
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [imagesLoaded, setImagesLoaded] = useState(false);
   const [source, setSource] = useState("");
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.importImages>>>();
   const [busy, setBusy] = useState(false);
   const load = () =>
-    api.images(project.id).then((value) => setImages(value.images));
+    api.images(project.id).then((value) => {
+      setImages(value.images);
+      setImagesLoaded(true);
+    });
   useEffect(() => {
+    setImagesLoaded(false);
     void load().catch((error: Error) => onError(error.message));
   }, [project.id]);
   const importImages = () => {
@@ -828,7 +833,7 @@ function BuildData({
           <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
         </label>
         <div className="button-row">
-          <button className={images.length === 0 ? "primary" : ""} disabled={busy || !source.trim()} onClick={importImages}>
+          <button className={imagesLoaded && images.length === 0 ? "primary" : ""} disabled={busy || !source.trim()} onClick={importImages}>
             {busy ? "Importing…" : "Add images"}
           </button>
           <small>Supported: PNG and JPEG · recursive folder discovery · 100 MP decode safety limit</small>
