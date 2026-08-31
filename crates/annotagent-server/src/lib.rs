@@ -1103,9 +1103,13 @@ async fn save_provider_credential(
         let reference = CredentialReference {
             provider_id,
             source: input.source,
-            locator,
+            locator: locator.trim().to_owned(),
         };
-        reference.validate().map_err(ApiError::bad_request)?;
+        reference.validate().map_err(|_| {
+            ApiError::bad_request(
+                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the session-only credential source.",
+            )
+        })?;
         if !state
             .secret_store
             .exists(&reference)
@@ -1113,7 +1117,7 @@ async fn save_provider_credential(
             .map_err(ApiError::bad_request)?
         {
             return Err(ApiError::bad_request(
-                "the selected environment variable is not currently configured",
+                "The selected environment variable is not configured in the server process. Set it before starting AnnotAgent, or choose the session-only credential source to paste a key directly.",
             ));
         }
         reference
@@ -5151,6 +5155,23 @@ export:
         .await;
         assert_eq!(status, StatusCode::OK);
         let remote_id = remote_provider["id"].as_str().expect("provider id");
+        let (status, invalid_environment) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{remote_id}/credential"),
+            json!({
+                "source": "environment_variable",
+                "environment_variable": "not-a-variable-name"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_environment["error"],
+            json!(
+                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the session-only credential source."
+            )
+        );
         let (status, credential) = call_json(
             &service,
             axum::http::Method::POST,

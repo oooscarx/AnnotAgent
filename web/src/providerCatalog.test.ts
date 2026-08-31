@@ -3,6 +3,7 @@ import {
   applyProviderPreset,
   getProviderPreset,
   inferProviderPreset,
+  isEnvironmentVariableName,
   isCatalogModel,
 } from "./providerCatalog";
 
@@ -36,5 +37,12 @@ describe("provider catalog", () => {
     expect(custom.provider?.endpoint).toBe("https://gateway.example/v1");
     expect(custom.default_provider).toBe("openai_compatible");
     expect(isCatalogModel(getProviderPreset("dashscope"), "private-vision")).toBe(false);
+  });
+
+  it("distinguishes an environment variable name from a pasted API key", () => {
+    expect(isEnvironmentVariableName("DASHSCOPE_API_KEY")).toBe(true);
+    expect(isEnvironmentVariableName("_PRIVATE_GATEWAY_TOKEN_2")).toBe(true);
+    expect(isEnvironmentVariableName("not-a-variable-name")).toBe(false);
+    expect(isEnvironmentVariableName("123_API_KEY")).toBe(false);
   });
 });

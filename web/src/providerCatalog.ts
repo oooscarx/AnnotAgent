@@ -1,5 +1,9 @@
 export const CUSTOM_MODEL = "__custom_model__";
 
+export function isEnvironmentVariableName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim());
+}
+
 export interface ProviderModel {
   id: string;
   label: string;

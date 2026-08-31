@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
-import { PROVIDER_PRESETS } from "./providerCatalog";
+import {
+  PROVIDER_PRESETS,
+  isEnvironmentVariableName,
+} from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
@@ -2129,7 +2132,7 @@ function InlineProviderSetup({
   const [modelId, setModelId] = useState("");
   const [credentialSource, setCredentialSource] = useState<
     "environment_variable" | "session_only"
-  >("environment_variable");
+  >("session_only");
   const [environmentVariable, setEnvironmentVariable] =
     useState("ANNOTAGENT_PROVIDER_API_KEY");
   const [secret, setSecret] = useState("");
@@ -2170,9 +2173,11 @@ function InlineProviderSetup({
       return onError("Enter a Provider name and exact model ID.");
     if (
       credentialSource === "environment_variable" &&
-      !environmentVariable.trim()
+      !isEnvironmentVariableName(environmentVariable)
     )
-      return onError("Enter the server environment variable name.");
+      return onError(
+        "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose This server session only.",
+      );
     if (credentialSource === "session_only" && !secret)
       return onError("Enter the API key for this server session.");
     setBusy("connect");
@@ -2311,8 +2316,10 @@ function InlineProviderSetup({
             </label>
           )}
           <small>
-            No credential is placed in the workspace, browser storage, or OS
-            keychain. Session-only values disappear when the server stops.
+            To paste an API key, choose This server session only. Environment
+            variable mode accepts only a variable name already set before the
+            server starts. No credential is placed in the workspace, browser
+            storage, or OS keychain.
           </small>
           <button
             disabled={busy === "connect" || !presets.length}
@@ -4907,17 +4914,27 @@ function ProviderRegistryCard({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(""));
   };
-  const saveCredential = () =>
+  const saveCredential = () => {
+    if (
+      credentialSource === "environment_variable" &&
+      !isEnvironmentVariableName(environmentVariable)
+    ) {
+      onError(
+        "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose This server session only.",
+      );
+      return;
+    }
     run(
       "credential",
       () => api.saveProviderCredential(provider.id, {
         source: credentialSource,
         ...(credentialSource === "environment_variable"
-          ? { environment_variable: environmentVariable }
+          ? { environment_variable: environmentVariable.trim() }
           : { secret }),
       }),
       "Credential reference saved. Run Check connection next.",
     );
+  };
   const discover = () => {
     setBusy("discover");
     void api.discoverProviderModels(provider.id)
@@ -4969,7 +4986,7 @@ function ProviderRegistryCard({
         {provider.adapter === "mock" ? <p>Mock runs offline and does not need a credential.</p> : <>
           <div className="form-grid">
             <label>Storage<select value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as typeof credentialSource)}><option value="system_keyring">System credential store</option><option value="environment_variable">Environment variable</option><option value="session_only">This server session only</option></select></label>
-            {credentialSource === "environment_variable" ? <label>Variable name<input value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="PROVIDER_API_KEY" /></label> : <label>API key<input type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Written once; never returned" /></label>}
+            {credentialSource === "environment_variable" ? <label>Variable name<input value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="DASHSCOPE_API_KEY" /><small>Enter only a variable name already set before the server starts. Do not paste the API key here.</small></label> : <label>API key<input type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Written once; never returned" /><small>Stored only in this server process and cleared when it stops.</small></label>}
           </div>
           <div className="button-row"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
         </>}
