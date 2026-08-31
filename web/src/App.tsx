@@ -2379,17 +2379,16 @@ function WorkflowsPage({
         ...draft.nodes,
         {
           id: `node_${draft.nodes.length + 1}`,
-          node_type: "vision_language",
-          kind: "vision_language_model",
+          node_type: "core.resize",
+          kind: "transform",
           depends_on: [],
-          inputs: [],
-          outputs: [],
-          model_binding: "default-vision",
+          inputs: [{ id: "image", artifact_type: "image", required: true, multiple: false }],
+          outputs: [{ id: "image", artifact_type: "image", required: true, multiple: false }],
           validators: [],
           refiners: [],
-          max_retries: 1,
+          max_retries: 0,
           review_gate: false,
-          parameters: {},
+          parameters: { max_edge: 1600, allow_upscale: false },
         },
       ],
     });
@@ -2793,6 +2792,9 @@ function WorkflowsPage({
                               })
                             }
                           >
+                            {!catalog?.node_catalog.some((descriptor) => descriptor.id === node.node_type) && (
+                              <option value={node.node_type}>{workflowNodeTitle(node.node_type)} · legacy operation</option>
+                            )}
                             {(catalog?.node_catalog ?? []).map((descriptor) => (
                               <option key={descriptor.id} value={descriptor.id}>
                                 {descriptor.display_name}
@@ -3024,6 +3026,15 @@ function WorkflowsPage({
                   </article>
                 ))}
               </div>
+              <section className="runtime-policy-summary" aria-label="Runtime Policies">
+                <span className="eyebrow">Runtime behavior · not graph nodes</span>
+                <p>Cache, replay, retry, timeout, budget, checkpoints, run control, usage, and history apply across the graph.</p>
+                <div className="node-meta">
+                  {(catalog?.runtime_policies ?? []).map((policy) => (
+                    <span key={policy.id}>{policy.display_name} · {policy.scope}</span>
+                  ))}
+                </div>
+              </section>
               </details>
                 </>
               )}
@@ -3085,6 +3096,12 @@ function WorkflowsPage({
 export function workflowNodeTitle(nodeType: string): string {
   const known: Record<string, string> = {
     "core.image_input": "Read each image",
+    "core.existing_annotations": "Read existing annotations",
+    "core.resize": "Resize image",
+    "core.tile": "Tile image",
+    "capability.detect": "Find objects",
+    "capability.classify": "Classify crops or images",
+    "capability.segment": "Segment regions",
     "vlm_detection.detect": "Find objects",
     "yolo_detection.detect": "Find objects",
     "classification.classify": "Classify crops or images",
@@ -3092,12 +3109,17 @@ export function workflowNodeTitle(nodeType: string): string {
     "core.project_detection_candidates": "Select detections",
     "core.crop": "Crop candidates",
     "core.map_label": "Select detections",
+    "core.select_and_map": "Select and map results",
+    "core.project_coordinates": "Project coordinates",
     "core.attach_result": "Combine model evidence",
     "core.candidate_merge": "Combine model evidence",
     "core.match_detection_sets": "Combine model evidence",
+    "core.combine_evidence": "Combine model evidence",
     "core.attach_attribute": "Attach attributes",
     "core.confidence_gate": "Decision",
     "core.evidence_gate": "Decision",
+    "core.validate": "Validate results",
+    "core.decision": "Decision",
     "core.human_review": "Send uncertain results to Review",
     "core.commit": "Save annotations",
     "core.artifact_cache": "Keep replayable artifacts",
@@ -3106,11 +3128,11 @@ export function workflowNodeTitle(nodeType: string): string {
 }
 
 function guidedWorkflowConcept(nodeType: string): string {
-  if (["core.filter", "core.map_label", "core.project_detection_candidates"].includes(nodeType))
+  if (["core.filter", "core.map_label", "core.project_detection_candidates", "core.select_and_map"].includes(nodeType))
     return "select_detections";
-  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(nodeType))
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets", "core.combine_evidence"].includes(nodeType))
     return "combine_model_evidence";
-  if (["core.confidence_gate", "core.evidence_gate"].includes(nodeType))
+  if (["core.confidence_gate", "core.evidence_gate", "core.decision"].includes(nodeType))
     return "decision";
   if (nodeType.includes("detect") || nodeType.includes("ground")) return "find_objects";
   return nodeType;
@@ -3126,11 +3148,11 @@ export function guidedWorkflowNodes<T extends { node_type: string }>(nodes: T[])
 function pipelineStepTitle(step: PipelineStep, targetLabel?: string): string {
   const label = targetLabel || (Array.isArray(step.parameters.labels) ? step.parameters.labels.join(", ") : "targets");
   if (step.node_type.includes("detect")) return `Find ${label}`;
-  if (["core.filter", "core.map_label", "core.project_detection_candidates"].includes(step.node_type)) return "Select detections";
+  if (["core.filter", "core.map_label", "core.project_detection_candidates", "core.select_and_map"].includes(step.node_type)) return "Select detections";
   if (step.node_type === "core.crop") return "Crop candidates";
   if (step.node_type.includes("classify")) return `Classify ${label}`;
-  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(step.node_type)) return "Combine model evidence";
-  if (["core.confidence_gate", "core.evidence_gate"].includes(step.node_type)) return "Decision";
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets", "core.combine_evidence"].includes(step.node_type)) return "Combine model evidence";
+  if (["core.confidence_gate", "core.evidence_gate", "core.decision"].includes(step.node_type)) return "Decision";
   if (step.kind === "human_review") return "Send uncertain results to Review";
   if (step.kind === "commit") return "Save the annotation";
   return workflowNodeTitle(step.node_type);
@@ -3143,7 +3165,7 @@ function pipelineStepDescription(step: PipelineStep, targetLabel?: string): stri
     return `Accept confidence ≥ ${Number(step.parameters.threshold ?? 0).toFixed(2)}; route the rest to Review`;
   if (step.node_type === "core.evidence_gate")
     return "Compare independent results and route conflicts to Review";
-  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets"].includes(step.node_type))
+  if (["core.attach_result", "core.candidate_merge", "core.match_detection_sets", "core.combine_evidence"].includes(step.node_type))
     return "Keep each result attached to the same source object";
   if (step.node_type === "core.filter")
     return `Class filter · minimum confidence ${Number(step.parameters.minimum_confidence ?? 0).toFixed(2)}`;
@@ -3324,7 +3346,7 @@ function LabelPipelineEditor({
       node_type: catalogNode,
       kind: pipelineNodeKind(catalogNode),
       inputs:
-        catalogNode === "core.crop"
+        ["core.crop", "core.project_coordinates"].includes(catalogNode)
           ? { image: { source: "image" }, detections: source }
           : { input: source },
       outputs: { [output.port]: output.type },
@@ -3389,25 +3411,17 @@ function LabelPipelineEditor({
       resources: {},
     };
     if (!localDetection) {
-      const cache: PipelineStep = {
-        id: `${prefix}.crop_cache`,
-        node_type: "core.artifact_cache",
-        kind: "export",
+      const commitWithCrop: PipelineStep = {
+        ...commit,
         inputs: {
-          crops: {
+          ...commit.inputs,
+          preview_crops: {
             source: "step",
             step_id: crop.id,
             port: "crops",
             artifact_type: "crop_set",
           },
         },
-        outputs: {},
-        parameters: { purpose: "bbox_and_crop_preview" },
-        validators: [],
-        refiners: [],
-        retry_policy: { max_attempts: 1 },
-        review_gate: { required: false, allow_manual_override: false },
-        resources: {},
       };
       replaceComposition({
         ...composition,
@@ -3424,9 +3438,8 @@ function LabelPipelineEditor({
                       step.node_type !== "core.artifact_cache",
                   ),
                   crop,
-                  cache,
                   gate,
-                  commit,
+                  commitWithCrop,
                 ],
               }
             : pipeline,
@@ -3578,26 +3591,6 @@ function LabelPipelineEditor({
       review_gate: { required: false, allow_manual_override: false },
       resources: {},
     };
-    const cache: PipelineStep = {
-      id: `${selected.id}.crop_cache`,
-      node_type: "core.artifact_cache",
-      kind: "export",
-      inputs: {
-        crops: {
-          source: "step",
-          step_id: crop.id,
-          port: "crops",
-          artifact_type: "crop_set",
-        },
-      },
-      outputs: {},
-      parameters: { purpose: "bbox_and_crop_preview" },
-      validators: [],
-      refiners: [],
-      retry_policy: { max_attempts: 1 },
-      review_gate: { required: false, allow_manual_override: false },
-      resources: {},
-    };
     replaceComposition({
       ...composition,
       shared_stages: composition.shared_stages.map((stage) => ({
@@ -3621,7 +3614,6 @@ function LabelPipelineEditor({
                     step.node_type !== "core.attach_result",
                 ),
                 crop,
-                cache,
                 gate,
                 commit,
               ],
@@ -3685,14 +3677,8 @@ function LabelPipelineEditor({
           >
             {(catalog?.node_catalog ?? [])
               .filter((node) =>
-                [
-                  "core.crop",
-                  "core.filter",
-                  "core.attach_result",
-                  "core.confidence_gate",
-                  "classification.classify",
-                  "vlm_detection.detect",
-                ].includes(node.id),
+                !["input", "human_and_output"].includes(node.category) &&
+                node.id !== "capability.segment",
               )
               .map((node) => (
                 <option key={node.id} value={node.id}>
@@ -3925,22 +3911,25 @@ export function pipelineNodeOutput(nodeType: string): {
   type: PipelineArtifactType;
 } {
   if (nodeType === "core.crop") return { port: "crops", type: "crop_set" };
-  if (nodeType === "classification.classify")
+  if (nodeType === "core.resize" || nodeType === "core.tile")
+    return { port: "images", type: "image" };
+  if (nodeType === "classification.classify" || nodeType === "capability.classify")
     return { port: "classifications", type: "classification_set" };
   if (nodeType === "core.attach_result" || nodeType === "core.attach_attribute")
     return { port: "candidates", type: "annotation_candidate_set" };
-  if (nodeType === "core.confidence_gate")
+  if (["core.confidence_gate", "core.decision", "core.validate"].includes(nodeType))
     return { port: "candidates", type: "annotation_candidate_set" };
-  if (nodeType === "core.match_detection_sets" || nodeType === "core.evidence_gate")
+  if (["core.match_detection_sets", "core.combine_evidence", "core.evidence_gate"].includes(nodeType))
     return { port: "candidates", type: "candidate_cluster_set" };
   return { port: "detections", type: "detection_set" };
 }
 
 export function pipelineNodeKind(nodeType: string): NonNullable<PipelineStep["kind"]> {
-  if (nodeType === "core.attach_result" || nodeType === "core.match_detection_sets")
+  if (["core.attach_result", "core.match_detection_sets", "core.combine_evidence"].includes(nodeType))
     return "candidate_merge";
-  if (nodeType === "core.confidence_gate" || nodeType === "core.evidence_gate")
+  if (["core.confidence_gate", "core.evidence_gate", "core.decision"].includes(nodeType))
     return "gate";
+  if (nodeType === "core.validate") return "validator";
   if (nodeType.includes("classify") || nodeType.includes("detect"))
     return "vision_model";
   return "transform";
@@ -3948,11 +3937,17 @@ export function pipelineNodeKind(nodeType: string): NonNullable<PipelineStep["ki
 
 export function pipelineNodeParameters(nodeType: string, label: string) {
   if (nodeType === "core.crop") return { padding: 0.05 };
+  if (nodeType === "core.resize") return { max_edge: 1600, allow_upscale: false };
+  if (nodeType === "core.tile")
+    return { tile_size: 1024, overlap: 0.15, maximum_tiles: 64, merge_policy: "nms" };
   if (nodeType === "core.filter")
     return { labels: [label], minimum_confidence: 0.5 };
   if (nodeType === "core.map_label") return { class_mapping: {} };
+  if (nodeType === "core.select_and_map")
+    return { labels: [label], minimum_confidence: 0.5, class_mapping: {}, drop_unknown_labels: false };
   if (nodeType === "core.confidence_gate") return { threshold: 0.9 };
-  if (nodeType === "core.match_detection_sets")
+  if (nodeType === "core.decision") return { mode: "confidence", threshold: 0.9 };
+  if (nodeType === "core.match_detection_sets" || nodeType === "core.combine_evidence")
     return { method: "iou", minimum_iou: 0.5, preserve_unmatched: true };
   if (nodeType === "core.evidence_gate")
     return {
@@ -3961,9 +3956,9 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
       review_when: [{ geometry_conflict: true, label_conflict: true, score_missing: true }],
       reject_when: [],
     };
-  if (nodeType === "classification.classify")
+  if (nodeType === "classification.classify" || nodeType === "capability.classify")
     return { labels: [label], mock_label: label };
-  if (nodeType === "vlm_detection.detect")
+  if (nodeType === "vlm_detection.detect" || nodeType === "capability.detect")
     return {
       labels: [label],
       object_description: `Locate every visible ${label} and return a tight normalized bounding box.`,

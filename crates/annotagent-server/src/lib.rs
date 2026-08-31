@@ -4941,6 +4941,23 @@ mod tests {
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
         );
+        let public_node_ids = catalog["node_catalog"]
+            .as_array()
+            .expect("node catalog")
+            .iter()
+            .filter_map(|node| node["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(public_node_ids.contains("core.resize"));
+        assert!(public_node_ids.contains("core.tile"));
+        assert!(public_node_ids.contains("core.project_coordinates"));
+        assert!(public_node_ids.contains("capability.detect"));
+        assert!(!public_node_ids.contains("core.artifact_cache"));
+        assert!(!public_node_ids.contains("core.filter"));
+        assert!(
+            catalog["runtime_policies"]
+                .as_array()
+                .is_some_and(|policies| policies.iter().any(|policy| policy["id"] == "cache"))
+        );
         assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
         assert_eq!(
             catalog["workflow_templates"].as_array().map(Vec::len),

@@ -20,13 +20,19 @@ use sha2::{Digest, Sha256};
 use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 
 pub const CORE_CROP: &str = "core.crop";
+pub const CORE_RESIZE: &str = "core.resize";
+pub const CORE_TILE: &str = "core.tile";
 pub const CORE_FILTER: &str = "core.filter";
 pub const CORE_MAP_LABEL: &str = "core.map_label";
+pub const CORE_SELECT_AND_MAP: &str = "core.select_and_map";
+pub const CORE_PROJECT_COORDINATES: &str = "core.project_coordinates";
 pub const CORE_ATTACH_RESULT: &str = "core.attach_result";
 pub const CORE_ATTACH_ATTRIBUTE: &str = "core.attach_attribute";
 pub const CORE_CONFIDENCE_GATE: &str = "core.confidence_gate";
 pub const CORE_CANDIDATE_MATCH: &str = "core.match_detection_sets";
+pub const CORE_COMBINE_EVIDENCE: &str = "core.combine_evidence";
 pub const CORE_EVIDENCE_GATE: &str = "core.evidence_gate";
+pub const CORE_DECISION: &str = "core.decision";
 pub const CORE_PROJECT_CANDIDATES: &str = "core.project_detection_candidates";
 pub const CORE_REJECT: &str = "core.reject_candidates";
 pub const CORE_ARTIFACT_CACHE: &str = "core.artifact_cache";
@@ -39,14 +45,19 @@ pub struct CorePipelineRunner;
 impl DagNodeRunner for CorePipelineRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
         match context.node.node_type.as_str() {
+            CORE_RESIZE => run_resize(&context),
+            CORE_TILE => run_tile(&context),
             CORE_CROP => run_crop(&context),
             CORE_FILTER => run_filter(&context),
             CORE_MAP_LABEL => run_map_label(&context),
+            CORE_SELECT_AND_MAP => run_select_and_map(&context),
+            CORE_PROJECT_COORDINATES => run_project_coordinates(&context),
             CORE_ATTACH_RESULT => run_attach_result(&context),
             CORE_ATTACH_ATTRIBUTE => run_attach_attribute(&context),
             CORE_CONFIDENCE_GATE => run_confidence_gate(&context),
-            CORE_CANDIDATE_MATCH => run_candidate_match(&context),
+            CORE_CANDIDATE_MATCH | CORE_COMBINE_EVIDENCE => run_candidate_match(&context),
             CORE_EVIDENCE_GATE => run_evidence_gate(&context),
+            CORE_DECISION => run_decision(&context),
             CORE_PROJECT_CANDIDATES => run_project_candidates(&context),
             CORE_REJECT => run_reject(&context),
             CORE_IMAGE_STATISTICS => run_image_statistics(&context),
@@ -61,6 +72,165 @@ impl DagNodeRunner for CorePipelineRunner {
             )),
         }
     }
+}
+
+fn run_resize(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let image = one_image(context)?;
+    image
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_image", error))?;
+    let target_width = optional_u32_parameter(context, "target_width")?;
+    let target_height = optional_u32_parameter(context, "target_height")?;
+    let max_edge = optional_u32_parameter(context, "max_edge")?;
+    let maximum_pixels = optional_u64_parameter(context, "maximum_pixels")?;
+    if target_width.is_none()
+        && target_height.is_none()
+        && max_edge.is_none()
+        && maximum_pixels.is_none()
+    {
+        return Err(DagNodeFailure::terminal(
+            "resize_target_missing",
+            "Resize requires target_width, target_height, max_edge, or maximum_pixels",
+        ));
+    }
+    let mut requested_scales = Vec::new();
+    if let Some(width) = target_width {
+        requested_scales.push(f64::from(width) / f64::from(image.width));
+    }
+    if let Some(height) = target_height {
+        requested_scales.push(f64::from(height) / f64::from(image.height));
+    }
+    if let Some(edge) = max_edge {
+        requested_scales.push(f64::from(edge) / f64::from(image.width.max(image.height)));
+    }
+    if let Some(pixels) = maximum_pixels {
+        let source_pixels = f64::from(image.width) * f64::from(image.height);
+        requested_scales.push((pixels as f64 / source_pixels).sqrt());
+    }
+    let mut scale = requested_scales.into_iter().fold(f64::INFINITY, f64::min);
+    if !boolean_parameter(context, "allow_upscale", false)? {
+        scale = scale.min(1.0);
+    }
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(DagNodeFailure::terminal(
+            "invalid_resize_scale",
+            "Resize computed an invalid scale",
+        ));
+    }
+    let reference = output_reference(context, "image", ArtifactKind::Image)?;
+    let resized = annotagent_core::ImageArtifact {
+        reference: reference.clone(),
+        image_id: image.image_id,
+        width: (f64::from(image.width) * scale).round().max(1.0) as u32,
+        height: (f64::from(image.height) * scale).round().max(1.0) as u32,
+        mime_type: image.mime_type.clone(),
+        blob_ref: format!("virtual-resize://{}", reference.artifact_id),
+        parent: Some(image.reference.clone()),
+        root_region: image.root_region,
+    };
+    resized
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("resize_failed", error))?;
+    Ok(output(PipelineArtifact::Image(resized)))
+}
+
+fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let image = one_image(context)?;
+    image
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_image", error))?;
+    let square = optional_u32_parameter(context, "tile_size")?;
+    let tile_width = optional_u32_parameter(context, "tile_width")?
+        .or(square)
+        .unwrap_or(1024)
+        .min(image.width);
+    let tile_height = optional_u32_parameter(context, "tile_height")?
+        .or(square)
+        .unwrap_or(1024)
+        .min(image.height);
+    let overlap = number_parameter(context, "overlap", 0.15)?;
+    if !(0.0..0.9).contains(&overlap) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_tile_overlap",
+            "Tile overlap must be within [0,0.9)",
+        ));
+    }
+    let maximum_tiles = optional_u32_parameter(context, "maximum_tiles")?.unwrap_or(64) as usize;
+    if maximum_tiles == 0 {
+        return Err(DagNodeFailure::terminal(
+            "invalid_maximum_tiles",
+            "maximum_tiles must be greater than zero",
+        ));
+    }
+    let x_offsets = tile_offsets(image.width, tile_width, overlap);
+    let y_offsets = tile_offsets(image.height, tile_height, overlap);
+    if x_offsets.len().saturating_mul(y_offsets.len()) > maximum_tiles {
+        return Err(DagNodeFailure::terminal(
+            "tile_limit_exceeded",
+            format!(
+                "Tile would produce {} images, exceeding maximum_tiles={maximum_tiles}",
+                x_offsets.len().saturating_mul(y_offsets.len())
+            ),
+        ));
+    }
+    let output = output_reference(context, "images", ArtifactKind::Image)?;
+    let parent_region = image.root_region.unwrap_or(
+        annotagent_core::NormalizedRect::new(0.0, 0.0, 1.0, 1.0)
+            .map_err(|error| DagNodeFailure::terminal("tile_failed", error.to_string()))?,
+    );
+    let mut tiles = Vec::new();
+    for (row, y) in y_offsets.iter().enumerate() {
+        for (column, x) in x_offsets.iter().enumerate() {
+            let local_x = *x as f32 / image.width as f32;
+            let local_y = *y as f32 / image.height as f32;
+            let local_width = tile_width as f32 / image.width as f32;
+            let local_height = tile_height as f32 / image.height as f32;
+            let root_region = annotagent_core::NormalizedRect::new(
+                parent_region.x() + local_x * parent_region.width(),
+                parent_region.y() + local_y * parent_region.height(),
+                local_width * parent_region.width(),
+                local_height * parent_region.height(),
+            )
+            .map_err(|error| DagNodeFailure::terminal("tile_failed", error.to_string()))?;
+            let tile_id = format!("r{row}-c{column}");
+            let reference = output.item(tile_id.clone());
+            tiles.push(PipelineArtifact::Image(annotagent_core::ImageArtifact {
+                reference: reference.clone(),
+                image_id: image.image_id,
+                width: tile_width,
+                height: tile_height,
+                mime_type: image.mime_type.clone(),
+                blob_ref: format!("virtual-tile://{}/{}", output.artifact_id, tile_id),
+                parent: Some(image.reference.clone()),
+                root_region: Some(root_region),
+            }));
+        }
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: tiles,
+        metadata: BTreeMap::from([(
+            "tile_count".to_owned(),
+            serde_json::json!(x_offsets.len() * y_offsets.len()),
+        )]),
+        ..DagNodeOutput::default()
+    })
+}
+
+fn tile_offsets(total: u32, tile: u32, overlap: f64) -> Vec<u32> {
+    if tile >= total {
+        return vec![0];
+    }
+    let step = ((f64::from(tile) * (1.0 - overlap)).round() as u32).max(1);
+    let mut offsets = Vec::new();
+    let mut offset = 0_u32;
+    while offset.saturating_add(tile) < total {
+        offsets.push(offset);
+        offset = offset.saturating_add(step);
+    }
+    offsets.push(total - tile);
+    offsets.sort_unstable();
+    offsets.dedup();
+    offsets
 }
 
 /// Converts evidence clusters back into a `DetectionSet` for downstream Core Crop fan-out while
@@ -332,6 +502,145 @@ fn run_map_label(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeF
         .validate()
         .map_err(|error| DagNodeFailure::terminal("map_label_output_invalid", error))?;
     Ok(output(PipelineArtifact::DetectionSet(mapped)))
+}
+
+fn run_select_and_map(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let source = one_detection_set(context)?;
+    let minimum = number_parameter(context, "minimum_confidence", 0.0)? as f32;
+    if !(0.0..=1.0).contains(&minimum) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_minimum_confidence",
+            "minimum_confidence must be within [0,1]",
+        ));
+    }
+    let class_ids = string_list_parameter(context, "class_ids")?;
+    let labels = string_list_parameter(context, "labels")?;
+    let queries = string_list_parameter(context, "queries")?;
+    let mapping = object_parameter(context, "class_mapping")?;
+    let drop_unknown = boolean_parameter(context, "drop_unknown_labels", false)?;
+    let mut selected = source.clone();
+    selected.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    selected.detections.retain_mut(|detection| {
+        if let Some(label) = mapping
+            .get(detection.model_label.as_deref().unwrap_or_default())
+            .and_then(Value::as_str)
+            .filter(|label| !label.trim().is_empty())
+        {
+            detection.project_label = Some(LabelId::from(label));
+        }
+        detection
+            .score
+            .comparable_confidence()
+            .is_none_or(|confidence| confidence >= minimum)
+            && (class_ids.is_empty()
+                || detection
+                    .model_label
+                    .as_ref()
+                    .is_some_and(|value| class_ids.contains(value)))
+            && (labels.is_empty()
+                || detection
+                    .project_label
+                    .as_ref()
+                    .is_some_and(|value| labels.iter().any(|label| label == value.as_str())))
+            && (queries.is_empty()
+                || detection
+                    .query_id
+                    .as_ref()
+                    .is_some_and(|query| queries.contains(query)))
+            && (!drop_unknown || detection.project_label.is_some())
+    });
+    selected
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("select_and_map_output_invalid", error))?;
+    Ok(output(PipelineArtifact::DetectionSet(selected)))
+}
+
+fn run_project_coordinates(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let images = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::Image(image) => Some(image),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if images.is_empty() {
+        return Err(DagNodeFailure::terminal(
+            "coordinate_source_missing",
+            "Coordinate Projection requires the source Crop or Tile Image Artifact",
+        ));
+    }
+    let sets = detection_sets(context)?;
+    let output = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    let mut projected = Vec::new();
+    for (index, source) in sets.into_iter().enumerate() {
+        let source_artifact_id = source
+            .metadata
+            .get("source_image_artifact_id")
+            .and_then(Value::as_str);
+        let source_item_id = source
+            .metadata
+            .get("source_image_item_id")
+            .and_then(Value::as_str);
+        let image = if images.len() == 1 {
+            images[0]
+        } else {
+            images
+                .iter()
+                .copied()
+                .find(|image| {
+                    source_artifact_id == Some(image.reference.artifact_id.as_str())
+                        && source_item_id == image.reference.item_id.as_deref()
+                })
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "coordinate_lineage_ambiguous",
+                        "Each local DetectionSet must identify source_image_artifact_id and source_image_item_id",
+                    )
+                })?
+        };
+        let region = image.root_region.ok_or_else(|| {
+            DagNodeFailure::terminal(
+                "coordinate_mapping_missing",
+                "Source Image Artifact has no Crop/Tile root coordinate mapping",
+            )
+        })?;
+        let mut next = source.clone();
+        next.reference = ArtifactRef {
+            artifact_id: format!("{}:set-{index}", output.artifact_id),
+            source_node: output.source_node.clone(),
+            port: output.port.clone(),
+            artifact_type: output.artifact_type,
+            item_id: None,
+        };
+        for detection in &mut next.detections {
+            let local = detection.bbox;
+            detection.bbox = annotagent_core::NormalizedRect::new(
+                region.x() + local.x() * region.width(),
+                region.y() + local.y() * region.height(),
+                local.width() * region.width(),
+                local.height() * region.height(),
+            )
+            .map_err(|error| {
+                DagNodeFailure::terminal("coordinate_projection_failed", error.to_string())
+            })?;
+        }
+        next.metadata.insert(
+            "projected_from_image_artifact_id".to_owned(),
+            serde_json::json!(image.reference.artifact_id),
+        );
+        next.metadata.insert(
+            "coordinate_space".to_owned(),
+            serde_json::json!("root_image"),
+        );
+        next.validate()
+            .map_err(|error| DagNodeFailure::terminal("coordinate_projection_failed", error))?;
+        projected.push(PipelineArtifact::DetectionSet(next));
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: projected,
+        ..DagNodeOutput::default()
+    })
 }
 
 fn run_attach_result(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -1414,6 +1723,77 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
     })
 }
 
+fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let mode = string_parameter(context, "mode", "confidence")?;
+    match mode.as_str() {
+        "confidence" => run_confidence_gate(context),
+        "evidence" => run_evidence_gate(context),
+        "domain_policy" => {
+            let has_invalid =
+                context
+                    .input_pipeline_artifacts
+                    .iter()
+                    .any(|artifact| match artifact {
+                        PipelineArtifact::DetectionSet(value) => {
+                            value.validation_state == ArtifactValidationState::Invalid
+                        }
+                        PipelineArtifact::ClassificationSet(value) => {
+                            value.validation_state == ArtifactValidationState::Invalid
+                        }
+                        PipelineArtifact::CandidateClusterSet(value) => {
+                            value.validation_state == ArtifactValidationState::Invalid
+                        }
+                        PipelineArtifact::AnnotationCandidateSet(value) => {
+                            value.candidates.iter().any(|candidate| {
+                                candidate.validation_state == Some(ArtifactValidationState::Invalid)
+                            })
+                        }
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+                    });
+            let has_review =
+                context
+                    .input_pipeline_artifacts
+                    .iter()
+                    .any(|artifact| match artifact {
+                        PipelineArtifact::DetectionSet(value) => {
+                            value.validation_state == ArtifactValidationState::NeedsReview
+                        }
+                        PipelineArtifact::ClassificationSet(value) => {
+                            value.validation_state == ArtifactValidationState::NeedsReview
+                        }
+                        PipelineArtifact::CandidateClusterSet(value) => {
+                            value.validation_state == ArtifactValidationState::NeedsReview
+                        }
+                        PipelineArtifact::AnnotationCandidateSet(value) => {
+                            value.candidates.iter().any(|candidate| {
+                                candidate.validation_state
+                                    == Some(ArtifactValidationState::NeedsReview)
+                            })
+                        }
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
+                    });
+            Ok(DagNodeOutput {
+                pipeline_artifacts: context.input_pipeline_artifacts.clone(),
+                route: Some(
+                    if has_invalid {
+                        "reject"
+                    } else if has_review {
+                        "review"
+                    } else {
+                        "accept"
+                    }
+                    .to_owned(),
+                ),
+                ..DagNodeOutput::default()
+            })
+        }
+        _ => Err(DagNodeFailure::terminal(
+            "invalid_decision_mode",
+            "Decision mode must be confidence, evidence, or domain_policy",
+        )),
+    }
+}
+
 fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValidationState) {
     for artifact in artifacts {
         match artifact {
@@ -1629,6 +2009,48 @@ fn number_parameter(
                 )
             })
         })
+}
+
+fn optional_u32_parameter(
+    context: &DagNodeContext<'_>,
+    name: &str,
+) -> Result<Option<u32>, DagNodeFailure> {
+    context
+        .node
+        .parameters
+        .get(name)
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    DagNodeFailure::terminal(
+                        "invalid_node_parameter",
+                        format!("parameter {name:?} must be a positive 32-bit integer"),
+                    )
+                })
+        })
+        .transpose()
+}
+
+fn optional_u64_parameter(
+    context: &DagNodeContext<'_>,
+    name: &str,
+) -> Result<Option<u64>, DagNodeFailure> {
+    context
+        .node
+        .parameters
+        .get(name)
+        .map(|value| {
+            value.as_u64().filter(|value| *value > 0).ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "invalid_node_parameter",
+                    format!("parameter {name:?} must be a positive integer"),
+                )
+            })
+        })
+        .transpose()
 }
 
 fn boolean_parameter(
@@ -2056,6 +2478,209 @@ mod tests {
             panic!("clusters")
         };
         assert_eq!(clusters.validation_state, ArtifactValidationState::Invalid);
+    }
+
+    #[tokio::test]
+    async fn resize_and_tile_preserve_explicit_coordinate_lineage() {
+        let image_id = ImageId::new();
+        let image = pipeline_image(image_id, 100, 80, None);
+        let resize = WorkflowDraftNode {
+            id: "resize".to_owned(),
+            node_type: CORE_RESIZE.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                required: true,
+                multiple: false,
+            }],
+            parameters: BTreeMap::from([("max_edge".to_owned(), serde_json::json!(50))]),
+            ..WorkflowDraftNode::default()
+        };
+        let resized = CorePipelineRunner
+            .run(node_context(&resize, vec![image.clone()], BTreeMap::new()))
+            .await
+            .expect("resize");
+        let PipelineArtifact::Image(resized_image) = &resized.pipeline_artifacts[0] else {
+            panic!("image")
+        };
+        assert_eq!((resized_image.width, resized_image.height), (50, 40));
+        assert_eq!(resized_image.parent.as_ref(), Some(image.reference()));
+
+        let tile = WorkflowDraftNode {
+            id: "tile".to_owned(),
+            node_type: CORE_TILE.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "images".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([
+                ("tile_width".to_owned(), serde_json::json!(60)),
+                ("tile_height".to_owned(), serde_json::json!(60)),
+                ("overlap".to_owned(), serde_json::json!(0)),
+                ("maximum_tiles".to_owned(), serde_json::json!(4)),
+            ]),
+            ..WorkflowDraftNode::default()
+        };
+        let tiled = CorePipelineRunner
+            .run(node_context(&tile, vec![image], BTreeMap::new()))
+            .await
+            .expect("tile");
+        assert_eq!(tiled.pipeline_artifacts.len(), 4);
+        let PipelineArtifact::Image(last) = &tiled.pipeline_artifacts[3] else {
+            panic!("tile")
+        };
+        let region = last.root_region.expect("root region");
+        assert_eq!((region.x(), region.y()), (0.4, 0.25));
+        assert_eq!(last.reference.item_id.as_deref(), Some("r1-c1"));
+    }
+
+    #[tokio::test]
+    async fn coordinate_projection_maps_local_detections_to_root_image() {
+        let image_id = ImageId::new();
+        let root_region = NormalizedRect::new(0.4, 0.2, 0.5, 0.5).expect("region");
+        let tile = pipeline_image(image_id, 100, 100, Some(root_region));
+        let mut detections = detection_set(
+            image_id,
+            "local-set",
+            "detector",
+            vec![detection(
+                "local-set",
+                "ball",
+                "ball",
+                [0.2, 0.4, 0.4, 0.2],
+                Some(0.9),
+                "detector",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(set) = &mut detections else {
+            panic!("detections")
+        };
+        set.metadata.insert(
+            "source_image_artifact_id".to_owned(),
+            serde_json::json!(tile.reference().artifact_id),
+        );
+        let project = WorkflowDraftNode {
+            id: "project".to_owned(),
+            node_type: CORE_PROJECT_COORDINATES.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &project,
+                vec![tile, detections],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("project");
+        let PipelineArtifact::DetectionSet(set) = &output.pipeline_artifacts[0] else {
+            panic!("detections")
+        };
+        let rect = set.detections[0].bbox;
+        assert!((rect.x() - 0.5).abs() < f32::EPSILON);
+        assert!((rect.y() - 0.4).abs() < f32::EPSILON);
+        assert!((rect.width() - 0.2).abs() < f32::EPSILON);
+        assert!((rect.height() - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn select_and_map_is_one_public_transform() {
+        let image_id = ImageId::new();
+        let source = detection_set(
+            image_id,
+            "raw",
+            "detector",
+            vec![
+                detection(
+                    "raw",
+                    "keep",
+                    "sports-ball",
+                    [0.1, 0.1, 0.2, 0.2],
+                    Some(0.9),
+                    "detector",
+                    VisionCapability::ObjectDetection,
+                ),
+                detection(
+                    "raw",
+                    "drop",
+                    "robot",
+                    [0.4, 0.4, 0.2, 0.2],
+                    Some(0.4),
+                    "detector",
+                    VisionCapability::ObjectDetection,
+                ),
+            ],
+        );
+        let node = WorkflowDraftNode {
+            id: "select".to_owned(),
+            node_type: CORE_SELECT_AND_MAP.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([
+                ("minimum_confidence".to_owned(), serde_json::json!(0.5)),
+                (
+                    "class_mapping".to_owned(),
+                    serde_json::json!({"sports-ball": "ball"}),
+                ),
+                ("labels".to_owned(), serde_json::json!(["ball"])),
+            ]),
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(&node, vec![source], BTreeMap::new()))
+            .await
+            .expect("select and map");
+        let PipelineArtifact::DetectionSet(set) = &output.pipeline_artifacts[0] else {
+            panic!("detections")
+        };
+        assert_eq!(set.detections.len(), 1);
+        assert_eq!(
+            set.detections[0]
+                .project_label
+                .as_ref()
+                .map(LabelId::as_str),
+            Some("ball")
+        );
+    }
+
+    fn pipeline_image(
+        image_id: ImageId,
+        width: u32,
+        height: u32,
+        root_region: Option<NormalizedRect>,
+    ) -> PipelineArtifact {
+        PipelineArtifact::Image(annotagent_core::ImageArtifact {
+            reference: ArtifactRef {
+                artifact_id: format!("image:{image_id}"),
+                source_node: "image".to_owned(),
+                port: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                item_id: root_region.map(|_| "tile".to_owned()),
+            },
+            image_id,
+            width,
+            height,
+            mime_type: "image/png".to_owned(),
+            blob_ref: "workspace://fixture".to_owned(),
+            parent: None,
+            root_region,
+        })
     }
 
     fn detection_set(

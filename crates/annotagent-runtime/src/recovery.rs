@@ -946,6 +946,8 @@ mod tests {
             height: 480,
             mime_type: "image/png".to_owned(),
             blob_ref: "fixture://image".to_owned(),
+            parent: None,
+            root_region: None,
         });
         DetectionRecoveryAgent::new(
             Arc::new(FixtureFallback {

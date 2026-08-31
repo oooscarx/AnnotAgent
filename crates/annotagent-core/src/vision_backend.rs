@@ -875,6 +875,8 @@ const fn capability_output_type(capability: VisionCapability) -> Option<Artifact
 #[derive(Debug, Default, Clone)]
 pub struct NodeRegistry {
     nodes: BTreeMap<String, VisionNodeDescriptor>,
+    definitions: BTreeMap<String, crate::NodeDefinition>,
+    runtime_policies: BTreeMap<String, crate::RuntimePolicyDefinition>,
 }
 
 impl NodeRegistry {
@@ -897,9 +899,63 @@ impl NodeRegistry {
         Ok(())
     }
 
+    pub fn register_definition(&mut self, definition: crate::NodeDefinition) -> CoreResult<()> {
+        definition.validate().map_err(CoreError::Validation)?;
+        if !self.nodes.contains_key(&definition.id) {
+            return Err(CoreError::Validation(format!(
+                "public node definition {:?} has no executable operation descriptor",
+                definition.id
+            )));
+        }
+        if self
+            .definitions
+            .insert(definition.id.clone(), definition)
+            .is_some()
+        {
+            return Err(CoreError::Validation(
+                "public node definition id is already registered".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn register_runtime_policy(
+        &mut self,
+        policy: crate::RuntimePolicyDefinition,
+    ) -> CoreResult<()> {
+        if policy.id.trim().is_empty()
+            || policy.display_name.trim().is_empty()
+            || !policy.config_schema.is_object()
+        {
+            return Err(CoreError::Validation(
+                "runtime policy id, display_name, and object schema are required".to_owned(),
+            ));
+        }
+        if self
+            .runtime_policies
+            .insert(policy.id.clone(), policy)
+            .is_some()
+        {
+            return Err(CoreError::Validation(
+                "runtime policy id is already registered".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn nodes(&self) -> Vec<VisionNodeDescriptor> {
         self.nodes.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn definitions(&self) -> Vec<crate::NodeDefinition> {
+        self.definitions.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn runtime_policies(&self) -> Vec<crate::RuntimePolicyDefinition> {
+        self.runtime_policies.values().cloned().collect()
     }
 
     #[must_use]

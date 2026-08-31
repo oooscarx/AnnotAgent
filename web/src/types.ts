@@ -779,7 +779,41 @@ export interface WorkflowCatalog {
   target_task_id?: string;
   target_label?: string;
   enabled_skills: string[];
-  node_catalog: { id: string; display_name: string; produces: string[] }[];
+  node_catalog: {
+    id: string;
+    display_name: string;
+    category:
+      | "input"
+      | "image_preparation"
+      | "model_inference"
+      | "result_transform"
+      | "evidence_and_validation"
+      | "human_and_output";
+    input_ports: {
+      name: string;
+      artifact_type: string;
+      required: boolean;
+      cardinality: "one" | "many";
+    }[];
+    output_ports: {
+      name: string;
+      artifact_type: string;
+      required: boolean;
+      cardinality: "one" | "many";
+    }[];
+    config_schema: Record<string, unknown>;
+    required_model_capability?: ModelCapability;
+    cardinality: "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many";
+    side_effect: "none" | "human_suspension" | "annotation_commit";
+    dry_run_supported: boolean;
+    expert_only: boolean;
+  }[];
+  runtime_policies: {
+    id: string;
+    display_name: string;
+    scope: "node" | "workflow" | "runtime";
+    config_schema: Record<string, unknown>;
+  }[];
   model_registry: {
     id: string;
     display_name: string;

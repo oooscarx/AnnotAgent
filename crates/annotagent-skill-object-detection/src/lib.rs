@@ -437,7 +437,10 @@ impl ObjectDetectionSkillRunner {
 #[async_trait]
 impl DagNodeRunner for ObjectDetectionSkillRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
-        if context.node.node_type != OBJECT_DETECTION_OPERATION {
+        if !matches!(
+            context.node.node_type.as_str(),
+            OBJECT_DETECTION_OPERATION | "capability.detect"
+        ) {
             return Err(DagNodeFailure::terminal(
                 "wrong_skill_operation",
                 "Object Detection runner received another operation",
@@ -955,6 +958,8 @@ mod tests {
             height: 100,
             mime_type: "image/png".to_owned(),
             blob_ref: "workspace://fixture".to_owned(),
+            parent: None,
+            root_region: None,
         });
         let runner = ObjectDetectionSkillRunner::new(
             Arc::new(MockObjectDetectionBackend::new("mock-specialist")),
@@ -1010,6 +1015,8 @@ mod tests {
             height: 1,
             mime_type: "image/png".to_owned(),
             blob_ref: "workspace://empty".to_owned(),
+            parent: None,
+            root_region: None,
         });
         let runner = ObjectDetectionSkillRunner::new(
             Arc::new(MockObjectDetectionBackend::new("mock-specialist")),

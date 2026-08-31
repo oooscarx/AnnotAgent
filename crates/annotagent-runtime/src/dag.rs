@@ -797,7 +797,10 @@ fn built_in_output(
                                 candidate.validation_state != Some(ArtifactValidationState::Valid)
                             })
                         }
-                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => true,
+                        // Images and CropSets are supporting evidence/artifact-preview inputs, not
+                        // annotation-shaped values. They may share the terminal Commit path so the
+                        // graph is observable, but Commit never turns them into annotations.
+                        PipelineArtifact::Image(_) | PipelineArtifact::CropSet(_) => false,
                     })
             {
                 return Err(DagNodeFailure::terminal(

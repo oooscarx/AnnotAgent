@@ -57,6 +57,13 @@ pub struct ImageArtifact {
     pub mime_type: String,
     /// Workspace/cache reference; raw image bytes are not serialized into the node trace.
     pub blob_ref: String,
+    /// Parent image/tile when this is a virtual resize or tile. The item identity prevents
+    /// fan-out results from being correlated by array position.
+    #[serde(default)]
+    pub parent: Option<ArtifactRef>,
+    /// Region occupied by this image in normalized root-image coordinates. `None` is identity.
+    #[serde(default)]
+    pub root_region: Option<NormalizedRect>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

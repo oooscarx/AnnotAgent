@@ -405,6 +405,8 @@ fn pipeline_image(image_id: ImageId) -> PipelineArtifact {
         height: 480,
         mime_type: "image/png".to_owned(),
         blob_ref: "workspace://offline-demo.png".to_owned(),
+        parent: None,
+        root_region: None,
     })
 }
 

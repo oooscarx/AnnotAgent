@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 4 — constrained Node Catalog.
+Milestone 5 — Pipeline Builder Agent tools.
 
 ## 已完成内容
 
@@ -60,15 +60,30 @@ Milestone 4 — constrained Node Catalog.
   revisioned Model Profile surface.
 - Browser validation verified Provider → Model → Usage against an isolated server, no console
   errors, and no page overflow at 1024 px or 390 px.
+- Split the executable operation registry from the public `NodeDefinition` catalog. Existing
+  Published Workflows retain legacy operation compatibility, while people and the Builder see only
+  the 16 constrained Annotation Workflow nodes.
+- Added typed Node categories, input/output port cardinality, JSON configuration schema, required
+  Model capability, node cardinality, side-effect, Dry Run and expert-only metadata.
+- Added executable Core Resize, Tile, Select & Map, Coordinate Projection, Combine Evidence and
+  Decision operations. Resize/Tile preserve parent identity and normalized root-image regions;
+  Coordinate Projection fails closed on ambiguous lineage and maps local detections to root space.
+- Moved cache, replay, retry, timeout, budget, usage, checkpoint, run control and history into a
+  separate `RuntimePolicyDefinition` catalog returned by the Workflow Catalog API and rendered as
+  non-node runtime behavior in the advanced editor.
+- Added generic `capability.detect`, `capability.classify` and `capability.segment` authoring
+  identities while retaining Skill/runtime operation adapters behind the execution boundary.
+- Updated Guided UI vocabulary and the Label Pipeline node chooser to use Select & Map, Decision
+  and Combine Evidence as one product concept each; hidden technical nodes are not addable.
 
 ## 正在进行内容
 
-- Closing the M3 local commit, then constraining the public Workflow Node Catalog in M4.
+- Closing the M4 validation and local commit, then extending the bounded Agent tool catalog in M5.
 
 ## 下一步
 
-- Milestone 4: expose only the requested annotation Node Catalog and move Cache/Replay/Retry,
-  Timeout/Budget/Checkpoint/control/history concerns into Runtime Policy surfaces.
+- Milestone 5: add Provider/Model and Node inspection, revision-aware compatible binding, real Draft
+  mutation/undo/comparison, validation, Dry Run, human approval, permissions and audit tools.
 
 ## 最近 Rust 测试
 
@@ -89,6 +104,11 @@ Milestone 4 — constrained Node Catalog.
 - M3 full `cargo test --workspace --all-features --quiet`: 257 passed, 0 failed; doc-test
   groups passed.
 - M3 full-workspace all-target/all-feature strict Clippy, fmt check and build: PASS.
+- M4 focused Core Runtime tests: 8 passed, including Resize/Tile lineage, coordinate projection and
+  combined Select & Map.
+- M4 constrained catalog and Runtime Policy Registry test: PASS.
+- M4 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
+  passed; full Rust suite 262/262 passed and doc-test groups passed.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -97,10 +117,14 @@ Milestone 4 — constrained Node Catalog.
 - `npm --prefix web test -- --run`: 36 passed after M2.
 - `npm --prefix web run build`: PASS after M2.
 - M3 TypeScript check, 36 Vitest tests and production build: PASS.
+- M4 TypeScript check and affected Label Pipeline UI tests: 8 passed.
+- M4 final Web validation: TypeScript, 36/36 Vitest tests and production build passed.
 
 ## 最近 E2E 测试
 
 - `npm --prefix web run test:e2e`: 28 passed, 0 failed after M3 in an isolated workspace.
+- M4 isolated Chromium E2E: 28 passed, including Crop Artifact lineage with Cache absent from the
+  graph and Registry compact-layout coverage.
 
 ## 最近本地提交
 
@@ -108,14 +132,16 @@ Milestone 4 — constrained Node Catalog.
 - M0: `39af089 docs: establish provider registry and builder baseline`.
 - M1: `5be1bf3 feat(provider): add reusable provider profiles and secure credentials`.
 - M2: `f8b4437 feat(models): add reusable model profiles and capability bindings`.
-- M3 commit pending at this status write; its hash is filled by the next milestone.
+- M3: `5a750ef feat(settings): manage llm and vlm providers from one registry`.
+- M4 commit pending at this status write; its hash is filled by the next milestone.
 
 ## Release Blocking 剩余项
 
 - A now passes offline Provider lifecycle/API/UI acceptance. B is implemented offline but awaits
   final M8 security/source-scan/native evidence. C and D now have lifecycle API/UI, persistence,
   revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
-  integration and migration are proven. E–I remain open.
+  integration and migration are proven. M4 closes the public Node Catalog contract, but E remains
+  open until later runtime/template milestones prove every public node end to end. F–I remain open.
 
 ## Live-conditional 项
 

@@ -102,12 +102,13 @@ export:
   const draft = await saved.json();
   const steps = draft.label_pipeline.label_pipelines[0].steps;
   expect(steps.some((step: { node_type: string }) => step.node_type === "core.crop")).toBeTruthy();
-  expect(steps.some((step: { node_type: string }) => step.node_type === "core.artifact_cache")).toBeTruthy();
+  expect(steps.some((step: { node_type: string }) => step.node_type === "core.artifact_cache")).toBeFalsy();
   const dryRun = await request.post(`/api/workflow-drafts/${draft.id}/dry-run`, {
     data: { image_indices: [0] },
   });
   expect(dryRun.ok()).toBeTruthy();
-  expect((await dryRun.json()).validation.valid).toBeTruthy();
+  const dryRunReport = await dryRun.json();
+  expect(dryRunReport.validation.valid, JSON.stringify(dryRunReport.validation.issues)).toBeTruthy();
   const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
   expect(published.ok()).toBeTruthy();
   const version = await published.json();

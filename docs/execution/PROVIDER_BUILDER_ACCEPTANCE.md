@@ -73,6 +73,22 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | M3 Rust validation | PASS | Provider 39/39, Server 11/11 and Storage 11/11 focused suites; full workspace 257/257 plus doc tests; strict all-workspace/all-target/all-feature Clippy, fmt and build pass. |
 | M3 Web/E2E validation | PASS | TypeScript, 36/36 Vitest, production build and isolated Chromium 28/28 pass. New tests cover Provider→Model→Usage and 1024/390 px overflow. In-app browser inspection found no console errors. |
 
+## M4 constrained Node Catalog
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Full Node Definition contract | PASS | Public definitions include category, typed named ports/cardinality, object JSON Schema, optional Model capability, node cardinality, side effect, Dry Run support and expert-only state; invalid definitions fail registration. |
+| Exact constrained public catalog | PASS | Registry test asserts exactly 16 requested IDs including Image Input, Existing Annotations, Resize, Tile, Crop, Detect/Classify/Segment capabilities, Select & Map, Projection, Attach, Evidence, Validate, Decision, Review and Commit. |
+| Internal operation compatibility | PASS | Legacy `filter`, `map_label`, confidence/evidence gates and artifact cache stay in the executable registry for old immutable versions but are absent from `definitions()`. Advanced editor labels existing technical operations as legacy and cannot add them. |
+| Runtime policies are not nodes | PASS | Cache, Replay, Retry, Timeout, Budget, Usage, Checkpoint, Run Control and History are separate `RuntimePolicyDefinition` values. API and UI tests/source checks prove Cache/Filter are absent from the public catalog. |
+| Resize runtime | PASS | Core runner computes bounded aspect-preserving dimensions, rejects missing/invalid targets, preserves parent reference and root coordinate region; focused behavior test passes. |
+| Tile runtime | PASS | Core runner creates bounded deterministic tiles, overlap and maximum-tile enforcement, stable item references, parent lineage and composed normalized root regions; focused behavior test passes. |
+| Coordinate Projection runtime | PASS | Local DetectionSet geometry is mapped through the source Image Artifact root region; ambiguous fan-out requires explicit artifact/item lineage and fails closed. Numeric projection test passes. |
+| Guided Select & Map | PASS | One public operation performs score/class/query/Project Label selection and mapping without exposing Filter + Map boxes; focused mapping/filter test and UI projection test pass. |
+| Guided Decision and Evidence | PASS | One public Decision dispatches confidence/evidence/domain policy modes; one public Combine Evidence uses the typed Candidate Cluster runtime while internal gate/match identities remain compatible. |
+| Capability node adapters | PASS | Public Detect/Classify aliases are accepted by the existing typed Skill runners; Segment uses the registered model-execution boundary. Static descriptors require bindings/capabilities. |
+| M4 affected validation | PASS | Runtime focused suite 8/8 and constrained Application/API tests pass. Final fmt, strict all-target/all-feature Clippy, all-feature build, Rust 262/262 plus doc tests, TypeScript, Vitest 36/36, production build and isolated Chromium E2E 28/28 pass. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
@@ -81,7 +97,7 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
 | C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe usage and snapshot contract pass; real publish/runtime call integration remains for M6–M8. |
 | D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility and locks pass; Project/Node binding UI and end-to-end execution remain. |
-| E. Node Catalog | OPEN | Typed Registry and guided projection exist; exact Alpha catalog and Resize/Tile/Projection remain. |
+| E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M6–M8 before release PASS. |
 | F. Agent | OPEN | Real bounded loop is reusable; Provider/Profile tools and revision-aware compatible binding remain. |
 | G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
 | H. Product | OPEN | Registry Settings IA passes; Project Build still needs compatible Profile selection and Builder integration in later milestones. |

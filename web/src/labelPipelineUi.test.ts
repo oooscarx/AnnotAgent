@@ -41,6 +41,18 @@ describe("Label Pipeline product helpers", () => {
       port: "candidates",
       type: "candidate_cluster_set",
     });
+    expect(pipelineNodeOutput("capability.detect")).toEqual({
+      port: "detections",
+      type: "detection_set",
+    });
+    expect(pipelineNodeOutput("capability.classify")).toEqual({
+      port: "classifications",
+      type: "classification_set",
+    });
+    expect(pipelineNodeOutput("core.combine_evidence")).toEqual({
+      port: "candidates",
+      type: "candidate_cluster_set",
+    });
     expect(pipelineNodeKind("core.crop")).toBe("transform");
     expect(pipelineNodeKind("yolo_detection.detect")).toBe("vision_model");
     expect(pipelineNodeKind("vlm_detection.detect")).toBe("vision_model");
@@ -66,6 +78,9 @@ describe("Label Pipeline product helpers", () => {
       "Combine model evidence",
     );
     expect(workflowNodeTitle("core.evidence_gate")).toBe("Decision");
+    expect(workflowNodeTitle("core.select_and_map")).toBe("Select and map results");
+    expect(workflowNodeTitle("core.combine_evidence")).toBe("Combine model evidence");
+    expect(workflowNodeTitle("core.decision")).toBe("Decision");
     expect(
       guidedWorkflowNodes([
         { node_type: "core.filter" },

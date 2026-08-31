@@ -118,3 +118,19 @@ The new Settings tabs own durable Provider and Model lifecycle. The existing sin
 settings remain under Storage as compatibility configuration until published Workflow resolution is
 cut over in M6–M8. It is not projected into fake Provider/Profile records during M3. Legacy
 `/models` continues to reach the independent Vision Worker page.
+
+## D019 — one registry keeps execution compatibility and public authoring as separate maps
+
+`VisionNodeDescriptor` remains the executable operation contract used to validate old Drafts and
+immutable Published Versions. `NodeDefinition` is the smaller contract exposed to people and the
+Pipeline Builder Agent. A public definition cannot register without a corresponding executable
+descriptor, but executable legacy operations do not automatically become authoring nodes. This
+preserves old Workflows without leaking Cache, Filter, Map or gate internals back into the product.
+
+## D020 — local image geometry carries identity and a root-image region
+
+Resize, Tile and later Crop-local inference must not correlate fan-out results by array order.
+Derived Image Artifacts carry a parent `ArtifactRef`, a stable item identity and an optional
+normalized root-image region. Coordinate Projection accepts a single unambiguous image or requires
+the DetectionSet to name the source image artifact/item, then performs the affine rectangle mapping.
+Missing or ambiguous lineage fails closed instead of emitting plausible but misplaced annotations.

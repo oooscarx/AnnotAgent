@@ -308,7 +308,10 @@ pub struct WorkflowAdvisorInput {
     #[serde(default)]
     pub target_label: Option<LabelId>,
     pub enabled_skills: Vec<String>,
-    pub node_catalog: Vec<crate::VisionNodeDescriptor>,
+    pub node_catalog: Vec<crate::NodeDefinition>,
+    /// Cross-cutting behavior is configured separately and cannot be inserted into the graph.
+    #[serde(default)]
+    pub runtime_policies: Vec<crate::RuntimePolicyDefinition>,
     pub model_registry: Vec<VisionModelDescriptor>,
     pub validator_ids: Vec<String>,
     pub refiner_ids: Vec<String>,

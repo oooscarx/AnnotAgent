@@ -1143,6 +1143,8 @@ mod tests {
                 height: 32,
                 mime_type: "image/png".to_owned(),
                 blob_ref: "workspace://fixture.png".to_owned(),
+                parent: None,
+                root_region: None,
             })],
             parameters: BTreeMap::new(),
             timeout_ms: Some(1_000),

@@ -698,6 +698,8 @@ mod tests {
                 height: 1,
                 mime_type: "image/png".to_owned(),
                 blob_ref: "memory:image".to_owned(),
+                parent: None,
+                root_region: None,
             })],
             parameters: BTreeMap::from([
                 (

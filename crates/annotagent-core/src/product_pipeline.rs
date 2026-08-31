@@ -51,14 +51,18 @@ impl GuidedPipelineConcept {
 pub fn guided_concept_for_node_type(node_type: &str) -> GuidedPipelineConcept {
     match node_type {
         "core.image_input" => GuidedPipelineConcept::ImageInput,
-        "core.filter" | "core.map_label" | "core.project_detection_candidates" => {
-            GuidedPipelineConcept::SelectDetections
-        }
+        "core.filter"
+        | "core.map_label"
+        | "core.project_detection_candidates"
+        | "core.select_and_map" => GuidedPipelineConcept::SelectDetections,
         "core.crop" => GuidedPipelineConcept::Crop,
-        "core.match_detection_sets" | "core.candidate_merge" | "core.attach_result" => {
-            GuidedPipelineConcept::CombineModelEvidence
+        "core.match_detection_sets"
+        | "core.candidate_merge"
+        | "core.combine_evidence"
+        | "core.attach_result" => GuidedPipelineConcept::CombineModelEvidence,
+        "core.confidence_gate" | "core.evidence_gate" | "core.decision" => {
+            GuidedPipelineConcept::Decision
         }
-        "core.confidence_gate" | "core.evidence_gate" => GuidedPipelineConcept::Decision,
         "core.human_review" | "review_gate" => GuidedPipelineConcept::HumanReview,
         "core.commit" | "commit" => GuidedPipelineConcept::Commit,
         value if value.contains("detect") || value.contains("ground") => {

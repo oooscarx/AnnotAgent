@@ -23,8 +23,11 @@ This file records observed baseline limitations and will be narrowed as mileston
   Normal Run usage still needs the same Profile/revision and pricing-snapshot integration in M6–M8.
 - Published Workflow snapshots support frozen Model Profile semantics, but the current publication
   service does not populate them until the M3 lifecycle/API integration resolves typed bindings.
-- Existing Node Registry is richer than the intended public Alpha catalog and still exposes some
-  technical identities that need guided convergence.
+- Resize and Tile currently create typed virtual Image Artifacts and complete coordinate lineage;
+  external inference adapters must materialize/consume their virtual blob references before tiled
+  remote inference is considered end-to-end release evidence in M6–M8.
+- Existing Annotations and generic Segment are registered public contracts, but their complete
+  Project-store/template execution paths remain release-open until M6.
 
 ## Explicitly outside this Alpha
 

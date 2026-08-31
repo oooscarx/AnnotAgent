@@ -566,6 +566,8 @@ async fn detector_cache_is_model_query_mapping_and_config_aware() {
             height: 480,
             mime_type: "image/png".to_owned(),
             blob_ref: format!("workspace://sha256/{}", "f".repeat(64)),
+            parent: None,
+            root_region: None,
         })],
         cancellation: CancellationToken::new(),
     };

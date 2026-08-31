@@ -24,25 +24,26 @@ use annotagent_core::{
     DatasetExporter, DatasetImporter, DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest,
     FullRunEstimate, ImageId, ImportIssue, ImportReport, ImportRequest, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
-    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelInputContract,
-    ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeRegistry, PipelineArtifact, PipelineBuilderConstraints,
-    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftTools,
-    PipelineGrammarValidator, PipelineSource, PipelineStep, PricingConfig, ProjectId,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelCapability,
+    ModelInputContract, ModelMessage, ModelOutputContract, ModelRegistry, ModelRequest, ModelRole,
+    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodeRegistry,
+    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderTool,
+    PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftTools, PipelineGrammarValidator,
+    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, ProjectId,
     ProjectSchema, ProjectSnapshot, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
     ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
-    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
-    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
-    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
-    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
-    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds,
+    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
+    VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
+    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
+    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
+    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
+    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -1456,7 +1457,562 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     ] {
         nodes.register(descriptor)?;
     }
+    register_public_annotation_catalog(&mut nodes)?;
     Ok((nodes, models))
+}
+
+fn catalog_port(
+    name: &str,
+    artifact_type: ArtifactKind,
+    required: bool,
+    cardinality: PortCardinality,
+) -> PortDefinition {
+    PortDefinition {
+        name: name.to_owned(),
+        artifact_type,
+        required,
+        cardinality,
+    }
+}
+
+fn node_schema(properties: impl Into<serde_json::Value>) -> serde_json::Value {
+    let properties = properties.into();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": properties,
+    })
+}
+
+fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
+    let any_candidates = vec![
+        ArtifactKind::DetectionSet,
+        ArtifactKind::ClassificationSet,
+        ArtifactKind::CandidateClusterSet,
+        ArtifactKind::AnnotationCandidateSet,
+    ];
+    for descriptor in [
+        VisionNodeDescriptor {
+            id: "core.existing_annotations".to_owned(),
+            display_name: "Existing annotations".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: Vec::new(),
+            produces: vec![ArtifactKind::AnnotationCandidateSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_RESIZE.to_owned(),
+            display_name: "Resize image".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image],
+            produces: vec![ArtifactKind::Image],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_TILE.to_owned(),
+            display_name: "Tile image".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image],
+            produces: vec![ArtifactKind::Image],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: "capability.detect".to_owned(),
+            display_name: "Detect objects".to_owned(),
+            required_capabilities: vec![VisionCapability::ObjectDetection],
+            accepts: vec![ArtifactKind::Image, ArtifactKind::CropSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: false,
+        },
+        VisionNodeDescriptor {
+            id: "capability.classify".to_owned(),
+            display_name: "Classify images or crops".to_owned(),
+            required_capabilities: vec![VisionCapability::Classification],
+            accepts: vec![
+                ArtifactKind::Image,
+                ArtifactKind::CropSet,
+                ArtifactKind::DetectionSet,
+            ],
+            produces: vec![ArtifactKind::ClassificationSet],
+            deterministic: false,
+        },
+        VisionNodeDescriptor {
+            id: "capability.segment".to_owned(),
+            display_name: "Segment regions".to_owned(),
+            required_capabilities: vec![VisionCapability::SemanticSegmentation],
+            accepts: vec![
+                ArtifactKind::Image,
+                ArtifactKind::CropSet,
+                ArtifactKind::DetectionSet,
+            ],
+            produces: vec![
+                ArtifactKind::SemanticMask,
+                ArtifactKind::InstanceMask,
+                ArtifactKind::Polygon,
+            ],
+            deterministic: false,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_SELECT_AND_MAP.to_owned(),
+            display_name: "Select and map results".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_PROJECT_COORDINATES.to_owned(),
+            display_name: "Project coordinates".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_COMBINE_EVIDENCE.to_owned(),
+            display_name: "Combine model evidence".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::CandidateClusterSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: "core.validate".to_owned(),
+            display_name: "Validate results".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: any_candidates.clone(),
+            produces: any_candidates.clone(),
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_DECISION.to_owned(),
+            display_name: "Decision".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: any_candidates.clone(),
+            produces: any_candidates.clone(),
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: "core.human_review".to_owned(),
+            display_name: "Human review".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: any_candidates.clone(),
+            produces: any_candidates.clone(),
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: "core.commit".to_owned(),
+            display_name: "Commit annotations".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: any_candidates.clone(),
+            produces: any_candidates,
+            deterministic: true,
+        },
+    ] {
+        nodes.register(descriptor)?;
+    }
+
+    let one = PortCardinality::One;
+    let many = PortCardinality::Many;
+    let definitions = vec![
+        NodeDefinition {
+            id: "core.image_input".to_owned(),
+            display_name: "Image input".to_owned(),
+            category: NodeCategory::Input,
+            input_ports: Vec::new(),
+            output_ports: vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::OneToOne,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.existing_annotations".to_owned(),
+            display_name: "Existing annotations".to_owned(),
+            category: NodeCategory::Input,
+            input_ports: Vec::new(),
+            output_ports: vec![catalog_port(
+                "candidates",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "task_id": {"type": "string"},
+                "labels": {"type": "array", "items": {"type": "string"}}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::OneToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: true,
+        },
+        NodeDefinition {
+            id: "core.resize".to_owned(),
+            display_name: "Resize image".to_owned(),
+            category: NodeCategory::ImagePreparation,
+            input_ports: vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            output_ports: vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            config_schema: node_schema(json!({
+                "target_width": {"type": "integer", "minimum": 1},
+                "target_height": {"type": "integer", "minimum": 1},
+                "max_edge": {"type": "integer", "minimum": 1},
+                "maximum_pixels": {"type": "integer", "minimum": 1},
+                "allow_upscale": {"type": "boolean", "default": false}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::OneToOne,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.tile".to_owned(),
+            display_name: "Tile image".to_owned(),
+            category: NodeCategory::ImagePreparation,
+            input_ports: vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            output_ports: vec![catalog_port("images", ArtifactKind::Image, true, many)],
+            config_schema: node_schema(json!({
+                "tile_size": {"type": "integer", "minimum": 1, "default": 1024},
+                "tile_width": {"type": "integer", "minimum": 1},
+                "tile_height": {"type": "integer", "minimum": 1},
+                "overlap": {"type": "number", "minimum": 0, "exclusiveMaximum": 0.9, "default": 0.15},
+                "maximum_tiles": {"type": "integer", "minimum": 1, "default": 64},
+                "merge_policy": {"type": "string", "enum": ["nms", "deduplicate", "preserve"], "default": "nms"}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::OneToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.crop".to_owned(),
+            display_name: "Crop candidates".to_owned(),
+            category: NodeCategory::ImagePreparation,
+            input_ports: vec![
+                catalog_port("image", ArtifactKind::Image, true, one),
+                catalog_port("detections", ArtifactKind::DetectionSet, true, one),
+            ],
+            output_ports: vec![catalog_port("crops", ArtifactKind::CropSet, true, many)],
+            config_schema: node_schema(json!({
+                "padding": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        model_node_definition(
+            "capability.detect",
+            "Detect objects",
+            vec![catalog_port("images", ArtifactKind::Image, true, many)],
+            catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ModelCapability::ObjectDetection,
+        ),
+        model_node_definition(
+            "capability.classify",
+            "Classify images or crops",
+            vec![
+                catalog_port("images", ArtifactKind::Image, false, many),
+                catalog_port("crops", ArtifactKind::CropSet, false, many),
+            ],
+            catalog_port(
+                "classifications",
+                ArtifactKind::ClassificationSet,
+                true,
+                many,
+            ),
+            ModelCapability::ImageClassification,
+        ),
+        model_node_definition(
+            "capability.segment",
+            "Segment regions",
+            vec![
+                catalog_port("images", ArtifactKind::Image, true, many),
+                catalog_port("prompts", ArtifactKind::DetectionSet, false, many),
+            ],
+            catalog_port("masks", ArtifactKind::InstanceMask, true, many),
+            ModelCapability::InstanceSegmentation,
+        ),
+        NodeDefinition {
+            id: "core.select_and_map".to_owned(),
+            display_name: "Select and map results".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "minimum_confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 0},
+                "class_ids": {"type": "array", "items": {"type": "string"}},
+                "labels": {"type": "array", "items": {"type": "string"}},
+                "queries": {"type": "array", "items": {"type": "string"}},
+                "class_mapping": {"type": "object", "additionalProperties": {"type": "string"}},
+                "drop_unknown_labels": {"type": "boolean", "default": false}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.project_coordinates".to_owned(),
+            display_name: "Project coordinates".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![
+                catalog_port("images", ArtifactKind::Image, true, many),
+                catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.attach_result".to_owned(),
+            display_name: "Attach result".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![
+                catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+                catalog_port(
+                    "classifications",
+                    ArtifactKind::ClassificationSet,
+                    true,
+                    many,
+                ),
+            ],
+            output_ports: vec![catalog_port(
+                "candidates",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "task_id": {"type": "string"},
+                "class_mapping": {"type": "object", "additionalProperties": {"type": "string"}}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        simple_candidate_definition(
+            "core.combine_evidence",
+            "Combine model evidence",
+            NodeCategory::EvidenceAndValidation,
+            ArtifactKind::DetectionSet,
+            ArtifactKind::CandidateClusterSet,
+            node_schema(json!({
+                "method": {"type": "string", "enum": ["iou"], "default": "iou"},
+                "minimum_iou": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5},
+                "preserve_unmatched": {"type": "boolean", "default": true}
+            })),
+        ),
+        simple_candidate_definition(
+            "core.validate",
+            "Validate results",
+            NodeCategory::EvidenceAndValidation,
+            ArtifactKind::AnnotationCandidateSet,
+            ArtifactKind::AnnotationCandidateSet,
+            node_schema(json!({
+                "validators": {"type": "array", "items": {"type": "string"}}
+            })),
+        ),
+        simple_candidate_definition(
+            "core.decision",
+            "Decision",
+            NodeCategory::EvidenceAndValidation,
+            ArtifactKind::AnnotationCandidateSet,
+            ArtifactKind::AnnotationCandidateSet,
+            node_schema(json!({
+                "mode": {"type": "string", "enum": ["confidence", "evidence", "domain_policy"], "default": "confidence"},
+                "threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}
+            })),
+        ),
+        NodeDefinition {
+            id: "core.human_review".to_owned(),
+            display_name: "Human review".to_owned(),
+            category: NodeCategory::HumanAndOutput,
+            input_ports: vec![catalog_port(
+                "candidates",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "approved",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::HumanSuspension,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: "core.commit".to_owned(),
+            display_name: "Commit annotations".to_owned(),
+            category: NodeCategory::HumanAndOutput,
+            input_ports: vec![catalog_port(
+                "candidates",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "annotations",
+                ArtifactKind::AnnotationCandidateSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::AnnotationCommit,
+            dry_run_supported: false,
+            expert_only: false,
+        },
+    ];
+    for definition in definitions {
+        nodes.register_definition(definition)?;
+    }
+    for (id, display_name, scope, properties) in [
+        (
+            "cache",
+            "Artifact cache",
+            RuntimePolicyScope::Runtime,
+            json!({"enabled": {"type": "boolean"}}),
+        ),
+        (
+            "replay",
+            "Replay",
+            RuntimePolicyScope::Runtime,
+            json!({"enabled": {"type": "boolean"}}),
+        ),
+        (
+            "retry",
+            "Retry",
+            RuntimePolicyScope::Node,
+            json!({"maximum_attempts": {"type": "integer", "minimum": 0}}),
+        ),
+        (
+            "timeout",
+            "Timeout",
+            RuntimePolicyScope::Node,
+            json!({"seconds": {"type": "integer", "minimum": 1}}),
+        ),
+        (
+            "budget",
+            "Budget",
+            RuntimePolicyScope::Workflow,
+            json!({"maximum_cost": {"type": "string"}}),
+        ),
+        (
+            "usage_tracking",
+            "Usage tracking",
+            RuntimePolicyScope::Runtime,
+            json!({"enabled": {"type": "boolean"}}),
+        ),
+        (
+            "checkpoint",
+            "Checkpoint",
+            RuntimePolicyScope::Runtime,
+            json!({"enabled": {"type": "boolean"}}),
+        ),
+        (
+            "run_control",
+            "Pause, resume, and cancel",
+            RuntimePolicyScope::Runtime,
+            json!({"enabled": {"type": "boolean"}}),
+        ),
+        (
+            "history",
+            "Run history",
+            RuntimePolicyScope::Runtime,
+            json!({"retention_days": {"type": "integer", "minimum": 1}}),
+        ),
+    ] {
+        nodes.register_runtime_policy(RuntimePolicyDefinition {
+            id: id.to_owned(),
+            display_name: display_name.to_owned(),
+            scope,
+            config_schema: node_schema(properties),
+        })?;
+    }
+    Ok(())
+}
+
+fn model_node_definition(
+    id: &str,
+    display_name: &str,
+    input_ports: Vec<PortDefinition>,
+    output_port: PortDefinition,
+    capability: ModelCapability,
+) -> NodeDefinition {
+    NodeDefinition {
+        id: id.to_owned(),
+        display_name: display_name.to_owned(),
+        category: NodeCategory::ModelInference,
+        input_ports,
+        output_ports: vec![output_port],
+        config_schema: node_schema(json!({
+            "model_binding": {"type": "string"},
+            "queries": {"type": "array", "items": {"type": "string"}}
+        })),
+        required_model_capability: Some(capability),
+        cardinality: NodeCardinality::ManyToMany,
+        side_effect: NodeSideEffect::None,
+        dry_run_supported: true,
+        expert_only: false,
+    }
+}
+
+fn simple_candidate_definition(
+    id: &str,
+    display_name: &str,
+    category: NodeCategory,
+    input: ArtifactKind,
+    output: ArtifactKind,
+    config_schema: serde_json::Value,
+) -> NodeDefinition {
+    NodeDefinition {
+        id: id.to_owned(),
+        display_name: display_name.to_owned(),
+        category,
+        input_ports: vec![catalog_port("input", input, true, PortCardinality::Many)],
+        output_ports: vec![catalog_port("output", output, true, PortCardinality::Many)],
+        config_schema,
+        required_model_capability: None,
+        cardinality: NodeCardinality::ManyToMany,
+        side_effect: NodeSideEffect::None,
+        dry_run_supported: true,
+        expert_only: false,
+    }
 }
 
 fn controlled_label_composition(
@@ -4441,7 +4997,8 @@ impl LocalApplication {
             target_task_id: target_task_id.map(TaskId::from),
             target_label: target_label.map(LabelId::from),
             enabled_skills,
-            node_catalog: nodes.nodes(),
+            node_catalog: nodes.definitions(),
+            runtime_policies: nodes.runtime_policies(),
             model_registry: models.models(),
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
@@ -5392,7 +5949,19 @@ impl LocalApplication {
                         inspected_nodes = true;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Listed available Pipeline nodes",
-                            json!({"nodes": input.node_catalog.iter().map(|node| json!({"id": node.id, "name": node.display_name, "required_capabilities": node.required_capabilities, "accepts": node.accepts, "produces": node.produces})).collect::<Vec<_>>() }),
+                            json!({"nodes": input.node_catalog.iter().map(|node| json!({
+                                "id": node.id,
+                                "name": node.display_name,
+                                "category": node.category,
+                                "required_model_capability": node.required_model_capability,
+                                "input_ports": node.input_ports,
+                                "output_ports": node.output_ports,
+                                "config_schema": node.config_schema,
+                                "cardinality": node.cardinality,
+                                "side_effect": node.side_effect,
+                                "dry_run_supported": node.dry_run_supported,
+                                "expert_only": node.expert_only,
+                            })).collect::<Vec<_>>() }),
                         ))
                     }
                     Ok(PipelineBuilderTool::ListAvailableModels) => {
@@ -8540,6 +9109,65 @@ export:
                     && model.status == ModelAvailabilityStatus::Disabled)
         );
         assert!(models.resolve("locate-anything-local").is_err());
+    }
+
+    #[test]
+    fn public_node_catalog_is_constrained_and_runtime_policies_are_separate() {
+        let settings = load_settings(None).expect("default Settings");
+        let (nodes, _) = workflow_catalog(&settings).expect("catalog");
+        let ids = nodes
+            .definitions()
+            .into_iter()
+            .map(|definition| definition.id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            ids,
+            BTreeSet::from([
+                "capability.classify".to_owned(),
+                "capability.detect".to_owned(),
+                "capability.segment".to_owned(),
+                "core.attach_result".to_owned(),
+                "core.combine_evidence".to_owned(),
+                "core.commit".to_owned(),
+                "core.crop".to_owned(),
+                "core.decision".to_owned(),
+                "core.existing_annotations".to_owned(),
+                "core.human_review".to_owned(),
+                "core.image_input".to_owned(),
+                "core.project_coordinates".to_owned(),
+                "core.resize".to_owned(),
+                "core.select_and_map".to_owned(),
+                "core.tile".to_owned(),
+                "core.validate".to_owned(),
+            ])
+        );
+        for internal in [
+            "core.artifact_cache",
+            "core.filter",
+            "core.map_label",
+            "core.confidence_gate",
+            "core.evidence_gate",
+        ] {
+            assert!(
+                !ids.contains(internal),
+                "{internal} leaked into public catalog"
+            );
+            assert!(
+                nodes.get(internal).is_some(),
+                "legacy operation must remain executable"
+            );
+        }
+        let policy_ids = nodes
+            .runtime_policies()
+            .into_iter()
+            .map(|policy| policy.id)
+            .collect::<BTreeSet<_>>();
+        assert!(policy_ids.is_superset(&BTreeSet::from([
+            "cache".to_owned(),
+            "replay".to_owned(),
+            "retry".to_owned(),
+            "budget".to_owned(),
+        ])));
     }
 
     #[test]

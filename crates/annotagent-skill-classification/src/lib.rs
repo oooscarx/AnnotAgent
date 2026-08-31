@@ -414,7 +414,10 @@ impl ClassificationSkillRunner {
 #[async_trait]
 impl DagNodeRunner for ClassificationSkillRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
-        if context.node.node_type != CLASSIFICATION_OPERATION {
+        if !matches!(
+            context.node.node_type.as_str(),
+            CLASSIFICATION_OPERATION | "capability.classify"
+        ) {
             return Err(DagNodeFailure::terminal(
                 "wrong_skill_operation",
                 "Classification runner received another operation",
@@ -659,6 +662,8 @@ mod tests {
             height: 24,
             mime_type: "image/png".to_owned(),
             blob_ref: "workspace://fixture".to_owned(),
+            parent: None,
+            root_region: None,
         })
     }
 

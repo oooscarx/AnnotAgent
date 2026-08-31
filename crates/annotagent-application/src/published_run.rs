@@ -21,12 +21,13 @@ use annotagent_provider::{
 };
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
-    CORE_CANDIDATE_MATCH, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_EVIDENCE_GATE, CORE_FILTER,
-    CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CORE_PROJECT_CANDIDATES, CORE_REJECT,
-    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
-    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
-    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
-    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_CANDIDATE_MATCH, CORE_COMBINE_EVIDENCE, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_DECISION,
+    CORE_EVIDENCE_GATE, CORE_FILTER, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL,
+    CORE_PROJECT_CANDIDATES, CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE,
+    CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
+    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
+    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -268,14 +269,20 @@ impl PublishedWorkflowRuntime {
             }
             match node.node_type.as_str() {
                 CORE_ARTIFACT_CACHE
+                | CORE_RESIZE
+                | CORE_TILE
                 | CORE_CROP
                 | CORE_FILTER
                 | CORE_MAP_LABEL
+                | CORE_SELECT_AND_MAP
+                | CORE_PROJECT_COORDINATES
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
                 | CORE_CONFIDENCE_GATE
                 | CORE_CANDIDATE_MATCH
+                | CORE_COMBINE_EVIDENCE
                 | CORE_EVIDENCE_GATE
+                | CORE_DECISION
                 | CORE_IMAGE_STATISTICS
                 | CORE_PROJECT_CANDIDATES
                 | CORE_REJECT => {
@@ -285,7 +292,7 @@ impl PublishedWorkflowRuntime {
                         true,
                     )?;
                 }
-                CLASSIFICATION_OPERATION => {
+                CLASSIFICATION_OPERATION | "capability.classify" => {
                     let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
                         if node.model_binding.as_deref() != Some("mock-classifier")
                             && let Some(provider) = &self.pipeline_provider
@@ -359,7 +366,7 @@ impl PublishedWorkflowRuntime {
                         false,
                     )?;
                 }
-                OBJECT_DETECTION_OPERATION => {
+                OBJECT_DETECTION_OPERATION | "capability.detect" => {
                     executor.register_runner(
                         node.node_type.clone(),
                         self.object_detection_runner(node, request)?,
@@ -460,6 +467,8 @@ impl PublishedWorkflowRuntime {
                     height: request.image.metadata.height,
                     mime_type: request.image.metadata.mime_type.clone(),
                     blob_ref: format!("workspace://sha256/{}", request.image.metadata.sha256),
+                    parent: None,
+                    root_region: None,
                 })
             })
             .into_iter()
@@ -959,14 +968,20 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
             }
             match node.node_type.as_str() {
                 CORE_ARTIFACT_CACHE
+                | CORE_RESIZE
+                | CORE_TILE
                 | CORE_CROP
                 | CORE_FILTER
                 | CORE_MAP_LABEL
+                | CORE_SELECT_AND_MAP
+                | CORE_PROJECT_COORDINATES
                 | CORE_ATTACH_RESULT
                 | CORE_ATTACH_ATTRIBUTE
                 | CORE_CONFIDENCE_GATE
                 | CORE_CANDIDATE_MATCH
+                | CORE_COMBINE_EVIDENCE
                 | CORE_EVIDENCE_GATE
+                | CORE_DECISION
                 | CORE_IMAGE_STATISTICS
                 | CORE_PROJECT_CANDIDATES
                 | CORE_REJECT => {
@@ -976,7 +991,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         true,
                     )?;
                 }
-                CLASSIFICATION_OPERATION => {
+                CLASSIFICATION_OPERATION | "capability.classify" => {
                     let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
                         if node.model_binding.as_deref() != Some("mock-classifier")
                             && let Some(provider) = &self.pipeline_provider
@@ -1050,7 +1065,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         false,
                     )?;
                 }
-                OBJECT_DETECTION_OPERATION => {
+                OBJECT_DETECTION_OPERATION | "capability.detect" => {
                     executor.register_runner(
                         node.node_type.clone(),
                         self.object_detection_runner(node, &request)?,
@@ -1147,6 +1162,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     height: request.image.metadata.height,
                     mime_type: request.image.metadata.mime_type.clone(),
                     blob_ref: format!("workspace://sha256/{}", request.image.metadata.sha256),
+                    parent: None,
+                    root_region: None,
                 })
             })
             .into_iter()
