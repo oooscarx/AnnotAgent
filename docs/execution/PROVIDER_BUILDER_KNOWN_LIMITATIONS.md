@@ -4,34 +4,30 @@ This file records observed baseline limitations and will be narrowed as mileston
 
 ## Baseline limitations
 
-- The compatibility singleton runtime configuration remains under Storage until M8. Pipeline
-  Builder `advisor=llm` now resolves its own Registry Provider/Profile, but existing annotation Runs
-  do not all resolve typed Profile bindings yet.
 - Native Keyring calls are live-conditional on an unlocked desktop credential service; CI covers
   the same contract through an injected backend and in-memory implementation.
-- The legacy workspace credential file is still readable to avoid breaking existing users. The M8
-  migration UI must make copy-to-Keyring and optional source deletion separate explicit actions.
-- Model Profile, Project Binding, Agent/default Binding and revision tables exist, but existing
-  singleton Projects are not migrated until M8.
+- The legacy workspace credential file is still readable to avoid breaking existing users. Registry
+  import retains only its opaque reference; any copy to another Secret Store and optional source
+  deletion are separate explicit actions.
 - Provider model discovery only proves `/models` compatibility and returns IDs. It cannot verify
   modality, task capability, structured output, tools or pricing without an explicit declaration or
   active model-specific verification.
 - `/api/models` remains the legacy Vision Worker/runtime-binding list; revisioned API/VLM profiles
   use `/api/model-profiles` and the separate Models tab.
-- New Builder mutations can bind a typed, lock-aware `ModelProfileId`; the legacy runtime string is
-  retained only when the Profile remote ID resolves to an existing runtime descriptor. Complete
-  Profile-to-runtime resolution for every Provider is M6–M8 work.
+- A Published Workflow can execute different frozen Model Profiles per node when they share one
+  Provider connection. A version spanning multiple Provider credentials currently fails closed at
+  Run admission instead of applying one credential to another Provider. Per-node multi-Provider
+  credential routing remains the next Runtime boundary.
 - TUI supports Provider/Profile inspection, passive configuration checks, compatibility queries and
   locked Project role bindings. It intentionally does not accept credentials or perform a
   credential-aware Provider network request; use GUI Settings or an environment-variable reference.
 - Active Probe and Pipeline Builder Agent usage persist Provider/Profile revision, tokens, latency
-  and configured pricing. Normal annotation Run usage still needs the same Profile/revision and
-  pricing-snapshot integration in M7–M8.
-- Published Workflow snapshots support frozen Model Profile semantics, but the current publication
-  service does not populate them until the M3 lifecycle/API integration resolves typed bindings.
-- Resize and Tile currently create typed virtual Image Artifacts and complete coordinate lineage;
-  external inference adapters must materialize/consume their virtual blob references before tiled
-  remote inference is considered end-to-end release evidence in M6–M8.
+  and configured pricing. Annotation Run history freezes Profile semantics but its aggregate usage
+  row still uses the compatibility Provider/model display fields rather than a dedicated revisioned
+  price-snapshot column.
+- Resize and Tile create typed virtual Image Artifacts with complete coordinate lineage. Core/Mock
+  execution is covered; live remote tiled inference still requires an adapter that materializes the
+  virtual blob reference for the external Provider.
 - Existing Annotations and generic Segment are registered public contracts, but their complete
   Project-store/template execution paths remain release-open until M6.
 - The Builder's passive Provider availability tool reads the persisted sanitized health snapshot;

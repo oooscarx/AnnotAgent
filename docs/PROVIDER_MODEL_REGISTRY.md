@@ -30,6 +30,32 @@ remote model ID, modalities, protocol features, task capabilities, limits, and g
 The snapshot contains neither `CredentialReference` nor pricing. Credentials resolve only when a
 call is made; the price actually used belongs to that call's usage record.
 
+Publication resolves every durable node Profile binding and embeds the resulting semantic snapshots
+in the immutable version. A compatibility `default-vision` node is projected to the migrated locked
+Project binding when one exists. New Runs re-check the current Provider/Profile lifecycle state: a
+disabled or unavailable dependency blocks the new Run, while the executable endpoint/model/defaults
+still come from the frozen version. Existing Run snapshots are never rewritten.
+
+## Legacy compatibility import
+
+**Settings → Providers** exposes an explicit preview-and-confirm import for the old singleton
+Provider configuration:
+
+```text
+legacy Provider settings  → ProviderProfile
+legacy model string       → ModelProfile revision 1
+default-vision            → locked Project role binding
+legacy key file           → LegacyWorkspaceFile CredentialReference
+```
+
+The fingerprint excludes secret values and deterministically identifies the old connection. The
+Provider, Model and all non-conflicting Project bindings are committed in one rollback-safe SQLite
+transaction. Repeating the import returns its original report without adding rows. Existing user
+bindings are preserved, and historical Runs/Published Versions are not modified. The import never
+copies or deletes a secret. Environment-variable and session-only references remain the recommended
+credential choices; migration from a legacy file to native credential storage is a separate,
+explicit operation.
+
 ## Binding hierarchy
 
 Binding resolution is deterministic:

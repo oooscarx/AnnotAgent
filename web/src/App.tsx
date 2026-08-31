@@ -54,6 +54,7 @@ import type {
   ProjectModelBinding,
   ModelBindingRole,
   GlobalModelDefaults,
+  LegacyRegistryImportPreview,
   ExportReadiness,
   ProjectExportResult,
   GuidedAction,
@@ -4748,6 +4749,7 @@ function ProviderRegistryPage({
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [presets, setPresets] = useState<ProviderPresetProfile[]>([]);
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
+  const [legacyImport, setLegacyImport] = useState<LegacyRegistryImportPreview>();
   const [presetId, setPresetId] = useState("mock");
   const [displayName, setDisplayName] = useState("Mock (offline)");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1");
@@ -4756,11 +4758,17 @@ function ProviderRegistryPage({
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const refresh = () =>
-    Promise.all([api.providers(), api.providerPresets(), api.modelProfiles()])
-      .then(([providerResult, presetResult, modelResult]) => {
+    Promise.all([
+      api.providers(),
+      api.providerPresets(),
+      api.modelProfiles(),
+      api.legacyRegistryImport(),
+    ])
+      .then(([providerResult, presetResult, modelResult, legacyResult]) => {
         setProviders(providerResult.providers);
         setPresets(presetResult.presets);
         setModels(modelResult.models);
+        setLegacyImport(legacyResult.migration);
       })
       .catch((error: Error) => onError(error.message));
   useEffect(() => {
@@ -4792,6 +4800,24 @@ function ProviderRegistryPage({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(""));
   };
+  const importLegacy = () => {
+    if (
+      !window.confirm(
+        "Import the compatibility Provider, model and default-vision Project bindings? The credential value and historical Runs will not be moved or changed.",
+      )
+    ) return;
+    setBusy("legacy-import");
+    void api
+      .applyLegacyRegistryImport()
+      .then((result) => {
+        setNotice(
+          `Imported Provider and Model Profile. ${result.migration.bindings_created} Project binding${result.migration.bindings_created === 1 ? "" : "s"} created; ${result.migration.bindings_preserved} existing choice${result.migration.bindings_preserved === 1 ? " was" : "s were"} preserved.`,
+        );
+        return refresh();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(""));
+  };
   return (
     <section className="registry-page">
       <div className="toolbar-panel">
@@ -4805,6 +4831,19 @@ function ProviderRegistryPage({
         </button>
       </div>
       {notice && <div className="positive-empty" role="status"><strong>{notice}</strong></div>}
+      {legacyImport && !legacyImport.already_applied && (
+        <div className="guided-callout legacy-registry-import">
+          <div>
+            <strong>Compatibility settings are ready to import</strong>
+            <p>
+              Create {legacyImport.provider_display_name}, {legacyImport.model_display_name}, and {legacyImport.project_binding_count} default Project binding{legacyImport.project_binding_count === 1 ? "" : "s"}. The existing credential stays as a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret Mock"} reference; no secret or Run history is moved.
+            </p>
+          </div>
+          <button disabled={Boolean(busy)} onClick={importLegacy}>
+            {busy === "legacy-import" ? "Importing…" : "Review and import"}
+          </button>
+        </div>
+      )}
       {adding && (
         <Panel title="New Provider" eyebrow="Connection profile">
           <div className="form-grid">
@@ -4850,7 +4889,7 @@ function ProviderRegistryCard({
   onError: (value: string) => void;
 }) {
   const [busy, setBusy] = useState("");
-  const [credentialSource, setCredentialSource] = useState<"system_keyring" | "environment_variable" | "session_only">("system_keyring");
+  const [credentialSource, setCredentialSource] = useState<"system_keyring" | "environment_variable" | "session_only">("session_only");
   const [secret, setSecret] = useState("");
   const [environmentVariable, setEnvironmentVariable] = useState("");
   const [selectedModel, setSelectedModel] = useState(models[0]?.id ?? "");
@@ -7277,7 +7316,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
     void api
       .saveSettings({ ...settings, clear_saved_api_key: true })
       .then((value) =>
-        finish(value, "Saved API key removed from the workspace.", true),
+        finish(value, "Saved API key removed from the active secret source.", true),
       )
       .catch((error: Error) => onError(error.message))
       .finally(() => setSaving(false));
@@ -7286,7 +7325,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
   return (
     <section className="settings-grid">
       <Panel title="Legacy Run fallback" eyebrow="Compatibility settings">
-        <div className="boundary-note"><i>i</i><span><strong>Registry migration boundary</strong><small>New reusable connections live in Providers and Models. This fallback keeps existing Projects runnable until published Workflow execution is cut over to Model Profile revisions.</small></span></div>
+        <div className="boundary-note"><i>i</i><span><strong>Registry compatibility boundary</strong><small>New reusable connections live in Providers and Models. This fallback remains for older unversioned Runs; Published Workflows use frozen Model Profile revisions.</small></span></div>
         <label>
           Provider
           <select
@@ -7394,7 +7433,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
                 onChange={(event) => setKey(event.target.value)}
                 placeholder={
                   settings.api_key_persisted && !providerChanged
-                    ? "Stored in the system credential store · paste to replace"
+                    ? `${settings.credential_store === "session_only" ? "Kept for this server session" : "Stored in the selected secret source"} · paste to replace`
                     : `Paste your ${preset.shortLabel} key once`
                 }
               />
@@ -7408,7 +7447,7 @@ function SettingsPage({ onError }: { onError: (value: string) => void }) {
               </button>
               <small>
                 {settings.api_key_persisted && !providerChanged
-                  ? "Native system credential store · never returned by the API"
+                  ? `${settings.credential_store === "session_only" ? "Process-only session" : settings.credential_store?.replaceAll("_", " ") ?? "Secret reference"} · never returned by the API`
                   : `Environment fallback: ${provider.api_key_env ?? "ANNOTAGENT_API_KEY"}`}
               </small>
             </div>
@@ -7928,7 +7967,7 @@ function CreateProject({
             {!preset.offline && <>
               <label>Vision model<select value={provider.model ?? ""} onChange={(event) => setSettings((current) => ({ ...current, provider: { ...current?.provider, model: event.target.value } }))}>{preset.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}<option value={CUSTOM_MODEL}>Another model ID…</option></select></label>
               {provider.model === CUSTOM_MODEL && <label>Model ID<input value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="provider/model-name" /></label>}
-              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored in the system credential store" /></label>}
+              {!settings?.api_key_persisted && <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Kept for this server session; not written to Keychain" /></label>}
             </>}
             {!modelConnected && <small role="alert">Enter a key, select Mock, or choose Offline only before using the recommendation.</small>}
           </div>

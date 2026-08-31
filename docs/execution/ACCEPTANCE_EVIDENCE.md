@@ -952,3 +952,32 @@ live inference result was fabricated; real GPU inference remains `LIVE-CONDITION
 
 Open-Vocabulary + Specialist Detection Alpha repository release status: `PASS`. External real-model
 accuracy remains `LIVE-CONDITIONAL`; native 200% browser zoom remains `MANUAL`.
+
+## Provider Registry + Pipeline Builder Alpha M8 — 2026-08-31
+
+1. Migration 9 and the explicit Registry import API/UI convert the compatibility Provider, model
+   string and default Project bindings in one rollback-safe transaction. Repeated apply is a no-op;
+   collisions roll back; existing user bindings win. The import never reads, copies or deletes a
+   secret and reports zero historical Run changes.
+2. Publication freezes exact Model Profile revisions plus Provider adapter, endpoint, remote model,
+   capabilities, limits and generation defaults into the immutable Workflow hash. Credentials and
+   prices stay outside the semantic snapshot. Disabling the current Provider blocks a new Run but
+   does not rewrite the Published Version or Run history.
+3. Draft Dry Run resolves the Registry Provider type and SecretStore credential and executes from
+   the same frozen Profile snapshots. A Server regression proves a session-only credential reaches
+   Runtime construction without appearing in serialized Provider data.
+4. Published Runtime integration executes two Classification nodes of the same operation with two
+   distinct frozen Model Profiles on one Provider and records the correct model for each node.
+   Workflows spanning multiple Provider credentials fail closed and are documented as a limitation.
+5. Provider Registry Chromium coverage proves protected deletion, disable removal from compatible
+   results, health restoration, session key rotation without echo, explicit idempotent migration and
+   responsive Settings. The complete 31-test suite also covers Generic Project, Published Run,
+   Artifact, Replay, Review, Export, keyboard recovery and compact layouts.
+6. Release commands pass: `cargo fmt --all --check`, strict workspace/all-target/all-feature Clippy,
+   all-feature build, 275 Rust tests plus doc tests (one explicitly billable smoke ignored), Web
+   typecheck, 38 Vitest tests, production build and 31 Chromium tests. API-key-shaped source scan,
+   browser-storage inspection and `git diff --check` have no secret or formatting finding.
+
+Provider Registry + Pipeline Builder Alpha offline release status: `PASS`. Real Qwen/OpenAI/
+OpenRouter/Gemini-compatible calls, external network behavior and native unlocked system Keyring
+remain `LIVE-CONDITIONAL`; no credential, push or remote mutation was used.

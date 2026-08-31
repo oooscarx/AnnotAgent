@@ -7,13 +7,14 @@ use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
     AnnotationSource, AnnotationValidator, ArtifactId, ArtifactKind, ArtifactProvenance,
     ArtifactRole, ArtifactValidationState, AttributeValue, CorrectionRisk, DetectionRecoveryReport,
-    ImageArtifact, ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, NormalizedPoint,
-    NormalizedRect, PipelineArtifact, PublishedWorkflowVersion, RefinementContext,
-    RelationEndpoint, RelationValue, ReviewStatus, RunEvent, RunEventKind, RunEventPayload,
-    RunStatus, SuggestedAction, TaskId, TaskKind, TaskRunStatus, TokenUsage, UsageRecord,
-    UsageSource, UsageTotals, ValidationContext, ValidationEvidence, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, VisionBackendKind, VisionInferenceRequest,
-    VisionModelBackend, VisionModelProvider, WorkflowDraftNode, WorkflowNodeKind,
+    ImageArtifact, ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, ModelProfileId,
+    NormalizedPoint, NormalizedRect, PipelineArtifact, ProviderAdapterKind,
+    PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue, ReviewStatus,
+    RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind,
+    TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
+    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
+    VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
+    WorkflowNodeKind,
 };
 use annotagent_provider::{
     HttpVisionDetectionBackend, OpenAiCompatiblePipelineClassifier,
@@ -82,6 +83,7 @@ pub(crate) struct PublishedWorkflowRuntime {
     model_name: String,
     external_backend: Option<Arc<dyn VisionModelBackend>>,
     pipeline_provider: Option<Arc<dyn VisionModelProvider>>,
+    profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     store: Arc<SqliteStore>,
     control: RunControl,
     events: broadcast::Sender<RunEvent>,
@@ -91,12 +93,20 @@ pub(crate) struct PublishedWorkflowRuntime {
     detection_workers: Vec<DetectionWorkerSettings>,
 }
 
+#[derive(Clone)]
+struct ModelExecution {
+    provider_name: String,
+    model_name: String,
+    external_backend: Option<Arc<dyn VisionModelBackend>>,
+    pipeline_provider: Option<Arc<dyn VisionModelProvider>>,
+}
+
 impl PublishedWorkflowRuntime {
     pub(crate) fn new(
         workflow: PublishedWorkflowVersion,
         provider_kind: &str,
         settings: &Settings,
-        temporary_api_key: Option<String>,
+        temporary_api_key: Option<&str>,
         store: Arc<SqliteStore>,
         validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
         refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
@@ -108,7 +118,7 @@ impl PublishedWorkflowRuntime {
                 let provider: Arc<dyn VisionModelProvider> = Arc::new(
                     OpenAiCompatibleProvider::new_with_api_key(
                         settings.provider.clone(),
-                        temporary_api_key,
+                        temporary_api_key.map(str::to_owned),
                     )
                     .map_err(|error| anyhow!(error))?,
                 );
@@ -123,13 +133,88 @@ impl PublishedWorkflowRuntime {
             }
             other => bail!("unknown provider {other:?}; choose mock or openai_compatible"),
         };
+        let mut profile_executions = BTreeMap::new();
+        for profile in &workflow.snapshot.model_profiles {
+            let execution = match profile.provider_adapter {
+                ProviderAdapterKind::Mock => ModelExecution {
+                    provider_name: "mock".to_owned(),
+                    model_name: profile.remote_model_id.clone(),
+                    external_backend: None,
+                    pipeline_provider: None,
+                },
+                ProviderAdapterKind::OpenAiCompatible => {
+                    let mut config = settings.provider.clone();
+                    config.endpoint = profile.provider_base_url.to_string();
+                    config.model.clone_from(&profile.remote_model_id);
+                    config.max_output_tokens = profile
+                        .generation_defaults
+                        .maximum_output_tokens
+                        .or(profile.limits.maximum_output_tokens)
+                        .unwrap_or(u64::from(config.max_output_tokens))
+                        .min(u64::from(u32::MAX))
+                        as u32;
+                    if let Some(temperature) = profile.generation_defaults.temperature {
+                        config.temperature = temperature.to_string().parse().unwrap_or(0.0);
+                    }
+                    config
+                        .reasoning_mode
+                        .clone_from(&profile.generation_defaults.reasoning_mode);
+                    config.supports_tool_calls = profile.protocol_features.tool_calls;
+                    config.supports_json_schema = profile.protocol_features.structured_output
+                        || profile.protocol_features.json_schema;
+                    let provider: Arc<dyn VisionModelProvider> = Arc::new(
+                        OpenAiCompatibleProvider::new_with_api_key(
+                            config.clone(),
+                            temporary_api_key.map(str::to_owned),
+                        )
+                        .map_err(|error| anyhow!(error))?,
+                    );
+                    ModelExecution {
+                        provider_name: "openai_compatible".to_owned(),
+                        model_name: config.model.clone(),
+                        external_backend: Some(Arc::new(OpenAiVisionBackend::new(
+                            format!("registry-openai-compatible-{}", profile.model_profile_id),
+                            &config.model,
+                            provider.clone(),
+                            config.max_output_tokens,
+                            config.temperature,
+                        ))),
+                        pipeline_provider: Some(provider),
+                    }
+                }
+            };
+            profile_executions.insert(profile.model_profile_id, execution);
+        }
+        let provider_name = if profile_executions.is_empty() {
+            provider_kind.to_owned()
+        } else {
+            profile_executions
+                .values()
+                .map(|execution| execution.provider_name.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join("+")
+        };
+        let model_name = if profile_executions.is_empty() {
+            settings.provider.model.clone()
+        } else {
+            profile_executions
+                .values()
+                .map(|execution| execution.model_name.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join("+")
+        };
         let (events, _) = broadcast::channel(512);
         Ok(Self {
             workflow,
-            provider_name: provider_kind.to_owned(),
-            model_name: settings.provider.model.clone(),
+            provider_name,
+            model_name,
             external_backend,
             pipeline_provider,
+            profile_executions,
             store,
             control: RunControl::new(),
             events,
@@ -138,6 +223,15 @@ impl PublishedWorkflowRuntime {
             refiners,
             detection_workers: settings.detection_workers.clone(),
         })
+    }
+
+    fn default_execution(&self) -> ModelExecution {
+        ModelExecution {
+            provider_name: self.provider_name.clone(),
+            model_name: self.model_name.clone(),
+            external_backend: self.external_backend.clone(),
+            pipeline_provider: self.pipeline_provider.clone(),
+        }
     }
 
     fn grounding_runner(
@@ -186,47 +280,6 @@ impl PublishedWorkflowRuntime {
         )?))
     }
 
-    fn object_detection_runner(
-        &self,
-        node: &WorkflowDraftNode,
-        request: &ImageRunRequest,
-    ) -> Result<Arc<ObjectDetectionSkillRunner>> {
-        let model_id = node
-            .model_binding
-            .clone()
-            .unwrap_or_else(|| "mock-object-detector".to_owned());
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-            if matches!(model_id.as_str(), "mock-object-detector" | "mock-detector") {
-                Arc::new(MockObjectDetectionBackend::new(
-                    "workspace-mock-object-detector",
-                ))
-            } else {
-                let worker = self
-                    .detection_workers
-                    .iter()
-                    .find(|worker| worker.model_id == model_id)
-                    .ok_or_else(|| anyhow!("unknown Detection Worker model {model_id:?}"))?;
-                if !worker.enabled {
-                    bail!("Detection Worker model {model_id:?} is disabled in Settings");
-                }
-                if !worker
-                    .expected_capabilities
-                    .contains(&annotagent_core::VisionCapability::ObjectDetection)
-                {
-                    bail!("Detection Worker model {model_id:?} does not provide ObjectDetection");
-                }
-                Arc::new(HttpVisionDetectionBackend::new(
-                    worker.http_config(),
-                    annotagent_core::VisionCapability::ObjectDetection,
-                )?)
-            };
-        Ok(Arc::new(ObjectDetectionSkillRunner::new(
-            backend,
-            model_id,
-            request.model_image.clone(),
-        )?))
-    }
-
     async fn publish(&self, event: RunEvent) -> Result<()> {
         self.store
             .record_event(&event)
@@ -252,6 +305,7 @@ impl PublishedWorkflowRuntime {
             external_backend: self.external_backend.clone(),
             provider_name: self.provider_name.clone(),
             model_name: self.model_name.clone(),
+            profile_executions: self.profile_executions.clone(),
             control: self.control.clone(),
             store: self.store.clone(),
             validators: self.validators.clone(),
@@ -293,27 +347,13 @@ impl PublishedWorkflowRuntime {
                     )?;
                 }
                 CLASSIFICATION_OPERATION | "capability.classify" => {
-                    let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-                        if node.model_binding.as_deref() != Some("mock-classifier")
-                            && let Some(provider) = &self.pipeline_provider
-                        {
-                            Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
-                                "workspace-openai-compatible-classifier",
-                                provider.clone(),
-                                self.model_name.clone(),
-                            ))
-                        } else {
-                            Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
-                        };
                     executor.register_runner(
                         node.node_type.clone(),
-                        Arc::new(ClassificationSkillRunner::new(
-                            backend,
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| self.model_name.clone()),
-                            request.model_image.clone(),
-                        )?),
+                        Arc::new(BoundClassificationRunner {
+                            default_execution: self.default_execution(),
+                            profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                        }),
                         false,
                     )?;
                 }
@@ -366,32 +406,15 @@ impl PublishedWorkflowRuntime {
                         false,
                     )?;
                 }
-                OBJECT_DETECTION_OPERATION | "capability.detect" => {
+                OBJECT_DETECTION_OPERATION | "capability.detect" | VLM_DETECTION_OPERATION => {
                     executor.register_runner(
                         node.node_type.clone(),
-                        self.object_detection_runner(node, request)?,
-                        true,
-                    )?;
-                }
-                VLM_DETECTION_OPERATION => {
-                    let provider = self.pipeline_provider.as_ref().ok_or_else(|| {
-                        anyhow!(
-                            "VLM Detection requires a configured OpenAI-compatible vision provider"
-                        )
-                    })?;
-                    executor.register_runner(
-                        node.node_type.clone(),
-                        Arc::new(VlmDetectionSkillRunner::new(
-                            Arc::new(OpenAiCompatiblePipelineDetector::new(
-                                "workspace-openai-compatible-vlm-detector",
-                                provider.clone(),
-                                self.model_name.clone(),
-                            )),
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| "default-vision".to_owned()),
-                            request.model_image.clone(),
-                        )?),
+                        Arc::new(BoundDetectionRunner {
+                            default_execution: self.default_execution(),
+                            profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                            detection_workers: self.detection_workers.clone(),
+                        }),
                         true,
                     )?;
                 }
@@ -812,6 +835,21 @@ impl PublishedWorkflowRuntime {
             .iter()
             .filter(|trace| model_nodes.contains(trace.node_id.as_str()) && !trace.cache_hit)
         {
+            let output_metadata = result
+                .checkpoint
+                .node_outputs
+                .get(&trace.node_id)
+                .map(|output| &output.metadata);
+            let provider_name = output_metadata
+                .and_then(|metadata| metadata.get("provider"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&self.provider_name)
+                .to_owned();
+            let model_name = output_metadata
+                .and_then(|metadata| metadata.get("model"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&self.model_name)
+                .to_owned();
             let tokens = if trace.usage.input_tokens == 0 && trace.usage.output_tokens == 0 {
                 TokenUsage {
                     input_tokens: None,
@@ -823,7 +861,7 @@ impl PublishedWorkflowRuntime {
                 TokenUsage::known(
                     trace.usage.input_tokens,
                     trace.usage.output_tokens,
-                    if self.provider_name == "mock" {
+                    if provider_name == "mock" {
                         UsageSource::Mock
                     } else {
                         UsageSource::Estimated
@@ -836,9 +874,9 @@ impl PublishedWorkflowRuntime {
                 ..AdditionalUsage::default()
             };
             let usage = UsageRecord {
-                provider: self.provider_name.clone(),
-                model: self.model_name.clone(),
-                endpoint_summary: if self.provider_name == "mock" {
+                provider: provider_name.clone(),
+                model: model_name,
+                endpoint_summary: if provider_name == "mock" {
                     "offline-mock".to_owned()
                 } else {
                     "configured-openai-compatible".to_owned()
@@ -954,6 +992,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
             external_backend: self.external_backend.clone(),
             provider_name: self.provider_name.clone(),
             model_name: self.model_name.clone(),
+            profile_executions: self.profile_executions.clone(),
             control: self.control.clone(),
             store: self.store.clone(),
             validators: self.validators.clone(),
@@ -992,27 +1031,13 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     )?;
                 }
                 CLASSIFICATION_OPERATION | "capability.classify" => {
-                    let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-                        if node.model_binding.as_deref() != Some("mock-classifier")
-                            && let Some(provider) = &self.pipeline_provider
-                        {
-                            Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
-                                "workspace-openai-compatible-classifier",
-                                provider.clone(),
-                                self.model_name.clone(),
-                            ))
-                        } else {
-                            Arc::new(MockClassificationBackend::new("workspace-mock-classifier"))
-                        };
                     executor.register_runner(
                         node.node_type.clone(),
-                        Arc::new(ClassificationSkillRunner::new(
-                            backend,
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| self.model_name.clone()),
-                            request.model_image.clone(),
-                        )?),
+                        Arc::new(BoundClassificationRunner {
+                            default_execution: self.default_execution(),
+                            profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                        }),
                         false,
                     )?;
                 }
@@ -1065,32 +1090,15 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         false,
                     )?;
                 }
-                OBJECT_DETECTION_OPERATION | "capability.detect" => {
+                OBJECT_DETECTION_OPERATION | "capability.detect" | VLM_DETECTION_OPERATION => {
                     executor.register_runner(
                         node.node_type.clone(),
-                        self.object_detection_runner(node, &request)?,
-                        true,
-                    )?;
-                }
-                VLM_DETECTION_OPERATION => {
-                    let provider = self.pipeline_provider.as_ref().ok_or_else(|| {
-                        anyhow!(
-                            "VLM Detection requires a configured OpenAI-compatible vision provider"
-                        )
-                    })?;
-                    executor.register_runner(
-                        node.node_type.clone(),
-                        Arc::new(VlmDetectionSkillRunner::new(
-                            Arc::new(OpenAiCompatiblePipelineDetector::new(
-                                "workspace-openai-compatible-vlm-detector",
-                                provider.clone(),
-                                self.model_name.clone(),
-                            )),
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| "default-vision".to_owned()),
-                            request.model_image.clone(),
-                        )?),
+                        Arc::new(BoundDetectionRunner {
+                            default_execution: self.default_execution(),
+                            profile_executions: self.profile_executions.clone(),
+                            model_image: request.model_image.clone(),
+                            detection_workers: self.detection_workers.clone(),
+                        }),
                         true,
                     )?;
                 }
@@ -1257,6 +1265,151 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
     }
 }
 
+fn execution_for_node<'a>(
+    default_execution: &'a ModelExecution,
+    profile_executions: &'a BTreeMap<ModelProfileId, ModelExecution>,
+    node: &WorkflowDraftNode,
+) -> &'a ModelExecution {
+    node.model_profile_binding
+        .as_ref()
+        .and_then(|binding| profile_executions.get(&binding.model_profile_id))
+        .unwrap_or(default_execution)
+}
+
+fn add_execution_metadata(output: &mut DagNodeOutput, execution: &ModelExecution) {
+    output
+        .metadata
+        .insert("provider".to_owned(), json!(execution.provider_name));
+    output
+        .metadata
+        .insert("model".to_owned(), json!(execution.model_name));
+}
+
+struct BoundClassificationRunner {
+    default_execution: ModelExecution,
+    profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
+    model_image: Option<annotagent_core::ModelImage>,
+}
+
+#[async_trait]
+impl DagNodeRunner for BoundClassificationRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let execution = execution_for_node(
+            &self.default_execution,
+            &self.profile_executions,
+            context.node,
+        );
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+            execution.pipeline_provider.as_ref().map_or_else(
+                || {
+                    Arc::new(MockClassificationBackend::new(format!(
+                        "registry-mock-classifier-{}",
+                        execution.model_name
+                    ))) as Arc<dyn annotagent_core::PipelineModelBackend>
+                },
+                |provider| {
+                    Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
+                        format!("registry-openai-classifier-{}", execution.model_name),
+                        provider.clone(),
+                        execution.model_name.clone(),
+                    )) as Arc<dyn annotagent_core::PipelineModelBackend>
+                },
+            );
+        let runner = ClassificationSkillRunner::new(
+            backend,
+            execution.model_name.clone(),
+            self.model_image.clone(),
+        )
+        .map_err(|error| DagNodeFailure::terminal("classification_binding", error.to_string()))?;
+        let mut output = runner.run(context).await?;
+        add_execution_metadata(&mut output, execution);
+        Ok(output)
+    }
+}
+
+struct BoundDetectionRunner {
+    default_execution: ModelExecution,
+    profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
+    model_image: Option<annotagent_core::ModelImage>,
+    detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+#[async_trait]
+impl DagNodeRunner for BoundDetectionRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let execution = execution_for_node(
+            &self.default_execution,
+            &self.profile_executions,
+            context.node,
+        );
+        let mut output = if let Some(provider) = &execution.pipeline_provider {
+            let runner = VlmDetectionSkillRunner::new(
+                Arc::new(OpenAiCompatiblePipelineDetector::new(
+                    format!("registry-openai-detector-{}", execution.model_name),
+                    provider.clone(),
+                    execution.model_name.clone(),
+                )),
+                execution.model_name.clone(),
+                self.model_image.clone(),
+            )
+            .map_err(|error| DagNodeFailure::terminal("detection_binding", error.to_string()))?;
+            runner.run(context).await?
+        } else {
+            let model_id = context
+                .node
+                .model_binding
+                .clone()
+                .unwrap_or_else(|| execution.model_name.clone());
+            let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
+                if context.node.model_profile_binding.is_some()
+                    || matches!(
+                        model_id.as_str(),
+                        "mock-object-detector" | "mock-detector" | "default-vision"
+                    )
+                {
+                    Arc::new(MockObjectDetectionBackend::new(format!(
+                        "registry-mock-detector-{}",
+                        execution.model_name
+                    )))
+                } else {
+                    let worker = self
+                        .detection_workers
+                        .iter()
+                        .find(|worker| worker.model_id == model_id)
+                        .ok_or_else(|| {
+                            DagNodeFailure::terminal(
+                                "detection_binding",
+                                format!("unknown Detection Worker model {model_id:?}"),
+                            )
+                        })?;
+                    if !worker.enabled {
+                        return Err(DagNodeFailure::terminal(
+                            "detection_binding",
+                            format!("Detection Worker model {model_id:?} is disabled"),
+                        ));
+                    }
+                    Arc::new(
+                        HttpVisionDetectionBackend::new(
+                            worker.http_config(),
+                            annotagent_core::VisionCapability::ObjectDetection,
+                        )
+                        .map_err(|error| {
+                            DagNodeFailure::terminal("detection_binding", error.to_string())
+                        })?,
+                    )
+                };
+            let runner =
+                ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+                    .map_err(|error| {
+                        DagNodeFailure::terminal("detection_binding", error.to_string())
+                    })?;
+            runner.run(context).await?
+        };
+        add_execution_metadata(&mut output, execution);
+        Ok(output)
+    }
+}
+
 struct WorkflowRunner {
     project: Arc<annotagent_core::ProjectSchema>,
     image: Arc<annotagent_core::ImageFrame>,
@@ -1264,6 +1417,7 @@ struct WorkflowRunner {
     external_backend: Option<Arc<dyn VisionModelBackend>>,
     provider_name: String,
     model_name: String,
+    profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     control: RunControl,
     store: Arc<SqliteStore>,
     validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
@@ -1301,7 +1455,15 @@ impl WorkflowRunner {
         context: DagNodeContext<'_>,
     ) -> Result<DagNodeOutput, DagNodeFailure> {
         let (task_id, kind, label) = target_for_node(&self.project, context.node)?;
-        let artifacts = if let Some(backend) = &self.external_backend {
+        let default_execution = ModelExecution {
+            provider_name: self.provider_name.clone(),
+            model_name: self.model_name.clone(),
+            external_backend: self.external_backend.clone(),
+            pipeline_provider: None,
+        };
+        let execution =
+            execution_for_node(&default_execution, &self.profile_executions, context.node);
+        let artifacts = if let Some(backend) = &execution.external_backend {
             if backend.kind() != VisionBackendKind::OpenAiCompatible {
                 return Err(DagNodeFailure::terminal(
                     "backend_mismatch",
@@ -1322,7 +1484,7 @@ impl WorkflowRunner {
                             .node
                             .model_binding
                             .clone()
-                            .unwrap_or_else(|| self.model_name.clone()),
+                            .unwrap_or_else(|| execution.model_name.clone()),
                         image: self.model_image.clone(),
                         input_artifacts: context.input_artifacts,
                         prompt: Some(format!(
@@ -1355,8 +1517,8 @@ impl WorkflowRunner {
                 &context.node.id,
                 kind,
                 label.as_ref(),
-                &self.provider_name,
-                &self.model_name,
+                &execution.provider_name,
+                &execution.model_name,
             )?]
         };
         for artifact in &artifacts {
@@ -1364,7 +1526,7 @@ impl WorkflowRunner {
         }
         Ok(DagNodeOutput {
             artifacts,
-            usage: if self.external_backend.is_none() {
+            usage: if execution.external_backend.is_none() {
                 DagNodeUsage {
                     input_tokens: 80,
                     output_tokens: 20,
@@ -1374,8 +1536,8 @@ impl WorkflowRunner {
                 DagNodeUsage::default()
             },
             metadata: BTreeMap::from([
-                ("provider".to_owned(), json!(self.provider_name)),
-                ("model".to_owned(), json!(self.model_name)),
+                ("provider".to_owned(), json!(execution.provider_name)),
+                ("model".to_owned(), json!(execution.model_name)),
             ]),
             ..DagNodeOutput::default()
         })

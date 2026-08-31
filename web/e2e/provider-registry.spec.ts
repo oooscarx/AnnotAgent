@@ -116,6 +116,113 @@ export:
   }));
 });
 
+test("Legacy compatibility configuration imports once without moving a secret or history", async ({ page, request }) => {
+  const before = await request.get("/api/registry-migrations/legacy");
+  expect(before.ok()).toBeTruthy();
+  const preview = (await before.json()).migration as {
+    already_applied: boolean;
+    moves_secret: boolean;
+    modifies_historical_runs: boolean;
+    project_binding_count: number;
+  };
+  expect(preview.moves_secret).toBe(false);
+  expect(preview.modifies_historical_runs).toBe(false);
+  expect(preview.project_binding_count).toBeGreaterThan(0);
+
+  await page.goto("/settings/providers");
+  if (!preview.already_applied) {
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("credential value and historical Runs will not be moved");
+      await dialog.accept();
+    });
+    await page.getByRole("button", { name: "Review and import" }).click();
+    await expect(page.getByText(/Imported Provider and Model Profile/)).toBeVisible();
+  }
+  const after = await request.get("/api/registry-migrations/legacy");
+  expect(after.ok()).toBeTruthy();
+  expect((await after.json()).migration.already_applied).toBe(true);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Review and import" })).toHaveCount(0);
+
+  const repeated = await request.post("/api/registry-migrations/legacy", {
+    data: { confirmed: true },
+  });
+  expect(repeated.ok()).toBeTruthy();
+  const report = await repeated.json();
+  expect(report.migration.already_applied).toBe(true);
+  expect(report.secret_moved).toBe(false);
+  expect(report.historical_runs_modified).toBe(false);
+});
+
+test("Provider lifecycle is reference-safe and credential rotation stays write-only", async ({ request }) => {
+  const listed = await request.get("/api/providers");
+  expect(listed.ok()).toBeTruthy();
+  const providers = (await listed.json()).providers as {
+    id: string;
+    display_name: string;
+    enabled: boolean;
+  }[];
+  const mock = providers.find((provider) => provider.display_name === "Mock (offline)");
+  let remote = providers.find((provider) => provider.display_name === "Remote lifecycle fixture");
+  if (!remote) {
+    const created = await request.post("/api/providers", {
+      data: {
+        display_name: "Remote lifecycle fixture",
+        preset_id: "custom",
+        adapter: "open_ai_compatible",
+        base_url: "https://provider.invalid/v1",
+      },
+    });
+    expect(created.ok()).toBeTruthy();
+    remote = await created.json();
+  }
+  expect(mock).toBeTruthy();
+  expect(remote).toBeTruthy();
+
+  const blockedDelete = await request.delete(`/api/providers/${mock!.id}`);
+  expect(blockedDelete.status()).toBe(409);
+  expect((await blockedDelete.json()).code).toBe("provider_in_use");
+
+  const disabled = await request.patch(`/api/providers/${mock!.id}`, {
+    data: { enabled: false },
+  });
+  expect(disabled.ok()).toBeTruthy();
+  expect((await disabled.json()).health.status).toBe("disabled");
+  const incompatible = await request.get(
+    "/api/model-profiles/compatible?input_modalities=image&capabilities=image_classification&allow_unverified=true",
+  );
+  expect(incompatible.ok()).toBeTruthy();
+  expect((await incompatible.json()).models).not.toContainEqual(
+    expect.objectContaining({ provider_id: mock!.id }),
+  );
+
+  const enabled = await request.patch(`/api/providers/${mock!.id}`, {
+    data: { enabled: true },
+  });
+  expect(enabled.ok()).toBeTruthy();
+  const checked = await request.post(`/api/providers/${mock!.id}/check`);
+  expect(checked.ok()).toBeTruthy();
+  const compatible = await request.get(
+    "/api/model-profiles/compatible?input_modalities=image&capabilities=image_classification&allow_unverified=true",
+  );
+  expect(compatible.ok()).toBeTruthy();
+  expect((await compatible.json()).models).toContainEqual(
+    expect.objectContaining({ provider_id: mock!.id }),
+  );
+
+  const rotatedSecret = "e2e-rotated-session-credential";
+  const rotated = await request.post(`/api/providers/${remote!.id}/credential`, {
+    data: { source: "session_only", secret: rotatedSecret },
+  });
+  expect(rotated.ok()).toBeTruthy();
+  const rotatedBody = await rotated.json();
+  expect(rotatedBody.credential_source).toBe("session_only");
+  expect(JSON.stringify(rotatedBody)).not.toContain(rotatedSecret);
+  const fetched = await request.get(`/api/providers/${remote!.id}`);
+  expect(fetched.ok()).toBeTruthy();
+  expect(JSON.stringify(await fetched.json())).not.toContain(rotatedSecret);
+});
+
 test("Settings registry remains reachable without horizontal page overflow on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/settings");

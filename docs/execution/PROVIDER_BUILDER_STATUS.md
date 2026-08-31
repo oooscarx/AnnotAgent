@@ -2,7 +2,7 @@
 
 ## 当前 Milestone
 
-Milestone 8 — Migration, regression and release evidence.
+Milestone 8 complete — Provider Registry + Pipeline Builder Alpha release handoff.
 
 ## 已完成内容
 
@@ -20,8 +20,9 @@ Milestone 8 — Migration, regression and release evidence.
   reference. Multiple same-vendor profiles have independent identities.
 - Added the asynchronous `SecretStore` contract and native Keyring, environment-variable,
   session-only, in-memory and legacy-workspace-file implementations behind one router.
-- New GUI compatibility writes use the native system credential store. The old workspace key file
-  is read as `LegacyWorkspaceFile` only and is never copied or deleted automatically.
+- The Provider UI defaults to environment-variable or session-only credentials; native system
+  storage remains an explicit advanced source. The old workspace key file is read as
+  `LegacyWorkspaceFile` only and is never copied or deleted automatically.
 - Added transactional SQLite migration 6 and Provider Profile save/get/list/delete persistence;
   stored JSON contains only the opaque credential reference.
 - Updated server startup and Settings compatibility API to resolve credentials by reference while
@@ -143,16 +144,32 @@ Milestone 8 — Migration, regression and release evidence.
   with no horizontal overflow or console errors. It also identified and resolved the stale-server
   `index.html` API fallback during local validation; an ignored local Project schema was updated to
   its currently registered foreground refiner without entering Git.
+- Added transactional migration 9 plus explicit preview/confirm API and Settings UI for importing
+  the compatibility Provider, revision-1 Model Profile and non-conflicting locked Project bindings.
+  The deterministic import is idempotent, rolls back identity collisions, never moves a secret and
+  never rewrites Published Versions or historical Runs.
+- Publication now resolves typed and migrated `default-vision` bindings into immutable
+  `ModelProfileSnapshot` records. New Run/Batch admission checks current Provider/Profile lifecycle
+  state while executing frozen endpoint/model/default semantics.
+- Draft Dry Run now freezes the same Registry semantics and resolves its Provider kind plus
+  write-only SecretStore credential instead of using the singleton compatibility connection.
+- Published Runtime now routes multiple nodes of the same operation to their exact frozen Model
+  Profile when the Profiles share a Provider. Cross-Provider credential routing fails closed and is
+  recorded as a known limitation.
+- Added Provider lifecycle E2E for reference-protected deletion, disable/compatibility removal,
+  health restoration, session credential rotation without echo, explicit migration and compact UI.
+- Added `docs/DEMO_PROVIDER_BUILDER.md`, completed the release matrix and documented migration,
+  publication, Runtime, secret and live-conditional boundaries.
 
 ## 正在进行内容
 
-- Auditing legacy Provider/Model/Secret migration and annotation Run publication/runtime binding
-  before the final release matrix.
+- None. The offline Alpha release matrix is closed; only explicitly external live-conditional
+  validation remains.
 
 ## 下一步
 
-- Milestone 8: explicit legacy migrations, Run/Review/Replay/Batch/Export regression, release
-  documentation, demo script and final security/source scan.
+- Optional live smoke against a user-authorized Provider and native desktop Keyring validation.
+- Future Runtime work may add per-node credentials for one Workflow spanning multiple Providers.
 
 ## 最近 Rust 测试
 
@@ -197,6 +214,10 @@ Milestone 8 — Migration, regression and release evidence.
 - M7 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
   passed; full Rust suite 269/269 passed, one explicitly billable smoke ignored, and every doc-test
   group passed.
+- M8 final workspace validation: fmt, strict all-target/all-feature Clippy and all-feature build
+  passed; full Rust suite 275/275 passed, one explicitly billable smoke ignored, and every doc-test
+  group passed. This includes transactional import, frozen Profile routing, disabled-Provider Run
+  admission, Registry-backed Dry Run credential resolution and the durable 100-image Batch.
 - Full pre-change baseline: 238 tests and doc tests passed; all-feature build passed.
 
 ## 最近 Web 测试
@@ -211,6 +232,8 @@ Milestone 8 — Migration, regression and release evidence.
 - M6 Web compatibility validation: TypeScript, 36/36 Vitest tests and production build passed.
 - M7 Web validation: TypeScript and production build passed; 38/38 Vitest tests passed. New API
   tests cover compatible queries, locked Project bindings and explicit Agent Profile selection.
+- M8 Web validation: TypeScript, 38/38 Vitest and production build passed after migration and
+  Provider Settings changes.
 
 ## 最近 E2E 测试
 
@@ -220,6 +243,9 @@ Milestone 8 — Migration, regression and release evidence.
 - M7 isolated Chromium E2E: 29 passed after adding global-default persistence and Project
   Classification binding/refresh recovery. Existing compact, keyboard, reduced-motion, Draft Diff,
   Run, Review, Replay and Export coverage remained green.
+- M8 isolated Chromium E2E: 31/31 passed. New coverage includes explicit legacy import, Provider
+  disable/re-enable, protected deletion, session credential rotation without leakage and the
+  one-primary-action Settings regression. Existing product journeys remained green.
 
 ## 最近本地提交
 
@@ -231,17 +257,15 @@ Milestone 8 — Migration, regression and release evidence.
 - M4: `f3cb72b refactor(workflow): expose a constrained annotation node catalog`.
 - M5: `6a2a389 feat(agent): let the builder inspect providers and edit real drafts`.
 - M6: `0db0f8e feat(agent): build and revise pipelines through constrained llm tools`.
-- M7 commit pending at this status write; its hash is filled by the next milestone.
+- M7: `a3b18de feat(ui): guide provider selection and agent-built automations`.
+- M8: `test(release): validate provider registry and pipeline builder alpha` (this milestone
+  commit; hash is reported after creation).
 
 ## Release Blocking 剩余项
 
-- A now passes offline Provider lifecycle/API/UI acceptance. B is implemented offline but awaits
-  final M8 security/source-scan/native evidence. C and D now have lifecycle API/UI, persistence,
-  revision/compatibility/lock tests and snapshot support, but remain open until publication/runtime
-  integration and migration are proven. M4 closes the public Node Catalog contract, but E remains
-  open until later runtime/template milestones prove every public node end to end. M6 closes the
-  real constrained Agent Tool Loop and Profile-based accounting. M7 closes the Guided Project/TUI
-  product path and H; annotation Run cutover, migration and final G/I evidence remain for M8.
+- None for the offline Alpha. Areas A–I are `PASS` in the acceptance matrix. Real external Provider
+  calls and native desktop Keyring interaction remain explicitly `LIVE-CONDITIONAL` and are not
+  represented by Mock results.
 
 ## Live-conditional 项
 

@@ -34,6 +34,8 @@ const PROVIDER_REGISTRY_MIGRATION: &str =
 const MODEL_PROFILE_MIGRATION: &str = include_str!("../../../migrations/0007_model_profiles.sql");
 const PROVIDER_PROBE_USAGE_MIGRATION: &str =
     include_str!("../../../migrations/0008_provider_probe_usage.sql");
+const LEGACY_REGISTRY_IMPORT_MIGRATION: &str =
+    include_str!("../../../migrations/0009_legacy_registry_imports.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -169,6 +171,33 @@ pub struct ProviderProbeUsage {
     pub succeeded: bool,
     pub safe_message: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// Complete, non-secret input for the explicit compatibility-registry import.
+///
+/// The caller derives deterministic IDs from the legacy connection fingerprint. The storage
+/// boundary applies the Provider, Model Profile and Project bindings in one transaction and never
+/// reads, copies or deletes a credential value.
+#[derive(Debug, Clone)]
+pub struct LegacyRegistryImport {
+    pub fingerprint: String,
+    pub provider: ProviderProfile,
+    pub model: ModelProfile,
+    pub project_bindings: Vec<ProjectModelBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LegacyRegistryImportReport {
+    pub fingerprint: String,
+    pub provider_id: ProviderId,
+    pub model_profile_id: ModelProfileId,
+    pub provider_created: bool,
+    pub model_created: bool,
+    pub bindings_created: usize,
+    pub bindings_preserved: usize,
+    pub already_applied: bool,
+    pub credential_source: Option<String>,
+    pub historical_runs_modified: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,7 +340,236 @@ impl SqliteStore {
                 params!["provider_probe_usage", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(LEGACY_REGISTRY_IMPORT_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (9, ?1, ?2)",
+                params!["legacy_registry_imports", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
             Ok(())
+        })
+    }
+
+    /// Import the legacy singleton Provider/model/default binding into the reusable Registry.
+    ///
+    /// A completed fingerprint is immutable and makes repeated calls a no-op. Any validation or
+    /// identity collision rolls the complete transaction back. Existing user-selected Project
+    /// bindings win and are reported as preserved rather than silently overwritten.
+    pub fn apply_legacy_registry_import(
+        &self,
+        import: &LegacyRegistryImport,
+    ) -> Result<LegacyRegistryImportReport, StorageError> {
+        if import.fingerprint.trim().is_empty() || import.fingerprint.len() > 128 {
+            return Err(StorageError::InvalidEnum(
+                "legacy Registry fingerprint must be non-empty and at most 128 bytes".to_owned(),
+            ));
+        }
+        import
+            .provider
+            .validate()
+            .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+        import
+            .model
+            .validate()
+            .map_err(|error| StorageError::InvalidModelRevision(error.to_string()))?;
+        if import.model.provider_id != import.provider.id || import.model.revision != 1 {
+            return Err(StorageError::InvalidModelRevision(
+                "legacy Model Profile must be revision 1 and belong to the imported Provider"
+                    .to_owned(),
+            ));
+        }
+        for binding in &import.project_bindings {
+            binding
+                .validate_for_model(&import.model)
+                .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
+        }
+
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            if let Some(json) = transaction
+                .query_row(
+                    "SELECT report_json FROM legacy_registry_imports WHERE fingerprint = ?1",
+                    [&import.fingerprint],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                let mut report: LegacyRegistryImportReport = serde_json::from_str(&json)?;
+                report.already_applied = true;
+                transaction.commit()?;
+                return Ok(report);
+            }
+
+            let existing_provider = transaction
+                .query_row(
+                    "SELECT profile_json FROM provider_profiles WHERE id = ?1",
+                    [import.provider.id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let provider_created = existing_provider.is_none();
+            if let Some(json) = existing_provider {
+                let existing: ProviderProfile = serde_json::from_str(&json)?;
+                if existing.adapter != import.provider.adapter
+                    || existing.base_url != import.provider.base_url
+                {
+                    return Err(StorageError::InvalidEnum(
+                        "legacy Provider identity collides with different connection semantics"
+                            .to_owned(),
+                    ));
+                }
+            } else {
+                transaction.execute(
+                    "INSERT INTO provider_profiles
+                     (id, display_name, preset_id, adapter, enabled, credential_source,
+                      profile_json, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        import.provider.id.to_string(),
+                        import.provider.display_name,
+                        import.provider.preset_id,
+                        enum_string(import.provider.adapter)?,
+                        import.provider.enabled,
+                        import
+                            .provider
+                            .credential_ref
+                            .as_ref()
+                            .map(|reference| enum_string(reference.source))
+                            .transpose()?,
+                        serde_json::to_string(&import.provider)?,
+                        import.provider.created_at.to_rfc3339(),
+                        import.provider.updated_at.to_rfc3339(),
+                    ],
+                )?;
+            }
+
+            let existing_model = transaction
+                .query_row(
+                    "SELECT profile_json FROM model_profiles WHERE id = ?1 AND revision = 1",
+                    [import.model.id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let model_created = existing_model.is_none();
+            if let Some(json) = existing_model {
+                let existing: ModelProfile = serde_json::from_str(&json)?;
+                if !existing.has_same_semantics(&import.model) {
+                    return Err(StorageError::InvalidModelRevision(
+                        "legacy Model Profile identity collides with different semantics"
+                            .to_owned(),
+                    ));
+                }
+            } else {
+                transaction.execute(
+                    "INSERT INTO model_profiles
+                     (id, revision, provider_id, display_name, remote_model_id, status, enabled,
+                      locked, profile_json, created_at, updated_at)
+                     VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        import.model.id.to_string(),
+                        import.model.provider_id.to_string(),
+                        import.model.display_name,
+                        import.model.remote_model_id,
+                        enum_string(import.model.status)?,
+                        import.model.enabled,
+                        import.model.locked,
+                        serde_json::to_string(&import.model)?,
+                        import.model.created_at.to_rfc3339(),
+                        import.model.updated_at.to_rfc3339(),
+                    ],
+                )?;
+            }
+
+            let mut bindings_created = 0;
+            let mut bindings_preserved = 0;
+            for binding in &import.project_bindings {
+                let match_value = binding_match_value(binding)?;
+                let existing = transaction
+                    .query_row(
+                        "SELECT binding_json FROM project_model_bindings
+                         WHERE project_id = ?1 AND match_kind = ?2 AND match_value = ?3",
+                        params![
+                            binding.project_id.to_string(),
+                            enum_string(binding.match_kind)?,
+                            match_value,
+                        ],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if existing.is_some() {
+                    bindings_preserved += 1;
+                    continue;
+                }
+                transaction.execute(
+                    "INSERT INTO project_model_bindings
+                     (id, project_id, match_kind, match_value, capability, role, model_profile_id,
+                      locked, binding_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        binding.id.to_string(),
+                        binding.project_id.to_string(),
+                        enum_string(binding.match_kind)?,
+                        binding_match_value(binding)?,
+                        enum_string(binding.capability)?,
+                        enum_string(binding.role)?,
+                        binding.model_profile_id.to_string(),
+                        binding.locked,
+                        serde_json::to_string(binding)?,
+                        binding.created_at.to_rfc3339(),
+                    ],
+                )?;
+                bindings_created += 1;
+            }
+
+            let report = LegacyRegistryImportReport {
+                fingerprint: import.fingerprint.clone(),
+                provider_id: import.provider.id,
+                model_profile_id: import.model.id,
+                provider_created,
+                model_created,
+                bindings_created,
+                bindings_preserved,
+                already_applied: false,
+                credential_source: import
+                    .provider
+                    .credential_ref
+                    .as_ref()
+                    .map(|reference| enum_string(reference.source))
+                    .transpose()?,
+                historical_runs_modified: 0,
+            };
+            transaction.execute(
+                "INSERT INTO legacy_registry_imports
+                 (fingerprint, provider_id, model_profile_id, report_json, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    report.fingerprint,
+                    report.provider_id.to_string(),
+                    report.model_profile_id.to_string(),
+                    serde_json::to_string(&report)?,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(report)
+        })
+    }
+
+    pub fn legacy_registry_import_report(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<LegacyRegistryImportReport>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT report_json FROM legacy_registry_imports WHERE fingerprint = ?1",
+                    [fingerprint],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .transpose()
         })
     }
 
@@ -2991,12 +3249,119 @@ mod tests {
             "model_profiles",
             "project_model_bindings",
             "global_model_defaults",
+            "legacy_registry_imports",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn legacy_registry_import_is_atomic_idempotent_and_preserves_existing_bindings() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let now = Utc::now();
+        let provider_id = ProviderId::new();
+        let model_id = ModelProfileId::new();
+        let project_id = ProjectId::new();
+        let provider = ProviderProfile {
+            id: provider_id,
+            display_name: "Imported legacy mock".to_owned(),
+            preset_id: Some("legacy".to_owned()),
+            adapter: ProviderAdapterKind::Mock,
+            base_url: url::Url::parse("http://127.0.0.1:8787/v1").expect("URL"),
+            organization: None,
+            workspace: None,
+            credential_ref: None,
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some("Imported from compatibility settings.".to_owned()),
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        let model = ModelProfile {
+            id: model_id,
+            revision: 1,
+            provider_id,
+            display_name: "default-vision".to_owned(),
+            remote_model_id: "legacy-vision".to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([ModelCapability::VisionLanguage]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let binding = ProjectModelBinding {
+            id: ModelBindingId::new(),
+            project_id,
+            capability: ModelCapability::VisionLanguage,
+            role: ModelBindingRole::PrimaryInference,
+            match_kind: ModelBindingMatch::Role,
+            model_profile_id: model_id,
+            locked: true,
+            created_at: now,
+        };
+        let import = LegacyRegistryImport {
+            fingerprint: "legacy-fixture-v1".to_owned(),
+            provider: provider.clone(),
+            model: model.clone(),
+            project_bindings: vec![binding.clone()],
+        };
+        let first = store
+            .apply_legacy_registry_import(&import)
+            .expect("first import");
+        assert!(first.provider_created);
+        assert!(first.model_created);
+        assert_eq!(first.bindings_created, 1);
+        assert!(!first.already_applied);
+
+        let repeated = store
+            .apply_legacy_registry_import(&import)
+            .expect("repeated import");
+        assert!(repeated.already_applied);
+        assert_eq!(store.list_provider_profiles().expect("providers").len(), 1);
+        assert_eq!(
+            store.list_model_profiles(None, true).expect("models").len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list_project_model_bindings(project_id)
+                .expect("bindings"),
+            vec![binding]
+        );
+
+        let mut colliding = import;
+        colliding.fingerprint = "legacy-fixture-collision".to_owned();
+        colliding.model.remote_model_id = "different-semantics".to_owned();
+        assert!(matches!(
+            store.apply_legacy_registry_import(&colliding),
+            Err(StorageError::InvalidModelRevision(_))
+        ));
+        store
+            .with_connection(|connection| {
+                let marker_count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM legacy_registry_imports",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(marker_count, 1, "failed collision rolled back");
+                Ok(())
+            })
+            .expect("inspect markers");
     }
 
     #[test]

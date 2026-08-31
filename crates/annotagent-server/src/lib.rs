@@ -22,13 +22,13 @@ use annotagent_core::{
     CorrectionFeatures, CorrectionRecord, CredentialReference, CredentialSource, DetectionEvidence,
     EnabledSkillConfig, GenerationDefaults, GlobalModelDefaults, InputModality, LabelId,
     ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelCapability, ModelLimits,
-    ModelPricing, ModelProfile, ModelProfileId, ModelProfileStatus, ModelRequirements,
-    NormalizedRect, PipelineArtifact, PipelineBuilderConstraints, ProjectModelBinding,
-    ProjectSchema, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
-    ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus, ProviderId,
-    ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskKind, UsageTotals,
-    WorkflowConstraints, WorkflowDraft, check_model_compatibility,
+    ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot, ModelProfileStatus,
+    ModelRequirements, NormalizedRect, PipelineArtifact, PipelineBuilderConstraints,
+    ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
+    ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
+    ProviderId, ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
+    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskKind,
+    UsageTotals, WorkflowConstraints, WorkflowDraft, check_model_compatibility,
 };
 use annotagent_provider::{
     EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
@@ -70,7 +70,7 @@ pub struct ServerState {
     credential_store_error: Arc<RwLock<Option<String>>>,
     secret_store: Arc<dyn SecretStore>,
     credential_reference: Arc<RwLock<CredentialReference>>,
-    default_keyring_reference: Arc<CredentialReference>,
+    default_write_reference: Arc<CredentialReference>,
 }
 
 impl ServerState {
@@ -80,6 +80,11 @@ impl ServerState {
             provider_id,
             source: CredentialSource::SystemKeyring,
             locator: format!("workspace-{provider_id}"),
+        };
+        let default_session_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SessionOnly,
+            locator: format!("workspace-session-{provider_id}"),
         };
         let legacy_reference = CredentialReference {
             provider_id,
@@ -110,13 +115,13 @@ impl ServerState {
         {
             legacy_reference
         } else {
-            default_keyring_reference.clone()
+            default_session_reference.clone()
         };
         Self::with_secret_store(
             application,
             secret_store,
             credential_reference,
-            default_keyring_reference,
+            default_session_reference,
         )
         .await
     }
@@ -125,7 +130,7 @@ impl ServerState {
         application: Arc<LocalApplication>,
         secret_store: Arc<dyn SecretStore>,
         credential_reference: CredentialReference,
-        default_keyring_reference: CredentialReference,
+        default_write_reference: CredentialReference,
     ) -> anyhow::Result<Self> {
         let settings_path = application.workspace().join(".annotagent/settings.toml");
         let settings_persisted = settings_path.is_file();
@@ -136,7 +141,7 @@ impl ServerState {
         };
         validate_settings(&settings)?;
         credential_reference.validate()?;
-        default_keyring_reference.validate()?;
+        default_write_reference.validate()?;
         let (api_key, api_key_persisted, credential_store_error) =
             match secret_store.resolve(&credential_reference).await {
                 Ok(value) => (Some(value.expose_secret().to_owned()), true, None),
@@ -153,7 +158,7 @@ impl ServerState {
             credential_store_error: Arc::new(RwLock::new(credential_store_error)),
             secret_store,
             credential_reference: Arc::new(RwLock::new(credential_reference)),
-            default_keyring_reference: Arc::new(default_keyring_reference),
+            default_write_reference: Arc::new(default_write_reference),
         })
     }
 
@@ -317,6 +322,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/provider-presets", get(list_provider_presets))
+        .route(
+            "/api/registry-migrations/legacy",
+            get(preview_legacy_registry_import).post(apply_legacy_registry_import),
+        )
         .route(
             "/api/providers",
             get(list_provider_profiles).post(create_provider_profile),
@@ -626,6 +635,44 @@ async fn list_provider_presets() -> Json<Value> {
         },
     ];
     Json(json!({"presets": presets}))
+}
+
+async fn preview_legacy_registry_import(
+    State(state): State<ServerState>,
+) -> ApiResult<Json<Value>> {
+    let settings = state.settings.read().await.clone();
+    let preview = state
+        .application
+        .preview_legacy_registry_import(&settings)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "migration": preview })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyLegacyRegistryImportRequest {
+    confirmed: bool,
+}
+
+async fn apply_legacy_registry_import(
+    State(state): State<ServerState>,
+    Json(input): Json<ApplyLegacyRegistryImportRequest>,
+) -> ApiResult<Json<Value>> {
+    if !input.confirmed {
+        return Err(ApiError::bad_request(
+            "explicit confirmation is required before importing legacy Registry configuration",
+        ));
+    }
+    let settings = state.settings.read().await.clone();
+    let report = state
+        .application
+        .apply_legacy_registry_import(&settings)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({
+        "migration": report,
+        "secret_moved": false,
+        "historical_runs_modified": false,
+    })))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2670,15 +2717,28 @@ async fn dry_run_workflow(
     payload: Option<Json<DryRunWorkflowRequest>>,
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
-    let temporary_api_key = state.api_key.read().await.clone();
+    let compatibility_provider = settings.default_provider.clone();
+    let compatibility_key = state.api_key.read().await.clone();
+    let model_profiles = state
+        .application
+        .workflow_draft_model_profile_snapshots(&draft_id)
+        .map_err(ApiError::bad_request)?;
+    let (provider_kind, temporary_api_key) = resolve_runtime_model_profiles(
+        &state,
+        &model_profiles,
+        compatibility_provider,
+        compatibility_key,
+    )
+    .await?;
     let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
     let report = state
         .application
-        .dry_run_workflow_samples_with_api_key(
+        .dry_run_workflow_samples_with_provider(
             &draft_id,
             &settings,
             &image_indices,
-            temporary_api_key,
+            &provider_kind,
+            temporary_api_key.as_deref(),
         )
         .await
         .map_err(ApiError::bad_request)?;
@@ -3108,6 +3168,62 @@ struct StartRunRequest {
     version: Option<u32>,
 }
 
+async fn resolve_published_runtime_provider(
+    state: &ServerState,
+    selected_workflow: Option<(&str, u32)>,
+    compatibility_provider: String,
+    compatibility_key: Option<String>,
+) -> ApiResult<(String, Option<String>)> {
+    let Some((workflow_id, version)) = selected_workflow else {
+        return Ok((compatibility_provider, compatibility_key));
+    };
+    let workflow = state
+        .application
+        .store()
+        .get_published_workflow_version(workflow_id, version)
+        .map_err(ApiError::not_found)?;
+    resolve_runtime_model_profiles(
+        state,
+        &workflow.snapshot.model_profiles,
+        compatibility_provider,
+        compatibility_key,
+    )
+    .await
+}
+
+async fn resolve_runtime_model_profiles(
+    state: &ServerState,
+    model_profiles: &[ModelProfileSnapshot],
+    compatibility_provider: String,
+    compatibility_key: Option<String>,
+) -> ApiResult<(String, Option<String>)> {
+    let Some(first) = model_profiles.first() else {
+        return Ok((compatibility_provider, compatibility_key));
+    };
+    if model_profiles.iter().any(|profile| {
+        profile.provider_id != first.provider_id
+            || profile.provider_adapter != first.provider_adapter
+    }) {
+        return Err(ApiError::bad_request(
+            "this Runtime currently requires one frozen Provider connection per Published Workflow",
+        ));
+    }
+    let provider = state
+        .application
+        .store()
+        .get_provider_profile(first.provider_id)
+        .map_err(ApiError::bad_request)?;
+    let provider_kind = match first.provider_adapter {
+        ProviderAdapterKind::Mock => "mock",
+        ProviderAdapterKind::OpenAiCompatible => "openai_compatible",
+    }
+    .to_owned();
+    let credential = resolve_provider_credential(state, &provider)
+        .await?
+        .map(|secret| secret.expose_secret().to_owned());
+    Ok((provider_kind, credential))
+}
+
 async fn start_run(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
@@ -3136,7 +3252,7 @@ async fn start_run(
         },
         |Json(value)| value,
     );
-    let provider = request
+    let compatibility_provider = request
         .provider
         .clone()
         .unwrap_or_else(|| settings.default_provider.clone());
@@ -3153,14 +3269,21 @@ async fn start_run(
             "idempotency key must contain between 1 and 200 bytes",
         ));
     }
-    validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
-    let api_key = state.api_key.read().await.clone();
+    validate_provider_kind(&compatibility_provider).map_err(ApiError::bad_request)?;
+    let compatibility_key = state.api_key.read().await.clone();
     if request.workflow_id.is_some() != request.version.is_some() {
         return Err(ApiError::bad_request(
             "workflow_id and version must be selected together",
         ));
     }
     let selected_workflow = request.workflow_id.as_deref().zip(request.version);
+    let (provider, api_key) = resolve_published_runtime_provider(
+        &state,
+        selected_workflow,
+        compatibility_provider,
+        compatibility_key,
+    )
+    .await?;
     let started = state
         .application
         .start_run_path_with_settings_idempotent_workflow(
@@ -3232,10 +3355,18 @@ async fn start_batch(
     }
     let selected_workflow = request.workflow_id.as_deref().zip(request.version);
     let settings = state.settings.read().await.clone();
-    let provider = request
+    let compatibility_provider = request
         .provider
         .unwrap_or_else(|| settings.default_provider.clone());
-    validate_provider_kind(&provider).map_err(ApiError::bad_request)?;
+    validate_provider_kind(&compatibility_provider).map_err(ApiError::bad_request)?;
+    let compatibility_key = state.api_key.read().await.clone();
+    let (provider, api_key) = resolve_published_runtime_provider(
+        &state,
+        selected_workflow,
+        compatibility_provider,
+        compatibility_key,
+    )
+    .await?;
     let config_path = state
         .settings_path
         .is_file()
@@ -3250,7 +3381,6 @@ async fn start_batch(
         )
         .map_err(ApiError::bad_request)?;
     let application = state.application.clone();
-    let api_key = state.api_key.read().await.clone();
     let batch_id = batch.id;
     tokio::spawn(async move {
         let _ignored = DatasetCoordinator::new(application.as_ref())
@@ -4526,7 +4656,7 @@ async fn put_settings(
 
     if clear_saved_api_key || api_key.is_some() {
         let credential_result = if let Some(secret) = api_key.as_ref() {
-            let reference = state.default_keyring_reference.as_ref().clone();
+            let reference = state.default_write_reference.as_ref().clone();
             let scope = SecretScope {
                 provider_id: reference.provider_id,
                 source: reference.source,
@@ -4546,10 +4676,21 @@ async fn put_settings(
             }
         };
         if let Some(reference) = saved_reference {
+            let previous = state.credential_reference.read().await.clone();
+            if previous != reference
+                && matches!(
+                    previous.source,
+                    CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+                )
+                && let Err(error) = state.secret_store.delete(&previous).await
+            {
+                let _ = state.secret_store.delete(&reference).await;
+                return Err(ApiError::internal(error));
+            }
             *state.credential_reference.write().await = reference;
         } else {
             *state.credential_reference.write().await =
-                state.default_keyring_reference.as_ref().clone();
+                state.default_write_reference.as_ref().clone();
         }
         *state.api_key.write().await = api_key.clone();
         *state.api_key_persisted.write().await = api_key.is_some();
@@ -4645,6 +4786,175 @@ mod tests {
             .expect("body");
         let value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
         (status, value)
+    }
+
+    #[tokio::test]
+    async fn legacy_registry_import_requires_confirmation_and_is_idempotent() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        app.create_project(
+            "legacy-import",
+            r"
+version: 1
+project:
+  name: Legacy import
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+",
+        )
+        .expect("Project");
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let (status, preview) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/registry-migrations/legacy",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(preview["migration"]["already_applied"], json!(false));
+        assert_eq!(preview["migration"]["project_binding_count"], json!(1));
+        assert_eq!(preview["migration"]["moves_secret"], json!(false));
+        assert_eq!(
+            preview["migration"]["modifies_historical_runs"],
+            json!(false)
+        );
+
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/registry-migrations/legacy",
+            json!({"confirmed": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            app.store()
+                .list_provider_profiles()
+                .expect("Providers")
+                .is_empty()
+        );
+
+        let (status, imported) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/registry-migrations/legacy",
+            json!({"confirmed": true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(imported["secret_moved"], json!(false));
+        assert_eq!(imported["historical_runs_modified"], json!(false));
+        assert_eq!(imported["migration"]["bindings_created"], json!(1));
+        assert_eq!(imported["migration"]["historical_runs_modified"], json!(0));
+        assert_eq!(
+            app.store()
+                .list_provider_profiles()
+                .expect("Providers")
+                .len(),
+            1
+        );
+        assert_eq!(
+            app.store()
+                .list_model_profiles(None, false)
+                .expect("Models")
+                .len(),
+            1
+        );
+
+        let (_, repeated) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/registry-migrations/legacy",
+            json!({"confirmed": true}),
+        )
+        .await;
+        assert_eq!(repeated["migration"]["already_applied"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn draft_runtime_resolves_the_frozen_profile_credential_without_exposing_it() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let state = test_state(app.clone(), secrets.clone()).await;
+        let now = Utc::now();
+        let provider_id = ProviderId::new();
+        let credential_ref = secrets
+            .put(
+                SecretScope {
+                    provider_id,
+                    source: CredentialSource::SessionOnly,
+                    locator: "draft-runtime-session".to_owned(),
+                },
+                SecretValue::new("draft-runtime-secret").expect("secret"),
+            )
+            .await
+            .expect("credential reference");
+        let provider = ProviderProfile {
+            id: provider_id,
+            display_name: "Draft Runtime Provider".to_owned(),
+            preset_id: Some("custom".to_owned()),
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: "https://provider.example/v1".parse().expect("URL"),
+            organization: None,
+            workspace: None,
+            credential_ref: Some(credential_ref),
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: None,
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        app.store()
+            .save_provider_profile(&provider)
+            .expect("Provider");
+        let model = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id,
+            display_name: "Draft Runtime Model".to_owned(),
+            remote_model_id: "remote-draft-model".to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Image]),
+            protocol_features: ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([ModelCapability::ImageClassification]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let frozen = ModelProfileSnapshot::frozen(&model, &provider).expect("snapshot");
+
+        let (provider_kind, credential) =
+            resolve_runtime_model_profiles(&state, &[frozen], "mock".to_owned(), None)
+                .await
+                .expect("resolved Draft Runtime");
+        assert_eq!(provider_kind, "openai_compatible");
+        assert_eq!(credential.as_deref(), Some("draft-runtime-secret"));
+
+        let serialized = serde_json::to_string(&provider).expect("Provider JSON");
+        assert!(!serialized.contains("draft-runtime-secret"));
     }
 
     #[tokio::test]
@@ -5721,6 +6031,75 @@ mod tests {
         assert_eq!(cleared["api_key_configured"], json!(false));
         assert_eq!(cleared["api_key_persisted"], json!(false));
         assert!(!secrets.exists(&reference).await.expect("secret status"));
+    }
+
+    #[tokio::test]
+    async fn compatibility_settings_rotate_an_existing_keyring_value_into_session_only() {
+        let temp = tempfile::tempdir().expect("temp");
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let provider_id = ProviderId(stable_project_id(application.workspace()).0);
+        let keyring_reference = secrets
+            .put(
+                SecretScope {
+                    provider_id,
+                    source: CredentialSource::SystemKeyring,
+                    locator: format!("old-keyring-{provider_id}"),
+                },
+                SecretValue::new("old-keyring-value").expect("old secret"),
+            )
+            .await
+            .expect("old Keyring reference");
+        let session_reference = CredentialReference {
+            provider_id,
+            source: CredentialSource::SessionOnly,
+            locator: format!("new-session-{provider_id}"),
+        };
+        let service = router(
+            ServerState::with_secret_store(
+                application,
+                secrets.clone(),
+                keyring_reference.clone(),
+                session_reference.clone(),
+            )
+            .await
+            .expect("state"),
+            None,
+        );
+
+        let mut settings =
+            response_json(request(&service, axum::http::Method::GET, "/api/settings", None).await)
+                .await;
+        settings["api_key"] = json!("new-session-value");
+        let saved = response_json(
+            request(
+                &service,
+                axum::http::Method::PUT,
+                "/api/settings",
+                Some(settings),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["credential_store"], json!("session_only"));
+        assert!(!saved.to_string().contains("new-session-value"));
+        assert!(
+            !secrets
+                .exists(&keyring_reference)
+                .await
+                .expect("old key removed")
+        );
+        assert_eq!(
+            secrets
+                .resolve(&session_reference)
+                .await
+                .expect("session secret")
+                .expose_secret(),
+            "new-session-value"
+        );
+        let persisted = std::fs::read_to_string(temp.path().join(".annotagent/settings.toml"))
+            .expect("settings file");
+        assert!(!persisted.contains("new-session-value"));
     }
 
     #[tokio::test]

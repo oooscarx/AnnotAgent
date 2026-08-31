@@ -41,6 +41,8 @@ import type {
   ProjectModelBinding,
   GlobalModelDefaults,
   ModelBindingRole,
+  LegacyRegistryImportPreview,
+  LegacyRegistryImportReport,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -74,6 +76,19 @@ export const api = {
   health: () => request<{ status: string }>("/api/health"),
   providerPresets: () =>
     request<{ presets: ProviderPresetProfile[] }>("/api/provider-presets"),
+  legacyRegistryImport: () =>
+    request<{ migration: LegacyRegistryImportPreview }>(
+      "/api/registry-migrations/legacy",
+    ),
+  applyLegacyRegistryImport: () =>
+    request<{
+      migration: LegacyRegistryImportReport;
+      secret_moved: false;
+      historical_runs_modified: false;
+    }>("/api/registry-migrations/legacy", {
+      method: "POST",
+      body: JSON.stringify({ confirmed: true }),
+    }),
   providers: () => request<{ providers: ProviderProfile[] }>("/api/providers"),
   createProvider: (value: {
     display_name: string;

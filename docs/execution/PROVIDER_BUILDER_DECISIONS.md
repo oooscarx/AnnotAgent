@@ -204,3 +204,28 @@ configured booleans, textual health and model identities. `/providers check` val
 profile and reports cached health without pretending it tested a credential or sending a billable
 request. Credential-aware network checks stay in the GUI/server Secret Store boundary. Keyboard
 selection uses `/bind`, creates a locked Project binding and never opens a terminal secret prompt.
+
+## D029 — legacy Registry import is explicit application data, not a startup side effect
+
+The old singleton Settings are converted only through the preview-and-confirm API/UI. A
+credential-free connection fingerprint derives deterministic Provider, Model and binding IDs. One
+SQLite transaction inserts the Provider, revision-1 Model Profile, and non-conflicting locked
+Project role bindings plus an immutable import report. Repeated calls return the report; identity
+collisions roll back; existing user bindings win. Startup, passive checks and Project reads never
+trigger the import.
+
+## D030 — compatibility credentials remain references during Registry import
+
+The import attaches either the registered `LegacyWorkspaceFile` locator or the configured
+environment-variable name. It never reads, copies, deletes or serializes the secret value. Moving a
+legacy file value to another Secret Store remains a separate explicit action. Environment and
+session-only are the normal non-Keychain product paths; native credential storage remains optional.
+
+## D031 — publication freezes semantics while new Run admission checks current lifecycle state
+
+Publication resolves explicit Profile bindings plus migrated `default-vision` Project bindings and
+embeds `ModelProfileSnapshot` records in the immutable Workflow hash/version. Endpoint, remote model,
+capabilities, limits and generation defaults execute from that frozen snapshot. Credentials resolve
+at call time and prices remain per-call usage metadata. A disabled/missing/unavailable current
+Provider or Model blocks a new Run, but does not mutate or hide the Published Version or historical
+Run.

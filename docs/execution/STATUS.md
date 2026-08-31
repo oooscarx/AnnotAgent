@@ -2,6 +2,28 @@
 
 Last updated: 2026-08-31 CST
 
+## Provider Registry + Pipeline Builder Alpha M8 — 2026-08-31
+
+- Added an explicit, transactional and idempotent compatibility import for the legacy Provider,
+  model name and `default-vision` Project bindings. The preview/confirm flow stores only a secret
+  reference, preserves existing user bindings and leaves Published Versions and Run history
+  unchanged.
+- Published Workflows now freeze exact Model Profile revisions and Provider execution semantics.
+  New Run/Batch admission fails closed when the current Provider/Profile is disabled or unavailable,
+  while history remains readable and immutable.
+- Draft Dry Run uses the same Registry Profile snapshots and write-only SecretStore resolution as
+  publication. Published Runtime routes same-operation nodes to distinct frozen Profiles under one
+  Provider; multiple Provider credentials in one Workflow remain an explicit fail-closed limitation.
+- Provider Settings includes the guided migration without competing with the page's primary action.
+  Provider lifecycle E2E covers reference conflicts, disable/re-enable, session key rotation without
+  echo, migration idempotency and 390 px layout.
+- Final validation passes: formatting, strict workspace Clippy, all-feature build, 275 Rust tests
+  plus doc tests (one explicitly billable smoke ignored), 38 Web tests, TypeScript, production build
+  and all 31 Chromium journeys. Secret-pattern, browser-storage and diff scans pass.
+- The Provider Builder release matrix is closed for offline Alpha. Real billable Provider calls and
+  native desktop Keyring interaction remain `LIVE-CONDITIONAL`; no key, push or remote change was
+  used.
+
 ## Open-Vocabulary + Specialist Detection M10 — 2026-08-31
 
 - Detector Cache Keys now include canonical image content, model/version/checkpoint/protocol,

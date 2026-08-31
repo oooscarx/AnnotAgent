@@ -21,32 +21,36 @@ use annotagent_core::{
     AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationSource,
     ArtifactKind, AttributeDefinition, AttributeValue, BackendDescriptor, BatchBudgetLedger,
     BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus, BatchNodeState,
-    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, DatasetExporter, DatasetImporter,
-    DomainSkill, EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, ImageId,
+    BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget, CapabilityDeclarationSource,
+    CredentialReference, CredentialSource, DatasetExporter, DatasetImporter, DomainSkill,
+    EnabledSkillConfig, ExportReport, ExportRequest, FullRunEstimate, GenerationDefaults, ImageId,
     ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
     LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
-    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingRole,
-    ModelBindingSource, ModelCapability, ModelInputContract, ModelMessage, ModelOutputContract,
-    ModelProfile, ModelProfileId, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
+    ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelInputContract,
+    ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
+    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
     ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
     NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
     PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
     PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
-    PortDefinition, PricingConfig, ProjectId, ProjectSchema, ProjectSnapshot, ProviderAdapterKind,
-    ProviderHealthStatus, ProviderProfile, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
-    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
-    VisionArtifactValue, VisionBackendKind, VisionCapability, VisionInferenceRequest,
-    VisionInputType, VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus,
-    VisionModelLimits, VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints,
-    WorkflowDataProfile, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
+    PortDefinition, PricingConfig, PricingSource, ProjectId, ProjectModelBinding, ProjectSchema,
+    ProjectSnapshot, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
+    ProviderHealthSnapshot, ProviderHealthStatus, ProviderId, ProviderProfile,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionBackendKind,
+    VisionCapability, VisionInferenceRequest, VisionInputType, VisionModelDescriptor,
+    VisionModelHealth, VisionModelHealthStatus, VisionModelLimits, VisionModelProvider,
+    VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport,
+    WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -68,7 +72,8 @@ use annotagent_skill_robocup::{
     RoboCupBallRecoveryRequest, RoboCupBallSkill, RoboCupPackSkill, RoboCupSkill,
 };
 use annotagent_storage::{
-    BatchClaimResult, HistoryRun, RunStartReservation, SqliteStore, WorkflowSampleTest,
+    BatchClaimResult, HistoryRun, LegacyRegistryImport, LegacyRegistryImportReport,
+    RunStartReservation, SqliteStore, WorkflowSampleTest,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -90,6 +95,24 @@ pub struct Settings {
     pub budget: Budget,
     #[serde(default = "default_detection_workers")]
     pub detection_workers: Vec<DetectionWorkerSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyRegistryImportPreview {
+    pub fingerprint: String,
+    pub provider_id: ProviderId,
+    pub provider_display_name: String,
+    pub provider_adapter: ProviderAdapterKind,
+    pub endpoint_summary: String,
+    pub model_profile_id: ModelProfileId,
+    pub model_display_name: String,
+    pub remote_model_id: String,
+    pub capability_source: CapabilityDeclarationSource,
+    pub credential_source: Option<CredentialSource>,
+    pub project_binding_count: usize,
+    pub already_applied: bool,
+    pub moves_secret: bool,
+    pub modifies_historical_runs: bool,
 }
 
 /// Registry-backed model and Provider selected to execute a Pipeline Builder session.
@@ -3001,6 +3024,8 @@ impl<'a> DatasetCoordinator<'a> {
                         published.project_id
                     );
                 }
+                self.application
+                    .validate_published_registry_models(&published)?;
                 Ok(published)
             })
             .transpose()?;
@@ -3491,6 +3516,12 @@ pub struct LocalApplication {
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
 }
 
+#[derive(Clone, Copy)]
+struct DryRunRuntimeProvider<'a> {
+    kind: &'a str,
+    api_key: Option<&'a str>,
+}
+
 impl LocalApplication {
     pub fn new(workspace: impl AsRef<Path>) -> Result<Self> {
         let workspace = workspace.as_ref();
@@ -3586,6 +3617,227 @@ impl LocalApplication {
     #[must_use]
     pub fn store(&self) -> Arc<SqliteStore> {
         self.store.clone()
+    }
+
+    fn legacy_registry_import(&self, settings: &Settings) -> Result<LegacyRegistryImport> {
+        let adapter = match settings.default_provider.as_str() {
+            "mock" => ProviderAdapterKind::Mock,
+            "openai_compatible" => ProviderAdapterKind::OpenAiCompatible,
+            other => bail!("legacy Provider kind {other:?} cannot be imported"),
+        };
+        let fingerprint_material = format!(
+            "{}\n{}\n{}\n{}",
+            settings.default_provider,
+            settings.provider.endpoint.trim_end_matches('/'),
+            settings.provider.model,
+            settings.provider.api_key_env,
+        );
+        let fingerprint = annotagent_image_tools::sha256(fingerprint_material.as_bytes());
+        let provider_id = ProviderId(uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!("annotagent:legacy-provider:{fingerprint}").as_bytes(),
+        ));
+        let model_id = ModelProfileId(uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!(
+                "annotagent:legacy-model:{provider_id}:{}",
+                settings.provider.model
+            )
+            .as_bytes(),
+        ));
+        let now = chrono::Utc::now();
+        let legacy_credential_path = self
+            .workspace
+            .join(".annotagent/credentials/provider-api-key");
+        let credential_ref = match adapter {
+            ProviderAdapterKind::Mock => None,
+            ProviderAdapterKind::OpenAiCompatible if legacy_credential_path.is_file() => {
+                Some(CredentialReference {
+                    provider_id,
+                    source: CredentialSource::LegacyWorkspaceFile,
+                    locator: "legacy-workspace-provider-api-key".to_owned(),
+                })
+            }
+            ProviderAdapterKind::OpenAiCompatible => Some(CredentialReference {
+                provider_id,
+                source: CredentialSource::EnvironmentVariable,
+                locator: settings.provider.api_key_env.clone(),
+            }),
+        };
+        let provider = ProviderProfile {
+            id: provider_id,
+            display_name: format!("Imported {}", settings.provider.model),
+            preset_id: Some("legacy-settings".to_owned()),
+            adapter,
+            base_url: settings
+                .provider
+                .endpoint
+                .parse()
+                .context("legacy Provider endpoint is not a valid URL")?,
+            organization: None,
+            workspace: Some("compatibility-settings".to_owned()),
+            credential_ref,
+            safe_headers: settings.provider.custom_headers.clone(),
+            connection_policy: ProviderConnectionPolicy {
+                request_timeout_seconds: settings.provider.request_timeout_seconds,
+                maximum_retries: settings.provider.max_retries,
+                ..ProviderConnectionPolicy::default()
+            },
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: if adapter == ProviderAdapterKind::Mock {
+                    ProviderHealthStatus::Available
+                } else {
+                    ProviderHealthStatus::Configured
+                },
+                safe_message: Some(
+                    "Imported from compatibility Settings; run a connection check before live use."
+                        .to_owned(),
+                ),
+                checked_at: (adapter == ProviderAdapterKind::Mock).then_some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        let pricing_is_known = settings.pricing.input_per_million_tokens
+            != rust_decimal::Decimal::ZERO
+            || settings.pricing.output_per_million_tokens != rust_decimal::Decimal::ZERO
+            || settings.pricing.per_image != rust_decimal::Decimal::ZERO
+            || settings.pricing.per_request != rust_decimal::Decimal::ZERO;
+        let temperature = settings
+            .provider
+            .temperature
+            .to_string()
+            .parse::<rust_decimal::Decimal>()
+            .ok();
+        let model = ModelProfile {
+            id: model_id,
+            revision: 1,
+            provider_id,
+            display_name: format!("{} (legacy default-vision)", settings.provider.model),
+            remote_model_id: settings.provider.model.clone(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures {
+                tool_calls: settings.provider.supports_tool_calls,
+                structured_output: settings.provider.supports_json_schema,
+                json_schema: settings.provider.supports_json_schema,
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([
+                ModelCapability::TextGeneration,
+                ModelCapability::VisionLanguage,
+                ModelCapability::ImageClassification,
+            ]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits {
+                maximum_output_tokens: Some(u64::from(settings.provider.max_output_tokens)),
+                ..ModelLimits::default()
+            },
+            generation_defaults: GenerationDefaults {
+                temperature,
+                maximum_output_tokens: Some(u64::from(settings.provider.max_output_tokens)),
+                reasoning_mode: settings.provider.reasoning_mode.clone(),
+                ..GenerationDefaults::default()
+            },
+            pricing: ModelPricing {
+                currency: settings.pricing.currency.clone(),
+                input_per_million_tokens: pricing_is_known
+                    .then_some(settings.pricing.input_per_million_tokens),
+                output_per_million_tokens: pricing_is_known
+                    .then_some(settings.pricing.output_per_million_tokens),
+                per_image: pricing_is_known.then_some(settings.pricing.per_image),
+                per_request: pricing_is_known.then_some(settings.pricing.per_request),
+                source: if pricing_is_known {
+                    PricingSource::UserConfigured
+                } else {
+                    PricingSource::Unknown
+                },
+                updated_at: pricing_is_known.then_some(now),
+                ..ModelPricing::default()
+            },
+            status: if adapter == ProviderAdapterKind::Mock {
+                ModelProfileStatus::Available
+            } else {
+                ModelProfileStatus::Unverified
+            },
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut project_bindings = Vec::new();
+        for entry in std::fs::read_dir(&self.workspace)? {
+            let entry = entry?;
+            if entry.file_type()?.is_symlink() || !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let project_path = entry.path().join("project.yaml");
+            if !project_path.is_file()
+                || load_project_schema_with_registry(&project_path, &self.skills).is_err()
+            {
+                continue;
+            }
+            let project_id = stable_project_id(&entry.path());
+            project_bindings.push(ProjectModelBinding {
+                id: ModelBindingId(uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_URL,
+                    format!("annotagent:legacy-default-vision:{project_id}:{model_id}").as_bytes(),
+                )),
+                project_id,
+                capability: ModelCapability::VisionLanguage,
+                role: ModelBindingRole::PrimaryInference,
+                match_kind: ModelBindingMatch::Role,
+                model_profile_id: model_id,
+                locked: true,
+                created_at: now,
+            });
+        }
+        project_bindings.sort_by_key(|binding| binding.project_id);
+        Ok(LegacyRegistryImport {
+            fingerprint,
+            provider,
+            model,
+            project_bindings,
+        })
+    }
+
+    pub fn preview_legacy_registry_import(
+        &self,
+        settings: &Settings,
+    ) -> Result<LegacyRegistryImportPreview> {
+        let import = self.legacy_registry_import(settings)?;
+        let already_applied = self
+            .store
+            .legacy_registry_import_report(&import.fingerprint)?
+            .is_some();
+        Ok(LegacyRegistryImportPreview {
+            fingerprint: import.fingerprint,
+            provider_id: import.provider.id,
+            provider_display_name: import.provider.display_name.clone(),
+            provider_adapter: import.provider.adapter,
+            endpoint_summary: import.provider.endpoint_summary(),
+            model_profile_id: import.model.id,
+            model_display_name: import.model.display_name,
+            remote_model_id: import.model.remote_model_id,
+            capability_source: import.model.capability_source,
+            credential_source: import
+                .provider
+                .credential_ref
+                .map(|reference| reference.source),
+            project_binding_count: import.project_bindings.len(),
+            already_applied,
+            moves_secret: false,
+            modifies_historical_runs: false,
+        })
+    }
+
+    pub fn apply_legacy_registry_import(
+        &self,
+        settings: &Settings,
+    ) -> Result<LegacyRegistryImportReport> {
+        let import = self.legacy_registry_import(settings)?;
+        Ok(self.store.apply_legacy_registry_import(&import)?)
     }
 
     /// Resolve the model that may drive a Pipeline Builder session without making a Provider
@@ -7644,7 +7896,25 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
         image_indices: &[usize],
-        temporary_api_key: Option<String>,
+        temporary_api_key: Option<&str>,
+    ) -> Result<WorkflowDryRunReport> {
+        self.dry_run_workflow_samples_with_provider(
+            draft_id,
+            settings,
+            image_indices,
+            &settings.default_provider,
+            temporary_api_key,
+        )
+        .await
+    }
+
+    pub async fn dry_run_workflow_samples_with_provider(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+        provider_kind: &str,
+        temporary_api_key: Option<&str>,
     ) -> Result<WorkflowDryRunReport> {
         let started = std::time::Instant::now();
         let mut validation = self.dry_run_workflow(draft_id, settings)?;
@@ -7664,7 +7934,10 @@ impl LocalApplication {
                     &images,
                     &selected,
                     started,
-                    temporary_api_key,
+                    DryRunRuntimeProvider {
+                        kind: provider_kind,
+                        api_key: temporary_api_key,
+                    },
                 )
                 .await?;
             self.store.save_workflow_sample_test(&WorkflowSampleTest {
@@ -7823,18 +8096,20 @@ impl LocalApplication {
 
     async fn dry_run_label_pipeline_samples(
         &self,
-        draft: WorkflowDraft,
+        mut draft: WorkflowDraft,
         settings: &Settings,
         images: &[PathBuf],
         selected: &[usize],
         started: std::time::Instant,
-        temporary_api_key: Option<String>,
+        runtime_provider: DryRunRuntimeProvider<'_>,
     ) -> Result<WorkflowDryRunReport> {
         let project_path = self.project_path(&draft.project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (_, models) = workflow_catalog(settings)?;
+        let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
         let snapshot =
-            WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions());
+            WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions())
+                .with_model_profiles(model_profiles);
         let content_hash = annotagent_image_tools::sha256(&snapshot.content_hash_material()?);
         let published = PublishedWorkflowVersion {
             workflow_id: format!("dry-run:{}", draft.id),
@@ -7861,9 +8136,9 @@ impl LocalApplication {
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             published,
-            &settings.default_provider,
+            runtime_provider.kind,
             settings,
-            temporary_api_key,
+            runtime_provider.api_key,
             self.store.clone(),
             validators,
             refiners,
@@ -8164,6 +8439,114 @@ impl LocalApplication {
         })
     }
 
+    fn freeze_registry_model_profiles(
+        &self,
+        draft: &mut WorkflowDraft,
+    ) -> Result<Vec<ModelProfileSnapshot>> {
+        let project_path = self.project_path(&draft.project_id)?;
+        let project_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let project_bindings = self.store.list_project_model_bindings(project_id)?;
+        let defaults = self.store.get_global_model_defaults()?;
+        let mut referenced = BTreeSet::new();
+        for node in &mut draft.nodes {
+            if node.model_profile_binding.is_none()
+                && node.model_binding.as_deref() == Some("default-vision")
+                && let Ok(resolved) = resolve_model_binding(
+                    None,
+                    &project_bindings,
+                    &defaults,
+                    ModelCapability::VisionLanguage,
+                    ModelBindingRole::PrimaryInference,
+                )
+            {
+                node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                    model_profile_id: resolved.model_profile_id,
+                    locked: resolved.locked,
+                });
+            }
+            if let Some(binding) = node.model_profile_binding.as_ref() {
+                referenced.insert(binding.model_profile_id);
+            }
+        }
+        referenced
+            .into_iter()
+            .map(|model_id| {
+                let model = self.store.get_model_profile(model_id, None)?;
+                let provider = self.store.get_provider_profile(model.provider_id)?;
+                ModelProfileSnapshot::frozen(&model, &provider).map_err(|error| {
+                    anyhow!(
+                        "Model Profile {} cannot be frozen for publication: {error}",
+                        model.display_name
+                    )
+                })
+            })
+            .collect()
+    }
+
+    pub fn workflow_draft_model_profile_snapshots(
+        &self,
+        draft_id: &str,
+    ) -> Result<Vec<ModelProfileSnapshot>> {
+        let mut draft = self.store.get_workflow_draft(draft_id)?;
+        self.freeze_registry_model_profiles(&mut draft)
+    }
+
+    fn validate_published_registry_models(
+        &self,
+        workflow: &PublishedWorkflowVersion,
+    ) -> Result<()> {
+        for frozen in &workflow.snapshot.model_profiles {
+            let current = self
+                .store
+                .get_model_profile(frozen.model_profile_id, None)
+                .with_context(|| {
+                    format!(
+                        "Model Profile {} used by the Published Workflow no longer exists",
+                        frozen.model_profile_id
+                    )
+                })?;
+            let provider = self
+                .store
+                .get_provider_profile(frozen.provider_id)
+                .with_context(|| {
+                    format!(
+                        "Provider {} used by the Published Workflow no longer exists",
+                        frozen.provider_id
+                    )
+                })?;
+            if !current.enabled || current.status != ModelProfileStatus::Available {
+                bail!(
+                    "new Run blocked: Model Profile {} is disabled or unavailable",
+                    current.display_name
+                );
+            }
+            if !provider.enabled
+                || !matches!(
+                    provider.health.status,
+                    ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+                )
+            {
+                bail!(
+                    "new Run blocked: Provider {} is disabled or unavailable",
+                    provider.display_name
+                );
+            }
+            let published_revision = self
+                .store
+                .get_model_profile(frozen.model_profile_id, Some(frozen.revision))?;
+            let published_semantics = ModelProfileSnapshot::frozen(&published_revision, &provider)
+                .map_err(|error| {
+                    anyhow!("published Model Profile snapshot is unusable: {error}")
+                })?;
+            if &published_semantics != frozen {
+                bail!(
+                    "new Run blocked: published Model Profile snapshot no longer matches its frozen revision"
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn publish_workflow(
         &self,
         draft_id: &str,
@@ -8186,8 +8569,10 @@ impl LocalApplication {
         if !publish_report.valid {
             bail!("workflow has unresolved bindings and cannot be published");
         }
+        let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
         let (_, models) = workflow_catalog(settings)?;
-        let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone());
+        let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
+            .with_model_profiles(model_profiles);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
         Ok(self
@@ -8428,6 +8813,7 @@ impl LocalApplication {
                 if published.project_id != project_id {
                     bail!("selected Workflow Version belongs to a different Project");
                 }
+                self.validate_published_registry_models(&published)?;
                 Ok(published)
             })
             .transpose()?;
@@ -9033,7 +9419,7 @@ fn prepare_run_with_settings(
             published,
             provider_kind,
             &settings,
-            temporary_api_key,
+            temporary_api_key.as_deref(),
             store,
             validators,
             refiners,
@@ -11460,6 +11846,178 @@ export:
     }
 
     #[tokio::test]
+    async fn published_runtime_routes_same_operation_to_each_frozen_model_profile() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("multi-profile", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("Project");
+        let image_path = temporary.path().join("multi-profile/images/sample.png");
+        annotagent_image_tools::generate_synthetic_inspection(&image_path).expect("image");
+        let now = chrono::Utc::now();
+        let provider = ProviderProfile {
+            id: ProviderId::new(),
+            display_name: "Shared Mock Provider".to_owned(),
+            preset_id: Some("mock".to_owned()),
+            adapter: ProviderAdapterKind::Mock,
+            base_url: "http://127.0.0.1".parse().expect("URL"),
+            organization: None,
+            workspace: None,
+            credential_ref: None,
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: None,
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        let model = |name: &str| ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id: provider.id,
+            display_name: name.to_owned(),
+            remote_model_id: name.to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Image]),
+            protocol_features: ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([ModelCapability::ImageClassification]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        let model_a = model("classifier-a");
+        let model_b = model("classifier-b");
+        let port = |id: &str, artifact_type| NodePort {
+            id: id.to_owned(),
+            artifact_type,
+            required: true,
+            multiple: false,
+        };
+        let classifier = |id: &str, profile: &ModelProfile, label: &str| WorkflowDraftNode {
+            id: id.to_owned(),
+            node_type: annotagent_skill_classification::CLASSIFICATION_OPERATION.to_owned(),
+            kind: WorkflowNodeKind::VisionModel,
+            inputs: vec![port("image", ArtifactKind::Image)],
+            outputs: vec![port("classifications", ArtifactKind::ClassificationSet)],
+            model_profile_binding: Some(annotagent_core::WorkflowModelBinding {
+                model_profile_id: profile.id,
+                locked: true,
+            }),
+            parameters: BTreeMap::from([
+                ("labels".to_owned(), json!(["day", "night"])),
+                ("mock_label".to_owned(), json!(label)),
+            ]),
+            ..WorkflowDraftNode::default()
+        };
+        let draft = WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "multi-profile-runtime".to_owned(),
+            project_id: "multi-profile".to_owned(),
+            name: "Two profile execution".to_owned(),
+            status: WorkflowDraftStatus::Published,
+            nodes: vec![
+                WorkflowDraftNode {
+                    id: "image".to_owned(),
+                    node_type: annotagent_core::IMAGE_INPUT_OPERATION.to_owned(),
+                    kind: WorkflowNodeKind::ImageInput,
+                    outputs: vec![port("image", ArtifactKind::Image)],
+                    ..WorkflowDraftNode::default()
+                },
+                classifier("classifier-a", &model_a, "day"),
+                classifier("classifier-b", &model_b, "night"),
+            ],
+            edges: vec![
+                WorkflowEdge {
+                    from_node: "image".to_owned(),
+                    from_port: "image".to_owned(),
+                    to_node: "classifier-a".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "image".to_owned(),
+                    from_port: "image".to_owned(),
+                    to_node: "classifier-b".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+            ],
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let snapshot = WorkflowSnapshot {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            draft: Some(draft.clone()),
+            model_profiles: vec![
+                ModelProfileSnapshot::frozen(&model_a, &provider).expect("snapshot A"),
+                ModelProfileSnapshot::frozen(&model_b, &provider).expect("snapshot B"),
+            ],
+            ..WorkflowSnapshot::default()
+        };
+        let workflow = PublishedWorkflowVersion {
+            workflow_id: draft.id.clone(),
+            version: 1,
+            project_id: draft.project_id.clone(),
+            source_draft_id: draft.id.clone(),
+            content_hash: annotagent_image_tools::sha256(
+                &snapshot.content_hash_material().expect("hash material"),
+            ),
+            draft,
+            snapshot,
+            published_at: now,
+        };
+        let project_path = application.project_path("multi-profile").expect("path");
+        let (project, _) =
+            load_project_schema_with_registry(&project_path, &application.skills).expect("schema");
+        let image = Arc::new(load_image(&image_path, 40_000_000).expect("frame"));
+        let model_image = to_model_image("multi-profile-test", &image, 1280).expect("model image");
+        let runtime = PublishedWorkflowRuntime::new(
+            workflow,
+            "mock",
+            &load_settings(None).expect("settings"),
+            None,
+            application.store.clone(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .expect("Runtime");
+        let result = runtime
+            .execute_sandbox(&ImageRunRequest {
+                run_id: RunId::new(),
+                project_id: stable_project_id(project_path.parent().expect("root")),
+                project_root: project_path.parent().expect("root").to_path_buf(),
+                project: Arc::new(project),
+                image_id: ImageId::new(),
+                image,
+                model_image: Some(model_image),
+            })
+            .await
+            .expect("execution");
+        assert_eq!(
+            result.checkpoint.node_outputs["classifier-a"].metadata["model"],
+            json!("classifier-a")
+        );
+        assert_eq!(
+            result.checkpoint.node_outputs["classifier-b"].metadata["model"],
+            json!("classifier-b")
+        );
+    }
+
+    #[tokio::test]
     async fn target_label_advisor_draft_is_editable_dry_runnable_and_publish_blocking() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -13551,6 +14109,120 @@ export:
                 .to_string()
                 .contains("immutable")
         );
+    }
+
+    #[tokio::test]
+    async fn legacy_registry_import_freezes_new_publication_and_blocks_disabled_provider_runs() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "registry-migration",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let project_path = application
+            .project_path("registry-migration")
+            .expect("project path");
+        generate_synthetic_robocup(
+            &project_path
+                .parent()
+                .expect("project root")
+                .join("images/sample.png"),
+        )
+        .expect("sample image");
+        let historical_run = RunId::new();
+        application
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: historical_run,
+                project_id: stable_project_id(project_path.parent().expect("project root")),
+                project_name: "Historical compatibility Run".to_owned(),
+                skill_id: "robocup".to_owned(),
+                provider: "mock".to_owned(),
+                model: "legacy-model".to_owned(),
+                status: RunStatus::Completed,
+                project_schema_json: std::fs::read_to_string(&project_path).expect("schema"),
+                workflow_snapshot_json: Some("{\"legacy\":true}".to_owned()),
+            })
+            .await
+            .expect("historical Run");
+        let history_before =
+            serde_json::to_value(application.list_runs().expect("history")).expect("history JSON");
+
+        let settings = load_settings(None).expect("settings");
+        let preview = application
+            .preview_legacy_registry_import(&settings)
+            .expect("preview");
+        assert!(!preview.already_applied);
+        assert_eq!(preview.project_binding_count, 1);
+        assert!(!preview.moves_secret);
+        assert!(!preview.modifies_historical_runs);
+        let imported = application
+            .apply_legacy_registry_import(&settings)
+            .expect("import");
+        assert_eq!(imported.historical_runs_modified, 0);
+        assert_eq!(imported.bindings_created, 1);
+        assert!(
+            application
+                .apply_legacy_registry_import(&settings)
+                .expect("idempotent import")
+                .already_applied
+        );
+        assert_eq!(
+            serde_json::to_value(application.list_runs().expect("unchanged history"))
+                .expect("history JSON"),
+            history_before
+        );
+
+        let suggestion = application
+            .suggest_workflow(
+                "registry-migration",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("Workflow suggestion");
+        application
+            .dry_run_workflow(&suggestion.draft.id, &settings)
+            .expect("Dry Run validation");
+        let published = application
+            .publish_workflow(&suggestion.draft.id, &settings)
+            .expect("published Workflow");
+        assert_eq!(published.snapshot.model_profiles.len(), 1);
+        let frozen = &published.snapshot.model_profiles[0];
+        assert_eq!(frozen.model_profile_id, imported.model_profile_id);
+        assert!(published.draft.nodes.iter().any(|node| {
+            node.model_profile_binding
+                .as_ref()
+                .is_some_and(|binding| binding.model_profile_id == imported.model_profile_id)
+        }));
+
+        let mut provider = application
+            .store
+            .get_provider_profile(imported.provider_id)
+            .expect("Provider");
+        provider.enabled = false;
+        provider.health = ProviderHealthSnapshot {
+            status: ProviderHealthStatus::Disabled,
+            safe_message: Some("Disabled by test.".to_owned()),
+            checked_at: Some(chrono::Utc::now()),
+        };
+        provider.updated_at = chrono::Utc::now();
+        application
+            .store
+            .save_provider_profile(&provider)
+            .expect("disable Provider");
+        let error = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &project_path,
+                "mock",
+                settings,
+                None,
+                None,
+                Some((&published.workflow_id, published.version)),
+            )
+            .expect_err("disabled Provider blocks a new Run");
+        assert!(error.to_string().contains("new Run blocked: Provider"));
     }
 
     #[tokio::test]

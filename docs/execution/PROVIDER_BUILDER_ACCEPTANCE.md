@@ -23,7 +23,7 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 |---|---|---|
 | Reusable Provider Profile | PASS | Core profile owns independent identity, adapter, URL, safe headers, connection policy, enable state, health and credential reference; same-vendor identity test passes. |
 | Safe connection metadata | PASS | HTTPS/loopback policy, embedded credentials, schemes, fragments, connection limits and header allow-list are fail-closed in `provider_registry` tests. |
-| Native Keyring default | PASS | Production server routes new GUI writes to `KeyringSecretStore`; server no longer depends directly on `keyring` or writes new credential files. |
+| Native Keyring support | PASS | `KeyringSecretStore` is available as an explicit advanced source and is contract-tested through an injected backend. The normal Provider UI defaults to environment-variable or session-only references and writes no credential file. |
 | Environment and session sources | PASS | Read-only environment and process-local session implementations pass focused tests. |
 | CI/test secret source | PASS | Public `InMemorySecretStore` is used by server and storage tests; no desktop credential service is required. |
 | Legacy source is explicit | PASS | Legacy file store rejects writes; startup reads the exact registered old path without copying/deleting it. Server regression test verifies no implicit migration. |
@@ -140,18 +140,34 @@ Status values: `PASS`, `OPEN`, `LIVE-CONDITIONAL`, `NOT-IN-SCOPE`.
 | Responsive and accessible | PASS | Controls use fieldsets, labels, textual status and ARIA progress/live regions. Real-browser inspection passed 1280/1024/390 px without overflow; the isolated compact/keyboard/reduced-motion suite passes. |
 | M7 validation | PASS | Full fmt, strict all-target/all-feature Clippy and build pass; Rust passes 269/269 with one explicit billable smoke ignored and all doc tests green. TypeScript, 38/38 Vitest and production build pass. Isolated Chromium E2E passes 29/29 including new binding/default recovery. |
 
+## M8 migration, runtime cutover and release
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Explicit legacy data migration | PASS | Migration 9 records an immutable non-secret import fingerprint/report. Preview + confirmed apply atomically create the Provider, revision-1 Model Profile and non-conflicting locked Project bindings; collision rollback and repeat no-op behavior pass Storage/Application/Server tests. |
+| Secret and history preservation | PASS | Registry import creates only a `CredentialReference`, never reads/copies/deletes the value, and reports zero historical Run changes. Compatibility GUI writes default to session-only and an explicit rotation removes the replaced Keyring value. Application/Server tests prove history preservation and secret-source behavior; Web E2E proves no secret/history movement or key echo. |
+| Publication freezes real Profile semantics | PASS | Publication resolves typed and migrated `default-vision` bindings, writes exact Profile revisions into `WorkflowSnapshot.model_profiles`, and includes them in the immutable content hash. Credentials and current prices remain outside the snapshot. |
+| New Run lifecycle admission | PASS | New Run/Batch admission rechecks current Provider/Profile enable and health state while executing endpoint/model/defaults from the frozen revision. A disabled Provider blocks a new Run without changing the Published Version or historical Runs. |
+| Draft Dry Run uses the Registry connection | PASS | Dry Run freezes the same Profile snapshots as publication and resolves the selected Provider type plus write-only SecretStore credential. Server regression proves a session credential reaches only Runtime construction and is absent from serialized Provider data. |
+| Per-node Profile routing | PASS | Exact Published Runtime integration binds two Classification nodes of the same operation to different frozen Profiles under one Provider and proves each node executes/records its own remote model identity. |
+| Provider lifecycle E2E | PASS | Chromium covers reference-protected delete (409), disable removal from compatibility results, health restoration, session-only key rotation without response leakage, legacy import and compact Settings layout. |
+| Existing product regression | PASS | Full Rust coverage includes Generic Project, Published Run, Artifact/Review/Replay/Export, exact 100-image Batch pause/restart/resume, HTTP Vision Workers and usage. Full Chromium covers the existing Guided Project, Run, Review, Replay, Export, keyboard, recovery and responsive journeys. |
+| Secret/source scan | PASS | API-key-shaped repository scan returned no finding outside preserved master inputs; `web/src` browser storage contains only active Project ID and Review panel preference. `git diff --check` passed. |
+| M8 release validation | PASS | fmt, strict all-target/all-feature Clippy and all-feature build pass. Rust passes 275 tests with one explicitly billable smoke ignored and all doc tests green. TypeScript, 38/38 Vitest, production build and Chromium 31/31 pass. |
+| Real Provider and native Keyring | LIVE-CONDITIONAL | A billable OpenAI-compatible smoke remains ignored unless explicitly enabled with external credentials; native Keyring requires an available unlocked desktop service. Neither is represented by Mock evidence. |
+
 ## Release matrix
 
 | Area | Status | Current evidence / remaining work |
 |---|---|---|
 | A. Provider | PASS | Multiple persistent Profiles, pure presets, CRUD, passive/active checks, discovery, health, reference protection and Settings lifecycle UI pass offline tests. |
-| B. Secret | OPEN | Multi-source secure storage and no-auto-migration behavior pass focused tests; full API/E2E/history/source-scan release evidence remains for M8. |
-| C. Model Profile | OPEN | Revisioned lifecycle/API/UI, pricing/protocol provenance, probe/Agent usage and snapshot contract pass; annotation Run publication/runtime integration remains for M7–M8. |
-| D. Project Binding | OPEN | Persistent hierarchy, Project/Agent APIs, compatibility, locks and Guided Project selection/refresh pass. Published annotation Run resolution remains for M8. |
-| E. Node Catalog | OPEN | M4 exact public catalog, Runtime Policy separation and Core Resize/Tile/Projection behavior pass. End-to-end Existing Annotations/Segment/template execution is re-evidenced in M7–M8 before release PASS. |
+| B. Secret | PASS | Keyring/environment/session/legacy-reference stores, write-only API behavior, explicit migration, Run-history preservation, E2E rotation, browser-storage audit and source scan pass. Native desktop Keyring is separately live-conditional. |
+| C. Model Profile | PASS | Revisioned lifecycle, semantic snapshots, per-node same-Provider routing, publication freeze, current lifecycle admission and usage identity pass integration tests. |
+| D. Project Binding | PASS | Persistent hierarchy, compatibility, locks, unresolved states, global/Project/Node selection, migrated defaults and Published Runtime resolution pass. |
+| E. Node Catalog | PASS | The exact constrained public catalog, hidden Runtime Policies, typed Resize/Tile/Crop/Detect/Classify/Segment/Select/Projection/Attach/Evidence/Validate/Decision/Review/Commit behavior and regression suites pass. Live remote tiled-image materialization remains documented outside the catalog contract. |
 | F. Agent | PASS | M6 resolves the Agent's own Registry Profile, runs the real OpenAI-compatible multi-turn loop, preserves Tool history, bounds context, records Profile-priced usage, repairs validation/Dry Run feedback and stops for human approval. |
-| G. Workflow safety | OPEN | Most grammar, immutable publication and sandbox Dry Run already have tests; must be re-evidenced with new bindings/catalog. |
+| G. Workflow safety | PASS | Closed Tool/Node registries, typed ports, cycle/code/Shell/URL bans, Commit grammar, uncertainty routing, immutable publication and non-committing Dry Run pass full regression. |
 | H. Product | PASS | Central Settings, reusable credentials, global/Project/Agent selectors, compatibility/health labels, inline first-use setup, generic product identity and responsive/accessible UI pass offline and browser evidence. |
-| I. Regression | OPEN | Existing release tests are strong; full post-migration evidence remains. |
+| I. Regression | PASS | Post-migration full workspace tests and 31 Chromium journeys cover Project, Published Run, Batch controls/restart, Artifact, Replay, Review, Export, usage and Vision Workers. |
 
 No item is marked PASS merely because a UI control, DTO or Mock path exists.

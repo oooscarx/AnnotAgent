@@ -217,6 +217,36 @@ export interface ProviderProfile {
   updated_at: string;
 }
 
+export interface LegacyRegistryImportPreview {
+  fingerprint: string;
+  provider_id: string;
+  provider_display_name: string;
+  provider_adapter: ProviderAdapterKind;
+  endpoint_summary: string;
+  model_profile_id: string;
+  model_display_name: string;
+  remote_model_id: string;
+  capability_source: "user_declared" | "provider_discovered" | "preset" | "unknown";
+  credential_source?: CredentialSource;
+  project_binding_count: number;
+  already_applied: boolean;
+  moves_secret: false;
+  modifies_historical_runs: false;
+}
+
+export interface LegacyRegistryImportReport {
+  fingerprint: string;
+  provider_id: string;
+  model_profile_id: string;
+  provider_created: boolean;
+  model_created: boolean;
+  bindings_created: number;
+  bindings_preserved: number;
+  already_applied: boolean;
+  credential_source?: string;
+  historical_runs_modified: 0;
+}
+
 export type InputModality = "text" | "image" | "video";
 export type ModelCapability =
   | "text_generation"
