@@ -83,6 +83,7 @@ impl ProviderConnectionPolicy {
 pub enum CredentialSource {
     SystemKeyring,
     EnvironmentVariable,
+    WorkspaceFile,
     SessionOnly,
     LegacyWorkspaceFile,
 }
@@ -92,7 +93,7 @@ pub enum CredentialSource {
 pub struct CredentialReference {
     pub provider_id: ProviderId,
     pub source: CredentialSource,
-    /// Opaque lookup key: keyring account, environment variable, session token, or legacy path.
+    /// Opaque lookup key: keyring account, environment variable, local file, session token, or legacy path.
     pub locator: String,
 }
 

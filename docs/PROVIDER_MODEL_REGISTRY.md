@@ -52,9 +52,9 @@ The fingerprint excludes secret values and deterministically identifies the old 
 Provider, Model and all non-conflicting Project bindings are committed in one rollback-safe SQLite
 transaction. Repeating the import returns its original report without adding rows. Existing user
 bindings are preserved, and historical Runs/Published Versions are not modified. The import never
-copies or deletes a secret. Environment-variable and session-only references remain the recommended
-credential choices; migration from a legacy file to native credential storage is a separate,
-explicit operation.
+copies or deletes a secret. New credentials may use an owner-only workspace file, an environment
+variable, a process-local session value, or the native system credential store. Migration from a
+legacy file remains a separate, explicit operation.
 
 ## Binding hierarchy
 
@@ -89,9 +89,11 @@ compatible model selector before it starts.
 
 The normal UI shows the Model Profile, Provider, capabilities and health. Endpoint, remote model ID
 and protocol metadata stay in Settings/advanced inspection. When no compatible Agent model exists,
-Build embeds a first-use flow. It accepts either an environment-variable reference or a process
-Session-only value, never stores that value in browser/workspace state, performs a non-billable
-Provider check, then asks separately before the possibly billable model verification request.
+Build embeds a first-use flow. Its default stores a write-only value under the Git-ignored
+`.annotagent/credentials` directory with owner-only permissions so it survives restarts without the
+OS Keychain. Environment-variable and process Session-only alternatives remain available. The flow
+performs a non-billable Provider check, then asks separately before the possibly billable model
+verification request.
 
 ## TUI registry commands
 

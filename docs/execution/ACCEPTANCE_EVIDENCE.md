@@ -1005,3 +1005,21 @@ remain `LIVE-CONDITIONAL`; no credential, push or remote mutation was used.
    occupies about 3.5 GiB instead of retaining the former unbounded cache.
 
 Registry-only execution admission status: `PASS`.
+
+## Persistent workspace Provider credentials — 2026-08-31
+
+1. `WorkspaceFileSecretStore` writes a Provider-scoped secret atomically to
+   `.annotagent/credentials/registry-provider-<id>.key`, rejects traversal and symbolic links, and
+   enforces owner-only directory/file permissions on Unix.
+2. `workspace_file_registry_credential_survives_server_restart` creates a Provider through HTTP,
+   saves a write-only workspace credential, destroys and reconstructs Server state, resolves the
+   same credential and verifies that neither save nor read APIs expose its value.
+3. The same regression proves an expired `session_only` reference reports `credential_configured`
+   as `false`, resets stale health to `unknown`, and returns a repair message that explains the restart
+   lifecycle and points to Local workspace file.
+4. Provider setup defaults to Local workspace file. Environment variable, temporary session and
+   opt-in system credential storage remain explicit alternatives; the UI explains each lifetime.
+5. Strict workspace Clippy, all-feature Rust/doc tests, 40 Vitest tests, production Web build and
+   Chromium Provider Registry coverage pass. Secret-shaped diff and formatting checks are clean.
+
+Persistent workspace Provider credentials status: `PASS`.

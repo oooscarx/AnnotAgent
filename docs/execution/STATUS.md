@@ -446,3 +446,18 @@ Review priority-rendering status: `PASS`.
   Chromium E2E scenarios pass.
 
 Registry-only execution admission status: `PASS`.
+
+## Persistent non-Keychain Provider credentials — 2026-08-31
+
+- Provider Registry now offers `Local workspace file` as its default credential source. The secret
+  is written atomically below the Git-ignored `.annotagent/credentials` directory; Unix directory
+  and file permissions are restricted to `0700` and `0600`.
+- Workspace credential locators reject path separators and symlinks. Values remain absent from
+  SQLite, Settings, API responses, logs and browser storage.
+- Session-only credentials remain available for temporary use. After a restart, an expired session
+  reference now reports why it expired and directs the user to Local workspace file instead of
+  reporting an internal missing-reference error.
+- Strict workspace Clippy, all-feature Rust/doc tests, 40 Web unit tests, production build, the full
+  31-scenario Chromium suite and the focused five-scenario Registry suite pass.
+
+Persistent non-Keychain Provider credentials status: `PASS`.

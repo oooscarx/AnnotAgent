@@ -67,9 +67,10 @@ A Workflow is a typed graph of model, tool, validator/refiner, review, and outpu
 
 Model bindings connect Workflow nodes to reusable Provider and Model Profiles. Settings offers
 Provider presets, capability-aware Model Profiles and separate optional local Vision Workers.
-Environment-variable and session-only references are the normal credential paths; native system
-storage is opt-in. Worker health and capabilities are discovered live, and an unavailable Provider
-or Worker never blocks AnnotAgent startup.
+The default GUI credential path is an owner-only file under the Git-ignored workspace so a saved
+Provider survives restarts without using the OS Keychain. Environment-variable, session-only and
+native system credential references remain available. Worker health and capabilities are
+discovered live, and an unavailable Provider or Worker never blocks AnnotAgent startup.
 
 ## 5. Skill
 

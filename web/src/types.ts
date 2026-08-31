@@ -164,6 +164,7 @@ export type ProviderAdapterKind = "open_ai_compatible" | "mock";
 export type CredentialSource =
   | "system_keyring"
   | "environment_variable"
+  | "workspace_file"
   | "session_only"
   | "legacy_workspace_file";
 export type ProviderHealthStatus =

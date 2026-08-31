@@ -33,7 +33,8 @@ use annotagent_core::{
 use annotagent_provider::{
     EnvironmentSecretStore, HttpVisionWorkerClient, KeyringSecretStore,
     LegacyWorkspaceFileSecretStore, OpenAiCompatibleProvider, SecretStoreRouter,
-    SessionSecretStore, active_provider_probe, discover_provider_models, passive_provider_check,
+    SessionSecretStore, WorkspaceFileSecretStore, active_provider_probe, discover_provider_models,
+    passive_provider_check,
 };
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::{HistoryRun, ProviderProbeUsage, RegistryReference};
@@ -94,6 +95,9 @@ impl ServerState {
         let secret_store: Arc<dyn SecretStore> = Arc::new(SecretStoreRouter {
             keyring: Arc::new(KeyringSecretStore::new(SECRET_SERVICE)),
             environment: Arc::new(EnvironmentSecretStore),
+            workspace: Arc::new(WorkspaceFileSecretStore::new(
+                application.workspace().join(".annotagent/credentials"),
+            )),
             session: Arc::new(SessionSecretStore::default()),
             legacy: Arc::new(LegacyWorkspaceFileSecretStore::single(
                 legacy_reference.locator.clone(),
@@ -809,6 +813,27 @@ struct ProviderProfileDto {
     updated_at: chrono::DateTime<Utc>,
 }
 
+fn missing_credential_message(source: Option<CredentialSource>) -> &'static str {
+    match source {
+        Some(CredentialSource::SessionOnly) => {
+            "This session-only credential was cleared when the server stopped. Add it again and choose Local workspace file to keep it across restarts."
+        }
+        Some(CredentialSource::EnvironmentVariable) => {
+            "The configured environment variable is not available in this server process. Set it before starting AnnotAgent or save the key as a Local workspace file."
+        }
+        Some(CredentialSource::WorkspaceFile) => {
+            "The local workspace credential file is missing or unavailable. Add the credential again to recreate it."
+        }
+        Some(CredentialSource::SystemKeyring) => {
+            "The system credential store no longer contains this Provider credential. Add it again or choose Local workspace file."
+        }
+        Some(CredentialSource::LegacyWorkspaceFile) => {
+            "The legacy workspace credential file is missing. Add a current Provider credential."
+        }
+        None => "Configure a Provider credential before making a connection request.",
+    }
+}
+
 async fn provider_profile_dto(
     state: &ServerState,
     profile: ProviderProfile,
@@ -817,6 +842,15 @@ async fn provider_profile_dto(
         Some(reference) => state.secret_store.exists(reference).await.unwrap_or(false),
         None => profile.adapter == ProviderAdapterKind::Mock,
     };
+    let credential_source = profile
+        .credential_ref
+        .as_ref()
+        .map(|reference| reference.source);
+    let mut health = profile.health.clone();
+    if profile.adapter != ProviderAdapterKind::Mock && !credential_configured {
+        health.status = ProviderHealthStatus::Unknown;
+        health.safe_message = Some(missing_credential_message(credential_source).to_owned());
+    }
     let model_count = state
         .application
         .store()
@@ -836,9 +870,9 @@ async fn provider_profile_dto(
         safe_headers: profile.safe_headers,
         connection_policy: profile.connection_policy,
         enabled: profile.enabled,
-        health: profile.health,
+        health,
         credential_configured,
-        credential_source: profile.credential_ref.map(|reference| reference.source),
+        credential_source,
         model_count,
         created_at: profile.created_at,
         updated_at: profile.updated_at,
@@ -1052,7 +1086,9 @@ async fn delete_provider_profile(
     if let Some(reference) = &profile.credential_ref
         && matches!(
             reference.source,
-            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+            CredentialSource::SystemKeyring
+                | CredentialSource::WorkspaceFile
+                | CredentialSource::SessionOnly
         )
     {
         state
@@ -1089,6 +1125,7 @@ async fn save_provider_credential(
         .map_err(ApiError::not_found)?;
     let locator = match input.source {
         CredentialSource::SystemKeyring => format!("provider-{provider_id}"),
+        CredentialSource::WorkspaceFile => format!("registry-provider-{provider_id}"),
         CredentialSource::SessionOnly => format!("session-provider-{provider_id}"),
         CredentialSource::EnvironmentVariable => input
             .environment_variable
@@ -1107,7 +1144,7 @@ async fn save_provider_credential(
         };
         reference.validate().map_err(|_| {
             ApiError::bad_request(
-                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the session-only credential source.",
+                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the workspace-file credential source.",
             )
         })?;
         if !state
@@ -1117,7 +1154,7 @@ async fn save_provider_credential(
             .map_err(ApiError::bad_request)?
         {
             return Err(ApiError::bad_request(
-                "The selected environment variable is not configured in the server process. Set it before starting AnnotAgent, or choose the session-only credential source to paste a key directly.",
+                "The selected environment variable is not configured in the server process. Set it before starting AnnotAgent, or choose the workspace-file credential source to paste a key directly.",
             ));
         }
         reference
@@ -1142,7 +1179,9 @@ async fn save_provider_credential(
         && previous != reference
         && matches!(
             previous.source,
-            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+            CredentialSource::SystemKeyring
+                | CredentialSource::WorkspaceFile
+                | CredentialSource::SessionOnly
         )
     {
         state
@@ -1181,7 +1220,9 @@ async fn delete_provider_credential(
     if let Some(reference) = profile.credential_ref.take()
         && matches!(
             reference.source,
-            CredentialSource::SystemKeyring | CredentialSource::SessionOnly
+            CredentialSource::SystemKeyring
+                | CredentialSource::WorkspaceFile
+                | CredentialSource::SessionOnly
         )
     {
         state
@@ -1277,15 +1318,13 @@ async fn resolve_provider_credential(
             .await
             .map(Some)
             .map_err(|error| match error {
-                SecretStoreError::NotFound => ApiError::bad_request(
-                    "the Provider credential reference is configured but no credential exists",
-                ),
+                SecretStoreError::NotFound => {
+                    ApiError::bad_request(missing_credential_message(Some(reference.source)))
+                }
                 other => ApiError::bad_request(other),
             }),
         None if profile.adapter == ProviderAdapterKind::Mock => Ok(None),
-        None => Err(ApiError::bad_request(
-            "configure a Provider credential before making a connection request",
-        )),
+        None => Err(ApiError::bad_request(missing_credential_message(None))),
     }
 }
 
@@ -4772,6 +4811,7 @@ async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
                 match credential_source {
                     CredentialSource::SystemKeyring => "system_keyring",
                     CredentialSource::EnvironmentVariable => "environment_variable",
+                    CredentialSource::WorkspaceFile => "workspace_file",
                     CredentialSource::SessionOnly => "session_only",
                     CredentialSource::LegacyWorkspaceFile => "legacy_workspace_file",
                 }
@@ -5169,7 +5209,7 @@ export:
         assert_eq!(
             invalid_environment["error"],
             json!(
-                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the session-only credential source."
+                "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose the workspace-file credential source."
             )
         );
         let (status, credential) = call_json(
@@ -5277,6 +5317,122 @@ export:
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(conflict["code"], json!("provider_in_use"));
+    }
+
+    #[tokio::test]
+    async fn workspace_file_registry_credential_survives_server_restart() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let first_state = ServerState::new(application).await.expect("state");
+        let first_service = router(first_state.clone(), None);
+        let (status, provider) = call_json(
+            &first_service,
+            axum::http::Method::POST,
+            "/api/providers",
+            json!({
+                "display_name": "Persistent fixture",
+                "preset_id": "custom",
+                "adapter": "open_ai_compatible",
+                "base_url": "https://provider.invalid/v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let provider_id = provider["id"].as_str().expect("provider id");
+        let (status, saved) = call_json(
+            &first_service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{provider_id}/credential"),
+            json!({"source": "workspace_file", "secret": "persistent-fixture-secret"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved["credential_source"], json!("workspace_file"));
+        assert!(!saved.to_string().contains("persistent-fixture-secret"));
+        let (status, session_provider) = call_json(
+            &first_service,
+            axum::http::Method::POST,
+            "/api/providers",
+            json!({
+                "display_name": "Expired session fixture",
+                "preset_id": "custom",
+                "adapter": "open_ai_compatible",
+                "base_url": "https://session-provider.invalid/v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let session_provider_id = session_provider["id"].as_str().expect("provider id");
+        let (status, _) = call_json(
+            &first_service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{session_provider_id}/credential"),
+            json!({"source": "session_only", "secret": "session-fixture-secret"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        drop(first_service);
+        drop(first_state);
+
+        let restarted_application =
+            Arc::new(LocalApplication::new(temp.path()).expect("restarted application"));
+        let restarted_state = ServerState::new(restarted_application)
+            .await
+            .expect("restarted state");
+        let parsed_provider_id = parse_provider_id(provider_id).expect("provider id");
+        let profile = restarted_state
+            .application
+            .store()
+            .get_provider_profile(parsed_provider_id)
+            .expect("persisted provider");
+        let resolved = resolve_provider_credential(&restarted_state, &profile)
+            .await
+            .expect("resolve after restart")
+            .expect("credential");
+        assert_eq!(resolved.expose_secret(), "persistent-fixture-secret");
+
+        let restarted_service = router(restarted_state, None);
+        let (status, fetched) = call_json(
+            &restarted_service,
+            axum::http::Method::GET,
+            &format!("/api/providers/{provider_id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fetched["credential_configured"], json!(true));
+        assert_eq!(fetched["credential_source"], json!("workspace_file"));
+        assert!(!fetched.to_string().contains("persistent-fixture-secret"));
+
+        let (status, expired) = call_json(
+            &restarted_service,
+            axum::http::Method::GET,
+            &format!("/api/providers/{session_provider_id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(expired["credential_configured"], json!(false));
+        assert_eq!(expired["credential_source"], json!("session_only"));
+        assert_eq!(expired["health"]["status"], json!("unknown"));
+        assert!(
+            expired["health"]["safe_message"]
+                .as_str()
+                .is_some_and(|message| message.contains("cleared when the server stopped"))
+        );
+        let (status, error) = call_json(
+            &restarted_service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{session_provider_id}/check"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            error["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("choose Local workspace file"))
+        );
     }
 
     #[tokio::test]
@@ -6326,6 +6482,9 @@ export:
         let store: Arc<dyn SecretStore> = Arc::new(SecretStoreRouter {
             keyring: keyring.clone(),
             environment: Arc::new(EnvironmentSecretStore),
+            workspace: Arc::new(WorkspaceFileSecretStore::new(
+                temp.path().join(".annotagent/credentials"),
+            )),
             session: Arc::new(SessionSecretStore::default()),
             legacy: Arc::new(LegacyWorkspaceFileSecretStore::single(
                 legacy_reference.locator.clone(),

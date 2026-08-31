@@ -2,9 +2,14 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    fs::OpenOptions,
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use annotagent_core::{
     CredentialReference, CredentialSource, SecretScope, SecretStore, SecretStoreError, SecretValue,
@@ -280,6 +285,172 @@ impl SecretStore for InMemorySecretStore {
     }
 }
 
+#[derive(Debug)]
+pub struct WorkspaceFileSecretStore {
+    root: PathBuf,
+}
+
+impl WorkspaceFileSecretStore {
+    #[must_use]
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    fn path_for(&self, reference: &CredentialReference) -> Result<PathBuf, SecretStoreError> {
+        reference.validate()?;
+        if reference.source != CredentialSource::WorkspaceFile {
+            return Err(SecretStoreError::InvalidReference(
+                "workspace file store requires a workspace_file reference".to_owned(),
+            ));
+        }
+        if !reference
+            .locator
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        {
+            return Err(SecretStoreError::InvalidReference(
+                "workspace credential locator must contain only letters, numbers, hyphens, or underscores"
+                    .to_owned(),
+            ));
+        }
+        Ok(self.root.join(format!("{}.key", reference.locator)))
+    }
+
+    fn ensure_root(&self) -> Result<(), SecretStoreError> {
+        std::fs::create_dir_all(&self.root).map_err(|_| {
+            SecretStoreError::Unavailable(
+                "workspace credential directory cannot be created".to_owned(),
+            )
+        })?;
+        let metadata = std::fs::symlink_metadata(&self.root).map_err(|_| {
+            SecretStoreError::Unavailable(
+                "workspace credential directory cannot be inspected".to_owned(),
+            )
+        })?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(SecretStoreError::InvalidReference(
+                "workspace credential directory must be a real directory".to_owned(),
+            ));
+        }
+        #[cfg(unix)]
+        std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700)).map_err(
+            |_| {
+                SecretStoreError::Unavailable(
+                    "workspace credential directory permissions cannot be restricted".to_owned(),
+                )
+            },
+        )?;
+        Ok(())
+    }
+
+    fn inspect_file(path: &Path) -> Result<(), SecretStoreError> {
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                SecretStoreError::NotFound
+            } else {
+                SecretStoreError::Unavailable(
+                    "workspace credential file cannot be inspected".to_owned(),
+                )
+            }
+        })?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(SecretStoreError::InvalidReference(
+                "workspace credential must be a regular non-symlink file".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl SecretStore for WorkspaceFileSecretStore {
+    async fn put(
+        &self,
+        scope: SecretScope,
+        secret: SecretValue,
+    ) -> Result<CredentialReference, SecretStoreError> {
+        let reference = scope.reference();
+        let path = self.path_for(&reference)?;
+        self.ensure_root()?;
+        if path.exists() {
+            Self::inspect_file(&path)?;
+        }
+        let temporary = self.root.join(format!(
+            ".{}.{}.tmp",
+            reference.locator,
+            uuid::Uuid::new_v4()
+        ));
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let result = (|| {
+            let mut file = options.open(&temporary).map_err(|_| {
+                SecretStoreError::Unavailable(
+                    "workspace credential temporary file cannot be created".to_owned(),
+                )
+            })?;
+            file.write_all(secret.expose_secret().as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|_| {
+                    SecretStoreError::Unavailable(
+                        "workspace credential cannot be written".to_owned(),
+                    )
+                })?;
+            std::fs::rename(&temporary, &path).map_err(|_| {
+                SecretStoreError::Unavailable(
+                    "workspace credential cannot be installed atomically".to_owned(),
+                )
+            })?;
+            #[cfg(unix)]
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(
+                |_| {
+                    SecretStoreError::Unavailable(
+                        "workspace credential permissions cannot be restricted".to_owned(),
+                    )
+                },
+            )?;
+            Ok(reference.clone())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(temporary);
+        }
+        result
+    }
+
+    async fn resolve(
+        &self,
+        reference: &CredentialReference,
+    ) -> Result<SecretValue, SecretStoreError> {
+        let path = self.path_for(reference)?;
+        Self::inspect_file(&path)?;
+        let value = std::fs::read_to_string(path).map_err(|_| {
+            SecretStoreError::Unavailable("workspace credential cannot be read".to_owned())
+        })?;
+        SecretValue::new(value.trim().to_owned())
+    }
+
+    async fn delete(&self, reference: &CredentialReference) -> Result<(), SecretStoreError> {
+        let path = self.path_for(reference)?;
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(SecretStoreError::Unavailable(
+                "workspace credential cannot be removed".to_owned(),
+            )),
+        }
+    }
+
+    async fn exists(&self, reference: &CredentialReference) -> Result<bool, SecretStoreError> {
+        let path = self.path_for(reference)?;
+        match Self::inspect_file(&path) {
+            Ok(()) => Ok(true),
+            Err(SecretStoreError::NotFound) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct LegacyWorkspaceFileSecretStore {
     files: BTreeMap<String, PathBuf>,
@@ -371,6 +542,7 @@ impl SecretStore for LegacyWorkspaceFileSecretStore {
 pub struct SecretStoreRouter {
     pub keyring: Arc<dyn SecretStore>,
     pub environment: Arc<dyn SecretStore>,
+    pub workspace: Arc<dyn SecretStore>,
     pub session: Arc<dyn SecretStore>,
     pub legacy: Arc<dyn SecretStore>,
 }
@@ -380,6 +552,7 @@ impl SecretStoreRouter {
         match source {
             CredentialSource::SystemKeyring => &self.keyring,
             CredentialSource::EnvironmentVariable => &self.environment,
+            CredentialSource::WorkspaceFile => &self.workspace,
             CredentialSource::SessionOnly => &self.session,
             CredentialSource::LegacyWorkspaceFile => &self.legacy,
         }
@@ -518,6 +691,47 @@ mod tests {
                 .expose_secret(),
             "memory-value"
         );
+    }
+
+    #[tokio::test]
+    async fn workspace_file_store_survives_reconstruction_and_rejects_path_escape() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path().join("credentials");
+        let reference = WorkspaceFileSecretStore::new(&root)
+            .put(
+                scope(CredentialSource::WorkspaceFile, "provider-fixture"),
+                SecretValue::new("workspace-secret").expect("secret"),
+            )
+            .await
+            .expect("put");
+
+        let reopened = WorkspaceFileSecretStore::new(&root);
+        assert!(reopened.exists(&reference).await.expect("exists"));
+        assert_eq!(
+            reopened
+                .resolve(&reference)
+                .await
+                .expect("resolve")
+                .expose_secret(),
+            "workspace-secret"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(root.join("provider-fixture.key"))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let escaped = scope(CredentialSource::WorkspaceFile, "../escape").reference();
+        assert!(matches!(
+            reopened.exists(&escaped).await,
+            Err(SecretStoreError::InvalidReference(_))
+        ));
+        reopened.delete(&reference).await.expect("delete");
+        assert!(!reopened.exists(&reference).await.expect("missing"));
     }
 
     #[tokio::test]

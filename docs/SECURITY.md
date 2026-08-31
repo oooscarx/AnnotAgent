@@ -4,12 +4,12 @@
 
 - Do not commit `.env` or local provider configuration containing a key.
 - CLI providers read the configured environment variable only when making a request.
-- A GUI-entered API key is write-only and stored in the native system credential store (Keychain on macOS). It is omitted from responses, local TOML settings, SQLite, model traces, history exports, and logs.
-- Environment-variable references are read-only and session-only credentials are process-local. SQLite stores only a provider-scoped `CredentialReference`.
+- A GUI-entered API key is write-only. The default is `<workspace>/.annotagent/credentials/registry-provider-<id>.key`, a Git-ignored regular file created with owner-only permissions on Unix. Native system storage remains opt-in. Secret values are omitted from responses, TOML settings, SQLite, model traces, history exports, and logs.
+- Environment-variable references are read-only and session-only credentials are process-local. SQLite stores only a provider-scoped `CredentialReference`; a workspace-file reference resolves the value from the protected file after restart.
 - An existing `<workspace>/.annotagent/credentials/provider-api-key` is a legacy read-only source. AnnotAgent does not copy or delete it automatically; migration to the system credential store must be an explicit user action.
 - Non-secret Web settings are atomically written to `<workspace>/.annotagent/settings.toml` with owner-only permissions on Unix.
 - Provider configuration rejects credential-bearing custom headers such as `Authorization`, API-key/access-token/secret/password fields, including nested extra request metadata. Endpoint URLs cannot contain embedded user info. Authorization and image base64 are redacted from Provider errors, model messages, history, and logs.
-- A legacy workspace credential file is plaintext protected only by filesystem permissions. Keep such a workspace private, migrate explicitly, and rotate any key pasted into chat or a terminal transcript after testing.
+- Workspace credential files are plaintext protected by filesystem permissions. Keep the workspace private and backed up appropriately; use an environment variable or native credential store when stronger host-level separation is required. Rotate any key pasted into chat or a terminal transcript after testing.
 
 ## Filesystem
 

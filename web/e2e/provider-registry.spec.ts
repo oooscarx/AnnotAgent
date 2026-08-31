@@ -152,7 +152,7 @@ test("Legacy compatibility configuration imports once without moving a secret or
   expect(report.historical_runs_modified).toBe(false);
 });
 
-test("Provider lifecycle is reference-safe and credential rotation stays write-only", async ({ request }) => {
+test("Provider lifecycle is reference-safe and persistent credentials stay write-only", async ({ request, page }) => {
   const listed = await request.get("/api/providers");
   expect(listed.ok()).toBeTruthy();
   const providers = (await listed.json()).providers as {
@@ -208,17 +208,23 @@ test("Provider lifecycle is reference-safe and credential rotation stays write-o
     expect.objectContaining({ provider_id: mock!.id }),
   );
 
-  const rotatedSecret = "e2e-rotated-session-credential";
+  const rotatedSecret = "e2e-persistent-workspace-credential";
   const rotated = await request.post(`/api/providers/${remote!.id}/credential`, {
-    data: { source: "session_only", secret: rotatedSecret },
+    data: { source: "workspace_file", secret: rotatedSecret },
   });
   expect(rotated.ok()).toBeTruthy();
   const rotatedBody = await rotated.json();
-  expect(rotatedBody.credential_source).toBe("session_only");
+  expect(rotatedBody.credential_source).toBe("workspace_file");
   expect(JSON.stringify(rotatedBody)).not.toContain(rotatedSecret);
   const fetched = await request.get(`/api/providers/${remote!.id}`);
   expect(fetched.ok()).toBeTruthy();
   expect(JSON.stringify(await fetched.json())).not.toContain(rotatedSecret);
+
+  await page.goto("/settings");
+  const remoteCard = page.locator(".registry-provider-card").filter({ hasText: "Remote lifecycle fixture" });
+  await remoteCard.getByText("Rotate or remove credential", { exact: true }).click();
+  await expect(remoteCard.getByLabel("Storage")).toHaveValue("workspace_file");
+  await expect(remoteCard.getByLabel("API key")).toBeVisible();
 });
 
 test("Settings registry remains reachable without horizontal page overflow on a phone", async ({ page }) => {

@@ -45,9 +45,9 @@ This file records observed baseline limitations and will be narrowed as mileston
 - Inline first-use setup spans Provider, credential reference, Model Profile and connection check as
   separate durable operations. If a later operation fails, the already-created safe Registry
   records remain visible for repair or deletion in Settings rather than being silently rolled back.
-- Session-only credentials intentionally disappear when the server process stops. Environment
-  references are the non-Keychain persistent choice and require that variable to exist in the
-  server process environment.
+- Session-only credentials intentionally disappear when the server process stops. The default
+  non-Keychain persistent choice is an owner-only file under the Git-ignored workspace; environment
+  references remain available and require that variable to exist in the server process environment.
 
 ## Explicitly outside this Alpha
 
