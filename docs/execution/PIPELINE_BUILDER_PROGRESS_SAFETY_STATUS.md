@@ -61,3 +61,16 @@ instead of generic exhaustion. Its scripted input usage falls from 95,326 to 27,
 A separate no-detection-model fixture completes the intended context → feasibility → blocked Draft
 → setup-requirements path in four Tool Calls. Static validation emits the blocking
 `unresolved_model_binding` issue; Dry Run and Publish remain unavailable until the binding is fixed.
+
+## Milestone 4 detection compatibility
+
+Core now checks Node capability, input modality, and protocol requirements together. A structured
+VLM Detection node accepts an available profile only when it declares `vision_language`, image
+input, and either structured output or Tool Calls. The same profile remains incompatible with the
+native detector nodes unless it separately declares `object_detection`.
+
+The public Node Catalog now exposes the already executable VLM, specialist, and open-vocabulary
+detection operations as distinct contracts. The Qwen-style fixture uses only `vision_language` and
+`image_classification`, binds the structured VLM node, validates and Dry Runs the resulting RoboCup
+ball Draft in seven Builder Tool Calls, and proves it cannot bind the native detector contract.
+Unavailable prompted-segmentation expert models are not added to that runnable Draft.

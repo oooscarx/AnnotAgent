@@ -1462,6 +1462,42 @@ impl PipelineBuilderSession {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PipelineDraftTools;
 
+/// Checks the semantic contract between a public Node Definition and a Provider Model Profile.
+/// A VLM that emits a DetectionSet is not a native detector: it requires image input plus a
+/// structured response channel, while native detection still requires ObjectDetection.
+#[must_use]
+pub fn model_profile_satisfies_node_contract(
+    definition: &crate::NodeDefinition,
+    model: &ModelProfile,
+) -> bool {
+    if definition
+        .required_model_capability
+        .is_some_and(|required| !model.task_capabilities.contains(&required))
+    {
+        return false;
+    }
+    let consumes_images = definition
+        .input_ports
+        .iter()
+        .any(|port| port.artifact_type == crate::ArtifactKind::Image);
+    if consumes_images
+        && !model
+            .input_modalities
+            .contains(&crate::InputModality::Image)
+    {
+        return false;
+    }
+    let structured_vlm_detection = definition.required_model_capability
+        == Some(crate::ModelCapability::VisionLanguage)
+        && definition
+            .output_ports
+            .iter()
+            .any(|port| port.artifact_type == crate::ArtifactKind::DetectionSet);
+    !structured_vlm_detection
+        || model.protocol_features.structured_output
+        || model.protocol_features.tool_calls
+}
+
 /// Session-local undo journal. Every entry is a complete, previously persisted Draft snapshot;
 /// the Agent still performs mutations through typed tools and never receives a database handle.
 #[derive(Debug, Clone)]
@@ -1784,11 +1820,9 @@ impl PipelineDraftTools {
                 model.id, model.revision
             )));
         }
-        if let Some(required) = definition.required_model_capability
-            && !model.task_capabilities.contains(&required)
-        {
+        if !model_profile_satisfies_node_contract(definition, model) {
             return Err(CoreError::Validation(format!(
-                "incompatible_model_capability: Model Profile {:?}@{} does not provide {required:?}",
+                "incompatible_model_capability: Model Profile {:?}@{} does not satisfy the Node capability, modality, and protocol contract",
                 model.id, model.revision
             )));
         }
@@ -1796,6 +1830,7 @@ impl PipelineDraftTools {
             model_profile_id: model.id,
             locked,
         });
+        node.unresolved_model_requirement = None;
         touch(draft);
         Ok(())
     }
@@ -2597,6 +2632,63 @@ mod tests {
                 .bind_model_profile(&mut draft, "detect", &incompatible, true, &nodes)
                 .is_err()
         );
+
+        let mut qwen_vlm = model.clone();
+        qwen_vlm.id = crate::ModelProfileId::new();
+        qwen_vlm.task_capabilities = BTreeSet::from([
+            crate::ModelCapability::VisionLanguage,
+            crate::ModelCapability::ImageClassification,
+        ]);
+        qwen_vlm.input_modalities =
+            BTreeSet::from([crate::InputModality::Text, crate::InputModality::Image]);
+        qwen_vlm.protocol_features.structured_output = true;
+        let vlm_detection = crate::NodeDefinition {
+            id: "vlm_detection.detect".to_owned(),
+            display_name: "Structured VLM Detection".to_owned(),
+            category: crate::NodeCategory::ModelInference,
+            input_ports: vec![crate::PortDefinition {
+                name: "image".to_owned(),
+                artifact_type: crate::ArtifactKind::Image,
+                required: true,
+                cardinality: crate::PortCardinality::One,
+            }],
+            output_ports: vec![crate::PortDefinition {
+                name: "detections".to_owned(),
+                artifact_type: crate::ArtifactKind::DetectionSet,
+                required: true,
+                cardinality: crate::PortCardinality::Many,
+            }],
+            config_schema: serde_json::json!({"type":"object"}),
+            required_model_capability: Some(crate::ModelCapability::VisionLanguage),
+            cardinality: crate::NodeCardinality::OneToMany,
+            side_effect: crate::NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        };
+        assert!(model_profile_satisfies_node_contract(
+            &vlm_detection,
+            &qwen_vlm
+        ));
+        assert!(!model_profile_satisfies_node_contract(
+            nodes.definition("detect").expect("native detector"),
+            &qwen_vlm
+        ));
+
+        let mut text_only = qwen_vlm.clone();
+        text_only
+            .input_modalities
+            .remove(&crate::InputModality::Image);
+        assert!(!model_profile_satisfies_node_contract(
+            &vlm_detection,
+            &text_only
+        ));
+        let mut unstructured = qwen_vlm;
+        unstructured.protocol_features.structured_output = false;
+        unstructured.protocol_features.tool_calls = false;
+        assert!(!model_profile_satisfies_node_contract(
+            &vlm_detection,
+            &unstructured
+        ));
     }
 
     #[test]

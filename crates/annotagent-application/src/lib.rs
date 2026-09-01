@@ -1410,10 +1410,28 @@ fn materialize_feasibility_draft(
     suggestion.draft.updated_at = suggestion.draft.created_at;
     match feasibility {
         annotagent_core::BuildFeasibility::Runnable {
+            candidate_templates,
             compatible_bindings,
             warnings,
-            ..
         } => {
+            if let Some(template) = candidate_templates.iter().find_map(|template_id| {
+                input.workflow_templates.iter().find(|template| {
+                    template.id == *template_id
+                        && template.nodes.iter().any(|node| {
+                            compatible_bindings.iter().any(|binding| {
+                                binding
+                                    .split_once(':')
+                                    .is_some_and(|(node_type, _)| node_type == node.node_type)
+                            })
+                        })
+                })
+            }) {
+                suggestion.draft = template.instantiate(
+                    input.project_id.clone(),
+                    safe_suggestion.draft.enabled_skills.clone(),
+                    chrono::Utc::now(),
+                );
+            }
             for binding in compatible_bindings {
                 let Some((node_type, model_id)) = binding.split_once(':') else {
                     continue;
@@ -1433,7 +1451,19 @@ fn materialize_feasibility_draft(
                 else {
                     continue;
                 };
-                node.model_binding = Some(model.remote_model_id.clone());
+                node.model_binding = Some(
+                    input
+                        .model_registry
+                        .iter()
+                        .find(|runtime| {
+                            runtime.id == model.remote_model_id
+                                || runtime.model == model.remote_model_id
+                        })
+                        .map_or_else(
+                            || model.remote_model_id.clone(),
+                            |runtime| runtime.id.clone(),
+                        ),
+                );
                 node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
                     model_profile_id: model.id,
                     locked: true,
@@ -3148,9 +3178,30 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
         model_node_definition(
             "capability.detect",
             "Detect objects",
-            vec![catalog_port("images", ArtifactKind::Image, true, many)],
+            vec![catalog_port("image", ArtifactKind::Image, true, one)],
             catalog_port("detections", ArtifactKind::DetectionSet, true, many),
             ModelCapability::ObjectDetection,
+        ),
+        model_node_definition(
+            annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION,
+            "Native specialist detection",
+            vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ModelCapability::ObjectDetection,
+        ),
+        model_node_definition(
+            annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION,
+            "Structured VLM detection",
+            vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ModelCapability::VisionLanguage,
+        ),
+        model_node_definition(
+            annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION,
+            "Open-vocabulary detection",
+            vec![catalog_port("image", ArtifactKind::Image, true, one)],
+            catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ModelCapability::OpenVocabularyDetection,
         ),
         model_node_definition(
             "capability.classify",
@@ -6879,9 +6930,8 @@ impl LocalApplication {
         };
         let compatible = |node: &NodeDefinition, model: &ModelProfile| {
             available_model(model)
-                && node
-                    .required_model_capability
-                    .is_some_and(|capability| model.task_capabilities.contains(&capability))
+                && node.required_model_capability.is_some()
+                && annotagent_core::model_profile_satisfies_node_contract(node, model)
         };
         let node_catalog = input
             .node_catalog
@@ -6902,7 +6952,17 @@ impl LocalApplication {
                 required_model_capability: node
                     .required_model_capability
                     .map(|capability| serialized_enum_name(&capability)),
-                required_protocol_features: Vec::new(),
+                required_protocol_features: if node.required_model_capability
+                    == Some(ModelCapability::VisionLanguage)
+                    && node
+                        .output_ports
+                        .iter()
+                        .any(|port| port.artifact_type == ArtifactKind::DetectionSet)
+                {
+                    vec!["structured_output_or_tool_calls".to_owned()]
+                } else {
+                    Vec::new()
+                },
                 available: node.required_model_capability.is_none()
                     || input
                         .model_profiles
@@ -8455,6 +8515,14 @@ impl LocalApplication {
                     async {
                     match resolved {
                     Ok(PipelineBuilderTool::GetPipelineBuilderContext) => {
+                        inspected_project = true;
+                        inspected_label = true;
+                        inspected_skills = true;
+                        inspected_nodes = true;
+                        inspected_models = true;
+                        if let Some(resource) = required_advisor_resource.as_ref() {
+                            loaded_resources.insert(resource.clone());
+                        }
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Loaded compact Pipeline Builder context",
                             serde_json::to_value(&context_snapshot)?,
@@ -8844,7 +8912,7 @@ impl LocalApplication {
                     }
                     Ok(PipelineBuilderTool::ListCompatibleModels) => {
                         inspected_models = true;
-                        let required_capability = call
+                        let requested_definition = call
                             .arguments
                             .get("node_type")
                             .and_then(serde_json::Value::as_str)
@@ -8854,12 +8922,21 @@ impl LocalApplication {
                                     .iter()
                                     .find(|node| node.id == node_type)
                                     .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))
-                                    .map(|node| node.required_model_capability)
                             })
-                            .transpose()?
-                            .flatten();
-                        let provider_models =
-                            compatible_builder_models(&input, required_capability);
+                            .transpose()?;
+                        let required_capability = requested_definition
+                            .and_then(|definition| definition.required_model_capability);
+                        let provider_models = compatible_builder_models(&input, None)
+                            .into_iter()
+                            .filter(|model| {
+                                requested_definition.is_none_or(|definition| {
+                                    annotagent_core::model_profile_satisfies_node_contract(
+                                        definition,
+                                        model,
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>();
                         let expert_models = input
                             .expert_models
                             .iter()
@@ -9044,9 +9121,16 @@ impl LocalApplication {
                             .find(|definition| definition.id == node_type)
                             .ok_or_else(|| anyhow!("node definition {node_type:?} is not registered"))?;
                         let provider_models = compatible_builder_models(
-                            &input,
-                            definition.required_model_capability,
-                        );
+                            &input, None,
+                        )
+                        .into_iter()
+                        .filter(|model| {
+                            annotagent_core::model_profile_satisfies_node_contract(
+                                definition,
+                                model,
+                            )
+                        })
+                        .collect::<Vec<_>>();
                         let expert_models = input
                             .expert_models
                             .iter()
@@ -9163,7 +9247,33 @@ impl LocalApplication {
                                 required_advisor_resource.as_deref().unwrap_or_default()
                             );
                         }
-                        let mut created = safe_suggestion.clone();
+                        if tool == PipelineBuilderTool::CreateDraftFromTemplate
+                            && matches!(
+                                feasibility,
+                                annotagent_core::BuildFeasibility::BlockedByBindings { .. }
+                                    | annotagent_core::BuildFeasibility::Unsupported { .. }
+                            )
+                        {
+                            bail!(
+                                "pipeline setup is incomplete; use create_blocked_draft so unresolved bindings remain explicit and editable"
+                            );
+                        }
+                        let mut created = if tool == PipelineBuilderTool::CreateDraftFromTemplate
+                            && call
+                                .arguments
+                                .get("template_id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_none_or(|template_id| template_id == "safe_default")
+                        {
+                            materialize_feasibility_draft(
+                                &safe_suggestion,
+                                &input,
+                                &feasibility,
+                            )?
+                            .0
+                        } else {
+                            safe_suggestion.clone()
+                        };
                         if tool == PipelineBuilderTool::CreateDraftFromTemplate
                             && let Some(template_id) = call
                                 .arguments
@@ -14454,6 +14564,9 @@ export:
                 "core.select_and_map".to_owned(),
                 "core.tile".to_owned(),
                 "core.validate".to_owned(),
+                "object_detection.detect".to_owned(),
+                "open_vocabulary_grounding.detect".to_owned(),
+                "vlm_detection.detect".to_owned(),
             ])
         );
         for internal in [
@@ -16347,7 +16460,12 @@ export:
             .await
             .expect("Advisor revision loop");
 
-        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.status,
+            AgentSessionStatus::WaitingForHuman,
+            "{:#?}",
+            report.session
+        );
         assert!(report.approval_required);
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
         assert!(report.dry_run.as_ref().is_some_and(|value| {
@@ -16787,6 +16905,142 @@ export:
     }
 
     #[tokio::test]
+    async fn qwen_style_vlm_binds_structured_detection_but_not_native_detector() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "qwen-vlm-detection",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("qwen-vlm-detection/images/sample.png"),
+        )
+        .expect("sample image");
+        let selected_model = register_pipeline_builder_model(&application, "scripted-qwen-builder");
+        let qwen = register_available_vision_model(
+            &application,
+            &selected_model,
+            "default-vision",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ImageClassification,
+            ],
+        );
+        let step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 400,
+                output_tokens: 40,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                step("get_pipeline_builder_context", json!({})),
+                step("resolve_pipeline_feasibility", json!({})),
+                step(
+                    "create_draft_from_template",
+                    json!({"template_id": "safe_default"}),
+                ),
+                step("validate_pipeline", json!({})),
+                step("dry_run_pipeline", json!({"image_indices": [0]})),
+                step("inspect_dry_run_summary", json!({})),
+                step("submit_draft_for_human_approval", json!({})),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "qwen-vlm-detection",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("structured VLM Builder result");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert!(report.session.usage.tool_calls <= 12);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview)
+        );
+        assert!(
+            report
+                .validation
+                .as_ref()
+                .is_some_and(|report| report.valid)
+        );
+        let suggestion = report.suggestion.expect("VLM detection Draft");
+        let detector = suggestion
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.node_type == annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION)
+            .expect("VLM detection node");
+        assert_eq!(
+            detector
+                .model_profile_binding
+                .as_ref()
+                .map(|binding| binding.model_profile_id),
+            Some(qwen.id)
+        );
+        assert!(suggestion.warnings.iter().any(|warning| {
+            warning.contains("coarse hypothesis") || warning.contains("coarse geometry")
+        }));
+        assert!(
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .all(|node| node.node_type != "capability.segment")
+        );
+        let input = application
+            .workflow_advisor_input_for_label(
+                "qwen-vlm-detection",
+                &load_settings(None).expect("settings"),
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder context");
+        assert!(input.expert_models.iter().any(|model| {
+            model
+                .capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+                && model.availability != ModelAvailability::Available
+        }));
+        assert!(annotagent_core::model_profile_satisfies_node_contract(
+            input
+                .node_catalog
+                .iter()
+                .find(|node| { node.id == annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION })
+                .expect("VLM node"),
+            &qwen,
+        ));
+        assert!(!annotagent_core::model_profile_satisfies_node_contract(
+            input
+                .node_catalog
+                .iter()
+                .find(|node| node.id == "capability.detect")
+                .expect("native detection node"),
+            &qwen,
+        ));
+    }
+
+    #[tokio::test]
     async fn live_pipeline_builder_exposes_and_loads_exact_domain_resource_ids() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -16807,7 +17061,7 @@ export:
         register_available_vision_model(
             &application,
             &selected_model,
-            "scripted-vlm-detection-v1",
+            "default-vision",
             [
                 ModelCapability::VisionLanguage,
                 ModelCapability::ObjectDetection,
@@ -16887,22 +17141,38 @@ export:
                         output_tokens: 5,
                     },
                 },
-                scripted_step(
-                    "dry_run_pipeline",
-                    json!({"image_indices": [0]}),
-                    Some("did not include a registered Tool Call"),
-                ),
-                scripted_step("inspect_dry_run_summary", json!({}), Some("sandbox")),
-                scripted_step(
-                    "submit_draft_for_human_approval",
-                    json!({
-                        "name": "RoboCup Ball resource-aware proposal",
-                        "rationale": ["Loaded the exact enabled Domain Advisor resource."],
-                        "warnings": [],
-                        "alternatives": []
-                    }),
-                    Some("review_rate"),
-                ),
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: Some(
+                        "did not include a registered Tool Call".to_owned(),
+                    ),
+                    response: MockResponseSpec::ToolCalls {
+                        calls: vec![
+                            MockToolCall {
+                                name: "dry_run_pipeline".to_owned(),
+                                arguments: json!({"image_indices": [0]}),
+                            },
+                            MockToolCall {
+                                name: "inspect_dry_run_summary".to_owned(),
+                                arguments: json!({}),
+                            },
+                            MockToolCall {
+                                name: "submit_draft_for_human_approval".to_owned(),
+                                arguments: json!({
+                                    "name": "RoboCup Ball resource-aware proposal",
+                                    "rationale": ["Loaded the exact enabled Domain Advisor resource."],
+                                    "warnings": [],
+                                    "alternatives": []
+                                }),
+                            },
+                        ],
+                        content: None,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                },
             ],
         });
 
@@ -16921,7 +17191,12 @@ export:
             .expect("resource-aware Pipeline Builder");
 
         assert_eq!(provider.remaining_steps(), 0);
-        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.status,
+            AgentSessionStatus::WaitingForHuman,
+            "{:#?}",
+            report.session
+        );
         let skill_list = report
             .session
             .steps
