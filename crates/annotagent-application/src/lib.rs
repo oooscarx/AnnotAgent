@@ -3429,7 +3429,11 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             id: "core.human_review".to_owned(),
             display_name: "Human review".to_owned(),
             required_capabilities: Vec::new(),
-            accepts: any_candidates.clone(),
+            accepts: {
+                let mut artifacts = any_candidates.clone();
+                artifacts.push(ArtifactKind::CropSet);
+                artifacts
+            },
             produces: any_candidates.clone(),
             deterministic: true,
         },
@@ -3828,12 +3832,15 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             id: "core.human_review".to_owned(),
             display_name: "Human review".to_owned(),
             category: NodeCategory::HumanAndOutput,
-            input_ports: vec![catalog_port(
-                "candidates",
-                ArtifactKind::AnnotationCandidateSet,
-                true,
-                many,
-            )],
+            input_ports: vec![
+                catalog_port(
+                    "candidates",
+                    ArtifactKind::AnnotationCandidateSet,
+                    true,
+                    many,
+                ),
+                catalog_port("preview_crops", ArtifactKind::CropSet, false, many),
+            ],
             output_ports: vec![catalog_port(
                 "approved",
                 ArtifactKind::AnnotationCandidateSet,

@@ -72,3 +72,12 @@ Runtime proof remains `crates/annotagent-runtime/tests/skill_extension.rs`, whic
 ## Why no dynamic plugin loader
 
 Compile-time registration makes compatibility and algorithm safety explicit. Signed WASM or dynamic components may be added later, but this release does not claim a package ecosystem.
+
+## Geometry remains Core policy
+
+Skills and model adapters may declare detection or prompted-segmentation capabilities, but Core owns
+score semantics, geometry semantics, calibration keys, Project geometry policy, static safety,
+quality reports, correction evidence, typed conversion lineage and improvement comparison. No Core
+branch names YOLO, SAM, RoboCup or a concrete Label to decide whether geometry is accepted. Domain
+Skills may add validators and Review reasons; they cannot reinterpret semantic confidence as IoU or
+bypass the Project policy.

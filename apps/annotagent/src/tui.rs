@@ -12,8 +12,8 @@ use annotagent_application::{
 use annotagent_core::{
     AgentSessionStatus, BindingMutationActor, InputModality, ModelBindingId, ModelBindingMatch,
     ModelBindingRole, ModelCapability, ModelProfileId, ModelProfileStatus,
-    PipelineBuilderConstraints, ProjectId, ProjectModelBinding, ProjectSchema,
-    ProviderHealthStatus, ProviderId, RunEvent, RunEventPayload, RunStatus,
+    PipelineBuilderConstraints, PipelineImprovementId, ProjectId, ProjectModelBinding,
+    ProjectSchema, ProviderHealthStatus, ProviderId, RunEvent, RunEventPayload, RunStatus,
 };
 use annotagent_provider::HttpVisionWorkerClient;
 use anyhow::{Context, Result};
@@ -93,6 +93,7 @@ struct TuiState {
     usage: String,
     active: Option<ActiveRun>,
     model_lines: Vec<String>,
+    geometry_lines: Vec<String>,
     quit: bool,
 }
 
@@ -108,6 +109,7 @@ impl TuiState {
             .into_iter()
             .chain(model_lines(&workspace_settings(application.as_ref())?))
             .collect();
+        let geometry_lines = geometry_lines(application.as_ref(), project_context.as_ref())?;
         Ok(Self {
             project,
             project_context,
@@ -119,6 +121,7 @@ impl TuiState {
             usage: "input 0 · output 0 · cost 0".to_owned(),
             active: None,
             model_lines,
+            geometry_lines,
             quit: false,
         })
     }
@@ -581,6 +584,15 @@ impl TuiState {
                     model.protocol_features.structured_output,
                     model.protocol_features.json_schema
                 ));
+                for contract in annotagent_core::effective_model_quality_contracts(&model) {
+                    self.push(format!(
+                        "quality · {} · score {} · geometry {} · auto accept {}",
+                        contract.operation,
+                        enum_label(contract.score_semantics),
+                        enum_label(contract.output_geometry),
+                        enum_label(contract.auto_accept_eligibility),
+                    ));
+                }
                 return Ok(());
             }
             Some("compatible") => {
@@ -752,6 +764,69 @@ impl TuiState {
         Ok(())
     }
 
+    fn improvements(&mut self, requested_id: Option<&str>) -> Result<()> {
+        let Some(project) = self.project_context.as_ref() else {
+            self.push("Open a Project before viewing improvement sessions.");
+            return Ok(());
+        };
+        let sessions = self
+            .application
+            .project_pipeline_improvements(&project.id)?;
+        if let Some(requested_id) = requested_id {
+            let id = requested_id
+                .parse::<PipelineImprovementId>()
+                .with_context(|| format!("invalid improvement session id {requested_id:?}"))?;
+            let session = sessions
+                .into_iter()
+                .find(|session| session.id == id)
+                .context("Pipeline improvement session was not found in this Project")?;
+            self.push(format!(
+                "improvement {} · {:?} · diagnosis {:?}",
+                session.id, session.status, session.diagnosis.primary_failure_class
+            ));
+            self.push(format!(
+                "baseline {}@v{} · candidate Draft {} · validation {}",
+                session.baseline_workflow_id,
+                session.baseline_workflow_version,
+                session.candidate_draft_id,
+                if session.validation.valid {
+                    "passed"
+                } else {
+                    "blocked"
+                }
+            ));
+            self.push(format!(
+                "evidence {} Run(s) · independent holdout {} Run(s) · selected changes require GUI approval",
+                session.diagnosis.evidence_run_ids.len(),
+                session.evaluation_run_ids.len(),
+            ));
+            if let Some(comparison) = session.comparison {
+                self.push(format!(
+                    "comparison {:?} · evidence {:?} · median IoU before {:?} / after {:?}",
+                    comparison.recommendation,
+                    comparison.evidence_sufficiency,
+                    comparison.baseline.median_iou,
+                    comparison.candidate.median_iou,
+                ));
+            }
+            return Ok(());
+        }
+        if sessions.is_empty() {
+            self.push("No saved improvement sessions. Use Improve Automation in the GUI to choose diagnosis and independent holdout Runs.");
+        }
+        for session in sessions {
+            self.push(format!(
+                "improvement {} · {:?} · {:?} · evidence {} / holdout {}",
+                session.id,
+                session.status,
+                session.diagnosis.primary_failure_class,
+                session.diagnosis.evidence_run_ids.len(),
+                session.evaluation_run_ids.len(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
@@ -789,6 +864,7 @@ impl TuiState {
                     .into_iter()
                     .chain(model_lines(&workspace_settings(self.application.as_ref())?))
                     .collect();
+                self.geometry_lines = geometry_lines(self.application.as_ref(), Some(&context))?;
                 self.push(format!("opened Project {}", context.name));
                 self.project = Some(path);
                 self.project_context = Some(context);
@@ -838,6 +914,15 @@ impl TuiState {
             "/models" => self.models(parts.next(), parts.next()).await,
             "/bindings" => self.bindings(),
             "/bind" => self.bind(parts.next(), parts.next()),
+            "/geometry" => {
+                self.geometry_lines =
+                    geometry_lines(self.application.as_ref(), self.project_context.as_ref())?;
+                for line in self.geometry_lines.clone() {
+                    self.push(format!("geometry · {line}"));
+                }
+                Ok(())
+            }
+            "/improvements" => self.improvements(parts.next()),
             "/skills" => {
                 if parts.next() == Some("show") {
                     let id = parts.next().context("usage: /skills show <skill-id>")?;
@@ -1014,7 +1099,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /bindings /bind <role> <model-profile-id> /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -1107,6 +1192,51 @@ fn registry_model_lines(application: &LocalApplication) -> Result<Vec<String>> {
             ))
         })
         .collect()
+}
+
+fn geometry_lines(
+    application: &LocalApplication,
+    project: Option<&ProjectContext>,
+) -> Result<Vec<String>> {
+    let Some(project) = project else {
+        return Ok(vec![
+            "Open a Project to inspect geometry policy and calibration.".to_owned(),
+        ]);
+    };
+    let Ok(policies) = application.project_geometry_policies(&project.id) else {
+        return Ok(vec![
+            "Geometry policy is available after this Project is imported into the current workspace."
+                .to_owned(),
+        ]);
+    };
+    let mut lines = policies
+        .into_iter()
+        .map(|policy| {
+            format!(
+                "{} · quality {} · acceptance {}",
+                enum_label(policy.task_kind),
+                enum_label(policy.required_quality),
+                enum_label(policy.auto_accept_policy),
+            )
+        })
+        .collect::<Vec<_>>();
+    let calibrations = application.project_geometry_calibrations(&project.id)?;
+    if calibrations.is_empty() {
+        lines.push("No geometry calibration · model scores cannot verify box quality".to_owned());
+    } else {
+        lines.extend(calibrations.into_iter().map(|view| {
+            format!(
+                "calibration {} · {} samples · median IoU {} · small objects {}",
+                enum_label(view.effective_status),
+                view.report.sample_count,
+                view.report
+                    .median_iou
+                    .map_or_else(|| "not measured".to_owned(), |value| format!("{value:.3}")),
+                view.report.small_object_sample_count,
+            )
+        }));
+    }
+    Ok(lines)
 }
 
 fn worker_capability(worker: &DetectionWorkerSettings) -> String {
@@ -1347,11 +1477,21 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &TuiState) {
             .model_lines
             .iter()
             .flat_map(|entry| [Line::from(entry.as_str()), Line::default()])
+            .chain(std::iter::once(Line::styled(
+                "Geometry safety",
+                theme.title(),
+            )))
+            .chain(
+                state
+                    .geometry_lines
+                    .iter()
+                    .flat_map(|entry| [Line::from(entry.as_str()), Line::default()]),
+            )
             .collect::<Vec<_>>();
         frame.render_widget(
             Paragraph::new(models)
                 .style(theme.panel())
-                .block(themed_block("Models · /models · /providers", theme))
+                .block(themed_block("Models + Geometry · /geometry", theme))
                 .wrap(Wrap { trim: true }),
             body[1],
         );
@@ -1515,6 +1655,12 @@ mod tests {
         assert!(summary.contains("Project:"));
         assert!(summary.contains("Workflow: Configured task graph@v1"));
         assert!(summary.contains("Skills: robocup"));
+        assert!(
+            state
+                .geometry_lines
+                .iter()
+                .any(|line| line.contains("imported"))
+        );
     }
 
     #[test]

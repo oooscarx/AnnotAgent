@@ -394,6 +394,116 @@ export interface RegistryModelProfile {
   updated_at: string;
 }
 
+export type ScoreSemantics =
+  | "semantic_confidence"
+  | "detection_confidence"
+  | "calibrated_probability"
+  | "relative_confidence"
+  | "ranking_score"
+  | "not_provided"
+  | "unknown";
+
+export type GeometrySemantics =
+  | "not_applicable"
+  | "coarse_hypothesis"
+  | "predicted_geometry"
+  | "refined_geometry"
+  | "mask_refined_geometry"
+  | "calibrated_geometry"
+  | "human_verified";
+
+export type GeometryCalibrationStatus =
+  | "uncalibrated"
+  | "collecting_evidence"
+  | "provisional"
+  | "passed"
+  | "failed"
+  | "stale";
+
+export interface ModelCapabilityQualityContract {
+  model_profile_id: string;
+  model_profile_revision: number;
+  capability: ModelCapability;
+  operation: string;
+  output_geometry: GeometrySemantics;
+  score_semantics: ScoreSemantics;
+  auto_accept_eligibility:
+    | "never_from_score_alone"
+    | "requires_project_calibration"
+    | "eligible_with_calibration";
+  evidence_source:
+    | "system_default"
+    | "user_declared"
+    | "active_probe"
+    | "calibration_report"
+    | "migrated_legacy";
+  small_object_localization: "unsupported" | "declared" | "verified" | "unknown";
+  requires_geometry_verification: boolean;
+}
+
+export interface GeometryCalibrationThresholds {
+  minimum_iou: number;
+  maximum_normalized_center_shift: number;
+  minimum_area_ratio: number;
+  maximum_area_ratio: number;
+  minimum_sample_count: number;
+}
+
+export interface ProjectGeometryPolicy {
+  project_id: string;
+  task_kind: string;
+  required_quality:
+    | "coarse_localization"
+    | "training_bounding_box"
+    | "tight_bounding_box"
+    | "pixel_accurate_mask";
+  auto_accept_policy:
+    | "human_review_required"
+    | "refiner_or_review"
+    | "calibration_required"
+    | "explicit_risk_acceptance";
+  calibration_thresholds: GeometryCalibrationThresholds;
+}
+
+export interface GeometryCalibrationReport {
+  id: string;
+  key: {
+    project_id: string;
+    task_id: string;
+    label_id?: string;
+    model_profile_id: string;
+    model_profile_revision: number;
+    node_definition_id: string;
+    node_config_hash: string;
+    prompt_version?: string;
+    preprocessing_hash: string;
+    dataset_profile_revision: string;
+    label_schema_hash: string;
+    refinement_hash: string;
+  };
+  status: GeometryCalibrationStatus;
+  sample_count: number;
+  small_object_sample_count: number;
+  median_iou?: number;
+  p10_iou?: number;
+  median_center_shift?: number;
+  p90_center_shift?: number;
+  median_area_ratio_error?: number;
+  manual_adjustment_rate?: number;
+  too_loose_rate?: number;
+  too_tight_rate?: number;
+  thresholds: GeometryCalibrationThresholds;
+  evidence_run_ids: string[];
+  evidence_quality_report_ids: string[];
+  created_at: string;
+}
+
+export interface GeometryCalibrationView {
+  report: GeometryCalibrationReport;
+  effective_status: GeometryCalibrationStatus;
+  staleness_reasons: string[];
+}
+
 export type ModelBindingRole =
   | "pipeline_builder"
   | "primary_inference"
@@ -1067,6 +1177,86 @@ export interface GeometryQualitySummary {
   mean_manual_area_change?: number | null;
   mean_refiner_iou?: number | null;
   inaccurate_bbox_reason_count: number;
+}
+
+export interface PipelineGeometrySizeMetrics {
+  reference_count: number;
+  matched_count: number;
+  mean_iou?: number;
+  median_iou?: number;
+  p10_iou?: number;
+  median_center_shift?: number;
+}
+
+export interface PipelineGeometryMetrics {
+  image_count: number;
+  reference_count: number;
+  prediction_count: number;
+  matched_count: number;
+  semantic_precision?: number;
+  semantic_recall?: number;
+  mean_iou?: number;
+  median_iou?: number;
+  p10_iou?: number;
+  median_center_shift?: number;
+  p90_center_shift?: number;
+  manual_resize_rate?: number;
+  too_loose_rate?: number;
+  too_tight_rate?: number;
+  no_candidate_rate: number;
+  review_rate: number;
+  cost_per_image: string;
+  latency_per_image_ms: number;
+  failure_count: number;
+  failure_classes: Partial<Record<AnnotationFailureClass, number>>;
+  size_buckets: Record<string, PipelineGeometrySizeMetrics>;
+}
+
+export interface PipelineGeometryComparison {
+  baseline: PipelineGeometryMetrics;
+  candidate: PipelineGeometryMetrics;
+  evidence_sufficiency: "insufficient" | "provisional" | "sufficient";
+  independent_holdout: boolean;
+  recommendation:
+    | "recommend_candidate"
+    | "do_not_recommend"
+    | "insufficient_evidence";
+  reasons: string[];
+  regressions: string[];
+}
+
+export interface PipelineImprovementSession {
+  schema_version: number;
+  id: string;
+  project_id: string;
+  baseline_workflow_id: string;
+  baseline_workflow_version: number;
+  target_task_id: string;
+  target_label: string;
+  diagnosis: {
+    primary_failure_class: AnnotationFailureClass;
+    evidence_run_ids: string[];
+    evidence_statements: string[];
+    semantic_target_correct_count: number;
+    geometry_correction_count: number;
+    provider_failure_count: number;
+    no_candidate_count: number;
+  };
+  evaluation_run_ids: string[];
+  baseline_draft_id: string;
+  candidate_draft_id: string;
+  diff: PipelineDraftDiff;
+  validation: WorkflowValidationReport;
+  comparison?: PipelineGeometryComparison;
+  status:
+    | "draft_created"
+    | "compared"
+    | "awaiting_human_approval"
+    | "applied_to_draft";
+  setup_requirements: string[];
+  applied_draft_id?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface WorkflowVersionComparison {

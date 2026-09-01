@@ -11,6 +11,8 @@ import {
   pipelineNodeParameters,
   guidedPipelineStepGroups,
   guidedWorkflowNodes,
+  geometrySemanticsLabel,
+  scoreSemanticsLabel,
   workflowNodeTitle,
 } from "./App";
 import type { Annotation, PipelineArtifact, PipelineStep } from "./types";
@@ -205,6 +207,34 @@ describe("Label Pipeline product helpers", () => {
         score: { value: undefined, semantics: "not_provided" },
       }],
     });
+  });
+
+  it("keeps semantic score and geometry verification separate", () => {
+    const detection: PipelineArtifact = {
+      kind: "detection_set",
+      artifact: {
+        detections: [{
+          detection_id: "vlm-ball",
+          project_label: "ball",
+          bbox: [0.4, 0.4, 0.2, 0.2],
+          score: { value: 0.99, semantics: "semantic_confidence" },
+          source_model_id: "qwen-vlm",
+          source_capability: "vision_language",
+          geometry_semantics: "coarse_hypothesis",
+        }],
+      },
+    };
+    const mark = artifactDetectionMarks([detection])[0];
+    expect(mark).toMatchObject({
+      confidence: 0.99,
+      scoreSemantics: "semantic_confidence",
+      geometrySemantics: "coarse_hypothesis",
+      calibrationStatus: "uncalibrated",
+    });
+    expect(scoreSemanticsLabel(mark.scoreSemantics)).toBe("Semantic confidence");
+    expect(geometrySemanticsLabel(mark.geometrySemantics)).toBe(
+      "Uncalibrated coarse proposal",
+    );
   });
 
   it("keeps every detector box and agreement metric in Candidate Cluster previews", () => {

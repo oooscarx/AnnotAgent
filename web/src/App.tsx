@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
+import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import {
   PROVIDER_PRESETS,
   isEnvironmentVariableName,
@@ -50,6 +51,7 @@ import type {
   ProviderProbeUsage,
   ProjectModelBinding,
   ModelBindingRole,
+  ModelCapabilityQualityContract,
   GlobalModelDefaults,
   LegacyRegistryImportPreview,
   ExportReadiness,
@@ -514,6 +516,7 @@ export function App() {
         {loaded && route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
             projects={projects}
+            runs={runs}
             activeProjectId={projectId}
             onActivate={(id) =>
               navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`)
@@ -1001,10 +1004,14 @@ function BuildTestPublish({
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const [startingRun, setStartingRun] = useState(false);
-  const load = () => api.workflowDrafts(project.id).then((value) => {
+  const load = (selectFallback = true) => api.workflowDrafts(project.id).then((value) => {
     setDrafts(value.drafts);
-    const visible = value.drafts.filter((draft) => draft.status !== "archived");
-    setDraftId((current) => visible.some((draft) => draft.id === current) ? current : (visible[0]?.id ?? ""));
+    const visible = value.drafts.filter(
+      (draft) => draft.status !== "archived" && draft.status !== "published",
+    );
+    setDraftId((current) => visible.some((draft) => draft.id === current)
+      ? current
+      : selectFallback ? (visible[0]?.id ?? "") : "");
   });
   useEffect(() => {
     void Promise.all([load(), api.images(project.id).then((value) => setImages(value.images))])
@@ -1048,7 +1055,7 @@ function BuildTestPublish({
         setRestoredAt(undefined);
         setStaleReport(false);
       })
-      .then(load)
+      .then(() => load())
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
@@ -1058,7 +1065,7 @@ function BuildTestPublish({
     void api.publishWorkflow(draftId)
       .then((version) => {
         setActivated(version);
-        return Promise.all([onRefresh(), load()]);
+        return Promise.all([onRefresh(), load(false)]);
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
@@ -1097,7 +1104,7 @@ function BuildTestPublish({
       .finally(() => setStartingRun(false));
   };
   const draftControls = <>
-    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setRestoredAt(undefined); setStaleReport(false); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name}{draft.status === "published" ? " · Activated" : ""}</option>)}</select>
+    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setRestoredAt(undefined); setStaleReport(false); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived" && draft.status !== "published").map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
     <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
     <button className={!report ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated}>{busy ? "Testing…" : isActivated ? "Activated" : "Test samples"}</button>
   </>;
@@ -1742,6 +1749,7 @@ function ProjectPage({
           {guidance.secondary_actions.slice(0, 2).map((action) => (
             <button key={`${action.kind}:${action.destination}`} disabled={!action.enabled} title={action.disabled_reason} onClick={() => runGuidedAction(action)}>{action.label}</button>
           ))}
+          {project.available_workflow_versions.some((workflow) => workflow.status === "published") && <button onClick={onOpenWorkflows}>Improve automation</button>}
         </div>
         {guidance.blockers.length > 0 && <div className="guidance-blockers" aria-label="Project blockers">
           {guidance.blockers.map((blocker) => <article key={blocker.code}>
@@ -1802,7 +1810,7 @@ function ProjectPage({
                 title="No active Run"
                 detail="Run every image with the selected immutable Workflow Version."
               />
-              {selectedPublishedWorkflow && <button className="primary" disabled={starting} onClick={startBatch}>{starting ? "Starting…" : "Start full Run"}</button>}
+              {selectedPublishedWorkflow && <button disabled={starting} onClick={startBatch}>{starting ? "Starting…" : "Start full Run"}</button>}
             </div>
           )}
         </Panel>
@@ -2463,6 +2471,7 @@ function InlineProviderSetup({
 
 function WorkflowsPage({
   projects,
+  runs,
   activeProjectId,
   onActivate,
   onRefresh,
@@ -2474,6 +2483,7 @@ function WorkflowsPage({
   onError,
 }: {
   projects: ProjectSummary[];
+  runs: HistoryRun[];
   activeProjectId: string;
   onActivate: (id: string) => void;
   onRefresh: () => Promise<void>;
@@ -2703,6 +2713,18 @@ function WorkflowsPage({
       window.clearInterval(timer);
     };
   }, [advisorRunning, activeProjectId]);
+  useEffect(() => {
+    if (!draft) return;
+    let cancelled = false;
+    void api.workflowSampleTest(draft.id)
+      .then(({ sample_test: sampleTest, current }) => {
+        if (!cancelled) setReport(current ? sampleTest?.report : undefined);
+      })
+      .catch(() => {
+        if (!cancelled) setReport(undefined);
+      });
+    return () => { cancelled = true; };
+  }, [draft?.id, draft?.updated_at]);
   const finish = (promise: Promise<unknown>) => {
     setBusy(true);
     void promise
@@ -2917,6 +2939,15 @@ function WorkflowsPage({
         Number(selected.workflow.version),
       ),
     );
+  const createSafeDraft = () => {
+    if (!selected) return onError("Select a published Workflow Version first.");
+    finish(
+      api.createGeometrySafeDraft(
+        selected.workflow.workflow_id,
+        Number(selected.workflow.version),
+      ),
+    );
+  };
   const publishedEntries = entries.filter(({ project, workflow }) =>
     project.id === activeProjectId && workflow.source.startsWith("published draft"),
   );
@@ -3013,6 +3044,17 @@ function WorkflowsPage({
     });
   const immutable =
     draft?.status === "published" || draft?.status === "archived";
+  const geometryBlockingCodes = new Set([
+    "uncalibrated_geometry_auto_commit",
+    "semantic_score_used_as_geometry_evidence",
+    "geometry_acceptance_path_missing",
+    "geometry_calibration_missing",
+    "geometry_calibration_stale",
+    "unsafe_legacy_workflow",
+  ]);
+  const geometryBlockingIssues = report?.validation.issues.filter(
+    (issue) => issue.blocking && geometryBlockingCodes.has(issue.code),
+  ) ?? [];
   if (activeProject && !buildSummary)
     return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" onNavigate={onNavigate} /><div className="loading-banner" role="status">Loading Build readiness…</div></section>;
   if (buildSummary && !buildStepAllowed(buildSummary.guidance, "pipeline"))
@@ -3255,10 +3297,27 @@ function WorkflowsPage({
             {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
             {!immutable && <button onClick={() => onNavigate("test")} disabled={busy || !draft}>Open Test &amp; Activate</button>}
             {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
+            <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>Improve from evidence</button>
             {!immutable && draft && <details className="action-menu"><summary>More</summary><div><button onClick={archive} disabled={busy}>Archive</button></div></details>}
           </div>
         </section>
       </div>
+      {geometryBlockingIssues.length > 0 && <section className="geometry-safety-blocker" role="alert">
+        <div>
+          <span className="eyebrow">Publication blocked</span>
+          <h2>Automatic acceptance is unsafe</h2>
+          <p>The selected model score describes semantic or relative confidence, but the bounding boxes do not have valid geometry evidence for this Project.</p>
+          <ul>{geometryBlockingIssues.map((issue) => <li key={`${issue.code}:${issue.path}`}><strong>{issue.code.replaceAll("_", " ")}</strong><span>{issue.message}</span></li>)}</ul>
+        </div>
+        <div className="geometry-repair-actions">
+          <button className="primary" disabled={busy || !selected?.workflow.source.startsWith("published draft")} onClick={createSafeDraft}>Require human review</button>
+          <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>Add compatible refiner</button>
+          <button onClick={() => {
+            document.querySelector<HTMLDetailsElement>(".geometry-calibration-panel")?.setAttribute("open", "");
+            document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" });
+          }}>Run geometry calibration</button>
+        </div>
+      </section>}
       {(advisorRunning || (activeAgentSession && !advisorProposal)) && (
         <Panel title="Agent progress" eyebrow={advisorRunning ? "Live persisted Pipeline Builder session" : "Recovered persisted Pipeline Builder session"}>
           {activeAgentSession ? (
@@ -3349,6 +3408,19 @@ function WorkflowsPage({
           </div>
         </Panel>
       )}
+      {activeProject && <ImproveAutomationPanel
+        project={activeProject}
+        runs={runs}
+        workflows={publishedEntries.map(({ workflow }) => workflow)}
+        onDraftApplied={(draftId) => {
+          void api.workflowDrafts(activeProject.id).then(({ drafts: latest }) => {
+            const applied = latest.find((candidate) => candidate.id === draftId);
+            if (applied) setDraft(applied);
+            return refreshDrafts();
+          }).catch((error: Error) => onError(error.message));
+        }}
+        onError={onError}
+      />}
       <details className="panel version-history">
         <summary>Version History</summary>
       <div className="toolbar-panel">
@@ -4319,15 +4391,51 @@ function LabelPipelineEditor({
       review_gate: { required: false, allow_manual_override: false },
       resources: {},
     };
-    const commitWithCrop: PipelineStep = {
-      ...commit,
+    const gateOutputPort = Object.keys(gate.outputs)[0];
+    const gateOutputType = Object.values(gate.outputs)[0];
+    const existingReview = selected.steps.find(
+      (step) => step.kind === "human_review" || step.node_type === "core.human_review",
+    );
+    const geometryReview: PipelineStep = {
+      ...(existingReview ?? {} as PipelineStep),
+      id: existingReview?.id ?? `${selected.id}.geometry_review`,
+      node_type: existingReview?.node_type ?? "core.human_review",
+      kind: "human_review",
       inputs: {
-        ...commit.inputs,
+        candidates: {
+          source: "step",
+          step_id: gate.id,
+          port: gateOutputPort,
+          artifact_type: gateOutputType,
+        },
         preview_crops: {
           source: "step",
           step_id: crop.id,
           port: "crops",
           artifact_type: "crop_set",
+        },
+      },
+      outputs: existingReview?.outputs ?? { candidates: gateOutputType },
+      parameters: {
+        reason: "Uncalibrated VLM box requires a geometry check",
+      },
+      validators: [],
+      refiners: [],
+      retry_policy: { max_attempts: 1 },
+      review_gate: { required: true, allow_manual_override: false },
+      resources: {},
+    };
+    const commitWithCrop: PipelineStep = {
+      ...commit,
+      inputs: {
+        ...Object.fromEntries(
+          Object.entries(commit.inputs).filter(([port]) => port !== "preview_crops"),
+        ),
+        candidates: {
+          source: "step",
+          step_id: geometryReview.id,
+          port: Object.keys(geometryReview.outputs)[0],
+          artifact_type: Object.values(geometryReview.outputs)[0],
         },
       },
     };
@@ -4348,6 +4456,7 @@ function LabelPipelineEditor({
                   (step) =>
                     step.id !== gate.id &&
                     step.id !== commit.id &&
+                    step.id !== geometryReview.id &&
                     step.node_type !== "core.crop" &&
                     step.node_type !== "core.artifact_cache" &&
                     step.node_type !== "classification.classify" &&
@@ -4355,6 +4464,7 @@ function LabelPipelineEditor({
                 ),
                 crop,
                 gate,
+                geometryReview,
                 commitWithCrop,
               ],
             }
@@ -5504,10 +5614,44 @@ function ModelRegistryPage({
       <div className="registry-filter-bar"><label>Provider<select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}><option value="all">All Providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></label><label>Capability<select value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}><option value="all">All capabilities</option>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <option key={capability.id} value={capability.id}>{capability.label}</option>)}</select></label><label>Health<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="available">Available</option><option value="unverified">Unverified</option><option value="disabled">Disabled</option><option value="unavailable">Unavailable</option></select></label><label>Input modality<select value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}><option value="all">All modalities</option><option value="text">Text</option><option value="image">Image</option><option value="video">Video</option></select></label><label>Enabled<select value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">Enabled and disabled</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Pricing<select value={costFilter} onChange={(event) => setCostFilter(event.target.value)}><option value="all">Any pricing status</option><option value="configured">Configured</option><option value="unknown">Unknown</option></select></label></div>
       {filtered.length ? <div className="registry-card-grid">{filtered.map((model) => {
         const provider = providers.find((candidate) => candidate.id === model.provider_id);
-        return <article className="registry-model-card" key={model.id}><header><span><strong>{model.display_name}</strong><small>{provider?.display_name ?? "Missing Provider"} · revision {model.revision}</small></span><Status status={model.status} /></header><code>{model.remote_model_id}</code><div className="tag-group">{model.input_modalities.map((value) => <span key={value}>{value} input</span>)}{model.task_capabilities.map((value) => <span key={value}>{value.replaceAll("_", " ")}</span>)}</div><dl className="registry-facts"><div><dt>Protocol</dt><dd>{[model.protocol_features.tool_calls && "tools", model.protocol_features.structured_output && "structured", model.protocol_features.json_schema && "JSON Schema"].filter(Boolean).join(" · ") || "basic"}</dd></div><div><dt>Capability source</dt><dd>{model.capability_source.replaceAll("_", " ")}</dd></div><div><dt>Pricing</dt><dd>{model.pricing.source === "unknown" ? "Unknown" : `${model.pricing.currency} · ${model.pricing.source.replaceAll("_", " ")}`}</dd></div><div><dt>Binding lock</dt><dd>{model.locked ? "Locked" : "Editable"}</dd></div></dl><div className="registry-card-actions"><button disabled={busy === model.id} onClick={() => edit(model)}>Edit</button><button disabled={busy === model.id || !provider?.enabled} onClick={() => probe(model)}>{busy === model.id ? "Working…" : "Run billable test"}</button><button disabled={busy === model.id} onClick={() => change(model, { enabled: !model.enabled })}>{model.enabled ? "Disable" : "Enable"}</button><button disabled={busy === model.id} onClick={() => change(model, { locked: !model.locked })}>{model.locked ? "Unlock" : "Lock"}</button></div><details className="advanced-settings"><summary>Revision and destructive actions</summary><pre>{JSON.stringify({ limits: model.limits, generation_defaults: model.generation_defaults, pricing: model.pricing }, null, 2)}</pre><button className="danger-button" disabled={busy === model.id} onClick={() => { if (window.confirm(`Delete ${model.display_name}? Referenced profiles cannot be deleted.`)) { setBusy(model.id); void api.deleteModelProfile(model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy("")); } }}>Delete Model Profile</button></details></article>;
+        return <article className="registry-model-card" key={model.id}><header><span><strong>{model.display_name}</strong><small>{provider?.display_name ?? "Missing Provider"} · revision {model.revision}</small></span><Status status={model.status} /></header><code>{model.remote_model_id}</code><div className="tag-group">{model.input_modalities.map((value) => <span key={value}>{value} input</span>)}{model.task_capabilities.map((value) => <span key={value}>{value.replaceAll("_", " ")}</span>)}</div><dl className="registry-facts"><div><dt>Protocol</dt><dd>{[model.protocol_features.tool_calls && "tools", model.protocol_features.structured_output && "structured", model.protocol_features.json_schema && "JSON Schema"].filter(Boolean).join(" · ") || "basic"}</dd></div><div><dt>Capability source</dt><dd>{model.capability_source.replaceAll("_", " ")}</dd></div><div><dt>Pricing</dt><dd>{model.pricing.source === "unknown" ? "Unknown" : `${model.pricing.currency} · ${model.pricing.source.replaceAll("_", " ")}`}</dd></div><div><dt>Binding lock</dt><dd>{model.locked ? "Locked" : "Editable"}</dd></div></dl><ModelQualityContracts modelId={model.id} onError={onError} /><div className="registry-card-actions"><button disabled={busy === model.id} onClick={() => edit(model)}>Edit</button><button disabled={busy === model.id || !provider?.enabled} onClick={() => probe(model)}>{busy === model.id ? "Working…" : "Run billable test"}</button><button disabled={busy === model.id} onClick={() => change(model, { enabled: !model.enabled })}>{model.enabled ? "Disable" : "Enable"}</button><button disabled={busy === model.id} onClick={() => change(model, { locked: !model.locked })}>{model.locked ? "Unlock" : "Lock"}</button></div><details className="advanced-settings"><summary>Revision and destructive actions</summary><pre>{JSON.stringify({ limits: model.limits, generation_defaults: model.generation_defaults, pricing: model.pricing }, null, 2)}</pre><button className="danger-button" disabled={busy === model.id} onClick={() => { if (window.confirm(`Delete ${model.display_name}? Referenced profiles cannot be deleted.`)) { setBusy(model.id); void api.deleteModelProfile(model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy("")); } }}>Delete Model Profile</button></details></article>;
       })}</div> : <Empty title="No matching Model Profiles" detail="Change the filters or add a manually declared model." />}
     </section>
   );
+}
+
+function ModelQualityContracts({
+  modelId,
+  onError,
+}: {
+  modelId: string;
+  onError: (message: string) => void;
+}) {
+  const [contracts, setContracts] = useState<ModelCapabilityQualityContract[]>();
+  const [loading, setLoading] = useState(false);
+  const load = () => {
+    if (contracts || loading) return;
+    setLoading(true);
+    void api.modelQualityContracts(modelId)
+      .then((result) => setContracts(result.contracts))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setLoading(false));
+  };
+  return <details className="model-quality-contracts" onToggle={(event) => event.currentTarget.open && load()}>
+    <summary><span><strong>Score and box quality</strong><small>Operation-scoped safety contract</small></span><b>{contracts?.length ?? "View"}</b></summary>
+    {loading && <p>Loading quality contracts…</p>}
+    {contracts?.map((contract) => <article key={`${contract.operation}:${contract.capability}`}>
+      <header><strong>{contract.operation.replaceAll("_", " ")}</strong><small>Model revision {contract.model_profile_revision}</small></header>
+      <dl>
+        <div><dt>Geometry output</dt><dd>{geometrySemanticsLabel(contract.output_geometry)}</dd></div>
+        <div><dt>Score meaning</dt><dd>{scoreSemanticsLabel(contract.score_semantics)}</dd></div>
+        <div><dt>Automatic acceptance</dt><dd>{contract.auto_accept_eligibility === "never_from_score_alone" ? "Never from score alone" : contract.auto_accept_eligibility.replaceAll("_", " ")}</dd></div>
+        <div><dt>Evidence</dt><dd>{contract.evidence_source.replaceAll("_", " ")}</dd></div>
+      </dl>
+      {contract.requires_geometry_verification && <p>Project calibration, measured refinement, or Human Review is required before box auto-acceptance.</p>}
+    </article>)}
+    {contracts && !contracts.length && <p>This Model Profile has no geometric operation contract.</p>}
+  </details>;
 }
 
 function VisionWorkersRegistryPage({
@@ -6021,6 +6165,7 @@ function RunDetailWorkspace({
       <div className="toolbar-panel run-detail-header">
         {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>}
         <div className="button-row">
+          {project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Improve automation</button>}
           {runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
           {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button>}
           {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
@@ -6216,8 +6361,76 @@ type ArtifactMark = ArtifactRect & {
   parentArtifact?: string;
   sourceNode?: string;
   evidence: DetectionEvidenceDto[];
+  scoreSemantics?: string;
+  geometrySemantics?: string;
+  calibrationStatus?: string;
+  geometryReportId?: string;
+  geometryIssues?: string[];
   agreement?: "single_source" | "geometry_conflict" | "label_conflict" | { multi_source_agreement: { minimum_iou: number; mean_iou: number } };
 };
+
+export function geometrySemanticsLabel(value?: string): string {
+  const labels: Record<string, string> = {
+    not_applicable: "Not applicable",
+    coarse_hypothesis: "Uncalibrated coarse proposal",
+    predicted_geometry: "Predicted box",
+    refined_geometry: "Refined by prompted segmentation",
+    mask_refined_geometry: "Refined by prompted segmentation",
+    calibrated_geometry: "Project-calibrated geometry",
+    human_verified: "Human-verified geometry",
+  };
+  return value ? labels[value] ?? value.replaceAll("_", " ") : "Geometry source not recorded";
+}
+
+export function scoreSemanticsLabel(value?: string): string {
+  const labels: Record<string, string> = {
+    semantic_confidence: "Semantic confidence",
+    detection_confidence: "Detection confidence",
+    calibrated_probability: "Calibrated probability",
+    relative_confidence: "Relative model score",
+    ranking_score: "Ranking score",
+    not_provided: "Model score",
+    unknown: "Model score",
+  };
+  return value ? labels[value] ?? value.replaceAll("_", " ") : "Model score";
+}
+
+function geometryStateFromDetection(
+  detection: Record<string, unknown>,
+  evidence: DetectionEvidenceDto[],
+): Pick<ArtifactMark, "scoreSemantics" | "geometrySemantics" | "calibrationStatus" | "geometryReportId" | "geometryIssues"> {
+  const quality = detection.quality && typeof detection.quality === "object"
+    ? detection.quality as Record<string, unknown>
+    : undefined;
+  const geometry = quality?.geometry && typeof quality.geometry === "object"
+    ? quality.geometry as Record<string, unknown>
+    : undefined;
+  const sourceCapability = evidence[0]?.source_capability ?? detection.source_capability;
+  const conservativeGeometry = sourceCapability === "vision_language"
+    ? "coarse_hypothesis"
+    : typeof sourceCapability === "string" && (sourceCapability.includes("detect") || sourceCapability.includes("ground"))
+      ? "predicted_geometry"
+      : undefined;
+  return {
+    scoreSemantics: typeof (detection.score as Record<string, unknown> | undefined)?.semantics === "string"
+      ? String((detection.score as Record<string, unknown>).semantics)
+      : evidence[0]?.score.semantics,
+    geometrySemantics: typeof geometry?.semantics === "string"
+      ? geometry.semantics
+      : typeof detection.geometry_semantics === "string"
+        ? detection.geometry_semantics
+        : conservativeGeometry,
+    calibrationStatus: typeof geometry?.calibration_status === "string"
+      ? geometry.calibration_status
+      : typeof detection.calibration_status === "string"
+        ? detection.calibration_status
+        : "uncalibrated",
+    geometryReportId: typeof geometry?.report_id === "string" ? geometry.report_id : undefined,
+    geometryIssues: Array.isArray(detection.geometry_issue_codes)
+      ? detection.geometry_issue_codes.filter((value): value is string => typeof value === "string")
+      : [],
+  };
+}
 
 function artifactVisualContext(project?: ProjectSummary) {
   const schemaVisuals: Record<string, LabelVisualMapping> = {};
@@ -6313,8 +6526,8 @@ function artifactMarkSummary(mark: ArtifactMark): string {
   const source = sources[0];
   if (!source) return mark.confidence === undefined ? "Bounding box" : `Bounding box · ${Math.round(mark.confidence * 100)}%`;
   return source.score.value == null
-    ? `${sourceModelLabel(source.source_model_id)} · confidence not provided`
-    : `${sourceModelLabel(source.source_model_id)} · ${source.score.value.toFixed(2)}`;
+    ? `${sourceModelLabel(source.source_model_id)} · score not provided`
+    : `${sourceModelLabel(source.source_model_id)} · ${scoreSemanticsLabel(source.score.semantics)} ${source.score.value.toFixed(2)}`;
 }
 
 export function artifactDetectionMarks(
@@ -6362,6 +6575,7 @@ export function artifactDetectionMarks(
           source_capability: typeof detection.source_capability === "string" ? detection.source_capability : "object_detection",
         });
       }
+      const geometryState = geometryStateFromDetection(detection, evidence);
       return [{
         ...rect,
         id: typeof detection.detection_id === "string"
@@ -6375,6 +6589,7 @@ export function artifactDetectionMarks(
         parentArtifact: typeof reference?.artifact_id === "string" ? reference.artifact_id : undefined,
         sourceNode: typeof reference?.source_node === "string" ? reference.source_node : undefined,
         evidence,
+        ...geometryState,
         agreement: clusterSet ? detection.agreement as ArtifactMark["agreement"] : undefined,
       }];
     });
@@ -6433,6 +6648,17 @@ export function annotationDetectionMarks(
       color: markColor(label, project),
       sourceNode: "committed annotation",
       evidence: [],
+      scoreSemantics: typeof annotation.provenance.score_semantics === "string"
+        ? annotation.provenance.score_semantics
+        : annotation.confidence === undefined ? "not_provided" : "unknown",
+      geometrySemantics: annotation.review_status === "human_accepted" || annotation.source === "human"
+        ? "human_verified"
+        : typeof annotation.provenance.geometry_semantics === "string"
+          ? annotation.provenance.geometry_semantics
+          : undefined,
+      calibrationStatus: typeof annotation.provenance.geometry_calibration_status === "string"
+        ? annotation.provenance.geometry_calibration_status
+        : annotation.review_status === "human_accepted" ? "passed" : "uncalibrated",
     }];
   });
 }
@@ -6451,6 +6677,11 @@ function uniqueMarks(marks: ArtifactMark[]): ArtifactMark[] {
     if (!existing) return [...items, mark];
     existing.evidence = uniqueEvidence([...existing.evidence, ...mark.evidence]);
     existing.agreement = existing.agreement ?? mark.agreement;
+    existing.scoreSemantics ??= mark.scoreSemantics;
+    existing.geometrySemantics ??= mark.geometrySemantics;
+    existing.calibrationStatus ??= mark.calibrationStatus;
+    existing.geometryReportId ??= mark.geometryReportId;
+    existing.geometryIssues = [...new Set([...(existing.geometryIssues ?? []), ...(mark.geometryIssues ?? [])])];
     return items;
   }, []);
 }
@@ -6496,11 +6727,17 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
       </div>
       {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
       {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>{artifactMarkSummary(item)}</small></span></button></li>)}</ul>}
+      {selectedMark && <section className="geometry-quality-facts" aria-label="Semantic and geometry quality">
+        <article><span>{scoreSemanticsLabel(selectedMark.scoreSemantics)}</span><strong>{selectedMark.confidence === undefined ? "Not provided" : selectedMark.confidence.toFixed(2)}</strong><small>This score describes model belief, not box geometry.</small></article>
+        <article><span>Box quality</span><strong>{geometrySemanticsLabel(selectedMark.geometrySemantics)}</strong><small>A model score is not box IoU or tightness.</small></article>
+        <article className={selectedMark.calibrationStatus === "passed" || selectedMark.geometrySemantics === "human_verified" ? "verified" : "needs-check"}><span>Geometry verification</span><strong>{selectedMark.geometrySemantics === "human_verified" ? "Verified by a reviewer" : selectedMark.calibrationStatus === "passed" ? "Project calibration passed" : "Not performed"}</strong><small>{selectedMark.geometryReportId ? `Quality report ${selectedMark.geometryReportId.slice(0, 8)}` : `${(selectedMark.calibrationStatus ?? "uncalibrated").replaceAll("_", " ")} · review or measured evidence required`}</small></article>
+        {selectedMark.geometryIssues?.length ? <article className="needs-check"><span>Geometry issues</span><strong>{selectedMark.geometryIssues.map((issue) => issue.replaceAll("_", " ")).join(", ")}</strong></article> : null}
+      </section>}
       {selectedMark?.evidence.length ? <section className="evidence-inspector" aria-label="Detection evidence inspector">
         <header><span className="eyebrow">Evidence inspector</span><strong>{artifactMarkSummary(selectedMark)}</strong></header>
         <div>{uniqueEvidence(selectedMark.evidence).map((item) => <article key={evidenceIdentity(item)}>
           <span><strong>{sourceModelLabel(item.source_model_id)}</strong><small>{item.source_capability.replaceAll("_", " ")}</small></span>
-          <span><strong>{item.score.value == null ? "No confidence" : item.score.value.toFixed(2)}</strong><small>{item.score.semantics.replaceAll("_", " ")}</small></span>
+          <span><strong>{item.score.value == null ? "Score not provided" : item.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(item.score.semantics)}</small></span>
           <code>[{item.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
           {(item.query_id || item.model_label) && <small>{item.query_id ? `Query · ${item.query_id}` : ""}{item.query_id && item.model_label ? " · " : ""}{item.model_label ? `Model label · ${item.model_label}` : ""}</small>}
         </article>)}</div>
@@ -6907,6 +7144,22 @@ function ReviewPage({
       String(collapsed),
     );
   };
+  const reviewScoreSemantics = selected?.detection_evidence[0]?.score.semantics ??
+    (typeof selected?.annotation.provenance.score_semantics === "string"
+      ? selected.annotation.provenance.score_semantics
+      : "unknown");
+  const reviewGeometrySemantics = selected?.annotation.review_status === "human_accepted" || selected?.annotation.source === "human"
+    ? "human_verified"
+    : typeof selected?.annotation.provenance.geometry_semantics === "string"
+      ? selected.annotation.provenance.geometry_semantics
+      : selected?.detection_evidence.some((evidence) => evidence.source_capability === "vision_language")
+        ? "coarse_hypothesis"
+        : selected?.detection_evidence.length
+          ? "predicted_geometry"
+          : undefined;
+  const reviewCalibrationStatus = typeof selected?.annotation.provenance.geometry_calibration_status === "string"
+    ? selected.annotation.provenance.geometry_calibration_status
+    : reviewGeometrySemantics === "human_verified" ? "passed" : "uncalibrated";
   return (
     <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <aside className="review-queue panel">
@@ -7127,7 +7380,9 @@ function ReviewPage({
               {selected.review_explanation?.details.length ? <ul>{selected.review_explanation.details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
             </div>
             <dl className="review-essential-facts">
-              <div><dt>Confidence</dt><dd>{(selected.confidence ?? draft.confidence) === undefined ? "Not provided" : `${Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%`}</dd></div>
+              <div><dt>{scoreSemanticsLabel(reviewScoreSemantics)}</dt><dd>{(selected.confidence ?? draft.confidence) === undefined ? "Not provided" : `${Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%`}</dd></div>
+              <div><dt>Box quality</dt><dd>{geometrySemanticsLabel(reviewGeometrySemantics)}</dd></div>
+              <div><dt>Geometry verification</dt><dd>{reviewGeometrySemantics === "human_verified" ? "Human verified" : reviewCalibrationStatus === "passed" ? "Project calibration passed" : "Needs geometry check"}</dd></div>
               <div><dt>Source Run</dt><dd>{selected.run_id.slice(0, 8)}</dd></div>
               <div><dt>Automation Version</dt><dd>{selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`}</dd></div>
               <div><dt>Source Step</dt><dd>{selected.source_node ?? "Unknown"}</dd></div>
@@ -7136,13 +7391,14 @@ function ReviewPage({
               <header><span className="eyebrow">Source evidence</span><strong>{uniqueEvidence(selected.detection_evidence).length} detector result{uniqueEvidence(selected.detection_evidence).length === 1 ? "" : "s"}</strong></header>
               <div>{uniqueEvidence(selected.detection_evidence).map((evidence) => <article key={evidenceIdentity(evidence)}>
                 <span><strong>{sourceModelLabel(evidence.source_model_id)}</strong><small>{evidence.source_capability.replaceAll("_", " ")}</small></span>
-                <span><strong>{evidence.score.value == null ? "Confidence not provided" : evidence.score.value.toFixed(2)}</strong><small>{evidence.score.semantics.replaceAll("_", " ")}</small></span>
+                <span><strong>{evidence.score.value == null ? "Score not provided" : evidence.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(evidence.score.semantics)}</small></span>
                 <code>[{evidence.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
                 <button onClick={() => useEvidenceBox(evidence)}>Use {sourceModelLabel(evidence.source_model_id)} box</button>
               </article>)}</div>
               {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
             </section> : null}
             <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+            {reviewProject && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>Improve automation</button>}
             {editing && <section className="review-edit-details" aria-label="Annotation edit details">
               <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
               <label>
@@ -7162,7 +7418,7 @@ function ReviewPage({
               </label>
               {hasUnsavedAnnotationChanges && <div className="correction-impact" role="status">
                 <strong>Correction impact</strong>
-                <span>This correction will make similar candidates more likely to be reviewed.</span>
+                <span>This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.</span>
               </div>
               }
             </section>}

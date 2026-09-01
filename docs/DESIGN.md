@@ -88,4 +88,13 @@ Canonical sources live in `design/annotagent-visual-system/`. Vite delivery copi
 - A configured workspace is the local security boundary.
 - Folder import is controlled copying; arbitrary external reads are not exposed over HTTP.
 - OpenAI-compatible Chat Completions is the production network protocol in this release.
-- Mock mode is the authoritative offline demo and CI fallback.
+- Deterministic protocol fixtures are test-only evidence for offline CI; product-generated runnable
+  Drafts never bind Mock Providers or present fixture output as live model inference.
+
+## Geometry safety boundary
+
+Model operation metadata declares score and geometry semantics, Project policy declares required
+quality, Rust validation blocks unsafe candidate-to-Commit paths, and reviewed Dry Runs supply
+measured evidence. The GUI projects those same persisted contracts as Model score, Box quality and
+Geometry verification. Improve Automation patches an immutable baseline and requires a separate
+holdout comparison plus human-selected Draft application; publication remains outside the Agent.

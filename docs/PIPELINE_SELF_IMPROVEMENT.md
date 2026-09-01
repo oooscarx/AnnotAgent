@@ -54,3 +54,13 @@ selected changes still creates an editable Draft and publication remains a separ
 The Pipeline Builder also exposes the bounded read-only `compare_pipeline_geometry` Tool for a
 persisted session. It cannot publish, start a full Run, access credentials or turn provisional
 evidence into a production recommendation.
+
+## Product workflow
+
+The GUI entry is available from Project Overview, Run Results, Review and the Automation Version.
+Users explicitly select reviewed diagnosis Runs and different evaluation holdout Runs. The session
+shows structured diagnosis, evidence, exact Workflow diff, validation, setup requirements,
+Before/After semantic and geometry metrics, cost, latency, failures, size buckets and evidence
+sufficiency. Applying selected changes creates an editable Draft; Test & Activate remains the only
+publication surface. TUI `/improvements` lists sessions and `/improvements <id>` inspects the same
+persisted comparison without exposing hidden model reasoning.

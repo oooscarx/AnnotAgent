@@ -20,6 +20,11 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
 | 15. Small objects are evaluated separately | verified | Reference pixel area is bucketed using small/medium/large thresholds and each bucket retains sample count, adjustment count, mean IoU and mean center shift. |
 | 16. Generic Project remains domain-neutral | verified | Generic Core/Application workflows pass without RoboCup content. |
+| 17. Product separates semantic and geometry quality | verified | Run, Review and Model Registry UI plus TUI expose declared score semantics, geometry provenance and calibration independently; absent geometry quality is displayed as not measured. |
+| 18. Safety blockers have real repair paths | verified | Browser E2E follows the blocker and Improve Automation destinations; Require Review calls the safe-clone API, calibration uses the persisted API, and no disabled placeholder claims a repair. |
+| 19. Improve Automation remains human-controlled | verified | GUI and TUI expose persisted diagnosis/diff/comparison state; the apply request contains explicit change IDs and produces only an editable Draft. API tests prove no publish call is made. |
+| 20. Crop evidence cannot bypass mandatory Review | verified | VLM detection plus Crop publishes only when CropSet enters Human Review as supporting evidence and reviewed candidates remain the sole Commit input; the browser lineage test executes that exact graph. |
+| 21. Responsive release surface and recovery | verified | All 36 Chromium E2E tests pass, including 390 px layouts, URL/state recovery, Provider management, Review, Replay, Export and Expert Vision registration. |
 
 ## M0 evidence
 
@@ -175,3 +180,35 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 - Release verification passed all 339 active Rust tests and doc tests (one explicitly billable
   smoke ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
   TypeScript, all 41 Web unit tests and the production build.
+
+## M8 evidence
+
+- Run Artifact marks retain `ScoreSemantics`, `GeometrySemantics`, calibration state, report
+  reference and typed geometry issues. The product labels semantic/detection/model scores by their
+  declared meaning and shows box quality as uncalibrated, refined, human-verified or not measured;
+  it does not synthesize IoU or localization confidence.
+- The GUI exposes persisted Project geometry policy and exact-scope calibration creation/report
+  history. The same Automation screen provides real safety repair actions and a complete Improve
+  Automation surface with independent diagnosis and holdout Run selection.
+- The Before/After panel renders precision/recall, median/P10 IoU, median/P90 shift, resize/review
+  rates, failures, cost, latency and small/medium/large buckets. A billable comparison requires an
+  explicit confirmation checkbox; applying selected diff IDs returns an editable Draft and never
+  activates it.
+- Project Overview, Run Results, Review and Published Version all provide an Improve Automation
+  entry. Model cards lazily load operation-scoped quality contracts, while TUI `/geometry` and
+  `/improvements` expose the equivalent persisted facts without hidden reasoning or credentials.
+- The detect-and-crop browser fixture initially exposed a real graph error: CropSet was wired as a
+  Commit side input and bypassed Review. The final graph sends CropSet to Human Review as supporting
+  evidence and sends only its reviewed DetectionSet to Commit; static publication and runtime both
+  pass, and bbox/crop parent selection remains linked.
+- `npm run typecheck`, `npm run test` and `npm run build` passed with 43 Web unit tests. Full
+  `npm run test:e2e` passed all 36 Chromium scenarios, including geometry safety, crop lineage,
+  Review corrections, Model/Provider Registry, Expert Vision/SAM availability states, Replay,
+  Export, responsive layout and URL/state restoration.
+- `cargo fmt --all --check`, strict all-target/all-feature Clippy, all-feature workspace build and
+  `cargo test --workspace --all-features` passed. Rust executed 339 active tests and doc tests; the
+  one billable Provider smoke remains explicitly ignored.
+- A read-only browser smoke check rendered the current Automation/Improve Automation page at
+  390×844 with no horizontal overflow, one primary action and no console error. The already-running
+  port-8787 backend process predates the new geometry endpoints, so its HTML 404 is recorded as a
+  stale-process deployment condition rather than evidence from the current isolated binary.

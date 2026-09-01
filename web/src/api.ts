@@ -46,6 +46,12 @@ import type {
   ModelBindingRole,
   LegacyRegistryImportPreview,
   LegacyRegistryImportReport,
+  GeometryCalibrationReport,
+  GeometryCalibrationView,
+  GeometryQualitySummary,
+  ModelCapabilityQualityContract,
+  PipelineImprovementSession,
+  ProjectGeometryPolicy,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -212,6 +218,14 @@ export const api = {
   modelProfileUsage: (modelId: string) =>
     request<{ model_profile_id: string; active_probes: ProviderProbeUsage[] }>(
       `/api/model-profiles/${encodeURIComponent(modelId)}/usage`,
+    ),
+  modelQualityContracts: (modelId: string) =>
+    request<{
+      model_profile_id: string;
+      model_profile_revision: number;
+      contracts: ModelCapabilityQualityContract[];
+    }>(
+      `/api/model-profiles/${encodeURIComponent(modelId)}/quality-contracts`,
     ),
   dashboard: () => request<DashboardData>("/api/projects"),
   createProject: (id: string, yaml: string) =>
@@ -469,6 +483,76 @@ export const api = {
         right_version: right.version,
       }),
     }),
+  createGeometrySafeDraft: (workflowId: string, version: number) =>
+    request<WorkflowDraft>(
+      `/api/workflows/${encodeURIComponent(workflowId)}/versions/${version}/create-geometry-safe-draft`,
+      { method: "POST" },
+    ),
+  geometryPolicy: (projectId: string) =>
+    request<{ policies: ProjectGeometryPolicy[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/geometry-policy`,
+    ),
+  geometryCalibrations: (projectId: string) =>
+    request<{ calibrations: GeometryCalibrationView[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/geometry-calibrations`,
+    ),
+  createGeometryCalibration: (
+    projectId: string,
+    value: {
+      workflow_id: string;
+      workflow_version: number;
+      node_id: string;
+      task_id: string;
+      label_id?: string;
+      evidence_run_ids: string[];
+    },
+  ) =>
+    request<{ calibration: GeometryCalibrationReport }>(
+      `/api/projects/${encodeURIComponent(projectId)}/geometry-calibrations`,
+      { method: "POST", body: JSON.stringify(value) },
+    ),
+  geometryCorrections: (projectId: string) =>
+    request<{
+      summary: Record<string, unknown>;
+      reports: unknown[];
+      evidence: unknown[];
+    }>(`/api/projects/${encodeURIComponent(projectId)}/geometry-corrections`),
+  runGeometryQuality: (runId: string) =>
+    request<{ summary: GeometryQualitySummary; reports: unknown[]; evidence: unknown[] }>(
+      `/api/runs/${encodeURIComponent(runId)}/geometry-quality`,
+    ),
+  pipelineImprovements: (projectId: string) =>
+    request<{ pipeline_improvements: PipelineImprovementSession[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/pipeline-improvements`,
+    ),
+  createPipelineImprovement: (
+    projectId: string,
+    value: {
+      workflow_id: string;
+      workflow_version: number;
+      target_task_id: string;
+      target_label: string;
+      evidence_run_ids: string[];
+      evaluation_run_ids: string[];
+    },
+  ) =>
+    request<PipelineImprovementSession>(
+      `/api/projects/${encodeURIComponent(projectId)}/pipeline-improvements`,
+      { method: "POST", body: JSON.stringify(value) },
+    ),
+  comparePipelineImprovement: (improvementId: string) =>
+    request<PipelineImprovementSession>(
+      `/api/pipeline-improvements/${encodeURIComponent(improvementId)}/compare`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+  applyPipelineImprovement: (improvementId: string, selectedChangeIds: string[]) =>
+    request<PipelineImprovementSession>(
+      `/api/pipeline-improvements/${encodeURIComponent(improvementId)}/apply-to-draft`,
+      {
+        method: "POST",
+        body: JSON.stringify({ selected_change_ids: selectedChangeIds }),
+      },
+    ),
   models: () => request<{ models: ModelBinding[] }>("/api/models"),
   testModel: (modelId: string) =>
     request<DetectionWorkerTestResult>(`/api/models/${encodeURIComponent(modelId)}/test`, {

@@ -63,3 +63,13 @@ Server and URL state are authoritative. Refresh restores Project Guidance, Build
 - The full path has no horizontal overflow at 1024 px or 720×450.
 
 See [Project Guidance](PROJECT_GUIDANCE.md), [Guided Project Setup](GUIDED_PROJECT_SETUP.md), [Run and Review UX](RUN_AND_REVIEW_UX.md), and the [offline demo](DEMO_GUIDED_EXPERIENCE.md).
+
+## Geometry-safe guided language
+
+Run Results and Review present three separate facts: model/semantic score, Box quality and Geometry
+verification. Guided Mode says “Needs geometry check”, “Refine box” and “Review uncertain box” rather
+than exposing internal enum names. Automation shows a blocking repair card when an uncalibrated box
+would be accepted from score alone. **Require human review** creates a safe Draft; **Add compatible
+refiner** opens evidence-driven improvement; **Run geometry calibration** opens the exact calibration
+workflow. Expert details retain contract revisions, config hashes, quality reports and Artifact
+lineage.

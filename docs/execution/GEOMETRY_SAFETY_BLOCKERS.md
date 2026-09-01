@@ -18,6 +18,13 @@ correct or approve independent bbox references before objective IoU/calibration 
 No available specialist football detector and weight identity are registered in the active
 workspace. Contract and offline behavior can be tested; live inference cannot be claimed.
 
+## Operational observation
+
+- The process currently bound to port 8787 was started before the M8 API was compiled. The rebuilt
+  frontend can therefore receive an HTML 404 from that old process for a new geometry endpoint.
+  Restarting with the current binary resolves the version skew; isolated current-binary E2E is
+  green. This is not a source-code release blocker.
+
 ## Not blockers
 
 - The Qwen Provider is not required for deterministic contract, static-validation, storage or UI

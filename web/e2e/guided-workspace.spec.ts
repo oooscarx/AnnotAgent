@@ -175,12 +175,14 @@ export:
   const dryRun = await request.post(`/api/workflow-drafts/${draft.id}/dry-run`, {
     data: { image_indices: [0] },
   });
-  expect(dryRun.ok()).toBeTruthy();
-  const dryRunReport = await dryRun.json();
+  const dryRunBody = await dryRun.text();
+  expect(dryRun.ok(), dryRunBody).toBeTruthy();
+  const dryRunReport = JSON.parse(dryRunBody);
   expect(dryRunReport.validation.valid, JSON.stringify(dryRunReport.validation.issues)).toBeTruthy();
   const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
-  expect(published.ok()).toBeTruthy();
-  const version = await published.json();
+  const publishedBody = await published.text();
+  expect(published.ok(), publishedBody).toBeTruthy();
+  const version = JSON.parse(publishedBody);
   const started = await request.post(`/api/projects/${cropProjectId}/runs`, {
     headers: { "idempotency-key": `crop-e2e-${stamp}` },
     data: {
@@ -851,8 +853,8 @@ test("bbox and crop selection stay linked through parent references", async ({ p
   await page.goto(
     `/runs/${fixture!.run.id}?image=${fixture!.inspection.image_index}&node=${encodeURIComponent(cropNodeId)}`,
   );
-  const overlay = page.locator('svg[aria-label="Annotation overlay"]');
-  await expect(overlay.getByRole("button").first()).toBeVisible();
+  const overlay = page.locator(".artifact-image-stage svg");
+  await expect(overlay.locator("g").first()).toBeVisible();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
   const selectedStrokeWidth = await overlay.locator("g.selected rect").first().evaluate((element) =>
     Number.parseFloat(getComputedStyle(element).strokeWidth),
@@ -863,6 +865,31 @@ test("bbox and crop selection stay linked through parent references", async ({ p
   await page.getByRole("button", { name: "Result", exact: true }).click();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
   await page.screenshot({ path: `${screenshots}/03-run-artifact-lineage.png`, fullPage: true });
+});
+
+test("geometry safety is visible from Results through Improve Automation", async ({ page, request }) => {
+  const fixture = await findCropRun(request, cropProjectId);
+  expect(fixture).toBeTruthy();
+  await page.goto(`/runs/${fixture!.run.id}?image=${fixture!.inspection.image_index}`);
+  const quality = page.getByLabel("Semantic and geometry quality");
+  await expect(quality).toBeVisible();
+  await expect(quality.getByText("Box quality", { exact: true })).toBeVisible();
+  await expect(quality.getByText("Geometry verification", { exact: true })).toBeVisible();
+  await expect(quality).toContainText(/uncalibrated|Not performed|Human-verified/i);
+  await page.getByRole("button", { name: "Improve automation" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${cropProjectId}/build/pipeline$`));
+  await expect(page.getByRole("heading", { name: "Improve Automation" })).toBeVisible();
+  await expect(page.getByText("Diagnosis evidence", { exact: true })).toBeVisible();
+  await expect(page.getByText("Independent evaluation holdout", { exact: true })).toBeVisible();
+  await expect(page.getByText("Geometry calibration", { exact: true })).toBeVisible();
+  const policy = await request.get(`/api/projects/${cropProjectId}/geometry-policy`);
+  expect(policy.ok()).toBeTruthy();
+  expect((await policy.json()).policies).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      task_kind: "bounding_box",
+      required_quality: "training_bounding_box",
+    }),
+  ]));
 });
 
 test("generic Project routes contain no RoboCup-specific copy", async ({ page }) => {
@@ -1066,7 +1093,7 @@ export:
   await expect(page.getByText("2 models disagree on location", { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel("Detection evidence inspector")).toContainText("RF-DETR");
   await expect(page.getByLabel("Detection evidence inspector")).toContainText("LocateAnything");
-  await expect(page.getByLabel("Detection evidence inspector")).toContainText("No confidence");
+  await expect(page.getByLabel("Detection evidence inspector")).toContainText("Score not provided");
   await expect(page.getByText("Fallbacks")).toBeVisible();
   await expect(page.getByText("Cache hits")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
@@ -1124,7 +1151,7 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
   const label = page.getByLabel("Label", { exact: true });
   await label.fill("day corrected");
-  await expect(page.getByText("This correction will make similar candidates more likely to be reviewed.")).toBeVisible();
+  await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
 
   await page.reload();
@@ -1133,7 +1160,7 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByLabel("Canvas view", { exact: true })).toHaveValue("before");
   await page.locator("body").press("R");
   await expect(page.getByRole("dialog", { name: "Why is this result incorrect?" })).toBeVisible();
-  await expect(page.getByLabel("Reject reason").locator("option")).toHaveCount(5);
+  await expect(page.getByLabel("Reject reason").locator("option")).toHaveCount(8);
   await expect(page.locator('optgroup[label="Enabled Skill reasons"]')).toHaveCount(0);
   await page.screenshot({ path: `${screenshots}/10-review-reject.png`, fullPage: true });
   await page.getByRole("dialog", { name: "Why is this result incorrect?" }).getByRole("button", { name: "Reject & next" }).click();

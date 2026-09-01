@@ -70,6 +70,25 @@ cargo test -p annotagent-runtime control
 cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_works_over_http
 ```
 
+## R7 — Geometry-safe bbox acceptance and self-improvement
+
+Operation-scoped Model quality contracts separate semantic/detection scores from geometry source and
+calibration. Conservative Project policy and Rust path validation prevent uncalibrated VLM or
+specialist boxes from reaching Commit through score alone. Review revisions generate structured
+geometry evidence; exact calibration can become Passed or Stale; prompted refinement preserves
+Detection → Prompt → Mask → BBox → evaluation lineage.
+
+Improve Automation classifies the failure, patches an immutable baseline, evaluates the candidate on
+different holdout images, exposes robust geometry/semantic/cost/latency regressions and applies only
+human-selected changes to an editable Draft. The Agent cannot publish.
+
+```bash
+cargo test -p annotagent-core geometry
+cargo test -p annotagent-application pipeline_improvement
+cargo test -p annotagent-server geometry
+npm --prefix web test
+```
+
 ## Course-specialized Agent behavior
 
 The course deliverable contains more than a generic chat loop. Three concrete RoboCup Ball

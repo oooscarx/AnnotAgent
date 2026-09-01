@@ -38,3 +38,15 @@
   distribution; Projects should raise the threshold for production datasets.
 - The Qwen-only first-Draft behavior is deterministically verified with a scripted Provider. A
   billable live Provider response is still conditional and cannot weaken Core publication safety.
+- The GUI can create calibration only from already persisted, independently reviewed Run evidence;
+  it does not create or silently approve ground truth. The current RoboCup Ball workspace has too
+  few independent references for the default production threshold.
+- Improve Automation lists terminal Project Runs as selectable evidence. Core still rejects
+  overlapping diagnosis/holdout images, insufficient holdout size and comparisons without accepted
+  references; the GUI cannot override those checks.
+- Real Qwen, prompted-segmentation and specialist accuracy were not measured in M8. Offline
+  fixtures prove contracts, lineage, decisions and failure handling only and are visibly separated
+  from real-model quality claims.
+- A frontend rebuilt while an older `annotagent serve` process remains bound to port 8787 can show
+  an HTML-404 JSON parse error for newly added endpoints. Restart the server with the current binary
+  before manual release testing; isolated E2E already starts the matching binary and passed.

@@ -223,3 +223,19 @@ cargo run -p annotagent -- demo lean-agent-robocup
 ```
 
 Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.
+
+## Geometry-safe detection and improvement
+
+AnnotAgent separates a model's semantic/detection score from measured box quality. VLM boxes are
+uncalibrated coarse proposals by default, so a high semantic score cannot directly authorize a
+training bbox Commit. Safe Pipelines use Human Review, measured prompted refinement, or exact
+Project/model/node calibration.
+
+Run Results and Review show score meaning, box source and geometry verification separately. From
+Project Overview, Run Results, Review or Automation, open **Improve Automation** to diagnose reviewed
+evidence, create a focused Patch Draft, compare it on independent holdout Runs, and apply selected
+changes. AnnotAgent never publishes the result automatically.
+
+Start with [VLM Geometry Safety](docs/VLM_GEOMETRY_SAFETY.md),
+[Geometry Calibration](docs/GEOMETRY_CALIBRATION.md), and
+[Pipeline Self-Improvement](docs/PIPELINE_SELF_IMPROVEMENT.md).

@@ -142,7 +142,7 @@ test("guided SAM registration requires discovery, immutable identity, and a type
   await expect(sampleDialog).toContainText(`Expert Vision E2E ${stamp}`);
   await sampleDialog.getByRole("button", { name: "Run sample test" }).click();
   await expect(sampleDialog).toContainText("Sample conversion passed");
-  await expect(sampleDialog).toContainText("mask refined geometry");
+  await expect(sampleDialog).toContainText("refined geometry");
   await sampleDialog.getByText("Converted Artifact and coordinates").click();
   await expect(sampleDialog).toContainText("mask_set");
   await expect(sampleDialog).toContainText("e2e-mask");

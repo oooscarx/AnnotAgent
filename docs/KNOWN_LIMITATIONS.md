@@ -26,3 +26,10 @@ These are current implementation boundaries, not hidden release claims:
   video, mobile, Tauri packaging, and automatic execution of generated code are outside this Alpha.
 - Native browser 200% zoom remains a manual Release check because the automated Chromium environment can set viewport and motion preferences but cannot prove the browser chrome's native zoom level. The full journey is automated at 1024 px and 720×450, and responsive CSS remains usable under reflow.
 - Complex polygon, mask, and keypoint editing is keyboard-readable and selectable through the structured annotation list, but precise geometry manipulation remains more efficient with a pointer. COCO string RLE remains non-editable as described above.
+- The default improvement recommendation floor is ten independent holdout images and the default
+  calibration threshold is thirty reviewed references. These are conservative Alpha guards, not a
+  universal statistical guarantee; production Projects should set thresholds from their own
+  distribution and risk tolerance.
+- Improve Automation compares only Runs whose Project image identities can be proven disjoint from
+  diagnosis evidence. Sparse demonstrations may create a Patch Draft but remain provisional or
+  insufficient and are not recommended.

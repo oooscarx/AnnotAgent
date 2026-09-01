@@ -4,7 +4,7 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 7 — evidence-driven Improve Automation complete.
+Milestone 8 — GUI, TUI and release verification complete.
 
 ## Completed
 
@@ -112,15 +112,38 @@ Milestone 7 — evidence-driven Improve Automation complete.
 - Added bounded read-only Builder Tool `compare_pipeline_geometry`; the registry now contains 65
   Tools and still exposes no publish, full-Run, credential, shell, download or arbitrary-URL
   escape hatch.
+- Run Results and Review now display model-score semantics, box geometry semantics and calibration
+  state as separate facts. Missing geometry evidence remains visibly uncalibrated; the GUI never
+  manufactures a box-quality number from semantic confidence.
+- Added Geometry Safety publication blockers with working Require Review, Add Refiner and Run
+  Calibration destinations. The VLM detect-and-crop authoring template now sends CropSet as
+  supporting Review evidence, while only reviewed candidates can reach Commit.
+- Added persisted Geometry Calibration controls and the full Improve Automation workspace to the
+  GUI. Project, Run, Review and Published Version surfaces all reach the same evidence-driven flow.
+- Improve Automation exposes diagnosis and disjoint holdout selection, structured diagnosis,
+  exact Patch diff, static validation, setup requirements, Before/After semantic and geometry
+  metrics, object-size buckets, cost/latency/failures and explicit selected-change application.
+  Applying changes creates an editable Draft and never publishes.
+- Model Registry cards expose operation-scoped quality contracts. Published Drafts disappear from
+  the editable Test selector, while their persisted Sample Test evidence remains visible after a
+  refresh.
+- TUI `/geometry`, `/improvements` and `/improvements <id>` expose the same persisted policy,
+  calibration, diagnosis, diff and comparison state. Opening an external Project schema that is
+  not yet imported now degrades to an actionable geometry message instead of aborting the TUI.
+- Added release documentation for VLM geometry safety, calibration, safe pipelines, legacy
+  migration and a real-vs-offline demo boundary.
+- The current GUI is responsive at 390×844 with no horizontal overflow and one visible primary
+  action. All 36 browser E2E scenarios pass, including crop lineage, safety visibility, Provider
+  registry, Expert Vision/SAM registration, Review, Replay, Export and URL/state restoration.
 
 ## In progress
 
-- None within M7; the next implementation milestone is M8.
+- None. M0 through M8 are complete.
 
 ## Next
 
-- Milestone 8: expose the completed safety and improvement contracts coherently in GUI/TUI, add
-  release E2E coverage, finish user documentation and run the complete release verification.
+- Live-conditional evaluation with independently reviewed ground truth when real Qwen, SAM and
+  specialist bindings are available. These are external evidence tasks, not release-code gaps.
 
 ## Recent verification
 
@@ -160,6 +183,13 @@ Milestone 7 — evidence-driven Improve Automation complete.
 - M7 release: all 339 active Rust tests and doc tests passed (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
   Web TypeScript, all 41 unit tests and the production build passed.
+- M8 release: all 339 active Rust tests and doc tests passed (one explicitly billable live smoke
+  ignored); strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed.
+  Web TypeScript, all 43 unit tests, production build and all 36 Chromium E2E tests passed.
+- M8 browser inspection: the current Automation/Improve Automation surface rendered at 390×844
+  with `scrollWidth == clientWidth == 390`, one primary action and no browser console errors. The
+  existing long-running port-8787 backend predates the new API and returns an HTML 404 to the new
+  geometry endpoint; isolated release E2E uses the current binary and is green.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -174,11 +204,15 @@ Milestone 7 — evidence-driven Improve Automation complete.
 - `ee4a159 feat(evaluation): calibrate geometry quality by model and project` (M4).
 - `d07b180 feat(agent): build geometry-safe pipelines from the first draft` (M5).
 - `7ea44f8 feat(workflow): add auditable prompted geometry refinement` (M6).
-- `feat(agent): improve pipelines from review and geometry evidence` (M7, this milestone commit).
+- `8c644f7 feat(agent): improve pipelines from review and geometry evidence` (M7).
+- `test(release): validate geometry-safe self-improving annotation alpha` (M8, pending local
+  milestone commit).
 
 ## Release-blocking remainder
 
-- M8 remains open. M7 implementation and full release-command verification are complete.
+- None in deterministic code, contracts, persistence, GUI/TUI or offline release verification.
+- The real-model measurements below remain explicitly live-conditional and are not represented by
+  Mock output.
 
 ## Live-conditional items
 

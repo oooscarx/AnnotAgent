@@ -67,3 +67,13 @@ Each completed model request creates a `UsageRecord` with provider/model, safe e
 ## Events and history
 
 Events have schema version, event ID, run/image/task IDs, UTC timestamp, typed kind and typed payload. SQLite persistence occurs before broadcast to the Runtime bus. `LocalApplication` relays the same events to the TUI and SSE. Hidden chain-of-thought is neither requested nor stored.
+
+## Geometry-aware planning and improvement
+
+For bbox objectives, feasibility must inspect the operation-scoped Model quality contract, Project
+geometry policy, correction summary, exact calibration and available typed refinement paths. A VLM
+score is semantic evidence, not localization quality. The Agent may create and validate a safe
+Draft, run bounded Dry Runs and compare a persisted improvement session, but it cannot publish or
+start a full dataset Run. Provider failures, no-candidate results and semantic errors are classified
+before considering segmentation; SAM is only a candidate repair for geometry errors with a valid
+prompt and healthy compatible backend.

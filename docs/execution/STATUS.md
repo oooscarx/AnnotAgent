@@ -2,6 +2,41 @@
 
 Last updated: 2026-09-02 CST
 
+## Geometry-Safe Pipeline Builder M8 — 2026-09-02
+
+- Run, Review and Model Registry now separate declared model-score semantics from geometry
+  provenance, calibration and human verification. Missing box quality remains visibly unmeasured.
+- Automation exposes real geometry blockers, safe-clone/calibration/refiner repair destinations and
+  the persisted Improve Automation loop. Project, Run, Review and Version surfaces all reach it;
+  selected changes create only an editable Draft.
+- The complete Before/After view includes independent diagnosis/holdout selection, exact Patch,
+  validation, evidence sufficiency, semantic and geometry metrics, size buckets, cost, latency and
+  failures. TUI `/geometry` and `/improvements` expose the same server-owned state.
+- VLM detect-and-crop sends CropSet to Human Review as supporting evidence and keeps reviewed
+  candidates as the only Commit input. The full parent-reference UI journey passes.
+- Release verification passes 339 active Rust tests/doc tests with one explicit billable smoke
+  ignored, strict Clippy, Rustfmt, all-feature build, 43 Web unit tests, production build and all 36
+  Chromium E2E tests. A 390×844 real-page check has no horizontal overflow or console errors.
+- Real Qwen/SAM/specialist accuracy remains live-conditional; no Mock result, credential, model
+  weight, push or remote mutation is part of this milestone.
+
+## Geometry-Safe Pipeline Builder M7 — 2026-09-02
+
+- Persisted improvement sessions bind an immutable baseline, diagnosis Runs, disjoint holdout Runs,
+  comparison and candidate Drafts, exact Patch diff, validation, recommendation and explicit
+  selected-change application state.
+- Diagnosis separates Provider/infrastructure, no-candidate, semantic, geometry, domain,
+  missing-score, invalid-Artifact and budget failures. Prompted segmentation is considered only for
+  a geometry error with a real candidate.
+- Before/After comparison runs both Drafts non-committing on the same independent holdout and gates
+  recommendations on semantic recall/precision, robust geometry, manual adjustment, review,
+  cost/latency/failures and object-size buckets. Four images never recommend; five to nine are
+  provisional by default.
+- The Project-scoped REST surface and bounded `compare_pipeline_geometry` Tool are persisted and
+  tested. Apply creates an editable Draft and never mutates or publishes the baseline.
+- Release verification passed 339 active Rust tests/doc tests with one billable smoke ignored,
+  strict Clippy, Rustfmt, all-feature build, 41 Web unit tests and production build.
+
 ## Geometry-Safe Pipeline Builder M6 — 2026-09-02
 
 - Prompted refinement is now one executable, typed chain: Detection → Box Prompt → Mask → refined

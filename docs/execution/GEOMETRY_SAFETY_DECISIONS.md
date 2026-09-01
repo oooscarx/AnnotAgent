@@ -102,3 +102,17 @@ diff, static validation and before/after metrics as one durable session. Run IDs
 indices may not overlap across diagnosis and holdout. Four images cannot recommend a candidate;
 five to nine are provisional under the default policy. Even a sufficient recommendation only
 permits a human to apply selected changes to an editable Draft—publication remains separate.
+
+## D-017 — Human Review may receive typed supporting artifacts, but Commit receives candidates
+
+A CropSet can be attached to Human Review as optional visual evidence for a DetectionSet. It does
+not become an annotation candidate and must not be wired directly into Commit. This keeps crop
+lineage inspectable, ensures every geometry-bearing path crosses the mandatory Review boundary and
+avoids adding a second model merely to make a preview artifact terminal.
+
+## D-018 — Product quality claims come from persisted contracts and reports
+
+GUI and TUI render Model quality contracts, Project policy, correction aggregates, calibration and
+Pipeline comparisons from Core-owned APIs. They may translate enum values into readable labels,
+but cannot infer a geometry score from model confidence, invent calibration, mark a refiner
+available from source-code presence or publish an improvement automatically.

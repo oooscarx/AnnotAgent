@@ -83,3 +83,12 @@ Run, and stops at human approval. Its visual evidence is explicitly labelled Moc
 labelled evaluation covers geometry and operational metrics. Accuracy is refused for unlabelled
 real data. Real Qwen and external worker smoke remain live-conditional and are never inferred from
 fixture output.
+
+## Ball bbox geometry policy
+
+The RoboCup Ball Project uses Core's `TrainingBoundingBox` policy. A Qwen VLM proposal is a coarse
+hypothesis even when its semantic score is 0.99, so it routes to Human Review unless measured
+refinement or exact Project calibration supplies geometry evidence. Ball-specific hard negatives
+(white shoe, white sock, penalty mark and field-line intersection) remain Domain Skill reasons;
+generic geometry acceptance contains no RoboCup or ball branch. Small football boxes are reported in
+their own size bucket.

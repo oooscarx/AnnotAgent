@@ -1,5 +1,53 @@
 # AnnotAgent Acceptance Evidence
 
+## Geometry-Safe Pipeline Builder M8 — 2026-09-02
+
+1. Run/Review UI tests prove semantic or detector confidence is labelled by its declared
+   `ScoreSemantics`, while box quality and calibration are rendered separately. A missing geometry
+   report displays as not measured rather than a generated numeric value.
+2. Project, Run, Review and Published Version all expose Improve Automation. The GUI reads persisted
+   policy, calibration, correction and improvement APIs; it renders structured diagnosis, exact
+   Patch, static validation, independent holdout metrics, evidence sufficiency and setup needs.
+3. The Web API regression proves comparison requires explicit billable confirmation and
+   apply-to-Draft sends only selected change IDs. No publish request exists in the improvement flow.
+4. The VLM detect-and-crop E2E publishes and executes a graph where CropSet is typed optional Human
+   Review evidence and only the reviewed candidate reaches Commit. Run Results retain bbox/crop
+   parent selection and show coarse, uncalibrated geometry honestly.
+5. TUI tests and commands cover `/models show`, `/geometry`, `/improvements` and exact improvement
+   detail. An external schema not yet imported into the workspace yields an actionable message and
+   no longer prevents TUI startup.
+6. Full Web verification passes TypeScript, 43 Vitest tests, production build and all 36 Chromium
+   E2E scenarios. Those scenarios include responsive/keyboard behavior, state restoration,
+   Provider Registry, Expert Vision/SAM states, Run, Artifact, Replay, Review and Export.
+7. Full Rust verification passes 339 active workspace tests and doc tests with one separately
+   billable Provider smoke ignored, strict all-target/all-feature Clippy, Rustfmt and all-feature
+   build. `git diff --check` is clean.
+8. A read-only browser check at 390×844 reports equal 390 px viewport/body/page widths, one primary
+   action and no console errors. The old process currently on port 8787 predates the new endpoint;
+   its HTML 404 is version skew, while isolated current-binary E2E is green.
+9. Real Qwen, SAM and specialist quality remains `LIVE-CONDITIONAL` on healthy Profiles/Workers,
+   legal weights, hardware and independent reviewed ground truth. No fixture result is presented as
+   real accuracy, and no API key, weight, push or remote change occurred.
+
+## Geometry-Safe Pipeline Builder M7 — 2026-09-02
+
+1. SQLite migration 12 round-trips improvement sessions containing immutable baseline identity,
+   diagnosis/evaluation Runs, comparison/candidate Draft IDs, exact diff, validation, comparison,
+   recommendation and application state.
+2. Application regressions classify infrastructure, Provider, no-candidate, semantic, geometry,
+   domain, missing-score, invalid-Artifact, budget and insufficient-evidence failures before
+   selecting a Patch. Prompted segmentation is never proposed for Provider/no-candidate/wrong-object
+   failures.
+3. Baseline and candidate execute non-committing on the same holdout. Diagnosis and holdout Run IDs
+   and Project image indices must be disjoint. Core tests prove four images cannot recommend, five
+   remain provisional and geometry gains cannot conceal recall or cost regression.
+4. The Project-scoped REST operations and 65th bounded Builder Tool expose stored state without
+   publish, full-Run, credential, shell, download or arbitrary-URL authority.
+5. Applying selected changes creates an editable Draft after comparison. The Application regression
+   byte-compares the Published baseline before and after and observes no mutation or publication.
+6. Full release verification passed 339 active Rust tests/doc tests with one billable smoke ignored,
+   strict Clippy, Rustfmt, all-feature build, 41 Web unit tests and production build.
+
 ## Geometry-Safe Pipeline Builder M6 — 2026-09-02
 
 1. `GeometryRefinementTrace` is a strict versioned contract. Runtime-generated lineage names one

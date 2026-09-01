@@ -104,4 +104,37 @@ describe("API client", () => {
     );
     vi.unstubAllGlobals();
   });
+
+  it("creates an evidence-bounded improvement without publish authority", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "improvement", status: "draft_created" }),
+    });
+    vi.stubGlobal("fetch", fetch);
+    await api.createPipelineImprovement("generic", {
+      workflow_id: "baseline",
+      workflow_version: 2,
+      target_task_id: "objects",
+      target_label: "vehicle",
+      evidence_run_ids: ["diagnosis-run"],
+      evaluation_run_ids: ["holdout-run"],
+    });
+    await api.comparePipelineImprovement("improvement");
+    await api.applyPipelineImprovement("improvement", ["add:review"]);
+    const calls = fetch.mock.calls.map(([url, init]) => ({
+      url,
+      body: init?.body ? JSON.parse(init.body) : undefined,
+    }));
+    expect(calls[0]).toEqual({
+      url: "/api/projects/generic/pipeline-improvements",
+      body: expect.objectContaining({
+        evidence_run_ids: ["diagnosis-run"],
+        evaluation_run_ids: ["holdout-run"],
+      }),
+    });
+    expect(calls[2].body).toEqual({ selected_change_ids: ["add:review"] });
+    expect(JSON.stringify(calls)).not.toContain("publish");
+    expect(JSON.stringify(calls)).not.toContain("api_key");
+    vi.unstubAllGlobals();
+  });
 });
