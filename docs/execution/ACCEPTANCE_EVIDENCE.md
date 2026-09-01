@@ -1111,6 +1111,25 @@ Persistent workspace Provider credentials status: `PASS`.
 
 Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha offline release status: `PASS`.
 
+## Pipeline Builder Provider Resilience Hotfix — 2026-09-01
+
+1. Persisted session `bce120c9-629a-4575-aca3-541e91f485ec` proves configuration was valid before
+   the incident: three GLM-5.2 calls succeeded and only the fourth ended after a bounded 502 retry
+   sequence. No credential value was read or printed during diagnosis.
+2. `PipelineBuilderModelRuntime::openai_compatible_config` now forwards both retry-delay bounds from
+   the selected Provider Profile instead of using an internal fixed delay.
+3. `retries_transient_gateway_failures_and_records_attempt_count` returns 502 twice, succeeds on the
+   third attempt, and verifies `retry_count = 2`.
+4. `exhausted_gateway_failure_is_actionable_and_hides_html` proves a repeated 502 becomes a concise
+   saved-Draft recovery message and contains neither the HTML body nor the nginx banner.
+5. `retry_after_and_connection_policy_bound_retry_delay` proves `Retry-After` is honored without
+   exceeding the registered connection policy.
+6. A non-billable live connection check returned reachable and protocol-compatible with 26 models
+   at 41 ms. The affected workspace Profile was hardened from two 250 ms-start retries to four
+   bounded retries with 1–5 second backoff; no secret was moved or exposed.
+7. `cargo test --workspace`, strict all-target/all-feature Clippy, Rustfmt and `git diff --check`
+   pass. The only ignored test remains the explicitly opt-in billable Provider smoke.
+
 ## Product Mock removal — 2026-09-01
 
 1. Production `ServerState` migrates a legacy Mock default to `openai_compatible` and calls the

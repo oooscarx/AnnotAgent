@@ -2,6 +2,24 @@
 
 Last updated: 2026-09-01 CST
 
+## Pipeline Builder Provider Resilience Hotfix — 2026-09-01
+
+- Confirmed the reported GLM-5.2 failure was a transient upstream `502 Bad Gateway`: the same
+  persisted Builder session completed three model calls before its fourth call exhausted the
+  Provider Profile's bounded retries. Credentials, model identity and the compatible API path had
+  already succeeded in that session.
+- OpenAI-compatible execution now applies the Provider Profile's minimum and maximum retry delays,
+  honors bounded numeric `Retry-After` responses, and validates the delay range.
+- Exhausted 5xx and rate-limit errors now report a safe, actionable retry-from-saved-Draft message
+  with the number of attempts. HTML gateway bodies are not rendered in the product error surface.
+- The affected local GLM Provider passed a non-billable compatibility check (26 discoverable
+  models, 41 ms) and now uses four bounded retries with 1–5 second exponential backoff. Its model,
+  endpoint and persisted credential reference were left unchanged.
+- Focused Provider tests cover two transient 502 responses followed by success, exhausted 502
+  behavior, hidden nginx HTML, retry-count metadata, and delay clamping.
+- `cargo test --workspace`, strict all-target/all-feature Clippy, Rustfmt and `git diff --check`
+  pass after the hotfix; the opt-in billable smoke remains ignored.
+
 ## Pipeline Builder Progress-Safety M6 — 2026-09-01
 
 - Replaced the open-ended inspection loop with persisted Builder phases, phase budgets, a protected

@@ -177,6 +177,8 @@ impl PipelineBuilderModelRuntime {
             custom_headers: self.provider.safe_headers.clone(),
             extra_request_fields: BTreeMap::new(),
             max_retries: self.provider.connection_policy.maximum_retries,
+            minimum_retry_delay_ms: self.provider.connection_policy.minimum_retry_delay_ms,
+            maximum_retry_delay_ms: self.provider.connection_policy.maximum_retry_delay_ms,
         })
     }
 }

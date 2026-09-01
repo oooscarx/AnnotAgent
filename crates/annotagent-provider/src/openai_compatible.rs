@@ -41,6 +41,10 @@ pub struct OpenAiCompatibleConfig {
     pub extra_request_fields: BTreeMap<String, Value>,
     #[serde(default = "default_retries")]
     pub max_retries: u32,
+    #[serde(default = "default_minimum_retry_delay_ms")]
+    pub minimum_retry_delay_ms: u64,
+    #[serde(default = "default_maximum_retry_delay_ms")]
+    pub maximum_retry_delay_ms: u64,
 }
 
 const fn default_timeout() -> u64 {
@@ -57,6 +61,12 @@ const fn default_true() -> bool {
 }
 const fn default_retries() -> u32 {
     2
+}
+const fn default_minimum_retry_delay_ms() -> u64 {
+    250
+}
+const fn default_maximum_retry_delay_ms() -> u64 {
+    5_000
 }
 
 pub struct OpenAiCompatibleProvider {
@@ -225,6 +235,14 @@ fn validate_openai_config(config: &OpenAiCompatibleConfig) -> CoreResult<()> {
             "extra request field {path:?} may contain secret material"
         )));
     }
+    if config.minimum_retry_delay_ms > config.maximum_retry_delay_ms
+        || config.maximum_retry_delay_ms > 120_000
+    {
+        return Err(CoreError::Validation(
+            "retry delays must be ordered and maximum_retry_delay_ms cannot exceed 120000"
+                .to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -384,7 +402,7 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned);
             if is_retriable(status) && attempt < self.config.max_retries {
-                let delay = Duration::from_millis(250_u64.saturating_mul(1_u64 << attempt));
+                let delay = retry_delay(&self.config, response.headers(), attempt);
                 tokio::select! {
                     () = cancellation.cancelled() => {
                         return Err(CoreError::Provider("model request cancelled".to_owned()));
@@ -398,9 +416,10 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             })?;
             if !status.is_success() {
                 let safe = String::from_utf8_lossy(&bytes).replace(&key, "[REDACTED]");
-                return Err(CoreError::Provider(format!(
-                    "provider returned {status}: {}",
-                    truncate(&safe, 500)
+                return Err(CoreError::Provider(provider_status_error(
+                    status,
+                    attempt.saturating_add(1),
+                    &safe,
                 )));
             }
             let value: Value = serde_json::from_slice(&bytes)
@@ -422,6 +441,39 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
 
 fn is_retriable(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn retry_delay(config: &OpenAiCompatibleConfig, headers: &HeaderMap, attempt: u32) -> Duration {
+    let configured = config
+        .minimum_retry_delay_ms
+        .saturating_mul(1_u64.checked_shl(attempt.min(31)).unwrap_or(u64::MAX));
+    let retry_after = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|seconds| seconds.saturating_mul(1_000));
+    Duration::from_millis(
+        retry_after
+            .unwrap_or(configured)
+            .clamp(config.minimum_retry_delay_ms, config.maximum_retry_delay_ms),
+    )
+}
+
+fn provider_status_error(status: StatusCode, attempts: u32, safe_body: &str) -> String {
+    if status.is_server_error() {
+        return format!(
+            "provider is temporarily unavailable ({status}) after {attempts} attempts; retry this action from the saved Draft"
+        );
+    }
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return format!(
+            "provider rate limit persisted after {attempts} attempts; retry this action later from the saved Draft"
+        );
+    }
+    if safe_body.trim_start().starts_with('<') {
+        return format!("provider returned {status} with a non-JSON response");
+    }
+    format!("provider returned {status}: {}", truncate(safe_body, 500))
 }
 
 fn json_action_schema(tools: &[annotagent_core::ToolDefinition]) -> Value {
@@ -627,7 +679,156 @@ pub fn redact_secrets(value: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use axum::{
+        Json, Router,
+        extract::State,
+        response::{Html, IntoResponse, Response},
+        routing::post,
+    };
+
     use super::*;
+
+    #[derive(Clone)]
+    struct RetryFixture {
+        calls: Arc<AtomicUsize>,
+        failures: usize,
+    }
+
+    async fn retrying_completion(State(state): State<RetryFixture>) -> Response {
+        let call = state.calls.fetch_add(1, Ordering::SeqCst);
+        if call < state.failures {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Html("<html><body><h1>502 Bad Gateway</h1><p>nginx</p></body></html>"),
+            )
+                .into_response();
+        }
+        Json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+        }))
+        .into_response()
+    }
+
+    async fn spawn_retry_fixture(failures: usize) -> (String, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let state = RetryFixture {
+            calls: Arc::clone(&calls),
+            failures,
+        };
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(retrying_completion))
+                    .with_state(state),
+            )
+            .await
+            .expect("fixture server");
+        });
+        (format!("http://{address}/v1"), calls)
+    }
+
+    fn retry_test_config(endpoint: String, max_retries: u32) -> OpenAiCompatibleConfig {
+        OpenAiCompatibleConfig {
+            endpoint,
+            api_key_env: "UNUSED_TEST_KEY".to_owned(),
+            model: "fixture-model".to_owned(),
+            protocol: OpenAiProtocol::ChatCompletions,
+            request_timeout_seconds: 5,
+            max_output_tokens: 100,
+            temperature: 0.0,
+            reasoning_mode: None,
+            supports_tool_calls: true,
+            supports_json_schema: false,
+            custom_headers: BTreeMap::new(),
+            extra_request_fields: BTreeMap::new(),
+            max_retries,
+            minimum_retry_delay_ms: 0,
+            maximum_retry_delay_ms: 0,
+        }
+    }
+
+    fn retry_test_request() -> ModelRequest {
+        ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("pipeline_builder"),
+            messages: vec![ModelMessage {
+                role: ModelRole::User,
+                content: "Reply with OK.".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+            images: Vec::new(),
+            tools: Vec::new(),
+            max_output_tokens: 100,
+            temperature: 0.0,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_transient_gateway_failures_and_records_attempt_count() {
+        let (endpoint, calls) = spawn_retry_fixture(2).await;
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            retry_test_config(endpoint, 2),
+            Some("fixture-secret".to_owned()),
+        )
+        .expect("provider");
+
+        let response = provider
+            .complete(retry_test_request(), CancellationToken::new())
+            .await
+            .expect("third attempt succeeds");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(response.provider_metadata["retry_count"], "2");
+    }
+
+    #[tokio::test]
+    async fn exhausted_gateway_failure_is_actionable_and_hides_html() {
+        let (endpoint, calls) = spawn_retry_fixture(usize::MAX).await;
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            retry_test_config(endpoint, 1),
+            Some("fixture-secret".to_owned()),
+        )
+        .expect("provider");
+
+        let error = provider
+            .complete(retry_test_request(), CancellationToken::new())
+            .await
+            .expect_err("both attempts fail")
+            .to_string();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(error.contains("temporarily unavailable (502 Bad Gateway) after 2 attempts"));
+        assert!(error.contains("saved Draft"));
+        assert!(!error.contains("<html>"));
+        assert!(!error.contains("nginx"));
+    }
+
+    #[test]
+    fn retry_after_and_connection_policy_bound_retry_delay() {
+        let mut config = retry_test_config("https://provider.example/v1".to_owned(), 2);
+        config.minimum_retry_delay_ms = 250;
+        config.maximum_retry_delay_ms = 5_000;
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "3".parse().expect("header"));
+        assert_eq!(retry_delay(&config, &headers, 0), Duration::from_secs(3));
+        assert_eq!(
+            retry_delay(&config, &HeaderMap::new(), 8),
+            Duration::from_secs(5)
+        );
+    }
 
     #[test]
     fn parses_tool_calls_and_usage() {
@@ -699,6 +900,8 @@ mod tests {
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
             },
             Some("not-sent".to_owned()),
         )
@@ -759,6 +962,8 @@ mod tests {
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
             },
             Some("not-sent".to_owned()),
         )
@@ -806,6 +1011,8 @@ mod tests {
             custom_headers: BTreeMap::new(),
             extra_request_fields: BTreeMap::new(),
             max_retries: 0,
+            minimum_retry_delay_ms: 0,
+            maximum_retry_delay_ms: 0,
         };
         let mut header = base.clone();
         header
@@ -822,6 +1029,10 @@ mod tests {
         let mut embedded = base;
         embedded.endpoint = "https://user:pass@provider.example/v1".to_owned();
         assert!(OpenAiCompatibleProvider::new(embedded).is_err());
+
+        let mut unbounded_retry = retry_test_config("https://provider.example/v1".to_owned(), 1);
+        unbounded_retry.maximum_retry_delay_ms = 120_001;
+        assert!(OpenAiCompatibleProvider::new(unbounded_retry).is_err());
     }
 
     #[test]
@@ -841,6 +1052,8 @@ mod tests {
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
             },
             Some("not-sent".to_owned()),
         )
@@ -919,6 +1132,8 @@ mod tests {
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
             },
             Some("not-sent".to_owned()),
         )
