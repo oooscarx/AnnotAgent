@@ -17,17 +17,20 @@
   revisioned Workflow.
 - Prompted-segmentation and mask-to-bbox code exists, but no real active SAM availability can be
   inferred from source presence.
-- Exact calibration is implemented, but the Runtime Geometry Quality Evaluation and Geometry
-  Decision node behavior arrives in M6. Until then, uncalibrated detector paths still need
-  mandatory Review or an available refiner, and a passing report cannot be consumed by a score
-  gate.
+- Runtime Geometry Evaluation currently evaluates prompted-refinement traces. A historical Passed
+  calibration can satisfy static policy only through the same explicit geometry decision boundary,
+  but direct runtime consumption of a calibration report without a prompted trace is not yet a
+  supported execution mode; such a mismatch fails closed.
 - Calibration creation currently uses explicitly selected reviewed Runs and up to 1,000 structured
   correction records per Project. Evaluation-set/diagnosis-set separation and comparative
-  improvement promotion arrive in M6.
+  improvement promotion arrive in M7.
 - Historical unsafe Workflow Versions remain viewable and replayable in Sandbox, but cannot start a
   new formal Run. The current safe-clone repair inserts mandatory Review; richer refiner/calibration
   repair choices arrive in later milestones.
 - Pipeline Builder correction inspection intentionally returns bounded aggregates, not images or
-  free-form reviewer notes. Per-sample comparison and holdout promotion remain M6 work.
+  free-form reviewer notes. Per-sample comparison and holdout promotion remain M7 work.
+- Geometry Decision currently routes stable prompted refinements to `accept` at Runtime, but the
+  generated first improvement Draft deliberately retains mandatory Human Review until M7 adds an
+  independent holdout comparison and an explicit human promotion step.
 - The Qwen-only first-Draft behavior is deterministically verified with a scripted Provider. A
   billable live Provider response is still conditional and cannot weaken Core publication safety.

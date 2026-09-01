@@ -2,6 +2,26 @@
 
 Last updated: 2026-09-02 CST
 
+## Geometry-Safe Pipeline Builder M6 — 2026-09-02
+
+- Prompted refinement is now one executable, typed chain: Detection → Box Prompt → Mask → refined
+  Detection → Geometry Evaluation → Geometry Decision. Every refined item retains the exact source
+  detection, prompt, mask and output detection references plus both boxes and the declared mask
+  score semantics.
+- Geometry Evaluation measures coarse/refined IoU, normalized center shift and area/width/height
+  ratios. Geometry Decision accepts only non-empty sets with a valid stable evaluation for every
+  detection; missing, malformed or unstable evidence routes to Review. Semantic confidence is
+  explicitly absent from the decision.
+- The public Node Catalog and both Published Runtime executor paths register the new nodes. The
+  evidence-backed Builder revision replaces the old semantic Confidence Gate with Evaluation and
+  Geometry Decision, while preserving mandatory Review as the conservative boundary.
+- Static publication validation no longer treats a returned mask or `mask_to_bbox` conversion as
+  sufficient. A prompted refiner must be followed by both evaluation and decision, or the path must
+  pass Human Review.
+- Full release verification passes all 332 active Rust tests plus doc tests (one billable smoke
+  ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
+  TypeScript, 41 unit tests and production build. No real SAM availability or quality is claimed.
+
 ## Geometry-Safe Pipeline Builder M5 — 2026-09-02
 
 - Pipeline Builder now has bounded read-only Tools for model geometry/score contracts, Project

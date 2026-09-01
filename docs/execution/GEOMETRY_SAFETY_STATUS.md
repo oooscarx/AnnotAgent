@@ -4,7 +4,7 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 5 — geometry-safe first-draft Agent behavior complete.
+Milestone 6 — auditable prompted geometry refinement complete.
 
 ## Completed
 
@@ -32,8 +32,9 @@ Milestone 5 — geometry-safe first-draft Agent behavior complete.
   quality and uses Refiner-or-Review acceptance.
 - Geometry-aware Core validation now follows every candidate-source-to-Commit path and rejects
   score-only acceptance of coarse or uncalibrated predicted geometry.
-- Mandatory Human Review and an available prompted-refinement plus mask-to-bbox chain are legal;
-  missing and stale calibration have distinct blocking codes.
+- Mandatory Human Review and an available prompted-refinement plus mask-to-bbox, geometry
+  evaluation and geometry decision chain are legal; a mask alone is not a trust boundary. Missing
+  and stale calibration have distinct blocking codes.
 - `allow_unvalidated_commit` cannot bypass geometry policy.
 - New bbox suggestions and RoboCup Ball templates route uncalibrated geometry through mandatory
   Review; classification behavior remains unchanged.
@@ -80,15 +81,30 @@ Milestone 5 — geometry-safe first-draft Agent behavior complete.
   the current runnable fallback is mandatory Human Review.
 - The Qwen-only regression proves the first saved Draft retains a Human Review boundary, does not
   add `capability.segment`, and reports no passing calibration or runnable real segmenter.
+- Added strict, versioned `GeometryRefinementTrace` lineage linking the exact source Detection,
+  Box Prompt, Mask and refined Detection items, together with the original/refined boxes and mask
+  score semantics.
+- Added deterministic coarse/refined Geometry Evaluation for IoU, normalized center movement and
+  area/width/height ratios. Large conflict, movement, tightening, expansion or explicitly required
+  weak mask evidence becomes a typed geometry issue rather than a new confidence score.
+- Added executable `core.geometry_quality_evaluation` and `core.geometry_decision` nodes to the
+  public catalog and both Published Runtime executor paths. A decision accepts only a non-empty set
+  in which every detection has a valid stable evaluation; all incomplete/unstable cases route to
+  Review and record that semantic score was not used.
+- Evidence-backed prompted-segmentation revisions now replace the raw semantic Confidence Gate with
+  Mask-to-BBox → Geometry Evaluation → Geometry Decision and retain mandatory Human Review as the
+  conservative first publication boundary.
+- Static validation now rejects Refiner → Mask-to-BBox → Commit without evaluation/decision. A
+  returned SAM mask is evidence, not proof of geometry quality.
 
 ## In progress
 
-- None within M5; the next implementation milestone is M6.
+- None within M6; the next implementation milestone is M7.
 
 ## Next
 
-- Milestone 6: add auditable prompted geometry refinement, Runtime geometry comparison and exact
-  Artifact lineage.
+- Milestone 7: add evidence-driven Improve Automation with diagnosis/evaluation separation,
+  baseline-versus-candidate comparison, bounded patching and human-controlled promotion.
 
 ## Recent verification
 
@@ -116,6 +132,12 @@ Milestone 5 — geometry-safe first-draft Agent behavior complete.
 - M5 release: all 329 active Rust tests and doc tests passed (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
   Web TypeScript, 41 unit tests and production build passed.
+- M6 focused: all 92 Core, 25 Runtime and 55 active Application tests passed; the Application's one
+  billable provider smoke remains explicitly ignored. The offline Published Runtime test executes
+  the complete prompt/mask/refinement/evaluation/decision chain.
+- M6 release: all 332 active Rust tests and doc tests passed (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
+  Web TypeScript, 41 unit tests and production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -128,11 +150,12 @@ Milestone 5 — geometry-safe first-draft Agent behavior complete.
 - `0cb775c feat(workflow): block uncalibrated geometry from score-only commit` (M2).
 - `77c5dea feat(review): capture structured bbox correction evidence` (M3).
 - `ee4a159 feat(evaluation): calibrate geometry quality by model and project` (M4).
-- `feat(agent): build geometry-safe pipelines from the first draft` (M5, this milestone commit).
+- `d07b180 feat(agent): build geometry-safe pipelines from the first draft` (M5).
+- `feat(workflow): add auditable prompted geometry refinement` (M6, this milestone commit).
 
 ## Release-blocking remainder
 
-- M6 through M8 remain open. M5 acceptance evidence is implemented and verified.
+- M7 and M8 remain open. M6 acceptance evidence is implemented and verified offline.
 
 ## Live-conditional items
 

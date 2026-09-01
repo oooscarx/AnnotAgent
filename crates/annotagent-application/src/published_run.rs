@@ -24,13 +24,13 @@ use annotagent_provider::{
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
     CORE_CANDIDATE_MATCH, CORE_COMBINE_EVIDENCE, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_DECISION,
-    CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_FILTER, CORE_IMAGE_STATISTICS,
-    CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES,
-    CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE,
-    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
-    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
-    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
-    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_FILTER, CORE_GEOMETRY_DECISION,
+    CORE_GEOMETRY_QUALITY_EVALUATION, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CORE_MASK_TO_BBOX,
+    CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES, CORE_PROJECT_COORDINATES, CORE_REJECT,
+    CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
+    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
+    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -336,6 +336,8 @@ impl PublishedWorkflowRuntime {
                 | CORE_CROP
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
                 | CORE_MASK_TO_BBOX
+                | CORE_GEOMETRY_QUALITY_EVALUATION
+                | CORE_GEOMETRY_DECISION
                 | CORE_MASK_TO_POLYGON
                 | CORE_FILTER
                 | CORE_MAP_LABEL
@@ -1033,6 +1035,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_CROP
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
                 | CORE_MASK_TO_BBOX
+                | CORE_GEOMETRY_QUALITY_EVALUATION
+                | CORE_GEOMETRY_DECISION
                 | CORE_MASK_TO_POLYGON
                 | CORE_FILTER
                 | CORE_MAP_LABEL

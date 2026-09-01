@@ -2104,7 +2104,7 @@ fn validate_geometry_commit_safety(
                 node.kind == WorkflowNodeKind::HumanReview
                     && node_dominates_path(draft, &source.id, &commit.id, &node.id)
             });
-            let available_refiner = draft.nodes.iter().any(|node| {
+            let refined_geometry_decision = draft.nodes.iter().any(|node| {
                 geometry.node(&node.id).is_some_and(|node_contract| {
                     node_contract.available
                         && node_contract.output_geometry.is_refined()
@@ -2112,6 +2112,24 @@ fn validate_geometry_commit_safety(
                         && draft.nodes.iter().any(|conversion| {
                             conversion.node_type == "core.mask_to_bbox"
                                 && node_dominates_path(draft, &node.id, &commit.id, &conversion.id)
+                                && draft.nodes.iter().any(|evaluation| {
+                                    evaluation.node_type == "core.geometry_quality_evaluation"
+                                        && node_dominates_path(
+                                            draft,
+                                            &conversion.id,
+                                            &commit.id,
+                                            &evaluation.id,
+                                        )
+                                        && draft.nodes.iter().any(|decision| {
+                                            decision.node_type == "core.geometry_decision"
+                                                && node_dominates_path(
+                                                    draft,
+                                                    &evaluation.id,
+                                                    &commit.id,
+                                                    &decision.id,
+                                                )
+                                        })
+                                })
                         })
                 })
             });
@@ -2136,15 +2154,15 @@ fn validate_geometry_commit_safety(
                 match policy.auto_accept_policy {
                     crate::GeometryAutoAcceptPolicy::HumanReviewRequired => mandatory_review,
                     crate::GeometryAutoAcceptPolicy::RefinerOrReview => {
-                        mandatory_review || available_refiner || geometry_evaluation
+                        mandatory_review || refined_geometry_decision
                     }
                     crate::GeometryAutoAcceptPolicy::CalibrationRequired => {
                         mandatory_review || calibrated_geometry_decision
                     }
                     crate::GeometryAutoAcceptPolicy::ExplicitRiskAcceptance => {
                         mandatory_review
-                            || available_refiner
-                            || geometry_evaluation
+                            || refined_geometry_decision
+                            || calibrated_geometry_decision
                             || risk_accepted
                     }
                 }
@@ -3139,7 +3157,58 @@ export:
     }
 
     #[test]
-    fn available_prompted_refiner_with_mask_conversion_is_a_legal_geometry_path() {
+    fn available_prompted_refiner_with_evaluation_and_decision_is_a_legal_geometry_path() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            (
+                "prompts",
+                "core.detections_to_box_prompts",
+                WorkflowNodeKind::Transform,
+            ),
+            (
+                "segment",
+                "capability.segment",
+                WorkflowNodeKind::VisionModel,
+            ),
+            ("bbox", "core.mask_to_bbox", WorkflowNodeKind::Transform),
+            (
+                "geometry_quality",
+                "core.geometry_quality_evaluation",
+                WorkflowNodeKind::Validator,
+            ),
+            (
+                "geometry_decision",
+                "core.geometry_decision",
+                WorkflowNodeKind::Gate,
+            ),
+            ("validator", "static_validator", WorkflowNodeKind::Validator),
+        ]);
+        let mut geometry = geometry_policy_context(crate::GeometryCalibrationStatus::Uncalibrated);
+        geometry.node_contracts.push(GeometryNodeSafetyContext {
+            node_id: "segment".to_owned(),
+            output_geometry: crate::GeometrySemantics::RefinedGeometry,
+            score_semantics: crate::ScoreSemantics::NotProvided,
+            auto_accept_eligibility: crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
+            available: true,
+        });
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry,
+        );
+        assert!(
+            report.valid,
+            "an evaluated refiner must be legal: {:#?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn prompted_refiner_without_geometry_decision_cannot_auto_commit() {
         let (workflow, nodes) = simple_geometry_workflow(&[
             (
                 "prompts",
@@ -3172,10 +3241,13 @@ export:
             true,
             &geometry,
         );
+
+        assert!(!report.valid, "a mask is evidence, not automatic trust");
         assert!(
-            report.valid,
-            "available refiner must be legal: {:#?}",
-            report.issues
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "geometry_acceptance_path_missing")
         );
     }
 

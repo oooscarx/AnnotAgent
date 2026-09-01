@@ -6,10 +6,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnnotationId, AnnotationSnapshot, AnnotationValue, ArtifactId, DetectionArtifactItem,
-    GeometryCalibrationId, GeometryCalibrationStatus, GeometryCalibrationThresholds,
-    GeometryQualityReportId, GeometrySemantics, ImageId, LabelId, ModelProfileId, NodeDefinitionId,
-    NodeId, NormalizedRect, ProjectId, RunId, TaskId,
+    AnnotationId, AnnotationSnapshot, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
+    DetectionArtifactItem, DetectionScore, GeometryCalibrationId, GeometryCalibrationStatus,
+    GeometryCalibrationThresholds, GeometryQualityReportId, GeometrySemantics, ImageId, LabelId,
+    ModelProfileId, NodeDefinitionId, NodeId, NormalizedRect, ProjectId, RunId, TaskId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -231,6 +231,189 @@ impl CandidateGeometryQualityReport {
                 .iter()
                 .any(|code| code.starts_with("geometry_"))
     }
+}
+
+pub const GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION: u32 = 1;
+
+/// Exact item lineage retained by a prompted geometry-refinement operation. This trace is an
+/// observable Artifact contract, not a claim that the refined geometry is correct.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryRefinementTrace {
+    pub schema_version: u32,
+    pub method: String,
+    pub source_detection: ArtifactRef,
+    pub box_prompt: ArtifactRef,
+    pub mask: ArtifactRef,
+    pub refined_detection: ArtifactRef,
+    pub original_bbox: NormalizedRect,
+    pub refined_bbox: NormalizedRect,
+    pub mask_score: DetectionScore,
+}
+
+impl GeometryRefinementTrace {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION {
+            return Err("unsupported geometry refinement trace schema version".to_owned());
+        }
+        if self.method != "mask_to_bbox" {
+            return Err("geometry refinement trace method must be mask_to_bbox".to_owned());
+        }
+        for (name, reference, kind) in [
+            (
+                "source_detection",
+                &self.source_detection,
+                ArtifactKind::DetectionSet,
+            ),
+            ("box_prompt", &self.box_prompt, ArtifactKind::BoxPromptSet),
+            ("mask", &self.mask, ArtifactKind::MaskSet),
+            (
+                "refined_detection",
+                &self.refined_detection,
+                ArtifactKind::DetectionSet,
+            ),
+        ] {
+            if reference.artifact_type != kind
+                || reference.artifact_id.trim().is_empty()
+                || reference.source_node.trim().is_empty()
+                || reference.port.trim().is_empty()
+                || reference
+                    .item_id
+                    .as_deref()
+                    .is_none_or(|item| item.trim().is_empty())
+            {
+                return Err(format!("{name} must identify one {kind:?} item"));
+            }
+        }
+        self.mask_score.validate()?;
+        Ok(())
+    }
+}
+
+/// Thresholds for comparing a coarse prompt box with a prompted-segmentation result. Defaults are
+/// deliberately broad enough to permit useful tightening while routing large changes to Review.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeometryRefinementThresholds {
+    pub minimum_coarse_refined_iou: f32,
+    pub maximum_center_shift: f32,
+    pub minimum_area_ratio: f32,
+    pub maximum_area_ratio: f32,
+    pub minimum_mask_score: Option<f32>,
+}
+
+impl Default for GeometryRefinementThresholds {
+    fn default() -> Self {
+        Self {
+            minimum_coarse_refined_iou: 0.20,
+            maximum_center_shift: 0.15,
+            minimum_area_ratio: 0.20,
+            maximum_area_ratio: 1.25,
+            minimum_mask_score: None,
+        }
+    }
+}
+
+impl GeometryRefinementThresholds {
+    pub fn validate(self) -> Result<(), String> {
+        if !self.minimum_coarse_refined_iou.is_finite()
+            || !(0.0..=1.0).contains(&self.minimum_coarse_refined_iou)
+            || !self.maximum_center_shift.is_finite()
+            || !(0.0..=2.0_f32.sqrt()).contains(&self.maximum_center_shift)
+            || !self.minimum_area_ratio.is_finite()
+            || self.minimum_area_ratio <= 0.0
+            || !self.maximum_area_ratio.is_finite()
+            || self.maximum_area_ratio < self.minimum_area_ratio
+            || self
+                .minimum_mask_score
+                .is_some_and(|score| !score.is_finite() || !(0.0..=1.0).contains(&score))
+        {
+            return Err("invalid geometry refinement thresholds".to_owned());
+        }
+        Ok(())
+    }
+}
+
+/// Structured comparison consumed by `core.geometry_decision`. It measures a refiner's change but
+/// never upgrades the model's semantic score into geometry evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryRefinementEvaluation {
+    pub trace: GeometryRefinementTrace,
+    pub thresholds: GeometryRefinementThresholds,
+    pub coarse_refined_iou: f32,
+    pub normalized_center_shift: f32,
+    pub area_ratio: f32,
+    pub width_ratio: f32,
+    pub height_ratio: f32,
+    pub issue_codes: Vec<GeometryIssueCode>,
+    pub stable: bool,
+}
+
+impl GeometryRefinementEvaluation {
+    pub fn validate(&self) -> Result<(), String> {
+        let expected = evaluate_geometry_refinement(self.trace.clone(), self.thresholds)?;
+        if &expected != self {
+            return Err(
+                "geometry refinement evaluation does not match its trace and thresholds".to_owned(),
+            );
+        }
+        Ok(())
+    }
+}
+
+pub fn evaluate_geometry_refinement(
+    trace: GeometryRefinementTrace,
+    thresholds: GeometryRefinementThresholds,
+) -> Result<GeometryRefinementEvaluation, String> {
+    trace.validate()?;
+    thresholds.validate()?;
+    let original_area = trace.original_bbox.area();
+    if original_area <= f32::EPSILON {
+        return Err("geometry refinement original bbox has zero area".to_owned());
+    }
+    let coarse_refined_iou = rect_iou(trace.original_bbox, trace.refined_bbox);
+    let normalized_center_shift = center_shift(trace.original_bbox, trace.refined_bbox);
+    let area_ratio = trace.refined_bbox.area() / original_area;
+    let width_ratio = trace.refined_bbox.width() / trace.original_bbox.width();
+    let height_ratio = trace.refined_bbox.height() / trace.original_bbox.height();
+    let mut issue_codes = Vec::new();
+    if coarse_refined_iou < thresholds.minimum_coarse_refined_iou {
+        issue_codes.push(GeometryIssueCode::RefinerConflict);
+    }
+    if normalized_center_shift > thresholds.maximum_center_shift {
+        issue_codes.push(GeometryIssueCode::CenterShift);
+    }
+    if area_ratio < thresholds.minimum_area_ratio {
+        issue_codes.push(GeometryIssueCode::TooTight);
+        issue_codes.push(GeometryIssueCode::PartialObject);
+    }
+    if area_ratio > thresholds.maximum_area_ratio {
+        issue_codes.push(GeometryIssueCode::TooLoose);
+        issue_codes.push(GeometryIssueCode::IncludesBackground);
+    }
+    if let Some(minimum_mask_score) = thresholds.minimum_mask_score
+        && (trace.mask_score.semantics.is_semantic()
+            || trace
+                .mask_score
+                .value
+                .is_none_or(|score| score < minimum_mask_score))
+    {
+        issue_codes.push(GeometryIssueCode::InsufficientEvidence);
+    }
+    issue_codes.sort_unstable();
+    issue_codes.dedup();
+    Ok(GeometryRefinementEvaluation {
+        trace,
+        thresholds,
+        coarse_refined_iou,
+        normalized_center_shift,
+        area_ratio,
+        width_ratio,
+        height_ratio,
+        stable: issue_codes.is_empty(),
+        issue_codes,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -962,6 +1145,83 @@ fn touches_image_boundary(rect: NormalizedRect) -> bool {
 mod tests {
     use super::*;
     use crate::{DetectionScore, DetectionSource, LabelId, ReviewStatus, VisionCapability};
+
+    fn refinement_reference(kind: ArtifactKind, artifact_id: &str, item_id: &str) -> ArtifactRef {
+        ArtifactRef {
+            artifact_id: artifact_id.to_owned(),
+            source_node: format!("{artifact_id}-node"),
+            port: "output".to_owned(),
+            artifact_type: kind,
+            item_id: Some(item_id.to_owned()),
+        }
+    }
+
+    fn refinement_trace(
+        original_bbox: NormalizedRect,
+        refined_bbox: NormalizedRect,
+    ) -> GeometryRefinementTrace {
+        GeometryRefinementTrace {
+            schema_version: GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION,
+            method: "mask_to_bbox".to_owned(),
+            source_detection: refinement_reference(ArtifactKind::DetectionSet, "coarse", "ball-1"),
+            box_prompt: refinement_reference(ArtifactKind::BoxPromptSet, "prompts", "prompt-1"),
+            mask: refinement_reference(ArtifactKind::MaskSet, "masks", "mask-1"),
+            refined_detection: refinement_reference(
+                ArtifactKind::DetectionSet,
+                "refined",
+                "refined:ball-1",
+            ),
+            original_bbox,
+            refined_bbox,
+            mask_score: DetectionScore::not_provided(),
+        }
+    }
+
+    #[test]
+    fn prompted_refinement_evaluation_accepts_a_stable_tightening() {
+        let evaluation = evaluate_geometry_refinement(
+            refinement_trace(
+                NormalizedRect::new(0.1, 0.2, 0.4, 0.4).expect("coarse"),
+                NormalizedRect::new(0.16, 0.26, 0.26, 0.26).expect("refined"),
+            ),
+            GeometryRefinementThresholds::default(),
+        )
+        .expect("evaluation");
+
+        assert!(evaluation.stable);
+        assert!(evaluation.issue_codes.is_empty());
+        assert!(evaluation.coarse_refined_iou > 0.4);
+        assert!((evaluation.area_ratio - 0.4225).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn prompted_refinement_evaluation_routes_large_changes_to_review() {
+        let evaluation = evaluate_geometry_refinement(
+            refinement_trace(
+                NormalizedRect::new(0.1, 0.1, 0.3, 0.3).expect("coarse"),
+                NormalizedRect::new(0.75, 0.75, 0.05, 0.05).expect("refined"),
+            ),
+            GeometryRefinementThresholds::default(),
+        )
+        .expect("evaluation");
+
+        assert!(!evaluation.stable);
+        assert!(
+            evaluation
+                .issue_codes
+                .contains(&GeometryIssueCode::RefinerConflict)
+        );
+        assert!(
+            evaluation
+                .issue_codes
+                .contains(&GeometryIssueCode::CenterShift)
+        );
+        assert!(
+            evaluation
+                .issue_codes
+                .contains(&GeometryIssueCode::PartialObject)
+        );
+    }
 
     #[test]
     fn provider_failure_is_not_geometry_evidence() {

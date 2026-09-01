@@ -3351,6 +3351,22 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             deterministic: true,
         },
         VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION.to_owned(),
+            display_name: "Evaluate geometry refinement".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_GEOMETRY_DECISION.to_owned(),
+            display_name: "Geometry decision".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
             id: annotagent_runtime::CORE_MASK_TO_POLYGON.to_owned(),
             display_name: "Convert masks to polygons".to_owned(),
             required_capabilities: Vec::new(),
@@ -3599,6 +3615,58 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
                 catalog_port("masks", ArtifactKind::MaskSet, true, many),
                 catalog_port("box_prompts", ArtifactKind::BoxPromptSet, true, many),
             ],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({})),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION.to_owned(),
+            display_name: "Evaluate geometry refinement".to_owned(),
+            category: NodeCategory::EvidenceAndValidation,
+            input_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "minimum_coarse_refined_iou": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2},
+                "maximum_center_shift": {"type": "number", "minimum": 0, "default": 0.15},
+                "minimum_area_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 0.2},
+                "maximum_area_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 1.25},
+                "minimum_mask_score": {"type": "number", "minimum": 0, "maximum": 1}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_GEOMETRY_DECISION.to_owned(),
+            display_name: "Geometry decision".to_owned(),
+            category: NodeCategory::EvidenceAndValidation,
+            input_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
             output_ports: vec![catalog_port(
                 "detections",
                 ArtifactKind::DetectionSet,
@@ -15391,16 +15459,41 @@ fn add_prompted_segmentation_revision(
         review_gate: ReviewGate::default(),
         resources: ResourceRequirements::default(),
     };
-    let mut revised_gate = gate;
-    for source in revised_gate.inputs.values_mut() {
-        if matches!(source, PipelineSource::Step { step_id, .. } if step_id == &filter.id) {
-            *source = PipelineSource::Step {
+    let geometry_evaluation = PipelineStep {
+        id: format!("{prefix}.evaluate"),
+        node_type: annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION.to_owned(),
+        kind: WorkflowNodeKind::Validator,
+        inputs: BTreeMap::from([(
+            "detections".to_owned(),
+            PipelineSource::Step {
                 step_id: mask_to_bbox.id.clone(),
                 port: "detections".to_owned(),
                 artifact_type: ArtifactKind::DetectionSet,
-            };
-        }
-    }
+            },
+        )]),
+        outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
+        model_binding: None,
+        skill_binding: None,
+        parameters: BTreeMap::new(),
+        validators: Vec::new(),
+        refiners: Vec::new(),
+        fallback: None,
+        retry_policy: RetryPolicy::default(),
+        review_gate: ReviewGate::default(),
+        resources: ResourceRequirements::default(),
+    };
+    let mut revised_gate = gate;
+    annotagent_runtime::CORE_GEOMETRY_DECISION.clone_into(&mut revised_gate.node_type);
+    revised_gate.inputs = BTreeMap::from([(
+        "detections".to_owned(),
+        PipelineSource::Step {
+            step_id: geometry_evaluation.id.clone(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+        },
+    )]);
+    revised_gate.outputs = BTreeMap::from([("candidates".to_owned(), ArtifactKind::DetectionSet)]);
+    revised_gate.parameters.clear();
     let revised_gate_id = revised_gate.id.clone();
     let pipeline = &mut composition.label_pipelines[pipeline_index];
     pipeline.steps = pipeline
@@ -15408,7 +15501,13 @@ fn add_prompted_segmentation_revision(
         .iter()
         .filter(|step| step.id != revised_gate_id)
         .cloned()
-        .chain([prompts, segment, mask_to_bbox, revised_gate])
+        .chain([
+            prompts,
+            segment,
+            mask_to_bbox,
+            geometry_evaluation,
+            revised_gate,
+        ])
         .collect();
 
     let old = suggestion.draft.clone();
@@ -15426,12 +15525,12 @@ fn add_prompted_segmentation_revision(
     compiled.updated_at = chrono::Utc::now();
     suggestion.draft = compiled;
     suggestion.rationale.push(format!(
-        "Geometry evidence justified an explicit Detection → Box Prompt → Prompted Segmentation → Mask to BBox revision using available Model Profile {model_id}; {} geometry Review(s) and {} inaccurate-bbox reason(s) were observed.",
+        "Geometry evidence justified an explicit Detection → Box Prompt → Prompted Segmentation → Mask to BBox → Geometry Evaluation → Geometry Decision revision using available Model Profile {model_id}; {} geometry Review(s) and {} inaccurate-bbox reason(s) were observed.",
         evidence.geometry_review_count.max(evidence.geometry_quality.geometry_review_count),
         evidence.geometry_quality.inaccurate_bbox_reason_count,
     ));
     suggestion.warnings.push(
-        "Prompted segmentation refines existing candidate geometry only; it does not repair missing candidates, Provider failures, or semantic false positives."
+        "Prompted segmentation refines existing candidate geometry only; its mask is measured against the coarse box and is not automatically trusted. It does not repair missing candidates, Provider failures, or semantic false positives."
             .to_owned(),
     );
     Ok(true)
@@ -16500,6 +16599,9 @@ export:
         assert!(node_types.contains(annotagent_runtime::CORE_DETECTIONS_TO_BOX_PROMPTS));
         assert!(node_types.contains("capability.segment"));
         assert!(node_types.contains(annotagent_runtime::CORE_MASK_TO_BBOX));
+        assert!(node_types.contains(annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION));
+        assert!(node_types.contains(annotagent_runtime::CORE_GEOMETRY_DECISION));
+        assert!(!node_types.contains(annotagent_runtime::CORE_CONFIDENCE_GATE));
         let segment = suggestion
             .draft
             .nodes
@@ -16545,6 +16647,8 @@ export:
                 "core.decision".to_owned(),
                 "core.detections_to_box_prompts".to_owned(),
                 "core.existing_annotations".to_owned(),
+                "core.geometry_decision".to_owned(),
+                "core.geometry_quality_evaluation".to_owned(),
                 "core.human_review".to_owned(),
                 "core.image_input".to_owned(),
                 "core.mask_to_bbox".to_owned(),
@@ -17877,6 +17981,20 @@ export:
                     vec![port("detections", ArtifactKind::DetectionSet)],
                 ),
                 node(
+                    "geometry-quality",
+                    annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION,
+                    WorkflowNodeKind::Validator,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                ),
+                node(
+                    "geometry-decision",
+                    annotagent_runtime::CORE_GEOMETRY_DECISION,
+                    WorkflowNodeKind::Gate,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                ),
+                node(
                     "review",
                     "core.human_review",
                     WorkflowNodeKind::HumanReview,
@@ -17902,7 +18020,14 @@ export:
                 edge("prompts", "prompts", "segment", "box_prompts"),
                 edge("segment", "masks", "refine", "masks"),
                 edge("prompts", "prompts", "refine", "box_prompts"),
-                edge("refine", "detections", "review", "detections"),
+                edge("refine", "detections", "geometry-quality", "detections"),
+                edge(
+                    "geometry-quality",
+                    "detections",
+                    "geometry-decision",
+                    "detections",
+                ),
+                edge("geometry-decision", "detections", "review", "detections"),
                 edge("review", "detections", "commit", "detections"),
             ],
             enabled_skills: BTreeMap::new(),
@@ -17956,6 +18081,19 @@ export:
         assert!(kinds.contains(&ArtifactKind::BoxPromptSet));
         assert!(kinds.contains(&ArtifactKind::MaskSet));
         assert!(kinds.contains(&ArtifactKind::DetectionSet));
+        let quality = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "geometry-quality")
+            .expect("geometry quality node");
+        assert_eq!(quality.metadata["semantic_score_used"], false);
+        assert_eq!(quality.metadata["unstable_detection_count"], 0);
+        let decision = inspection
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "geometry-decision")
+            .expect("geometry decision node");
+        assert_eq!(decision.route.as_deref(), Some("accept"));
     }
 
     #[tokio::test]

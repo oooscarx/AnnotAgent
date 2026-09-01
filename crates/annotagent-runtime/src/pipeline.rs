@@ -9,9 +9,11 @@ use annotagent_core::{
     CorrectionRisk, CropSetArtifact, Detection, DetectionEvidence, DetectionSetArtifact,
     EvidenceAcceptRule, EvidenceFallbackRule, EvidenceGateConfig, EvidenceGateDecision,
     EvidenceGateInput, EvidenceGateReason, EvidenceGateReport, EvidenceRejectRule,
-    EvidenceReviewRule, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact, PipelineArtifact,
-    PolygonArtifactItem, PolygonSetArtifact, SuggestedAction, TaskId, ValidationEvidence,
-    ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability, mask_tight_bbox,
+    EvidenceReviewRule, GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION, GeometryRefinementThresholds,
+    GeometryRefinementTrace, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact,
+    PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact, SuggestedAction, TaskId,
+    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
+    evaluate_geometry_refinement, mask_tight_bbox,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -23,6 +25,8 @@ use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 pub const CORE_CROP: &str = "core.crop";
 pub const CORE_DETECTIONS_TO_BOX_PROMPTS: &str = "core.detections_to_box_prompts";
 pub const CORE_MASK_TO_BBOX: &str = "core.mask_to_bbox";
+pub const CORE_GEOMETRY_QUALITY_EVALUATION: &str = "core.geometry_quality_evaluation";
+pub const CORE_GEOMETRY_DECISION: &str = "core.geometry_decision";
 pub const CORE_MASK_TO_POLYGON: &str = "core.mask_to_polygon";
 pub const CORE_RESIZE: &str = "core.resize";
 pub const CORE_TILE: &str = "core.tile";
@@ -54,6 +58,8 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_CROP => run_crop(&context),
             CORE_DETECTIONS_TO_BOX_PROMPTS => run_detections_to_box_prompts(&context),
             CORE_MASK_TO_BBOX => run_mask_to_bbox(&context),
+            CORE_GEOMETRY_QUALITY_EVALUATION => run_geometry_quality_evaluation(&context),
+            CORE_GEOMETRY_DECISION => run_geometry_decision(&context),
             CORE_MASK_TO_POLYGON => run_mask_to_polygon(&context),
             CORE_FILTER => run_filter(&context),
             CORE_MAP_LABEL => run_map_label(&context),
@@ -544,8 +550,9 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
         } else {
             original.score
         };
+        let refined_detection_id = format!("refined:{}", original.detection_id);
         let mut refined = Detection::from_source(
-            format!("refined:{}", original.detection_id),
+            refined_detection_id.clone(),
             original.query_id.clone(),
             original.model_label.clone(),
             original.project_label.clone(),
@@ -560,15 +567,25 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
         .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
         refined.evidence.extend(original.evidence.clone());
         refined.attributes.clone_from(&original.attributes);
+        let trace = GeometryRefinementTrace {
+            schema_version: GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION,
+            method: "mask_to_bbox".to_owned(),
+            source_detection: prompt.subject.clone(),
+            box_prompt: mask.prompt.clone(),
+            mask: masks.reference.item(&mask.mask_id),
+            refined_detection: reference.item(&refined_detection_id),
+            original_bbox: original.bbox,
+            refined_bbox: bbox,
+            mask_score: mask.score,
+        };
+        trace
+            .validate()
+            .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
         refined.attributes.insert(
             "geometry_refinement".to_owned(),
-            serde_json::json!({
-                "method": "mask_to_bbox",
-                "original_bbox": original.bbox,
-                "box_prompt": mask.prompt,
-                "mask": masks.reference.item(&mask.mask_id),
-                "refined_bbox": bbox,
-            }),
+            serde_json::to_value(trace).map_err(|error| {
+                DagNodeFailure::terminal("mask_to_bbox_failed", error.to_string())
+            })?,
         );
         detections.push(refined);
     }
@@ -598,6 +615,168 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
         .validate()
         .map_err(|error| DagNodeFailure::terminal("mask_to_bbox_failed", error))?;
     Ok(output(PipelineArtifact::DetectionSet(refined)))
+}
+
+fn run_geometry_quality_evaluation(
+    context: &DagNodeContext<'_>,
+) -> Result<DagNodeOutput, DagNodeFailure> {
+    let mut detections = one_detection_set(context)?.clone();
+    detections
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
+    let thresholds: GeometryRefinementThresholds = serde_json::from_value(
+        serde_json::to_value(&context.node.parameters).map_err(|error| {
+            DagNodeFailure::terminal("invalid_geometry_thresholds", error.to_string())
+        })?,
+    )
+    .map_err(|error| DagNodeFailure::terminal("invalid_geometry_thresholds", error.to_string()))?;
+    thresholds
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_geometry_thresholds", error))?;
+    let mut evaluations = Vec::with_capacity(detections.detections.len());
+    let mut unstable_count = 0_u64;
+    for detection in &mut detections.detections {
+        let trace = detection
+            .attributes
+            .get("geometry_refinement")
+            .cloned()
+            .ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "geometry_refinement_missing",
+                    format!(
+                        "Detection {:?} has no prompted-refinement trace",
+                        detection.detection_id
+                    ),
+                )
+            })
+            .and_then(|value| {
+                serde_json::from_value::<GeometryRefinementTrace>(value).map_err(|error| {
+                    DagNodeFailure::terminal(
+                        "geometry_refinement_invalid",
+                        format!(
+                            "Detection {:?} has invalid prompted-refinement lineage: {error}",
+                            detection.detection_id
+                        ),
+                    )
+                })
+            })?;
+        if trace.refined_detection.artifact_id != detections.reference.artifact_id
+            || trace.refined_detection.item_id.as_deref() != Some(&detection.detection_id)
+            || trace.refined_bbox != detection.bbox
+        {
+            return Err(DagNodeFailure::terminal(
+                "geometry_refinement_lineage_mismatch",
+                format!(
+                    "Detection {:?} does not match its prompted-refinement output reference and geometry",
+                    detection.detection_id
+                ),
+            ));
+        }
+        let evaluation = evaluate_geometry_refinement(trace, thresholds)
+            .map_err(|error| DagNodeFailure::terminal("geometry_evaluation_failed", error))?;
+        if !evaluation.stable {
+            unstable_count = unstable_count.saturating_add(1);
+        }
+        detection.attributes.insert(
+            "geometry_quality_evaluation".to_owned(),
+            serde_json::to_value(&evaluation).map_err(|error| {
+                DagNodeFailure::terminal("geometry_evaluation_failed", error.to_string())
+            })?,
+        );
+        evaluations.push(evaluation);
+    }
+    detections.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    detections.validation_state = if unstable_count == 0 {
+        ArtifactValidationState::Unvalidated
+    } else {
+        ArtifactValidationState::NeedsReview
+    };
+    detections.metadata.insert(
+        "geometry_evaluations".to_owned(),
+        serde_json::to_value(&evaluations).map_err(|error| {
+            DagNodeFailure::terminal("geometry_evaluation_failed", error.to_string())
+        })?,
+    );
+    detections
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("geometry_evaluation_failed", error))?;
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(detections)],
+        metadata: BTreeMap::from([
+            (
+                "evaluated_detection_count".to_owned(),
+                serde_json::json!(evaluations.len()),
+            ),
+            (
+                "unstable_detection_count".to_owned(),
+                serde_json::json!(unstable_count),
+            ),
+            ("semantic_score_used".to_owned(), serde_json::json!(false)),
+        ]),
+        ..DagNodeOutput::default()
+    })
+}
+
+fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let mut detections = one_detection_set(context)?.clone();
+    detections
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
+    let mut missing_evaluation_count = 0_u64;
+    let mut unstable_count = 0_u64;
+    for detection in &detections.detections {
+        let Some(value) = detection.attributes.get("geometry_quality_evaluation") else {
+            missing_evaluation_count = missing_evaluation_count.saturating_add(1);
+            continue;
+        };
+        match serde_json::from_value::<annotagent_core::GeometryRefinementEvaluation>(value.clone())
+        {
+            Ok(evaluation)
+                if evaluation.validate().is_ok()
+                    && evaluation.stable
+                    && evaluation.trace.refined_detection.item_id.as_deref()
+                        == Some(&detection.detection_id)
+                    && evaluation.trace.refined_bbox == detection.bbox => {}
+            Ok(_) | Err(_) => unstable_count = unstable_count.saturating_add(1),
+        }
+    }
+    let accept =
+        !detections.detections.is_empty() && missing_evaluation_count == 0 && unstable_count == 0;
+    detections.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    detections.validation_state = if accept {
+        ArtifactValidationState::Valid
+    } else {
+        ArtifactValidationState::NeedsReview
+    };
+    detections.metadata.insert(
+        "geometry_decision".to_owned(),
+        serde_json::json!({
+            "route": if accept { "accept" } else { "review" },
+            "evaluated_detection_count": detections.detections.len(),
+            "missing_evaluation_count": missing_evaluation_count,
+            "unstable_detection_count": unstable_count,
+            "semantic_score_used": false,
+        }),
+    );
+    detections
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("geometry_decision_failed", error))?;
+    Ok(DagNodeOutput {
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(detections)],
+        route: Some(if accept { "accept" } else { "review" }.to_owned()),
+        metadata: BTreeMap::from([
+            (
+                "missing_evaluation_count".to_owned(),
+                serde_json::json!(missing_evaluation_count),
+            ),
+            (
+                "unstable_detection_count".to_owned(),
+                serde_json::json!(unstable_count),
+            ),
+            ("semantic_score_used".to_owned(), serde_json::json!(false)),
+        ]),
+        ..DagNodeOutput::default()
+    })
 }
 
 fn run_mask_to_polygon(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -2987,7 +3166,7 @@ mod tests {
             }],
             ..WorkflowDraftNode::default()
         };
-        let refined = CorePipelineRunner
+        let refined_output = CorePipelineRunner
             .run(node_context(
                 &bbox_node,
                 vec![prompt_output.pipeline_artifacts[0].clone(), masks],
@@ -2995,7 +3174,7 @@ mod tests {
             ))
             .await
             .expect("mask to bbox");
-        let PipelineArtifact::DetectionSet(refined) = &refined.pipeline_artifacts[0] else {
+        let PipelineArtifact::DetectionSet(refined) = &refined_output.pipeline_artifacts[0] else {
             panic!("refined detections")
         };
         let detection = &refined.detections[0];
@@ -3012,6 +3191,82 @@ mod tests {
             .expect("audit trail");
         assert_eq!(audit["method"], "mask_to_bbox");
         assert_eq!(audit["mask"]["artifact_id"], "sam-masks");
+        assert_eq!(audit["source_detection"]["item_id"], "ball-1");
+        assert_eq!(audit["box_prompt"]["item_id"], "box-prompt:ball-1");
+        assert_eq!(audit["refined_detection"]["item_id"], "refined:ball-1");
+
+        let refined_artifact = refined_output.pipeline_artifacts[0].clone();
+        let evaluation_node = WorkflowDraftNode {
+            id: "geometry-quality".to_owned(),
+            node_type: CORE_GEOMETRY_QUALITY_EVALUATION.to_owned(),
+            kind: WorkflowNodeKind::Validator,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let evaluated = CorePipelineRunner
+            .run(node_context(
+                &evaluation_node,
+                vec![refined_artifact.clone()],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("geometry quality evaluation");
+        assert_eq!(evaluated.metadata["unstable_detection_count"], 0);
+        assert_eq!(evaluated.metadata["semantic_score_used"], false);
+
+        let decision_node = WorkflowDraftNode {
+            id: "geometry-decision".to_owned(),
+            node_type: CORE_GEOMETRY_DECISION.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let accepted = CorePipelineRunner
+            .run(node_context(
+                &decision_node,
+                evaluated.pipeline_artifacts,
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("geometry decision");
+        assert_eq!(accepted.route.as_deref(), Some("accept"));
+        assert_eq!(accepted.metadata["semantic_score_used"], false);
+
+        let strict_evaluation_node = WorkflowDraftNode {
+            parameters: BTreeMap::from([(
+                "maximum_center_shift".to_owned(),
+                serde_json::json!(0.005),
+            )]),
+            ..evaluation_node
+        };
+        let unstable = CorePipelineRunner
+            .run(node_context(
+                &strict_evaluation_node,
+                vec![refined_artifact],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("strict geometry quality evaluation");
+        assert_eq!(unstable.metadata["unstable_detection_count"], 1);
+        let reviewed = CorePipelineRunner
+            .run(node_context(
+                &decision_node,
+                unstable.pipeline_artifacts,
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("review geometry decision");
+        assert_eq!(reviewed.route.as_deref(), Some("review"));
     }
 
     fn pipeline_image(

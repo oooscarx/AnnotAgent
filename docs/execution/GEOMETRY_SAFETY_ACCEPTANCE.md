@@ -6,7 +6,7 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 |---|---|---|
 | 1. High semantic score cannot pass geometry safety | verified | Core regression now rejects the exact M0 graph with semantic-score and uncalibrated-geometry blockers. |
 | 2. VLM plus mandatory Review is legal | verified | Core dominance-path test and published Runtime regressions pass. |
-| 3. Healthy SAM refinement path | live-conditional | Typed available-refiner path and offline prompted-segmentation Runtime pass; a real SAM Worker is not configured. |
+| 3. Healthy SAM refinement path | live-conditional | Complete typed Detection→Prompt→Mask→BBox→Evaluation→Decision execution passes offline; a real SAM Worker is not configured. |
 | 4. Unavailable SAM becomes setup alternative | verified | Refinement Tool excludes Mock and unavailable models from runnable bindings; Qwen-only regression returns missing-weights SAM only as unapplied setup and keeps Review. |
 | 5. Provider failure does not suggest SAM | verified | Builder contract and typed revision assessment classify Provider failure as infrastructure evidence and reject prompted refinement. |
 | 6. No candidate does not suggest SAM | verified | Builder contract and typed revision assessment reject segmentation without a candidate prompt and direct the Agent to search/detector/Review alternatives. |
@@ -15,7 +15,7 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 9. Calibration can pass with sufficient evidence | verified | Core aggregation and an Application end-to-end fixture build a `Passed` report from exact reviewed Run/model/node evidence under Project thresholds. |
 | 10. Configuration changes stale calibration | verified | Core exhaustively classifies staleness dimensions; the Application fixture changes grid/node configuration and observes effective `Stale`. |
 | 11. Qwen-only first Draft requires Review | verified | Scripted live Builder reads all five geometry Tools, observes coarse/uncalibrated Qwen and unavailable real SAM, then saves a valid Draft with Human Review and no segment node. |
-| 12. Registered SAM enables improvement Draft | open | Not implemented end to end. |
+| 12. Registered SAM enables improvement Draft | live-conditional | An available prompted-segmentation binding creates a typed refinement/evaluation/decision revision and executes offline; live SAM registration/quality remains conditional. |
 | 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
 | 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
 | 15. Small objects are evaluated separately | verified | Reference pixel area is bucketed using small/medium/large thresholds and each bucket retains sample count, adjustment count, mean IoU and mean center shift. |
@@ -58,8 +58,9 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 - Static validation emits `semantic_score_used_as_geometry_evidence`,
   `uncalibrated_geometry_auto_commit`, `geometry_acceptance_path_missing`, and a calibration state
   error for the former production graph.
-- Separate tests prove mandatory Review and an available
-  Detection → Box Prompt → Prompted Segmentation → Mask to BBox path are legal.
+- Separate tests prove mandatory Review and an available Detection → Box Prompt → Prompted
+  Segmentation → Mask to BBox → Geometry Evaluation → Geometry Decision path are legal. A refiner
+  plus mask conversion without the measured decision remains blocked.
 - Stale calibration emits `geometry_calibration_stale` rather than being silently reused.
 - Draft Dry Runs keep blockers inspectable as non-blocking warnings; publication and new formal Runs
   enforce them.
@@ -127,3 +128,24 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 - Verification passed all 329 active Rust tests and doc tests (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
   TypeScript, all 41 Web unit tests and the production Web build.
+
+## M6 evidence
+
+- `GeometryRefinementTrace` validates exact typed item references for the source detection, prompt,
+  mask and refined detection. Mask-to-BBox writes the trace without replacing semantic score
+  semantics or claiming calibration.
+- `GeometryRefinementEvaluation` compares original/refined boxes with Project-configurable
+  thresholds for IoU, center movement and area change. Its decision input is measured geometry;
+  semantic confidence is never read.
+- Runtime tests prove a stable tightening routes `accept`, while a stricter center-shift policy
+  routes the same result to `review`. Empty/missing/malformed evaluation also fails closed.
+- The public catalog exposes Geometry Evaluation and Geometry Decision, and both fresh execution
+  and review/replay Published Runtime registration paths use the real Core runner.
+- The Builder revision test proves an evidence-backed prompted segmenter is inserted only as
+  Prompt→Mask→BBox→Evaluation→Decision and the old semantic Confidence Gate disappears.
+- The full offline Application regression publishes and executes the chain, exposes node metadata
+  and exact Artifact types, and suspends at its retained Human Review boundary. A real SAM Worker
+  remains live-conditional and no Mock result is presented as model-quality evidence.
+- Release verification passed all 332 active Rust tests and doc tests (one explicitly billable
+  smoke ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
+  TypeScript, all 41 Web unit tests and the production build.

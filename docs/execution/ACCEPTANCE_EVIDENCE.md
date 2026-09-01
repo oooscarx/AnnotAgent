@@ -1,5 +1,31 @@
 # AnnotAgent Acceptance Evidence
 
+## Geometry-Safe Pipeline Builder M6 — 2026-09-02
+
+1. `GeometryRefinementTrace` is a strict versioned contract. Runtime-generated lineage names one
+   DetectionSet item, one BoxPromptSet item, one MaskSet item and one refined DetectionSet item;
+   empty or wrongly typed references fail validation.
+2. `evaluate_geometry_refinement` derives IoU, normalized center shift and area/width/height ratios
+   solely from coarse and refined boxes. Large movement, conflict, excessive tightening/expansion
+   and configured weak/non-geometric mask scores produce typed geometry issues.
+3. `core.geometry_quality_evaluation` persists each comparison on its detection and exposes bounded
+   aggregate metadata. `core.geometry_decision` routes only complete stable evidence to `accept`;
+   empty, missing, malformed or unstable evidence routes to `review`. Both record
+   `semantic_score_used=false`.
+4. Static validation proves a healthy prompted segmenter plus Mask-to-BBox still cannot auto-commit
+   without Geometry Evaluation and Geometry Decision. The complete evaluated path is legal; Human
+   Review remains legal independently.
+5. `published_prompted_segmentation_pipeline_runs_end_to_end_offline` publishes and executes the
+   complete chain through both newly registered Published Runtime paths, observes a stable decision
+   and still suspends at the deliberately retained Human Review boundary. This is protocol evidence,
+   not a real SAM quality claim.
+6. The Builder's evidence-backed revision replaces the raw semantic Confidence Gate with typed
+   geometry evaluation/decision nodes. Its Draft remains editable and statically valid, and it
+   explains that a mask is measured evidence rather than automatic trust.
+7. Release verification passes all 332 active Rust tests and doc tests with the separately billable
+   Provider smoke still ignored, strict all-target/all-feature Clippy, all-feature build,
+   Rustfmt/diff checks, Web TypeScript, all 41 Web unit tests and the production build.
+
 ## Geometry-Safe Pipeline Builder M5 — 2026-09-02
 
 1. The Builder's exact 64-Tool registry includes five geometry-safety observations with bounded

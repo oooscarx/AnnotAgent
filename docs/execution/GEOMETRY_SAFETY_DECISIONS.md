@@ -86,3 +86,11 @@ Project geometry policy, structured correction aggregate, exact calibration and 
 availability. A registered adapter is not an available model: Mock connections are excluded from
 product advice, and unavailable real models remain unapplied setup alternatives. With insufficient
 evidence the smallest runnable Draft preserves mandatory Human Review.
+
+## D-015 — A refiner result is evidence, not automatic approval
+
+Prompted segmentation must preserve exact Detection→Prompt→Mask→refined Detection lineage and then
+pass an explicit geometry comparison and decision. The comparison uses box/mask-derived evidence,
+never the upstream semantic score. A returned mask, a high mask ranking value or a Mask-to-BBox
+conversion alone cannot satisfy a Refiner-or-Review publication policy; incomplete or unstable
+evidence routes to Human Review.
