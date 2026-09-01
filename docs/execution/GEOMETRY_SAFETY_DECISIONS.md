@@ -78,3 +78,11 @@ report.
 Historical `Passed` evidence authorizes only an explicit Geometry Quality Evaluation → Geometry
 Decision boundary. It does not upgrade semantic confidence into localization confidence and cannot
 make a generic score gate geometry-safe.
+
+## D-014 — First-draft geometry advice is evidence-gated and setup-honest
+
+Before resolving a bounding-box Draft, the Pipeline Builder reads the operation quality contract,
+Project geometry policy, structured correction aggregate, exact calibration and typed refinement
+availability. A registered adapter is not an available model: Mock connections are excluded from
+product advice, and unavailable real models remain unapplied setup alternatives. With insufficient
+evidence the smallest runnable Draft preserves mandatory Human Review.

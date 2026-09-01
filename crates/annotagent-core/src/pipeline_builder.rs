@@ -966,6 +966,11 @@ pub enum PipelineBuilderTool {
     InspectLabelSpace,
     InspectScoreSemantics,
     InspectGeometrySemantics,
+    InspectModelQualityContract,
+    InspectProjectGeometryPolicy,
+    InspectGeometryCorrectionSummary,
+    InspectGeometryCalibration,
+    FindGeometryRefinementPath,
     CheckCapabilityPath,
     CheckProviderAvailability,
     EstimateModelCost,
@@ -998,7 +1003,7 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 59] = [
+    pub const ALL: [Self; 64] = [
         Self::GetPipelineBuilderContext,
         Self::ResolvePipelineFeasibility,
         Self::InspectNodesBatch,
@@ -1029,6 +1034,11 @@ impl PipelineBuilderTool {
         Self::InspectLabelSpace,
         Self::InspectScoreSemantics,
         Self::InspectGeometrySemantics,
+        Self::InspectModelQualityContract,
+        Self::InspectProjectGeometryPolicy,
+        Self::InspectGeometryCorrectionSummary,
+        Self::InspectGeometryCalibration,
+        Self::FindGeometryRefinementPath,
         Self::CheckCapabilityPath,
         Self::CheckProviderAvailability,
         Self::EstimateModelCost,
@@ -1093,6 +1103,11 @@ impl PipelineBuilderTool {
             Self::InspectLabelSpace => "inspect_label_space",
             Self::InspectScoreSemantics => "inspect_score_semantics",
             Self::InspectGeometrySemantics => "inspect_geometry_semantics",
+            Self::InspectModelQualityContract => "inspect_model_quality_contract",
+            Self::InspectProjectGeometryPolicy => "inspect_project_geometry_policy",
+            Self::InspectGeometryCorrectionSummary => "inspect_geometry_correction_summary",
+            Self::InspectGeometryCalibration => "inspect_geometry_calibration",
+            Self::FindGeometryRefinementPath => "find_geometry_refinement_path",
             Self::CheckCapabilityPath => "check_capability_path",
             Self::CheckProviderAvailability => "check_provider_availability",
             Self::EstimateModelCost => "estimate_model_cost",
@@ -1163,6 +1178,11 @@ impl PipelineBuilderTool {
                 | Self::InspectLabelSpace
                 | Self::InspectScoreSemantics
                 | Self::InspectGeometrySemantics
+                | Self::InspectModelQualityContract
+                | Self::InspectProjectGeometryPolicy
+                | Self::InspectGeometryCorrectionSummary
+                | Self::InspectGeometryCalibration
+                | Self::FindGeometryRefinementPath
                 | Self::FindArtifactConversionPath
         )
     }
@@ -1177,7 +1197,10 @@ impl PipelineBuilderTool {
             | Self::SampleDataset
             | Self::InspectSampleImage
             | Self::InspectExistingPipeline
-            | Self::InspectExistingAutomations => PipelineBuilderPermission::ReadProject,
+            | Self::InspectExistingAutomations
+            | Self::InspectProjectGeometryPolicy
+            | Self::InspectGeometryCorrectionSummary
+            | Self::InspectGeometryCalibration => PipelineBuilderPermission::ReadProject,
             Self::ResolvePipelineFeasibility
             | Self::InspectNodesBatch
             | Self::InspectModelsBatch
@@ -1197,6 +1220,8 @@ impl PipelineBuilderTool {
             | Self::InspectLabelSpace
             | Self::InspectScoreSemantics
             | Self::InspectGeometrySemantics
+            | Self::InspectModelQualityContract
+            | Self::FindGeometryRefinementPath
             | Self::CheckCapabilityPath
             | Self::EstimateModelCost => PipelineBuilderPermission::ReadRegistry,
             Self::CheckProviderAvailability => PipelineBuilderPermission::PassiveProviderCheck,
@@ -2477,7 +2502,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 59);
+        assert_eq!(tools.len(), 64);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",
@@ -2506,6 +2531,31 @@ mod tests {
                 .permission(),
             PipelineBuilderPermission::PassiveProviderCheck
         );
+        for name in [
+            "inspect_model_quality_contract",
+            "find_geometry_refinement_path",
+        ] {
+            assert_eq!(
+                registry
+                    .resolve(name)
+                    .expect("geometry Registry Tool")
+                    .permission(),
+                PipelineBuilderPermission::ReadRegistry
+            );
+        }
+        for name in [
+            "inspect_project_geometry_policy",
+            "inspect_geometry_correction_summary",
+            "inspect_geometry_calibration",
+        ] {
+            assert_eq!(
+                registry
+                    .resolve(name)
+                    .expect("geometry Project Tool")
+                    .permission(),
+                PipelineBuilderPermission::ReadProject
+            );
+        }
         assert!(tools.iter().all(|tool| !tool.name.contains("api_key")));
     }
 

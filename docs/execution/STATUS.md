@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-02 CST
 
+## Geometry-Safe Pipeline Builder M5 — 2026-09-02
+
+- Pipeline Builder now has bounded read-only Tools for model geometry/score contracts, Project
+  geometry policy, structured correction summaries, exact calibration and typed refiner
+  availability. They are exposed during feasibility analysis without revealing credentials or
+  consuming finalization reserve.
+- The first bbox Draft is evidence-safe: Qwen VLM geometry is coarse regardless of semantic score;
+  unavailable SAM remains an unapplied setup alternative; absent exact evidence produces mandatory
+  Human Review rather than a fabricated auto-accept path.
+- The full release suite passes 329 active Rust tests plus doc tests (one billable smoke ignored),
+  strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web TypeScript, 41
+  unit tests and production build. No remote was changed.
+
 ## Geometry-Safe Pipeline Builder M4 — 2026-09-02
 
 - Added exact Project/model/node/prompt/preprocessing/schema/refiner/dataset geometry calibration,

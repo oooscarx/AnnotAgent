@@ -1,5 +1,22 @@
 # AnnotAgent Acceptance Evidence
 
+## Geometry-Safe Pipeline Builder M5 — 2026-09-02
+
+1. The Builder's exact 64-Tool registry includes five geometry-safety observations with bounded
+   permissions and no publish, formal Run, credential, shell, Python, download or arbitrary-URL
+   escape hatch.
+2. The Qwen-only Agent regression inspects the model quality contract, Project policy, correction
+   summary, calibration and refinement availability before deterministic feasibility. Qwen returns
+   semantic confidence plus coarse geometry and cannot auto-accept from score.
+3. The refinement Tool requires both a registered typed conversion and a healthy non-Mock model.
+   The missing-weights SAM manifest is shown only as `requires_setup`, `applied_to_draft=false`;
+   the saved Draft contains mandatory Human Review and no segmentation node.
+4. Provider failure, NoCandidate and semantic wrong-object cases retain separate typed handling;
+   none is treated as proof that prompted segmentation should be inserted.
+5. Verification passed all 329 active Rust tests and doc tests (one explicitly billable smoke
+   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
+   TypeScript, all 41 Web unit tests and production build.
+
 ## Geometry-Safe Pipeline Builder M4 — 2026-09-02
 
 1. Core calibration tests exercise all six states, robust IoU/center/area metrics, small-object

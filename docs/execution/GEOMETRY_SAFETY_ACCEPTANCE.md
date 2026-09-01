@@ -7,14 +7,14 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 1. High semantic score cannot pass geometry safety | verified | Core regression now rejects the exact M0 graph with semantic-score and uncalibrated-geometry blockers. |
 | 2. VLM plus mandatory Review is legal | verified | Core dominance-path test and published Runtime regressions pass. |
 | 3. Healthy SAM refinement path | live-conditional | Typed available-refiner path and offline prompted-segmentation Runtime pass; a real SAM Worker is not configured. |
-| 4. Unavailable SAM becomes setup alternative | open | Builder has availability concepts; exact safe fallback test pending. |
-| 5. Provider failure does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
-| 6. No candidate does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
-| 7. Wrong object does not use SAM as primary fix | open | Domain guidance exists; Agent behavior test pending. |
+| 4. Unavailable SAM becomes setup alternative | verified | Refinement Tool excludes Mock and unavailable models from runnable bindings; Qwen-only regression returns missing-weights SAM only as unapplied setup and keeps Review. |
+| 5. Provider failure does not suggest SAM | verified | Builder contract and typed revision assessment classify Provider failure as infrastructure evidence and reject prompted refinement. |
+| 6. No candidate does not suggest SAM | verified | Builder contract and typed revision assessment reject segmentation without a candidate prompt and direct the Agent to search/detector/Review alternatives. |
+| 7. Wrong object does not use SAM as primary fix | verified | Builder contract directs semantic hard negatives to classification/domain validation/Correction Memory/Review; typed assessment does not mistake them for geometry evidence. |
 | 8. Bbox edit creates geometry evidence | verified | HTTP Review regression persists typed report/evidence records with original/corrected geometry, five requested metrics, reason and lineage, then reads them through Project and Run APIs. |
 | 9. Calibration can pass with sufficient evidence | verified | Core aggregation and an Application end-to-end fixture build a `Passed` report from exact reviewed Run/model/node evidence under Project thresholds. |
 | 10. Configuration changes stale calibration | verified | Core exhaustively classifies staleness dimensions; the Application fixture changes grid/node configuration and observes effective `Stale`. |
-| 11. Qwen-only first Draft requires Review | implemented | Deterministic bbox drafts and the VLM bootstrap template now make Review mandatory; LLM Builder policy is M5. |
+| 11. Qwen-only first Draft requires Review | verified | Scripted live Builder reads all five geometry Tools, observes coarse/uncalibrated Qwen and unavailable real SAM, then saves a valid Draft with Human Review and no segment node. |
 | 12. Registered SAM enables improvement Draft | open | Not implemented end to end. |
 | 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
 | 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
@@ -105,3 +105,25 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 - SQLite migration 11 persists Project policies and immutable reports. HTTP tests cover Project
   policy GET/PUT, report list/detail, fail-closed stale display without a matching current Version,
   and rejected calibration creation without explicit Evidence Runs.
+
+## M5 evidence
+
+- The Pipeline Builder registry now has 64 bounded Tools. The five geometry-safety additions have
+  explicit read-only Project/Registry permissions, cacheable observations and feasibility-only
+  visibility; forbidden publish, Run, credential, shell, Python, download and arbitrary-URL tools
+  remain absent.
+- `inspect_model_quality_contract` returns effective operation-scoped contracts and passive
+  availability without credentials. For the Qwen fixture it reports semantic confidence,
+  `coarse_hypothesis`, `never_from_score_alone` and `score_only_auto_accept_allowed=false`.
+- Project policy, correction-memory and calibration Tools are scoped to the requested task/Label.
+  Correction output is bounded and aggregate-only; exact calibration output distinguishes Passed
+  current evidence from Stale or insufficient evidence.
+- `find_geometry_refinement_path` verifies both the registered DetectionSet → prompts → mask →
+  DetectionSet conversion and an actually available non-Mock prompted-segmentation model. The
+  current missing-weights SAM manifest is an unapplied setup alternative, not a Draft binding.
+- `qwen_style_vlm_binds_structured_detection_but_not_native_detector` runs the complete controlled
+  Agent sequence through validation and sandbox Dry Run. The resulting editable Draft has a Human
+  Review boundary and no `capability.segment` node.
+- Verification passed all 329 active Rust tests and doc tests (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
+  TypeScript, all 41 Web unit tests and the production Web build.

@@ -4,7 +4,7 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 4 — exact Project/model/config geometry calibration complete.
+Milestone 5 — geometry-safe first-draft Agent behavior complete.
 
 ## Completed
 
@@ -67,15 +67,28 @@ Milestone 4 — exact Project/model/config geometry calibration complete.
 - Publication and formal-Run validation now hydrate exact persisted calibration state. Passing
   calibration alone cannot turn a semantic confidence threshold into geometry evidence; an
   explicit Geometry Quality Evaluation → Geometry Decision boundary must consume it.
+- Added five bounded, read-only Pipeline Builder Tools for exact model quality contracts, Project
+  geometry policy, structured correction aggregates, calibration state and typed refinement-path
+  availability.
+- Bounding-box Builder sessions expose those Tools only during feasibility analysis and reserve
+  final Tool Calls for Draft persistence/finalization rather than late catalog exploration.
+- The Builder system contract now requires geometry evidence inspection before feasibility,
+  rejects semantic/relative confidence as localization quality, treats grid/resize/prompt changes
+  as uncalibrated, and preserves every proposal as an editable Draft.
+- Refinement discovery filters out Mock connections and Mock Providers. Missing-weights or
+  otherwise unavailable prompted segmenters are returned only as unapplied setup alternatives;
+  the current runnable fallback is mandatory Human Review.
+- The Qwen-only regression proves the first saved Draft retains a Human Review boundary, does not
+  add `capability.segment`, and reports no passing calibration or runnable real segmenter.
 
 ## In progress
 
-- None within M4; the next implementation milestone is M5.
+- None within M5; the next implementation milestone is M6.
 
 ## Next
 
-- Milestone 5: expose quality contracts, Project geometry policy and calibration evidence to the
-  Pipeline Builder so its first Draft is conservative.
+- Milestone 6: add auditable prompted geometry refinement, Runtime geometry comparison and exact
+  Artifact lineage.
 
 ## Recent verification
 
@@ -98,6 +111,11 @@ Milestone 4 — exact Project/model/config geometry calibration complete.
 - M4 release: all 329 active Rust tests and doc tests passed (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy and all-feature build passed, and Web TypeScript,
   41 unit tests and production build passed.
+- M5 focused: the Qwen-only conservative Draft, system policy, phased Tool visibility and complete
+  64-Tool registry tests passed.
+- M5 release: all 329 active Rust tests and doc tests passed (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
+  Web TypeScript, 41 unit tests and production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -109,10 +127,12 @@ Milestone 4 — exact Project/model/config geometry calibration complete.
 - `291f20c feat(models): separate semantic confidence from geometry quality` (M1).
 - `0cb775c feat(workflow): block uncalibrated geometry from score-only commit` (M2).
 - `77c5dea feat(review): capture structured bbox correction evidence` (M3).
+- `ee4a159 feat(evaluation): calibrate geometry quality by model and project` (M4).
+- `feat(agent): build geometry-safe pipelines from the first draft` (M5, this milestone commit).
 
 ## Release-blocking remainder
 
-- M5 through M8 remain open. M4 acceptance evidence is implemented and verified.
+- M6 through M8 remain open. M5 acceptance evidence is implemented and verified.
 
 ## Live-conditional items
 

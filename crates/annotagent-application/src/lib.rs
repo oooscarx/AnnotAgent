@@ -712,8 +712,11 @@ fn default_provider_kind() -> String {
 
 const PIPELINE_BUILDER_SYSTEM_PROMPT: &str = "You are AnnotAgent's constrained Pipeline Builder. \
 Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
-and inspected evidence. Start with get_pipeline_builder_context, then call the deterministic \
-resolve_pipeline_feasibility tool. Do not enumerate the catalog with single-item inspection calls. \
+and inspected evidence. Start with get_pipeline_builder_context. For a bounding-box target, inspect \
+inspect_model_quality_contract, inspect_project_geometry_policy, inspect_geometry_correction_summary, \
+inspect_geometry_calibration, and find_geometry_refinement_path before calling the deterministic \
+resolve_pipeline_feasibility tool. Do not \
+enumerate the catalog with single-item inspection calls. \
 Request one batch inspection only when an omitted contract would materially change the Draft. Never \
 repeat an identical Tool Call: reuse the returned observation reference and advance the phase. Respect \
 the runtime phase, remaining Tool Calls, and reserved finalization calls supplied on every turn. By the \
@@ -723,7 +726,13 @@ unresolved binding and finish_with_setup_requirements. Never spend the finalizat
 inspection, and always terminate with an explicit typed outcome. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
 fixture backend, or test-only fallback. If a real binding is unavailable, leave it explicitly unresolved \
 and explain the required Provider or Vision Worker setup. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
-uncalibrated CoarseHypothesis even when confidence is high. Provider or Worker failure is infrastructure \
+uncalibrated CoarseHypothesis even when confidence is high. Never route it to Commit using semantic or \
+relative confidence alone. Training-quality bounding boxes require mandatory human Review, an available \
+prompted-segmentation refinement plus geometry evaluation, exact Project calibration consumed by a \
+Geometry Decision, or another compatible localization-evidence source. Grid overlays, coordinate \
+instructions, resize, and larger prompts may improve coarse localization but are not calibration. A \
+calibration claim requires a valid report for the exact Project, task/Label, Model Profile revision, \
+prompt, preprocessing, node configuration, Label Schema, refiner chain, and dataset profile. Provider or Worker failure is infrastructure \
 evidence, never a reason to add prompted segmentation. NoCandidate has no box or point prompt, so do not \
 add prompted segmentation; consider Tile, zoom/crop search, an available open-vocabulary or specialist \
 detector, or Review. Semantic errors such as white footwear mistaken for a football require Crop \
@@ -738,13 +747,14 @@ fabricated confidence. Never bind unavailable, disabled, unconfigured, missing-w
 incompatible, invalid-contract, failed-smoke, or Unknown models. Setup-only models may appear only as \
 unapplied Alternatives with a setup action. Never invent a capability, score, health result, benchmark, \
 Validator, Refiner, model, or node. The compact context snapshot is authoritative for Project, Label, \
-Skill, Node, Model, Draft, template, and capability summaries. Modify only the persisted editable Draft \
+Skill, Node, Model, Draft, template, and capability summaries. When evidence is insufficient, prefer \
+mandatory Review instead of fabricated geometry confidence. Modify only the persisted editable Draft \
 through bounded tools. Validate with Rust, run a \
 non-committing Dry Run, inspect failure classes and geometry quality, revise only from that structured \
 evidence, then submit for explicit human approval. An unresolved binding must never reach Dry Run or \
 Publish. A VisionLanguage profile with image input and structured output or Tool Calls may bind only to \
 a VLM Detection node that declares DetectionSet output; it is not a native ObjectDetection model unless \
-that capability is separately declared. Never publish, start a formal Run, set credentials, \
+that capability is separately declared. Every proposal remains an editable Draft. Never publish, start a formal Run, set credentials, \
 create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal \
 hidden reasoning. check_provider_availability is passive only and must not send a billable request.";
 
@@ -972,6 +982,31 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             PipelineBuilderTool::InspectGeometrySemantics,
             "Inspect geometry semantics independently from model confidence.",
             json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelQualityContract,
+            "Inspect operation-scoped score semantics, geometry semantics, auto-accept eligibility, exact calibration status, and passive availability for one registered model.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectProjectGeometryPolicy,
+            "Inspect the target Project's required geometry quality, acceptance policy, and calibration thresholds.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectGeometryCorrectionSummary,
+            "Inspect a bounded aggregate of structured human bbox corrections for the target task and Label; image data and free-form notes are excluded.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectGeometryCalibration,
+            "Inspect immutable exact-context geometry calibration reports and effective stale state for the target task and Label.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::FindGeometryRefinementPath,
+            "Find the registered Detection to Prompt to Mask to BBox path and verify that a compatible prompted-segmentation model is actually Available. Setup-only models are returned only as unapplied alternatives.",
+            no_arguments(),
         ),
         read(
             PipelineBuilderTool::CheckCapabilityPath,
@@ -1220,6 +1255,11 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::InspectContractsBatch
                     | PipelineBuilderTool::LoadSkillResource
                     | PipelineBuilderTool::FindArtifactConversionPath
+                    | PipelineBuilderTool::InspectModelQualityContract
+                    | PipelineBuilderTool::InspectProjectGeometryPolicy
+                    | PipelineBuilderTool::InspectGeometryCorrectionSummary
+                    | PipelineBuilderTool::InspectGeometryCalibration
+                    | PipelineBuilderTool::FindGeometryRefinementPath
             );
             if remaining <= reserve.saturating_add(4) && broad_inspection {
                 return false;
@@ -1234,6 +1274,11 @@ fn pipeline_builder_visible_tools(
                         | PipelineBuilderTool::InspectContractsBatch
                         | PipelineBuilderTool::LoadSkillResource
                         | PipelineBuilderTool::FindArtifactConversionPath
+                        | PipelineBuilderTool::InspectModelQualityContract
+                        | PipelineBuilderTool::InspectProjectGeometryPolicy
+                        | PipelineBuilderTool::InspectGeometryCorrectionSummary
+                        | PipelineBuilderTool::InspectGeometryCalibration
+                        | PipelineBuilderTool::FindGeometryRefinementPath
                 ),
                 Phase::Drafting => {
                     tool.mutates_draft()
@@ -10151,6 +10196,367 @@ impl LocalApplication {
                             json!({"model_id": model_id, "geometry_semantics": semantics, "independent_from_score": true}),
                         ))
                     }
+                    Ok(PipelineBuilderTool::InspectModelQualityContract) => {
+                        let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        if let Some(model) = input
+                            .model_profiles
+                            .iter()
+                            .find(|model| model.id.to_string() == model_id)
+                        {
+                            let provider = input
+                                .provider_profiles
+                                .iter()
+                                .find(|provider| provider.id == model.provider_id);
+                            let available = compatible_builder_models(&input, None)
+                                .iter()
+                                .any(|candidate| candidate.id == model.id);
+                            let calibrations = self
+                                .project_geometry_calibrations(project_id)?
+                                .into_iter()
+                                .filter(|view| {
+                                    view.report.key.model_profile_id == model.id
+                                        && view.report.key.model_profile_revision == model.revision
+                                        && input.target_task_id.as_ref().is_none_or(|task_id| {
+                                            view.report.key.task_id == *task_id
+                                        })
+                                        && input.target_label.as_ref().is_none_or(|label_id| {
+                                            view.report.key.label_id.as_ref() == Some(label_id)
+                                        })
+                                })
+                                .collect::<Vec<_>>();
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                format!("Inspected quality contract for Model Profile {model_id}"),
+                                json!({
+                                    "model_profile_id": model.id,
+                                    "revision": model.revision,
+                                    "display_name": model.display_name,
+                                    "capabilities": model.task_capabilities,
+                                    "quality_contracts": annotagent_core::effective_model_quality_contracts(model),
+                                    "availability": {
+                                        "available": available,
+                                        "model_enabled": model.enabled,
+                                        "model_status": model.status,
+                                        "provider_enabled": provider.map(|value| value.enabled),
+                                        "provider_health": provider.map(|value| value.health_status),
+                                        "credential_configured": provider.map(|value| value.credential_configured),
+                                    },
+                                    "matching_exact_context_calibrations": calibrations,
+                                    "confidence_is_geometry_quality": false,
+                                    "score_only_auto_accept_allowed": false,
+                                }),
+                            ));
+                        }
+                        if let Some(model) = input
+                            .expert_models
+                            .iter()
+                            .find(|model| model.model_id == model_id)
+                        {
+                            let eligibility = if model.geometry_semantics
+                                == annotagent_core::GeometrySemantics::CoarseHypothesis
+                                || model.score_semantics.is_semantic()
+                            {
+                                annotagent_core::AutoAcceptEligibility::NeverFromScoreAlone
+                            } else {
+                                annotagent_core::AutoAcceptEligibility::RequiresProjectCalibration
+                            };
+                            return Ok(annotagent_core::AgentToolResult::summary(
+                                format!("Inspected quality contract for Expert Model {model_id}"),
+                                json!({
+                                    "model_id": model.model_id,
+                                    "model_version": model.model_version,
+                                    "capabilities": model.capabilities,
+                                    "score_semantics": model.score_semantics,
+                                    "geometry_semantics": model.geometry_semantics,
+                                    "auto_accept_eligibility": eligibility,
+                                    "availability": model.availability,
+                                    "availability_evidence": model.availability_evidence,
+                                    "publishable": model.availability.publishable(),
+                                    "setup_only": !model.availability.publishable(),
+                                    "requires_revisioned_project_calibration": true,
+                                    "confidence_is_geometry_quality": false,
+                                    "score_only_auto_accept_allowed": false,
+                                }),
+                            ));
+                        }
+                        let model = input
+                            .model_registry
+                            .iter()
+                            .find(|model| model.id == model_id)
+                            .ok_or_else(|| anyhow!("Registry Model {model_id:?} is not registered"))?;
+                        let geometry_semantics =
+                            annotagent_core::default_geometry_semantics(&model.capabilities);
+                        let eligibility = if geometry_semantics
+                            == annotagent_core::GeometrySemantics::CoarseHypothesis
+                            || model.score_semantics.is_semantic()
+                        {
+                            annotagent_core::AutoAcceptEligibility::NeverFromScoreAlone
+                        } else {
+                            annotagent_core::AutoAcceptEligibility::RequiresProjectCalibration
+                        };
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected migrated quality contract for {model_id}"),
+                            json!({
+                                "model_id": model.id,
+                                "model_version": model.model_version,
+                                "capabilities": model.capabilities,
+                                "score_semantics": model.score_semantics,
+                                "geometry_semantics": geometry_semantics,
+                                "auto_accept_eligibility": eligibility,
+                                "availability": model.status,
+                                "setup_only": model.status != ModelAvailabilityStatus::Available,
+                                "requires_revisioned_project_calibration": true,
+                                "confidence_is_geometry_quality": false,
+                                "score_only_auto_accept_allowed": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectProjectGeometryPolicy) => {
+                        let target_kind = input.target_task_id.as_ref().and_then(|task_id| {
+                            input
+                                .project_schema
+                                .tasks
+                                .iter()
+                                .find(|task| task.id == *task_id)
+                                .map(|task| task.kind)
+                        });
+                        let policies = self
+                            .project_geometry_policies(project_id)?
+                            .into_iter()
+                            .filter(|policy| {
+                                target_kind.is_none_or(|task_kind| policy.task_kind == task_kind)
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected Project geometry acceptance policy",
+                            json!({
+                                "target": {
+                                    "task_id": input.target_task_id,
+                                    "label": input.target_label,
+                                    "task_kind": target_kind,
+                                },
+                                "policies": policies,
+                                "semantic_confidence_is_geometry_evidence": false,
+                                "default_when_evidence_is_insufficient": "mandatory_human_review",
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectGeometryCorrectionSummary) => {
+                        let mut summary = annotagent_core::GeometryQualitySummary::default();
+                        let mut seen = BTreeSet::new();
+                        let mut iou_sum = 0.0_f64;
+                        let mut iou_count = 0_u32;
+                        for (report, evidence) in
+                            self.list_project_geometry_corrections(project_id)?
+                        {
+                            if !seen.insert((evidence.run_id, evidence.annotation_id)) {
+                                continue;
+                            }
+                            let matches_target = self
+                                .store
+                                .find_annotation(evidence.annotation_id)?
+                                .is_some_and(|(run_id, annotation)| {
+                                    run_id == evidence.run_id
+                                        && input.target_task_id.as_ref().is_none_or(|task_id| {
+                                            annotation.task_id == *task_id
+                                        })
+                                        && input.target_label.as_ref().is_none_or(|label_id| {
+                                            annotation.label.as_ref() == Some(label_id)
+                                        })
+                                });
+                            if !matches_target {
+                                continue;
+                            }
+                            if let Some(iou) = report.iou {
+                                iou_sum += f64::from(iou);
+                                iou_count = iou_count.saturating_add(1);
+                            }
+                            summary.add_correction(&report, &evidence);
+                        }
+                        let wrong_object_count = [
+                            GeometryCorrectionReason::WrongObject,
+                            GeometryCorrectionReason::WhiteShoe,
+                            GeometryCorrectionReason::WhiteSock,
+                            GeometryCorrectionReason::PenaltyMark,
+                            GeometryCorrectionReason::FieldLineIntersection,
+                        ]
+                        .iter()
+                        .map(|reason| {
+                            summary
+                                .correction_reasons
+                                .get(reason)
+                                .copied()
+                                .unwrap_or_default()
+                        })
+                        .sum::<u32>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected bounded structured geometry correction summary",
+                            json!({
+                                "target": {
+                                    "task_id": input.target_task_id,
+                                    "label": input.target_label,
+                                },
+                                "sample_count": summary.human_adjustment_count,
+                                "mean_iou": (iou_count > 0).then_some(iou_sum / f64::from(iou_count)),
+                                "mean_center_shift": summary.mean_manual_center_shift,
+                                "mean_area_change": summary.mean_manual_area_change,
+                                "correction_reasons": summary.correction_reasons,
+                                "size_buckets": summary.size_buckets,
+                                "wrong_object_count": wrong_object_count,
+                                "bounded_limit": 1000,
+                                "image_data_exposed": false,
+                                "free_form_notes_exposed": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectGeometryCalibration) => {
+                        let calibrations = self
+                            .project_geometry_calibrations(project_id)?
+                            .into_iter()
+                            .filter(|view| {
+                                input.target_task_id.as_ref().is_none_or(|task_id| {
+                                    view.report.key.task_id == *task_id
+                                }) && input.target_label.as_ref().is_none_or(|label_id| {
+                                    view.report.key.label_id.as_ref() == Some(label_id)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let passing_exact_count = calibrations
+                            .iter()
+                            .filter(|view| {
+                                view.effective_status == GeometryCalibrationStatus::Passed
+                                    && view.staleness_reasons.is_empty()
+                            })
+                            .count();
+                        let stale_count = calibrations
+                            .iter()
+                            .filter(|view| {
+                                view.effective_status == GeometryCalibrationStatus::Stale
+                                    || !view.staleness_reasons.is_empty()
+                            })
+                            .count();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected exact-context Project geometry calibration",
+                            json!({
+                                "target": {
+                                    "task_id": input.target_task_id,
+                                    "label": input.target_label,
+                                },
+                                "reports": calibrations,
+                                "passing_exact_count": passing_exact_count,
+                                "stale_count": stale_count,
+                                "insufficient_evidence_counts_as_passed": false,
+                                "semantic_confidence_counts_as_calibration": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::FindGeometryRefinementPath) => {
+                        let paths = annotagent_core::ArtifactConversionRegistry::default()
+                            .find_conversion_path(
+                                ArtifactKind::DetectionSet,
+                                ArtifactKind::DetectionSet,
+                                &nodes,
+                            );
+                        let available_profiles = compatible_builder_models(
+                            &input,
+                            Some(ModelCapability::PromptedSegmentation),
+                        )
+                        .into_iter()
+                        .filter(|model| {
+                            input
+                                .provider_profiles
+                                .iter()
+                                .find(|provider| provider.id == model.provider_id)
+                                .is_some_and(|provider| {
+                                    provider.adapter != ProviderAdapterKind::Mock
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                        let available_experts = input
+                            .expert_models
+                            .iter()
+                            .filter(|model| {
+                                model.availability == ModelAvailability::Available
+                                    && !matches!(&model.connection, ModelConnection::Mock { .. })
+                                    && model
+                                        .capabilities
+                                        .contains(&ModelCapability::PromptedSegmentation)
+                            })
+                            .collect::<Vec<_>>();
+                        let setup_only_profiles = input
+                            .model_profiles
+                            .iter()
+                            .filter(|model| {
+                                model
+                                    .task_capabilities
+                                    .contains(&ModelCapability::PromptedSegmentation)
+                                    && input
+                                        .provider_profiles
+                                        .iter()
+                                        .find(|provider| provider.id == model.provider_id)
+                                        .is_some_and(|provider| {
+                                            provider.adapter != ProviderAdapterKind::Mock
+                                        })
+                                    && !available_profiles
+                                        .iter()
+                                        .any(|candidate| candidate.id == model.id)
+                            })
+                            .map(|model| {
+                                json!({
+                                    "model_profile_id": model.id,
+                                    "revision": model.revision,
+                                    "display_name": model.display_name,
+                                    "status": model.status,
+                                    "requires_setup": true,
+                                    "applied_to_draft": false,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let setup_only_experts = input
+                            .expert_models
+                            .iter()
+                            .filter(|model| {
+                                model
+                                    .capabilities
+                                    .contains(&ModelCapability::PromptedSegmentation)
+                                    && !matches!(&model.connection, ModelConnection::Mock { .. })
+                                    && model.availability != ModelAvailability::Available
+                            })
+                            .map(|model| {
+                                json!({
+                                    "model_id": model.model_id,
+                                    "display_name": model.display_name,
+                                    "availability": model.availability,
+                                    "requires_setup": true,
+                                    "applied_to_draft": false,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let runnable = !paths.is_empty()
+                            && (!available_profiles.is_empty() || !available_experts.is_empty());
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            if runnable {
+                                "Found an available typed geometry refinement path"
+                            } else {
+                                "Geometry refinement requires model setup; use human Review now"
+                            },
+                            json!({
+                                "from": ArtifactKind::DetectionSet,
+                                "to": ArtifactKind::DetectionSet,
+                                "registered_conversion_paths": paths,
+                                "available_model_profiles": available_profiles,
+                                "available_expert_models": available_experts,
+                                "setup_only_model_profiles": setup_only_profiles,
+                                "setup_only_expert_models": setup_only_experts,
+                                "runnable": runnable,
+                                "recommended_current_path": if runnable {
+                                    "prompted_segmentation_refinement"
+                                } else {
+                                    "mandatory_human_review"
+                                },
+                                "setup_only_alternatives_applied": false,
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::CheckCapabilityPath) => {
                         let node_type = required_string_argument(&call.arguments, "node_type")?;
                         let definition = input
@@ -15422,7 +15828,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 59);
+        assert_eq!(names.len(), 64);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -15489,6 +15895,22 @@ export:
             feasibility_tools.contains(PipelineBuilderTool::ResolvePipelineFeasibility.as_str())
         );
         assert!(feasibility_tools.contains(PipelineBuilderTool::InspectModelsBatch.as_str()));
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::InspectModelQualityContract.as_str())
+        );
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::InspectProjectGeometryPolicy.as_str())
+        );
+        assert!(
+            feasibility_tools
+                .contains(PipelineBuilderTool::InspectGeometryCorrectionSummary.as_str())
+        );
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::InspectGeometryCalibration.as_str())
+        );
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::FindGeometryRefinementPath.as_str())
+        );
         assert!(!feasibility_tools.contains(PipelineBuilderTool::InspectModelProfile.as_str()));
         session
             .transition_builder_phase(
@@ -15946,6 +16368,16 @@ export:
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("finalization reserve"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("blocked Draft"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("it is not a native ObjectDetection"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_model_quality_contract"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_project_geometry_policy"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_geometry_correction_summary"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_geometry_calibration"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("find_geometry_refinement_path"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Grid overlays"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("exact Project, task/Label"));
+        assert!(
+            PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Every proposal remains an editable Draft")
+        );
 
         let geometry = AgentDryRunSummary {
             image_count: 4,
@@ -18607,6 +19039,14 @@ export:
         let provider = MockVisionProvider::new(MockScript {
             steps: vec![
                 step("get_pipeline_builder_context", json!({})),
+                step(
+                    "inspect_model_quality_contract",
+                    json!({"model_id": qwen.id.to_string()}),
+                ),
+                step("inspect_project_geometry_policy", json!({})),
+                step("inspect_geometry_correction_summary", json!({})),
+                step("inspect_geometry_calibration", json!({})),
+                step("find_geometry_refinement_path", json!({})),
                 step("resolve_pipeline_feasibility", json!({})),
                 step(
                     "create_draft_from_template",
@@ -18639,6 +19079,56 @@ export:
             report.session.outcome,
             Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview)
         );
+        let tool_payload = |name: &str| {
+            &report
+                .session
+                .steps
+                .iter()
+                .find(|step| step.tool_name == name)
+                .unwrap_or_else(|| panic!("missing {name} Tool result"))
+                .result["model_payload"]
+        };
+        assert_eq!(
+            tool_payload("inspect_model_quality_contract")["quality_contracts"][0]["output_geometry"],
+            "coarse_hypothesis"
+        );
+        assert_eq!(
+            tool_payload("inspect_model_quality_contract")["quality_contracts"][0]["auto_accept_eligibility"],
+            "never_from_score_alone"
+        );
+        assert_eq!(
+            tool_payload("inspect_model_quality_contract")["score_only_auto_accept_allowed"],
+            false
+        );
+        assert_eq!(
+            tool_payload("inspect_project_geometry_policy")["policies"][0]["auto_accept_policy"],
+            "refiner_or_review"
+        );
+        assert_eq!(
+            tool_payload("inspect_geometry_correction_summary")["sample_count"],
+            0
+        );
+        assert_eq!(
+            tool_payload("inspect_geometry_calibration")["passing_exact_count"],
+            0
+        );
+        assert_eq!(
+            tool_payload("find_geometry_refinement_path")["runnable"],
+            false
+        );
+        assert_eq!(
+            tool_payload("find_geometry_refinement_path")["recommended_current_path"],
+            "mandatory_human_review"
+        );
+        assert!(
+            tool_payload("find_geometry_refinement_path")["setup_only_expert_models"]
+                .as_array()
+                .is_some_and(|models| !models.is_empty())
+        );
+        assert_eq!(
+            tool_payload("find_geometry_refinement_path")["setup_only_alternatives_applied"],
+            false
+        );
         assert!(
             report
                 .validation
@@ -18668,6 +19158,13 @@ export:
                 .nodes
                 .iter()
                 .all(|node| node.node_type != "capability.segment")
+        );
+        assert!(
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.kind == WorkflowNodeKind::HumanReview)
         );
         let input = application
             .workflow_advisor_input_for_label(

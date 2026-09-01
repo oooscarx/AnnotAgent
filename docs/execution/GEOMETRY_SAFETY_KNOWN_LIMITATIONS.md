@@ -27,3 +27,7 @@
 - Historical unsafe Workflow Versions remain viewable and replayable in Sandbox, but cannot start a
   new formal Run. The current safe-clone repair inserts mandatory Review; richer refiner/calibration
   repair choices arrive in later milestones.
+- Pipeline Builder correction inspection intentionally returns bounded aggregates, not images or
+  free-form reviewer notes. Per-sample comparison and holdout promotion remain M6 work.
+- The Qwen-only first-Draft behavior is deterministically verified with a scripted Provider. A
+  billable live Provider response is still conditional and cannot weaken Core publication safety.
