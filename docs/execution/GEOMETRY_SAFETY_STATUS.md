@@ -4,7 +4,8 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 0 — reproduction and baseline.
+Milestone 1 — quality semantics and Model Capability Quality Contracts (implementation and
+verification complete; commit in progress).
 
 ## Completed
 
@@ -17,19 +18,32 @@ Milestone 0 — reproduction and baseline.
   predicted box and a tighter human reference.
 - Reproduced the legacy behavior: the existing static validator accepts that unsafe graph because
   any upstream Validator currently satisfies `validate_commit_safety`.
+- Added explicit semantic-confidence and detection-confidence score semantics.
+- Added separate geometry calibration state, validation state, quality-score source and geometry
+  quality reference without inventing localization scores.
+- Added operation-scoped `ModelCapabilityQualityContract` with conservative VLM, specialist and
+  prompted-segmentation defaults.
+- Frozen Model Profile snapshots now include effective quality contracts; legacy profile JSON
+  without the field migrates conservatively.
+- New OpenAI-compatible VLM Detection artifacts now preserve `VisionLanguage`,
+  `SemanticConfidence` and `CoarseHypothesis` instead of masquerading as specialist detections.
+- Added the read-only Model Profile quality-contract API and user-declared override input; server
+  binds overrides to the actual Model Profile revision and marks their source truthfully.
 
 ## In progress
 
-- Create the independent M0 baseline commit.
+- Create the independent M1 commit, then begin M2 policy enforcement.
 
 ## Next
 
-- Milestone 1: operation-scoped model quality contracts and conservative compatibility migration.
+- Milestone 2: Project Geometry Policy, static geometry-safe publication and legacy run guards.
 
 ## Recent verification
 
-- Rust: `cargo test -p annotagent-core` — passed (74 tests); `cargo fmt --all --check` and
-  `git diff --check` passed.
+- Rust: `cargo test -p annotagent-core -p annotagent-provider -p annotagent-server` — passed
+  (79 Core, 44 Provider, 17 Server tests).
+- Workspace: `cargo clippy --workspace --all-targets --all-features -- -D warnings` — passed.
+- Formatting: `cargo fmt --all --check` and `git diff --check` — passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -37,11 +51,11 @@ Milestone 0 — reproduction and baseline.
 
 ## Recent local commit
 
-- Pending M0 commit.
+- `93882e7 test(geometry): reproduce unsafe vlm bbox auto-acceptance` (M0).
 
 ## Release-blocking remainder
 
-- M1 through M8 and all acceptance items remain open.
+- M2 through M8 remain open. M1 acceptance evidence is implemented and verified.
 
 ## Live-conditional items
 

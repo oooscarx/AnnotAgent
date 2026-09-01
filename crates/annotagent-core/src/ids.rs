@@ -100,6 +100,7 @@ uuid_id!(EventId);
 uuid_id!(ProviderId);
 uuid_id!(ModelProfileId);
 uuid_id!(ModelBindingId);
+uuid_id!(GeometryQualityReportId);
 
 string_id!(TaskId);
 string_id!(LabelId);

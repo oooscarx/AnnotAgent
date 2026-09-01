@@ -2454,7 +2454,7 @@ export:
         models
     }
 
-    /// Milestone-0 regression fixture for the production RoboCup failure mode.
+    /// Milestone-0 regression fixture for the production `RoboCup` failure mode.
     ///
     /// The coarse VLM proposal carries a high semantic score and passes through a domain
     /// validator before a generic confidence gate. The current validator mistakes the presence

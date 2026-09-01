@@ -2,9 +2,8 @@
 
 ## Baseline limitations
 
-- `ScoreSemantics` currently lacks explicit semantic-confidence and detection-confidence variants.
-- The active VLM provider path records detections with object-detection source capability, causing
-  actual Qwen boxes to appear as `predicted_geometry` instead of a coarse VLM hypothesis.
+- Historical VLM artifacts that were previously serialized as object-detection capability retain
+  their immutable historical value; newly produced VLM artifacts are coarse hypotheses.
 - `validate_commit_safety` treats any Validator ancestor as sufficient, even when the Validator does
   not measure geometry.
 - A generic `core.confidence_gate` compares relative scores without knowing whether they are semantic

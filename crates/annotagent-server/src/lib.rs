@@ -20,21 +20,22 @@ use annotagent_application::{
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactKind, ArtifactRef, ArtifactValidationState,
-    AttributeDefinition, BatchId, BindingMutationActor, BoxPrompt, BoxPromptSetArtifact,
-    CandidateAgreement, CapabilityDeclarationSource, CorrectionFeatures, CorrectionRecord,
-    CredentialReference, CredentialSource, DetectionEvidence, EnabledSkillConfig,
-    ExpertModelManifest, GenerationDefaults, GlobalModelDefaults, ImageArtifact, ImageId,
-    InputModality, LabelId, ModelAvailability, ModelBindingId, ModelBindingMatch, ModelBindingRole,
-    ModelCapability, ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
-    ModelProfileStatus, ModelRequirements, NormalizedRect, PipelineArtifact,
+    AttributeDefinition, AutoAcceptEligibility, BatchId, BindingMutationActor, BoxPrompt,
+    BoxPromptSetArtifact, CandidateAgreement, CapabilityDeclarationSource, ContractEvidenceSource,
+    CorrectionFeatures, CorrectionRecord, CredentialReference, CredentialSource, DetectionEvidence,
+    EnabledSkillConfig, ExpertModelManifest, GenerationDefaults, GeometrySemantics,
+    GlobalModelDefaults, ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability,
+    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelCapability,
+    ModelCapabilityQualityContract, ModelLimits, ModelPricing, ModelProfile, ModelProfileId,
+    ModelProfileSnapshot, ModelProfileStatus, ModelRequirements, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineInferenceRequest, PipelineModelBackend,
     ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
     ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
     ProviderId, ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue, TaskId,
-    TaskKind, UsageTotals, VisionCapability, VisionInferenceRequest, VisionModelBackend,
-    VisionModelHealthStatus, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind,
-    check_model_compatibility,
+    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue,
+    SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
+    VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus, WorkflowConstraints,
+    WorkflowDraft, WorkflowNodeKind, check_model_compatibility, effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_provider::{
@@ -267,6 +268,7 @@ fn ensure_test_mock_registry(application: &LocalApplication) -> anyhow::Result<(
             limits: ModelLimits::default(),
             generation_defaults: GenerationDefaults::default(),
             pricing: ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: true,
@@ -516,6 +518,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/model-profiles/{model_id}/usage",
             get(get_model_profile_usage),
+        )
+        .route(
+            "/api/model-profiles/{model_id}/quality-contracts",
+            get(get_model_profile_quality_contracts),
         )
         .route(
             "/api/projects/{project_id}/model-bindings",
@@ -1558,10 +1564,58 @@ struct CreateModelProfileRequest {
     generation_defaults: GenerationDefaults,
     #[serde(default)]
     pricing: ModelPricing,
+    #[serde(default)]
+    quality_contracts: Vec<ModelCapabilityQualityContractInput>,
     #[serde(default = "default_true_value")]
     enabled: bool,
     #[serde(default)]
     locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelCapabilityQualityContractInput {
+    capability: ModelCapability,
+    operation: String,
+    output_geometry: GeometrySemantics,
+    score_semantics: ScoreSemantics,
+    auto_accept_eligibility: AutoAcceptEligibility,
+    #[serde(default)]
+    small_object_localization: SmallObjectLocalizationSupport,
+    #[serde(default)]
+    requires_geometry_verification: bool,
+}
+
+impl ModelCapabilityQualityContractInput {
+    fn bind(
+        self,
+        model_profile_id: ModelProfileId,
+        model_profile_revision: u64,
+    ) -> ModelCapabilityQualityContract {
+        ModelCapabilityQualityContract {
+            model_profile_id,
+            model_profile_revision,
+            capability: self.capability,
+            operation: self.operation,
+            output_geometry: self.output_geometry,
+            score_semantics: self.score_semantics,
+            auto_accept_eligibility: self.auto_accept_eligibility,
+            evidence_source: ContractEvidenceSource::UserDeclared,
+            small_object_localization: self.small_object_localization,
+            requires_geometry_verification: self.requires_geometry_verification,
+        }
+    }
+
+    fn matches(&self, contract: &ModelCapabilityQualityContract) -> bool {
+        self.capability == contract.capability
+            && self.operation == contract.operation
+            && self.output_geometry == contract.output_geometry
+            && self.score_semantics == contract.score_semantics
+            && self.auto_accept_eligibility == contract.auto_accept_eligibility
+            && contract.evidence_source == ContractEvidenceSource::UserDeclared
+            && self.small_object_localization == contract.small_object_localization
+            && self.requires_geometry_verification == contract.requires_geometry_verification
+    }
 }
 
 const fn user_declared_capabilities() -> CapabilityDeclarationSource {
@@ -1602,8 +1656,14 @@ async fn create_model_profile(
         .get_provider_profile(input.provider_id)
         .map_err(ApiError::bad_request)?;
     let now = Utc::now();
+    let model_profile_id = ModelProfileId::new();
+    let quality_contracts = input
+        .quality_contracts
+        .into_iter()
+        .map(|contract| contract.bind(model_profile_id, 1))
+        .collect();
     let profile = ModelProfile {
-        id: ModelProfileId::new(),
+        id: model_profile_id,
         revision: 1,
         provider_id: input.provider_id,
         display_name: input.display_name,
@@ -1615,6 +1675,7 @@ async fn create_model_profile(
         limits: input.limits,
         generation_defaults: input.generation_defaults,
         pricing: input.pricing,
+        quality_contracts,
         status: if input.enabled {
             ModelProfileStatus::Unverified
         } else {
@@ -1654,6 +1715,23 @@ async fn get_model_profile(
     Ok(Json(json!({"model": model, "revisions": revisions})))
 }
 
+async fn get_model_profile_quality_contracts(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    let model = state
+        .application
+        .store()
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!({
+        "model_profile_id": model.id,
+        "model_profile_revision": model.revision,
+        "contracts": effective_model_quality_contracts(&model),
+    })))
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct UpdateModelProfileRequest {
@@ -1667,6 +1745,7 @@ struct UpdateModelProfileRequest {
     limits: Option<ModelLimits>,
     generation_defaults: Option<GenerationDefaults>,
     pricing: Option<ModelPricing>,
+    quality_contracts: Option<Vec<ModelCapabilityQualityContractInput>>,
     enabled: Option<bool>,
     locked: Option<bool>,
 }
@@ -1726,10 +1805,30 @@ async fn update_model_profile(
     if let Some(value) = input.locked {
         profile.locked = value;
     }
-    if !profile.has_same_semantics(&previous) {
+    let quality_contracts_changed = input.quality_contracts.as_ref().is_some_and(|requested| {
+        requested.len() != previous.quality_contracts.len()
+            || requested
+                .iter()
+                .zip(&previous.quality_contracts)
+                .any(|(requested, previous)| !requested.matches(previous))
+    });
+    let semantic_change = !profile.has_same_semantics(&previous) || quality_contracts_changed;
+    if semantic_change {
         profile.revision = previous.revision.saturating_add(1);
         if profile.enabled {
             profile.status = ModelProfileStatus::Unverified;
+        }
+    }
+    if let Some(contracts) = input.quality_contracts {
+        if quality_contracts_changed {
+            profile.quality_contracts = contracts
+                .into_iter()
+                .map(|contract| contract.bind(profile.id, profile.revision))
+                .collect();
+        }
+    } else if semantic_change {
+        for contract in &mut profile.quality_contracts {
+            contract.model_profile_revision = profile.revision;
         }
     }
     profile.updated_at = Utc::now();
@@ -6001,6 +6100,7 @@ export:
             limits: ModelLimits::default(),
             generation_defaults: GenerationDefaults::default(),
             pricing: ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -6102,8 +6202,8 @@ export:
                 "provider_id": mock_id,
                 "display_name": "Mock builder",
                 "remote_model_id": "mock-builder",
-                "input_modalities": ["text"],
-                "task_capabilities": ["text_generation"],
+                "input_modalities": ["text", "image"],
+                "task_capabilities": ["text_generation", "vision_language"],
                 "protocol_features": {
                     "tool_calls": true,
                     "structured_output": true
@@ -6113,6 +6213,68 @@ export:
         .await;
         assert_eq!(status, StatusCode::OK);
         let model_id = model["id"].as_str().expect("model id");
+        let (status, quality_contracts) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/model-profiles/{model_id}/quality-contracts"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let vlm_contract = quality_contracts["contracts"]
+            .as_array()
+            .and_then(|contracts| {
+                contracts
+                    .iter()
+                    .find(|contract| contract["operation"] == "vlm_detection.detect")
+            })
+            .expect("default VLM quality contract");
+        assert_eq!(vlm_contract["output_geometry"], json!("coarse_hypothesis"));
+        assert_eq!(
+            vlm_contract["score_semantics"],
+            json!("semantic_confidence")
+        );
+        assert_eq!(
+            vlm_contract["auto_accept_eligibility"],
+            json!("never_from_score_alone")
+        );
+        assert_eq!(vlm_contract["evidence_source"], json!("system_default"));
+        let (status, updated_model) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &format!("/api/model-profiles/{model_id}"),
+            json!({
+                "quality_contracts": [{
+                    "capability": "vision_language",
+                    "operation": "vlm_detection.detect",
+                    "output_geometry": "coarse_hypothesis",
+                    "score_semantics": "relative_confidence",
+                    "auto_accept_eligibility": "never_from_score_alone",
+                    "small_object_localization": "unknown",
+                    "requires_geometry_verification": true
+                }]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(updated_model["revision"], json!(2));
+        assert_eq!(
+            updated_model["quality_contracts"][0]["evidence_source"],
+            json!("user_declared")
+        );
+        let (status, declared_contracts) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/model-profiles/{model_id}/quality-contracts"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(declared_contracts["model_profile_revision"], json!(2));
+        assert_eq!(
+            declared_contracts["contracts"][0]["evidence_source"],
+            json!("user_declared")
+        );
         let (status, error) = call_json(
             &service,
             axum::http::Method::POST,

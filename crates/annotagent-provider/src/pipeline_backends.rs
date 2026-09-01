@@ -7,8 +7,8 @@ use annotagent_core::{
     CoreError, CoreResult, DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionScore,
     DetectionSetArtifact, DetectionSource, LabelId, ModelMessage, ModelRequest, ModelResponse,
     ModelRole, NormalizedRect, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
-    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, TaskId,
-    ToolDefinition, VisionCapability, VisionModelProvider,
+    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, ScoreSemantics,
+    TaskId, ToolDefinition, VisionCapability, VisionModelProvider,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -945,10 +945,11 @@ impl PipelineModelBackend for OpenAiCompatiblePipelineDetector {
                     Some(item.label.clone()),
                     Some(LabelId::from(item.label)),
                     rect,
-                    DetectionScore::relative(item.confidence).map_err(CoreError::Validation)?,
+                    DetectionScore::new(Some(item.confidence), ScoreSemantics::SemanticConfidence)
+                        .map_err(CoreError::Validation)?,
                     DetectionSource {
                         model_id: request.model_id.clone(),
-                        capability: VisionCapability::ObjectDetection,
+                        capability: VisionCapability::VisionLanguage,
                         artifact_id: artifact_id.clone(),
                     },
                 )
@@ -1374,6 +1375,14 @@ mod tests {
             Some(LabelId::from("football"))
         );
         assert!((set.detections[0].bbox.x() - 0.25).abs() < f32::EPSILON);
+        assert_eq!(
+            set.detections[0].score.semantics,
+            ScoreSemantics::SemanticConfidence
+        );
+        assert_eq!(
+            set.detections[0].geometry_semantics,
+            annotagent_core::GeometrySemantics::CoarseHypothesis
+        );
         assert_eq!(set.validation_state, ArtifactValidationState::Unvalidated);
     }
 

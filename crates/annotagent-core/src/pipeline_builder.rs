@@ -2598,6 +2598,7 @@ mod tests {
             limits: crate::ModelLimits::default(),
             generation_defaults: crate::GenerationDefaults::default(),
             pricing: crate::ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,

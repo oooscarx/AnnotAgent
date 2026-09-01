@@ -44,12 +44,31 @@ pub type ModelId = String;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScoreSemantics {
+    SemanticConfidence,
+    DetectionConfidence,
     CalibratedProbability,
     RelativeConfidence,
     RankingScore,
     NotProvided,
     #[default]
     Unknown,
+}
+
+impl ScoreSemantics {
+    #[must_use]
+    pub const fn is_semantic(self) -> bool {
+        matches!(self, Self::SemanticConfidence)
+    }
+
+    #[must_use]
+    pub const fn is_detection_score(self) -> bool {
+        matches!(self, Self::DetectionConfidence)
+    }
+
+    #[must_use]
+    pub const fn is_calibrated_probability(self) -> bool {
+        matches!(self, Self::CalibratedProbability)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -30,3 +30,21 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 - Legacy result: validation report is valid and contains no geometry-safety blocker.
 - Verification: `cargo test -p annotagent-core` passed all 74 Core tests; formatting and diff
   whitespace checks passed.
+
+## M1 evidence
+
+- `ScoreSemantics` now separates semantic confidence, detection confidence, calibrated
+  probability, relative confidence, ranking-only, absent and unknown scores.
+- `GeometryCalibrationStatus` is independent from `GeometrySemantics`; only `Passed` permits a
+  calibration-dependent score path.
+- Default `vlm_detection.detect` contract: coarse hypothesis + semantic confidence +
+  never-from-score-alone.
+- Default specialist contract: predicted geometry + detection confidence + Project calibration.
+- Default prompted-segmentation contract: refined geometry + no fabricated score + Project
+  calibration.
+- `DetectionQuality` keeps optional model scores separate from a report reference and validation
+  state.
+- Model Profile snapshots freeze effective contracts; missing legacy JSON fields derive
+  conservative defaults.
+- `/api/model-profiles/:modelId/quality-contracts` exposes effective revision-bound contracts.
+- Provider test proves new VLM Detection output is `semantic_confidence` and `coarse_hypothesis`.

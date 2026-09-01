@@ -103,9 +103,10 @@ impl DetectionScore {
     #[must_use]
     pub const fn comparable_confidence(self) -> Option<f32> {
         match self.semantics {
-            ScoreSemantics::CalibratedProbability | ScoreSemantics::RelativeConfidence => {
-                self.value
-            }
+            ScoreSemantics::SemanticConfidence
+            | ScoreSemantics::DetectionConfidence
+            | ScoreSemantics::CalibratedProbability
+            | ScoreSemantics::RelativeConfidence => self.value,
             ScoreSemantics::RankingScore
             | ScoreSemantics::NotProvided
             | ScoreSemantics::Unknown => None,
@@ -1559,7 +1560,10 @@ impl DetectionSetArtifact {
                 return Err("Detection source_model_id cannot be empty".to_owned());
             }
             if !is_detection_capability(detection.source_capability) {
-                return Err("Detection source_capability must be a detection capability".to_owned());
+                return Err(
+                    "Detection source_capability must be a detection-producing capability"
+                        .to_owned(),
+                );
             }
             if detection.query_id.as_deref().is_none_or(str::is_empty)
                 && detection.model_label.as_deref().is_none_or(str::is_empty)
@@ -1798,7 +1802,8 @@ fn validate_detection_evidence(evidence: &DetectionEvidence) -> Result<(), Strin
     }
     if !is_detection_capability(evidence.source_capability) {
         return Err(
-            "Detection evidence source_capability must be a detection capability".to_owned(),
+            "Detection evidence source_capability must be a detection-producing capability"
+                .to_owned(),
         );
     }
     if evidence
@@ -1829,7 +1834,8 @@ fn validate_detection_evidence(evidence: &DetectionEvidence) -> Result<(), Strin
 const fn is_detection_capability(capability: VisionCapability) -> bool {
     matches!(
         capability,
-        VisionCapability::OpenVocabularyDetection
+        VisionCapability::VisionLanguage
+            | VisionCapability::OpenVocabularyDetection
             | VisionCapability::PhraseGrounding
             | VisionCapability::ObjectDetection
             | VisionCapability::PromptedSegmentation

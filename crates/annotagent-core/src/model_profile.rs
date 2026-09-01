@@ -268,6 +268,8 @@ pub struct ModelProfile {
     pub limits: ModelLimits,
     pub generation_defaults: GenerationDefaults,
     pub pricing: ModelPricing,
+    #[serde(default)]
+    pub quality_contracts: Vec<crate::ModelCapabilityQualityContract>,
     pub status: ModelProfileStatus,
     pub enabled: bool,
     pub locked: bool,
@@ -305,6 +307,15 @@ impl ModelProfile {
         self.limits.validate()?;
         self.generation_defaults.validate()?;
         self.pricing.validate()?;
+        let mut contract_keys = BTreeSet::new();
+        for contract in &self.quality_contracts {
+            contract
+                .validate_for(self)
+                .map_err(ModelProfileValidationError::InvalidQualityContract)?;
+            if !contract_keys.insert((contract.capability, contract.operation.as_str())) {
+                return Err(ModelProfileValidationError::DuplicateQualityContract);
+            }
+        }
         if self.enabled == (self.status == ModelProfileStatus::Disabled) {
             return Err(ModelProfileValidationError::DisabledStatusMismatch);
         }
@@ -320,6 +331,7 @@ impl ModelProfile {
             && self.task_capabilities == other.task_capabilities
             && self.limits == other.limits
             && self.generation_defaults == other.generation_defaults
+            && self.quality_contracts == other.quality_contracts
     }
 }
 
@@ -343,6 +355,10 @@ pub enum ModelProfileValidationError {
     InvalidGenerationDefaults(String),
     #[error("invalid Model pricing: {0}")]
     InvalidPricing(String),
+    #[error("invalid Model capability quality contract: {0}")]
+    InvalidQualityContract(String),
+    #[error("Model capability quality contracts must be unique by capability and operation")]
+    DuplicateQualityContract,
     #[error("enabled state and Model Profile status disagree")]
     DisabledStatusMismatch,
 }
@@ -363,6 +379,8 @@ pub struct ModelProfileSnapshot {
     pub task_capabilities: BTreeSet<ModelCapability>,
     pub limits: ModelLimits,
     pub generation_defaults: GenerationDefaults,
+    #[serde(default)]
+    pub quality_contracts: Vec<crate::ModelCapabilityQualityContract>,
 }
 
 impl ModelProfileSnapshot {
@@ -398,6 +416,7 @@ impl ModelProfileSnapshot {
             task_capabilities: model.task_capabilities.clone(),
             limits: model.limits.clone(),
             generation_defaults: model.generation_defaults.clone(),
+            quality_contracts: crate::effective_model_quality_contracts(model),
         })
     }
 }
@@ -878,6 +897,7 @@ mod tests {
                 ..GenerationDefaults::default()
             },
             pricing: ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -896,6 +916,10 @@ mod tests {
         let mut semantic_update = price_update;
         semantic_update.remote_model_id = "qwen-vision-new".to_owned();
         assert!(!first.has_same_semantics(&semantic_update));
+
+        let mut quality_update = first.clone();
+        quality_update.quality_contracts = crate::effective_model_quality_contracts(&first);
+        assert!(!first.has_same_semantics(&quality_update));
     }
 
     #[test]
@@ -991,6 +1015,11 @@ mod tests {
         let json = serde_json::to_string(&snapshot).expect("JSON");
         assert_eq!(snapshot.revision, 1);
         assert_eq!(snapshot.provider_base_url, provider.base_url);
+        assert_eq!(snapshot.quality_contracts.len(), 1);
+        assert_eq!(
+            snapshot.quality_contracts[0].output_geometry,
+            crate::GeometrySemantics::CoarseHypothesis
+        );
         assert!(!json.contains("credential"));
         assert!(!json.contains("pricing"));
         assert!(!json.contains("lab-provider"));
@@ -1007,6 +1036,29 @@ mod tests {
             snapshot,
             ModelProfileSnapshot::frozen(&repriced_model, &rotated_provider)
                 .expect("non-semantic snapshot")
+        );
+    }
+
+    #[test]
+    fn legacy_model_json_without_quality_contracts_migrates_conservatively() {
+        let provider = provider(ProviderAdapterKind::OpenAiCompatible);
+        let original = model(provider.id);
+        let mut legacy = serde_json::to_value(&original).expect("legacy JSON");
+        legacy
+            .as_object_mut()
+            .expect("Model Profile object")
+            .remove("quality_contracts");
+        let migrated: ModelProfile = serde_json::from_value(legacy).expect("migrated profile");
+        assert!(migrated.quality_contracts.is_empty());
+        let effective = crate::effective_model_quality_contracts(&migrated);
+        assert_eq!(effective.len(), 1);
+        assert_eq!(
+            effective[0].score_semantics,
+            crate::ScoreSemantics::SemanticConfidence
+        );
+        assert_eq!(
+            effective[0].auto_accept_eligibility,
+            crate::AutoAcceptEligibility::NeverFromScoreAlone
         );
     }
 

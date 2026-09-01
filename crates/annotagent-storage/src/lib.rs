@@ -3452,6 +3452,7 @@ mod tests {
             limits: ModelLimits::default(),
             generation_defaults: GenerationDefaults::default(),
             pricing: ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -3615,6 +3616,7 @@ mod tests {
                 limits: ModelLimits::default(),
                 generation_defaults: GenerationDefaults::default(),
                 pricing: ModelPricing::default(),
+                quality_contracts: Vec::new(),
                 status: ModelProfileStatus::Available,
                 enabled: true,
                 locked: true,
@@ -3806,6 +3808,7 @@ mod tests {
                 updated_at: Some(now),
                 ..ModelPricing::default()
             },
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,

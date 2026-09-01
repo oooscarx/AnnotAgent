@@ -79,9 +79,29 @@ pub enum GeometrySemantics {
     NotApplicable,
     CoarseHypothesis,
     PredictedGeometry,
+    RefinedGeometry,
     MaskRefinedGeometry,
     CalibratedGeometry,
     HumanVerified,
+}
+
+impl GeometrySemantics {
+    #[must_use]
+    pub const fn is_refined(self) -> bool {
+        matches!(self, Self::RefinedGeometry | Self::MaskRefinedGeometry)
+    }
+
+    #[must_use]
+    pub const fn requires_external_calibration(self) -> bool {
+        matches!(
+            self,
+            Self::CoarseHypothesis
+                | Self::PredictedGeometry
+                | Self::RefinedGeometry
+                | Self::MaskRefinedGeometry
+                | Self::CalibratedGeometry
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,9 +357,9 @@ impl ExpertModelManifest {
                         .to_owned(),
                 ));
             }
-            if self.geometry_semantics != GeometrySemantics::MaskRefinedGeometry {
+            if !self.geometry_semantics.is_refined() {
                 return Err(CoreError::Validation(
-                    "Prompted Segmentation geometry must be mask_refined_geometry".to_owned(),
+                    "Prompted Segmentation geometry must be refined_geometry".to_owned(),
                 ));
             }
         }
@@ -599,7 +619,7 @@ pub const fn vision_capability(capability: ModelCapability) -> VisionCapability 
 #[must_use]
 pub fn default_geometry_semantics(capabilities: &[VisionCapability]) -> GeometrySemantics {
     if capabilities.contains(&VisionCapability::PromptedSegmentation) {
-        GeometrySemantics::MaskRefinedGeometry
+        GeometrySemantics::RefinedGeometry
     } else if capabilities.contains(&VisionCapability::VisionLanguage) {
         GeometrySemantics::CoarseHypothesis
     } else if capabilities.iter().any(|capability| {
@@ -655,7 +675,7 @@ mod tests {
                 multiple: true,
             }],
             score_semantics: ScoreSemantics::RelativeConfidence,
-            geometry_semantics: GeometrySemantics::MaskRefinedGeometry,
+            geometry_semantics: GeometrySemantics::RefinedGeometry,
             label_space: None,
             checkpoint: Some(CheckpointIdentity {
                 sha256: "a".repeat(64),
@@ -754,6 +774,7 @@ mod tests {
             limits: crate::ModelLimits::default(),
             generation_defaults: crate::GenerationDefaults::default(),
             pricing: crate::ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: crate::ModelProfileStatus::Unverified,
             enabled: true,
             locked: false,

@@ -5204,6 +5204,7 @@ impl LocalApplication {
                 updated_at: pricing_is_known.then_some(now),
                 ..ModelPricing::default()
             },
+            quality_contracts: Vec::new(),
             status: if adapter == ProviderAdapterKind::Mock {
                 ModelProfileStatus::Available
             } else {
@@ -14351,6 +14352,7 @@ export:
                 updated_at: Some(now),
                 ..annotagent_core::ModelPricing::default()
             },
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -14767,6 +14769,7 @@ export:
             limits: annotagent_core::ModelLimits::default(),
             generation_defaults: annotagent_core::GenerationDefaults::default(),
             pricing: annotagent_core::ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -16744,6 +16747,7 @@ export:
             limits: ModelLimits::default(),
             generation_defaults: GenerationDefaults::default(),
             pricing: ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: false,
@@ -18507,6 +18511,7 @@ export:
             },
             generation_defaults: annotagent_core::GenerationDefaults::default(),
             pricing: annotagent_core::ModelPricing::default(),
+            quality_contracts: Vec::new(),
             status: ModelProfileStatus::Available,
             enabled: true,
             locked: true,
