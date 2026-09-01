@@ -1111,6 +1111,19 @@ Persistent workspace Provider credentials status: `PASS`.
 
 Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha offline release status: `PASS`.
 
+## Product Mock Session Cleanup Hotfix — 2026-09-02
+
+1. Live API inspection proves both configured Providers are OpenAI-compatible, `/api/models`
+   exposes no Mock model, and all 11 RoboCup Drafts/versions contain zero `mock-*` bindings.
+2. Eight pre-purge Pipeline Builder sessions still contained structured Registry observations such
+   as `remote_model_id = mock-detector`; that persisted audit data was the source rendered by the
+   Agent panel.
+3. `purge_mock_agent_sessions` removes an Agent session only when its selected Provider, model-call
+   identity or structured Tool arguments/results contain a canonical `mock`, `mock-*` or `mock_*`
+   identity. A normal session whose explanatory warning says Mock models are disabled is retained.
+4. The existing Registry purge test now proves fixture Registry entries, bindings, Drafts and Agent
+   sessions are removed while real Agent authoring state survives. Server startup tests remain green.
+
 ## Pipeline Builder Provider Resilience Hotfix — 2026-09-01
 
 1. Persisted session `bce120c9-629a-4575-aca3-541e91f485ec` proves configuration was valid before

@@ -1,6 +1,17 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-09-01 CST
+Last updated: 2026-09-02 CST
+
+## Product Mock Session Cleanup Hotfix — 2026-09-02
+
+- Confirmed the live Registry, all 11 RoboCup Drafts/versions and the active Workflow contain no
+  Mock model binding. The remaining `Mock Detector (offline)` label came from eight persisted
+  Pipeline Builder audit sessions created before the product Mock purge.
+- Production startup now removes only Agent authoring sessions containing canonical Mock Provider
+  or Model identities. Formal Runs, immutable published Workflows, annotations and ordinary Agent
+  sessions—including explanatory text that merely mentions Mock—are preserved.
+- Storage and Server regressions pass. The live database is backed up before applying the cleanup,
+  so the removed legacy Agent-session records remain recoverable outside the active workspace.
 
 ## Pipeline Builder Provider Resilience Hotfix — 2026-09-01
 

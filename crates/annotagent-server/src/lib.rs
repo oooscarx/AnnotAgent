@@ -197,6 +197,7 @@ fn purge_builtin_mock_registry(application: &LocalApplication) -> anyhow::Result
     application
         .store()
         .purge_provider_adapter(ProviderAdapterKind::Mock)?;
+    application.store().purge_mock_agent_sessions()?;
     Ok(())
 }
 

@@ -759,6 +759,41 @@ impl SqliteStore {
         })
     }
 
+    /// Removes legacy Agent authoring sessions that exposed deterministic test fixtures as if they
+    /// were product models. Formal Run history and immutable Workflow versions live in separate
+    /// tables and are deliberately untouched.
+    pub fn purge_mock_agent_sessions(&self) -> Result<usize, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let candidates = transaction
+                .prepare("SELECT id, session_json FROM agent_sessions")?
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut removed = 0;
+            for (id, session_json) in candidates {
+                let session: AgentSession = serde_json::from_str(&session_json)?;
+                let contains_fixture = session.model_selection.as_ref().is_some_and(|selection| {
+                    selection.provider_adapter == ProviderAdapterKind::Mock
+                        || mock_fixture_identity(&selection.remote_model_id)
+                }) || session.model_calls.iter().any(|call| {
+                    mock_fixture_identity(&call.provider_name)
+                        || mock_fixture_identity(&call.remote_model_id)
+                }) || session.steps.iter().any(|step| {
+                    value_contains_mock_fixture(&step.arguments)
+                        || value_contains_mock_fixture(&step.result)
+                });
+                if contains_fixture {
+                    removed +=
+                        transaction.execute("DELETE FROM agent_sessions WHERE id = ?1", [id])?;
+                }
+            }
+            transaction.commit()?;
+            Ok(removed)
+        })
+    }
+
     pub fn provider_references(
         &self,
         provider_id: ProviderId,
@@ -3296,6 +3331,22 @@ fn sqlite_u64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
+fn mock_fixture_identity(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "mock" || normalized.starts_with("mock-") || normalized.starts_with("mock_")
+}
+
+fn value_contains_mock_fixture(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(value) => mock_fixture_identity(value),
+        serde_json::Value::Array(values) => values.iter().any(value_contains_mock_fixture),
+        serde_json::Value::Object(values) => values.values().any(value_contains_mock_fixture),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -3619,11 +3670,46 @@ mod tests {
         store
             .save_workflow_draft(&fixture_draft)
             .expect("fixture Draft");
+        let mut fixture_session = AgentSession::start(
+            annotagent_core::AgentKind::PipelineBuilder,
+            annotagent_core::AgentBudget::default(),
+        )
+        .with_project("project");
+        fixture_session
+            .record_tool(
+                "list_compatible_models",
+                serde_json::json!({}),
+                serde_json::json!({
+                    "models": [{"remote_model_id": "mock-detector"}]
+                }),
+                true,
+            )
+            .expect("fixture tool");
+        store
+            .save_agent_session(&fixture_session)
+            .expect("fixture Agent Session");
+        let mut real_session = AgentSession::start(
+            annotagent_core::AgentKind::PipelineBuilder,
+            annotagent_core::AgentBudget::default(),
+        )
+        .with_project("project");
+        real_session
+            .record_tool(
+                "inspect_project",
+                serde_json::json!({}),
+                serde_json::json!({"warning": "Mock models are disabled in product mode."}),
+                true,
+            )
+            .expect("real tool");
+        store
+            .save_agent_session(&real_session)
+            .expect("real Agent Session");
 
         let removed = store
             .purge_provider_adapter(ProviderAdapterKind::Mock)
             .expect("purge");
         assert_eq!(removed, (1, 1, 1));
+        assert_eq!(store.purge_mock_agent_sessions().expect("sessions"), 1);
         assert!(
             store
                 .list_provider_profiles()
@@ -3646,6 +3732,12 @@ mod tests {
         assert_eq!(
             store.get_global_model_defaults().expect("defaults"),
             GlobalModelDefaults::default()
+        );
+        assert_eq!(
+            store
+                .list_agent_sessions(Some("project"))
+                .expect("Agent Sessions"),
+            vec![real_session]
         );
     }
 
