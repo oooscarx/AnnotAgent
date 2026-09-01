@@ -2090,7 +2090,7 @@ fn validate_geometry_commit_safety(
                 contract.output_geometry,
                 crate::GeometrySemantics::CoarseHypothesis
                     | crate::GeometrySemantics::PredictedGeometry
-            ) && !contract.calibration_status.permits_calibrated_acceptance()
+            )
         })
     }) {
         let Some(contract) = geometry.node(&source.id) else {
@@ -2124,6 +2124,7 @@ fn validate_geometry_commit_safety(
                     })
             });
             let calibrated = contract.calibration_status.permits_calibrated_acceptance();
+            let calibrated_geometry_decision = calibrated && geometry_evaluation;
             let risk_accepted = draft
                 .geometry_risk_acceptance
                 .as_ref()
@@ -2135,16 +2136,15 @@ fn validate_geometry_commit_safety(
                 match policy.auto_accept_policy {
                     crate::GeometryAutoAcceptPolicy::HumanReviewRequired => mandatory_review,
                     crate::GeometryAutoAcceptPolicy::RefinerOrReview => {
-                        mandatory_review || available_refiner || geometry_evaluation || calibrated
+                        mandatory_review || available_refiner || geometry_evaluation
                     }
                     crate::GeometryAutoAcceptPolicy::CalibrationRequired => {
-                        mandatory_review || geometry_evaluation || calibrated
+                        mandatory_review || calibrated_geometry_decision
                     }
                     crate::GeometryAutoAcceptPolicy::ExplicitRiskAcceptance => {
                         mandatory_review
                             || available_refiner
                             || geometry_evaluation
-                            || calibrated
                             || risk_accepted
                     }
                 }
@@ -2189,6 +2189,16 @@ fn validate_geometry_commit_safety(
                         "no passing geometry calibration is available for this exact Project and model/node revision",
                     ),
                 ),
+                crate::GeometryCalibrationStatus::Passed if !calibrated_geometry_decision => {
+                    push_unique_issue(
+                        issues,
+                        issue(
+                            "geometry_calibration_gate_missing",
+                            &path,
+                            "passing historical calibration must be consumed by an explicit geometry quality evaluation and geometry decision; a semantic confidence gate is not sufficient",
+                        ),
+                    );
+                }
                 crate::GeometryCalibrationStatus::Passed => {}
             }
             if draft.nodes.iter().any(|node| {
@@ -2210,7 +2220,7 @@ fn validate_geometry_commit_safety(
                 issue(
                     "uncalibrated_geometry_auto_commit",
                     &path,
-                    "coarse or uncalibrated predicted geometry cannot enter Commit without mandatory Review, an available refiner, geometry evaluation, valid calibration, or policy-authorized risk acceptance",
+                    "coarse or uncalibrated predicted geometry cannot enter Commit without mandatory Review, an available refiner, geometry evaluation, a calibration-backed geometry decision, or policy-authorized risk acceptance",
                 ),
             );
             push_unique_issue(
@@ -3190,6 +3200,68 @@ export:
                 .issues
                 .iter()
                 .any(|issue| issue.code == "geometry_calibration_stale")
+        );
+    }
+
+    #[test]
+    fn passing_calibration_cannot_turn_a_semantic_confidence_gate_into_geometry_evidence() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            ("validator", "static_validator", WorkflowNodeKind::Validator),
+            ("gate", "core.confidence_gate", WorkflowNodeKind::Gate),
+        ]);
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry_policy_context(crate::GeometryCalibrationStatus::Passed),
+        );
+        assert!(!report.valid);
+        for code in [
+            "semantic_score_used_as_geometry_evidence",
+            "geometry_calibration_gate_missing",
+            "geometry_acceptance_path_missing",
+        ] {
+            assert!(
+                report.issues.iter().any(|issue| issue.code == code),
+                "missing {code}: {:#?}",
+                report.issues
+            );
+        }
+    }
+
+    #[test]
+    fn passing_calibration_is_consumed_by_an_explicit_geometry_decision() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            (
+                "geometry_quality",
+                "core.geometry_quality_evaluation",
+                WorkflowNodeKind::Validator,
+            ),
+            (
+                "geometry_decision",
+                "core.geometry_decision",
+                WorkflowNodeKind::Gate,
+            ),
+        ]);
+        let mut geometry = geometry_policy_context(crate::GeometryCalibrationStatus::Passed);
+        geometry.project_policies[0].auto_accept_policy =
+            crate::GeometryAutoAcceptPolicy::CalibrationRequired;
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry,
+        );
+        assert!(
+            report.valid,
+            "an exact passing calibration plus explicit geometry decision is legal: {:#?}",
+            report.issues
         );
     }
 

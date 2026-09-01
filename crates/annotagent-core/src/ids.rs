@@ -101,6 +101,7 @@ uuid_id!(ProviderId);
 uuid_id!(ModelProfileId);
 uuid_id!(ModelBindingId);
 uuid_id!(GeometryQualityReportId);
+uuid_id!(GeometryCalibrationId);
 
 string_id!(TaskId);
 string_id!(LabelId);

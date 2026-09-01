@@ -13,13 +13,14 @@ use std::{
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
     ArtifactId, ArtifactValidationState, BindingMutationActor, CorrectionRecord,
-    GeometryCorrectionEvidence, GeometryQualityReport, GlobalModelDefaults, ImageId, LabelId,
-    ModelBindingId, ModelBindingMatch, ModelMessage, ModelProfile, ModelProfileId, ProjectId,
-    ProjectModelBinding, ProviderAdapterKind, ProviderId, ProviderProfile,
+    GeometryCalibrationId, GeometryCalibrationReport, GeometryCorrectionEvidence,
+    GeometryQualityReport, GlobalModelDefaults, ImageId, LabelId, ModelBindingId,
+    ModelBindingMatch, ModelMessage, ModelProfile, ModelProfileId, ProjectGeometryPolicy,
+    ProjectId, ProjectModelBinding, ProviderAdapterKind, ProviderId, ProviderProfile,
     PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
-    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
-    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowDryRunReport, WorkflowSnapshot,
+    RunEventPayload, RunId, RunStatus, TaskId, TaskKind, TaskRunStatus, ToolCallId, ToolResult,
+    UsageRecord, ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunReport, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -43,6 +44,8 @@ const LEGACY_REGISTRY_IMPORT_MIGRATION: &str =
     include_str!("../../../migrations/0009_legacy_registry_imports.sql");
 const GEOMETRY_CORRECTION_EVIDENCE_MIGRATION: &str =
     include_str!("../../../migrations/0010_geometry_correction_evidence.sql");
+const GEOMETRY_CALIBRATION_MIGRATION: &str =
+    include_str!("../../../migrations/0011_geometry_calibration.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -359,6 +362,13 @@ impl SqliteStore {
             transaction.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (10, ?1, ?2)",
                 params!["geometry_correction_evidence", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(GEOMETRY_CALIBRATION_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (11, ?1, ?2)",
+                params!["geometry_calibration", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
             Ok(())
@@ -2615,6 +2625,133 @@ impl SqliteStore {
         })
     }
 
+    pub fn save_project_geometry_policy(
+        &self,
+        policy: &ProjectGeometryPolicy,
+    ) -> Result<(), StorageError> {
+        policy.validate().map_err(StorageError::InvalidEnum)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO project_geometry_policies
+                 (project_id, task_kind, policy_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id, task_kind) DO UPDATE SET
+                   policy_json = excluded.policy_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    policy.project_id.to_string(),
+                    enum_string(policy.task_kind)?,
+                    serde_json::to_string(policy)?,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_geometry_policies(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<ProjectGeometryPolicy>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT policy_json FROM project_geometry_policies
+                 WHERE project_id = ?1 ORDER BY task_kind",
+            )?;
+            statement
+                .query_map([project_id.to_string()], |row| row.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect()
+        })
+    }
+
+    pub fn get_project_geometry_policy(
+        &self,
+        project_id: ProjectId,
+        task_kind: TaskKind,
+    ) -> Result<Option<ProjectGeometryPolicy>, StorageError> {
+        self.with_connection(|connection| {
+            let value = connection
+                .query_row(
+                    "SELECT policy_json FROM project_geometry_policies
+                     WHERE project_id = ?1 AND task_kind = ?2",
+                    params![project_id.to_string(), enum_string(task_kind)?],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            value
+                .map(|value| serde_json::from_str(&value).map_err(StorageError::from))
+                .transpose()
+        })
+    }
+
+    pub fn save_geometry_calibration(
+        &self,
+        report: &GeometryCalibrationReport,
+    ) -> Result<(), StorageError> {
+        report.key.validate().map_err(StorageError::InvalidEnum)?;
+        report
+            .thresholds
+            .validate()
+            .map_err(StorageError::InvalidEnum)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO geometry_calibration_reports
+                 (id, project_id, task_id, label_id, model_profile_id, model_profile_revision,
+                  node_definition_id, node_config_hash, status, report_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    report.id.to_string(),
+                    report.key.project_id.to_string(),
+                    report.key.task_id.as_str(),
+                    report.key.label_id.as_ref().map(LabelId::as_str),
+                    report.key.model_profile_id.to_string(),
+                    i64::try_from(report.key.model_profile_revision).unwrap_or(i64::MAX),
+                    report.key.node_definition_id,
+                    report.key.node_config_hash,
+                    enum_string(report.status)?,
+                    serde_json::to_string(report)?,
+                    report.created_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_geometry_calibration(
+        &self,
+        id: GeometryCalibrationId,
+    ) -> Result<Option<GeometryCalibrationReport>, StorageError> {
+        self.with_connection(|connection| {
+            let value = connection
+                .query_row(
+                    "SELECT report_json FROM geometry_calibration_reports WHERE id = ?1",
+                    [id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            value
+                .map(|value| serde_json::from_str(&value).map_err(StorageError::from))
+                .transpose()
+        })
+    }
+
+    pub fn list_project_geometry_calibrations(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<GeometryCalibrationReport>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT report_json FROM geometry_calibration_reports
+                 WHERE project_id = ?1 ORDER BY created_at DESC",
+            )?;
+            statement
+                .query_map([project_id.to_string()], |row| row.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect()
+        })
+    }
+
     pub fn query_corrections(
         &self,
         project_id: ProjectId,
@@ -3482,10 +3619,11 @@ mod tests {
     use annotagent_core::{
         ArtifactProvenance, ArtifactRole, AttributeValue, CapabilityDeclarationSource,
         CorrectionFeatures, CredentialReference, CredentialSource,
-        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, GeometryCorrectionInput,
-        GeometryCorrectionReason, GeometrySnapshot, InputModality, IssueSeverity, ModelBindingRole,
-        ModelCapability, ModelLimits, ModelPricing, ModelProfileStatus, NodeId, NormalizedRect,
-        PipelineArtifact, PricingSource, ProtocolFeatures, ProviderAdapterKind,
+        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, GeometryCalibrationKey,
+        GeometryCalibrationThresholds, GeometryCorrectionInput, GeometryCorrectionReason,
+        GeometrySnapshot, InputModality, IssueSeverity, ModelBindingRole, ModelCapability,
+        ModelLimits, ModelPricing, ModelProfileStatus, NodeId, NormalizedRect, PipelineArtifact,
+        PricingSource, ProjectGeometryPolicy, ProtocolFeatures, ProviderAdapterKind,
         ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus, RunEventKind,
         RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
         WorkflowDraftNode, WorkflowNodeKind,
@@ -3535,6 +3673,8 @@ mod tests {
             "legacy_registry_imports",
             "geometry_quality_reports",
             "geometry_correction_evidence",
+            "project_geometry_policies",
+            "geometry_calibration_reports",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
@@ -4512,5 +4652,68 @@ mod tests {
                 .expect("Run records"),
             vec![(report, evidence)]
         );
+    }
+
+    #[test]
+    fn project_policy_and_immutable_calibration_report_round_trip() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_id = ProjectId::new();
+        let mut policy = ProjectGeometryPolicy::conservative_default(
+            project_id,
+            annotagent_core::TaskKind::BoundingBox,
+        );
+        policy.calibration_thresholds.minimum_sample_count = 5;
+        store
+            .save_project_geometry_policy(&policy)
+            .expect("save policy");
+        assert_eq!(
+            store
+                .get_project_geometry_policy(project_id, annotagent_core::TaskKind::BoundingBox)
+                .expect("get policy"),
+            Some(policy.clone())
+        );
+        assert_eq!(
+            store
+                .list_project_geometry_policies(project_id)
+                .expect("list policies"),
+            vec![policy.clone()]
+        );
+
+        let report = annotagent_core::evaluate_geometry_calibration(
+            GeometryCalibrationKey {
+                project_id,
+                task_id: TaskId::from("objects"),
+                label_id: Some(LabelId::from("ball")),
+                model_profile_id: ModelProfileId::new(),
+                model_profile_revision: 1,
+                node_definition_id: "detector".to_owned(),
+                node_config_hash: "node-hash".to_owned(),
+                prompt_version: None,
+                preprocessing_hash: "preprocess-hash".to_owned(),
+                dataset_profile_revision: "dataset-v1".to_owned(),
+                label_schema_hash: "labels-v1".to_owned(),
+                refinement_hash: "refiners-v1".to_owned(),
+            },
+            GeometryCalibrationThresholds::default(),
+            &[],
+            0,
+            Utc::now(),
+        );
+        store
+            .save_geometry_calibration(&report)
+            .expect("save calibration");
+        assert_eq!(
+            store
+                .get_geometry_calibration(report.id)
+                .expect("get calibration"),
+            Some(report.clone())
+        );
+        assert_eq!(
+            store
+                .list_project_geometry_calibrations(project_id)
+                .expect("list calibrations"),
+            vec![report.clone()]
+        );
+        assert!(store.save_geometry_calibration(&report).is_err());
     }
 }

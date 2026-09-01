@@ -4,8 +4,7 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 3 — structured Review geometry evidence (implementation and verification complete;
-commit in progress).
+Milestone 4 — exact Project/model/config geometry calibration complete.
 
 ## Completed
 
@@ -53,14 +52,30 @@ commit in progress).
   new records while retaining a compatibility read of legacy correction memory.
 - Review now offers the controlled common reason taxonomy, plus enabled Skill-specific domain
   reasons. Unknown reason codes fail before the annotation is mutated.
+- Added immutable `GeometryCalibrationReport` records keyed by Project, task/Label, Model Profile
+  and revision, node definition/configuration, prompt, preprocessing, Label Schema, refiner chain
+  and dataset profile revision. Credential values and API-key rotation are deliberately outside the
+  key.
+- Calibration evaluates median/p10 IoU, median/p90 center shift, median area-ratio error, manual
+  adjustment rate, loose/tight rates and a separate small-object count against Project-owned
+  thresholds.
+- Added all six lifecycle states: Uncalibrated, Collecting Evidence, Provisional, Passed, Failed
+  and effective Stale. Relevant model, prompt, pipeline, schema, refiner or dataset changes stale a
+  historical report without mutating it.
+- Project policy and immutable calibration reports persist through SQLite migration 11 and are
+  available through Project-scoped policy, calibration list/create and exact report APIs.
+- Publication and formal-Run validation now hydrate exact persisted calibration state. Passing
+  calibration alone cannot turn a semantic confidence threshold into geometry evidence; an
+  explicit Geometry Quality Evaluation → Geometry Decision boundary must consume it.
 
 ## In progress
 
-- Create the independent M3 local commit, then begin exact calibration work in M4.
+- None within M4; the next implementation milestone is M5.
 
 ## Next
 
-- Milestone 4: exact Project/model/config geometry calibration and staleness.
+- Milestone 5: expose quality contracts, Project geometry policy and calibration evidence to the
+  Pipeline Builder so its first Draft is conservative.
 
 ## Recent verification
 
@@ -78,6 +93,11 @@ commit in progress).
 - M3 release: full workspace/all-feature Rust and doc tests passed (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy passed, all-feature build passed, and Web
   TypeScript, 41 unit tests and production build passed.
+- M4 focused: 89 Core tests and 15 Storage tests passed; exact service-level calibration creation,
+  stale-on-node-change and the Project calibration HTTP surface passed.
+- M4 release: all 329 active Rust tests and doc tests passed (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy and all-feature build passed, and Web TypeScript,
+  41 unit tests and production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -88,10 +108,11 @@ commit in progress).
 - `93882e7 test(geometry): reproduce unsafe vlm bbox auto-acceptance` (M0).
 - `291f20c feat(models): separate semantic confidence from geometry quality` (M1).
 - `0cb775c feat(workflow): block uncalibrated geometry from score-only commit` (M2).
+- `77c5dea feat(review): capture structured bbox correction evidence` (M3).
 
 ## Release-blocking remainder
 
-- M4 through M8 remain open. M3 acceptance evidence is implemented and verified.
+- M5 through M8 remain open. M4 acceptance evidence is implemented and verified.
 
 ## Live-conditional items
 
@@ -102,5 +123,5 @@ commit in progress).
 ## Real blockers
 
 - No healthy prompted-segmentation Model Profile is currently registered.
-- The four B-Human predictions do not yet have independent human ground-truth boxes stored as a
-  calibration/evaluation set.
+- The four B-Human predictions do not yet have enough independent reviewed references to pass the
+  default 30-sample calibration threshold.

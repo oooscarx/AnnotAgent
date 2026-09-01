@@ -12,8 +12,8 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 6. No candidate does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
 | 7. Wrong object does not use SAM as primary fix | open | Domain guidance exists; Agent behavior test pending. |
 | 8. Bbox edit creates geometry evidence | verified | HTTP Review regression persists typed report/evidence records with original/corrected geometry, five requested metrics, reason and lineage, then reads them through Project and Run APIs. |
-| 9. Calibration can pass with sufficient evidence | open | Not implemented. |
-| 10. Configuration changes stale calibration | open | Not implemented. |
+| 9. Calibration can pass with sufficient evidence | verified | Core aggregation and an Application end-to-end fixture build a `Passed` report from exact reviewed Run/model/node evidence under Project thresholds. |
+| 10. Configuration changes stale calibration | verified | Core exhaustively classifies staleness dimensions; the Application fixture changes grid/node configuration and observes effective `Stale`. |
 | 11. Qwen-only first Draft requires Review | implemented | Deterministic bbox drafts and the VLM bootstrap template now make Review mandatory; LLM Builder policy is M5. |
 | 12. Registered SAM enables improvement Draft | open | Not implemented end to end. |
 | 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
@@ -87,3 +87,21 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
   fabricated model identity.
 - Core metric/bucket tests, Storage round-trip/migration tests and the complete HTTP Review edit,
   accept, persist and reread regression pass.
+
+## M4 evidence
+
+- `GeometryCalibrationKey` binds Project, task/Label, exact Model Profile revision, node
+  definition/config hash, prompt, preprocessing, dataset profile, Label Schema and downstream
+  refinement configuration. Its tests enumerate every stale dimension and prove secret material is
+  absent.
+- Calibration aggregation reports robust percentiles and rates rather than a single average. Zero
+  evidence is Uncalibrated, insufficient evidence is Collecting/Provisional, sufficient good
+  evidence is Passed and sufficient poor evidence is Failed.
+- `reviewed_geometry_calibrates_only_the_exact_published_model_and_node` publishes a revisioned
+  Workflow, persists an accepted annotation and small-object correction, creates a passing report,
+  injects Passed into validation, then changes grid configuration and observes Stale.
+- Static validation separately proves Passed calibration plus a semantic Confidence Gate remains
+  blocked; only an explicit Geometry Quality Evaluation → Geometry Decision consumes calibration.
+- SQLite migration 11 persists Project policies and immutable reports. HTTP tests cover Project
+  policy GET/PUT, report list/detail, fail-closed stale display without a matching current Version,
+  and rejected calibration creation without explicit Evidence Runs.

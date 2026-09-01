@@ -64,3 +64,17 @@ calibration evidence.
 Human-reference metrics use both normalized and pixel units. Aggregate readers retain
 small/medium/large reference-area buckets with independent counts and means; a global mean is never
 the only representation of bbox quality.
+
+## D-012 — Calibration is an immutable, exact-context evaluation artifact
+
+A passing result belongs to one Project/task/Label, Model Profile revision, node configuration,
+prompt, preprocessing path, Label Schema, refiner chain and dataset profile. Later changes produce
+an effective `Stale` result instead of rewriting history. Credential locators and API-key values are
+execution infrastructure and do not affect geometric behavior, so key rotation does not stale the
+report.
+
+## D-013 — Calibration is consumed by a geometry decision, never by a semantic threshold
+
+Historical `Passed` evidence authorizes only an explicit Geometry Quality Evaluation → Geometry
+Decision boundary. It does not upgrade semantic confidence into localization confidence and cannot
+make a generic score gate geometry-safe.

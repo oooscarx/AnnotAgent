@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AnnotationId, AnnotationSnapshot, AnnotationValue, ArtifactId, DetectionArtifactItem,
-    GeometryQualityReportId, GeometrySemantics, ImageId, ModelProfileId, NodeId, NormalizedRect,
-    ProjectId, RunId,
+    GeometryCalibrationId, GeometryCalibrationStatus, GeometryCalibrationThresholds,
+    GeometryQualityReportId, GeometrySemantics, ImageId, LabelId, ModelProfileId, NodeDefinitionId,
+    NodeId, NormalizedRect, ProjectId, RunId, TaskId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -399,6 +400,296 @@ pub struct GeometryCorrectionInput {
     pub corrected_geometry: GeometrySnapshot,
     pub reason: GeometryCorrectionReason,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryCalibrationKey {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub label_id: Option<LabelId>,
+    pub model_profile_id: ModelProfileId,
+    pub model_profile_revision: u64,
+    pub node_definition_id: NodeDefinitionId,
+    pub node_config_hash: String,
+    pub prompt_version: Option<String>,
+    pub preprocessing_hash: String,
+    pub dataset_profile_revision: String,
+    /// Label semantics are independent from image distribution and invalidate calibration.
+    pub label_schema_hash: String,
+    /// Downstream refiners and geometry conversion are part of the calibrated method.
+    pub refinement_hash: String,
+}
+
+impl GeometryCalibrationKey {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("node_definition_id", self.node_definition_id.as_str()),
+            ("node_config_hash", self.node_config_hash.as_str()),
+            ("preprocessing_hash", self.preprocessing_hash.as_str()),
+            (
+                "dataset_profile_revision",
+                self.dataset_profile_revision.as_str(),
+            ),
+            ("label_schema_hash", self.label_schema_hash.as_str()),
+            ("refinement_hash", self.refinement_hash.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("geometry calibration {name} cannot be empty"));
+            }
+        }
+        if self.model_profile_revision == 0 {
+            return Err(
+                "geometry calibration requires a positive Model Profile revision".to_owned(),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryCalibrationStaleness {
+    Project,
+    Task,
+    Label,
+    ModelProfile,
+    ModelRevision,
+    NodeDefinition,
+    NodeConfiguration,
+    Prompt,
+    Preprocessing,
+    DatasetProfile,
+    LabelSchema,
+    Refinement,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryCalibrationReport {
+    pub id: GeometryCalibrationId,
+    pub key: GeometryCalibrationKey,
+    pub status: GeometryCalibrationStatus,
+    pub sample_count: u32,
+    pub small_object_sample_count: u32,
+    pub median_iou: Option<f32>,
+    pub p10_iou: Option<f32>,
+    pub median_center_shift: Option<f32>,
+    pub p90_center_shift: Option<f32>,
+    pub median_area_ratio_error: Option<f32>,
+    pub manual_adjustment_rate: Option<f32>,
+    pub too_loose_rate: Option<f32>,
+    pub too_tight_rate: Option<f32>,
+    pub thresholds: GeometryCalibrationThresholds,
+    pub evidence_run_ids: Vec<RunId>,
+    pub evidence_quality_report_ids: Vec<GeometryQualityReportId>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl GeometryCalibrationReport {
+    #[must_use]
+    pub fn staleness_reasons(
+        &self,
+        current: &GeometryCalibrationKey,
+    ) -> Vec<GeometryCalibrationStaleness> {
+        let mut reasons = Vec::new();
+        let checks = [
+            (
+                self.key.project_id != current.project_id,
+                GeometryCalibrationStaleness::Project,
+            ),
+            (
+                self.key.task_id != current.task_id,
+                GeometryCalibrationStaleness::Task,
+            ),
+            (
+                self.key.label_id != current.label_id,
+                GeometryCalibrationStaleness::Label,
+            ),
+            (
+                self.key.model_profile_id != current.model_profile_id,
+                GeometryCalibrationStaleness::ModelProfile,
+            ),
+            (
+                self.key.model_profile_revision != current.model_profile_revision,
+                GeometryCalibrationStaleness::ModelRevision,
+            ),
+            (
+                self.key.node_definition_id != current.node_definition_id,
+                GeometryCalibrationStaleness::NodeDefinition,
+            ),
+            (
+                self.key.node_config_hash != current.node_config_hash,
+                GeometryCalibrationStaleness::NodeConfiguration,
+            ),
+            (
+                self.key.prompt_version != current.prompt_version,
+                GeometryCalibrationStaleness::Prompt,
+            ),
+            (
+                self.key.preprocessing_hash != current.preprocessing_hash,
+                GeometryCalibrationStaleness::Preprocessing,
+            ),
+            (
+                self.key.dataset_profile_revision != current.dataset_profile_revision,
+                GeometryCalibrationStaleness::DatasetProfile,
+            ),
+            (
+                self.key.label_schema_hash != current.label_schema_hash,
+                GeometryCalibrationStaleness::LabelSchema,
+            ),
+            (
+                self.key.refinement_hash != current.refinement_hash,
+                GeometryCalibrationStaleness::Refinement,
+            ),
+        ];
+        reasons.extend(
+            checks
+                .into_iter()
+                .filter_map(|(changed, reason)| changed.then_some(reason)),
+        );
+        reasons
+    }
+
+    #[must_use]
+    pub fn effective_status(&self, current: &GeometryCalibrationKey) -> GeometryCalibrationStatus {
+        if self.staleness_reasons(current).is_empty() {
+            self.status
+        } else {
+            GeometryCalibrationStatus::Stale
+        }
+    }
+
+    #[must_use]
+    pub fn exact_key_match(&self, current: &GeometryCalibrationKey) -> bool {
+        self.key == *current
+    }
+}
+
+#[must_use]
+pub fn evaluate_geometry_calibration(
+    key: GeometryCalibrationKey,
+    thresholds: GeometryCalibrationThresholds,
+    evidence: &[(GeometryQualityReport, GeometryCorrectionEvidence)],
+    evaluated_sample_count: u32,
+    created_at: DateTime<Utc>,
+) -> GeometryCalibrationReport {
+    let sample_count = u32::try_from(evidence.len()).unwrap_or(u32::MAX);
+    let small_object_sample_count = evidence
+        .iter()
+        .filter(|(report, _)| report.size_bucket == Some(ObjectSizeBucket::Small))
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX);
+    let ious = evidence
+        .iter()
+        .filter_map(|(report, _)| report.iou)
+        .collect::<Vec<_>>();
+    let center_shifts = evidence
+        .iter()
+        .filter_map(|(report, _)| report.normalized_center_shift)
+        .collect::<Vec<_>>();
+    let area_ratios = evidence
+        .iter()
+        .filter_map(|(report, _)| report.area_ratio)
+        .collect::<Vec<_>>();
+    let median_iou = percentile(&ious, 0.5);
+    let p10_iou = percentile(&ious, 0.1);
+    let median_center_shift = percentile(&center_shifts, 0.5);
+    let p90_center_shift = percentile(&center_shifts, 0.9);
+    let median_area_ratio = percentile(&area_ratios, 0.5);
+    let area_ratio_errors = area_ratios
+        .iter()
+        .map(|ratio| (ratio - 1.0).abs())
+        .collect::<Vec<_>>();
+    let median_area_ratio_error = percentile(&area_ratio_errors, 0.5);
+    let denominator = evaluated_sample_count.max(sample_count);
+    let manual_adjustment_rate =
+        (denominator > 0).then(|| sample_count as f32 / denominator as f32);
+    let too_loose_count = evidence
+        .iter()
+        .filter(|(_, item)| item.reason == GeometryCorrectionReason::TooLoose)
+        .count() as f32;
+    let too_tight_count = evidence
+        .iter()
+        .filter(|(_, item)| item.reason == GeometryCorrectionReason::TooTight)
+        .count() as f32;
+    let too_loose_rate = (sample_count > 0).then(|| too_loose_count / sample_count as f32);
+    let too_tight_rate = (sample_count > 0).then(|| too_tight_count / sample_count as f32);
+    let metrics_pass = p10_iou.is_some_and(|value| value >= thresholds.minimum_iou)
+        && p90_center_shift
+            .is_some_and(|value| value <= thresholds.maximum_normalized_center_shift)
+        && median_area_ratio.is_some_and(|value| {
+            value >= thresholds.minimum_area_ratio && value <= thresholds.maximum_area_ratio
+        });
+    let status = if sample_count == 0 {
+        GeometryCalibrationStatus::Uncalibrated
+    } else if sample_count < thresholds.minimum_sample_count {
+        if metrics_pass && sample_count >= thresholds.minimum_sample_count.div_ceil(3).max(3) {
+            GeometryCalibrationStatus::Provisional
+        } else {
+            GeometryCalibrationStatus::CollectingEvidence
+        }
+    } else if metrics_pass {
+        GeometryCalibrationStatus::Passed
+    } else {
+        GeometryCalibrationStatus::Failed
+    };
+    let mut evidence_run_ids = evidence
+        .iter()
+        .map(|(_, item)| item.run_id)
+        .collect::<Vec<_>>();
+    evidence_run_ids.sort();
+    evidence_run_ids.dedup();
+    let mut evidence_quality_report_ids = evidence
+        .iter()
+        .map(|(report, _)| report.id)
+        .collect::<Vec<_>>();
+    evidence_quality_report_ids.sort();
+    evidence_quality_report_ids.dedup();
+    GeometryCalibrationReport {
+        id: GeometryCalibrationId::new(),
+        key,
+        status,
+        sample_count,
+        small_object_sample_count,
+        median_iou,
+        p10_iou,
+        median_center_shift,
+        p90_center_shift,
+        median_area_ratio_error,
+        manual_adjustment_rate,
+        too_loose_rate,
+        too_tight_rate,
+        thresholds,
+        evidence_run_ids,
+        evidence_quality_report_ids,
+        created_at,
+    }
+}
+
+fn percentile(values: &[f32], percentile: f32) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut values = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f32::total_cmp);
+    let rank = percentile.clamp(0.0, 1.0) * (values.len().saturating_sub(1)) as f32;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    if lower == upper {
+        Some(values[lower])
+    } else {
+        let weight = rank - lower as f32;
+        Some(values[lower] + (values[upper] - values[lower]) * weight)
+    }
 }
 
 #[must_use]
@@ -841,5 +1132,123 @@ mod tests {
                 .contains(&GeometryIssueCode::InsufficientEvidence)
         );
         assert!(!evidence.calibration_eligible());
+    }
+
+    fn calibration_key(project_id: ProjectId, model_id: ModelProfileId) -> GeometryCalibrationKey {
+        GeometryCalibrationKey {
+            project_id,
+            task_id: TaskId::from("objects"),
+            label_id: Some(LabelId::from("ball")),
+            model_profile_id: model_id,
+            model_profile_revision: 2,
+            node_definition_id: "vlm_detection.detect".to_owned(),
+            node_config_hash: "node-v1".to_owned(),
+            prompt_version: Some("prompt-v1".to_owned()),
+            preprocessing_hash: "preprocess-v1".to_owned(),
+            dataset_profile_revision: "dataset-v1".to_owned(),
+            label_schema_hash: "labels-v1".to_owned(),
+            refinement_hash: "refiners-v1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn calibration_is_project_model_revision_and_pipeline_exact() {
+        let project_id = ProjectId::new();
+        let model_id = ModelProfileId::new();
+        let key = calibration_key(project_id, model_id);
+        let evidence = (0..30)
+            .map(|index| {
+                build_geometry_correction_evidence(GeometryCorrectionInput {
+                    project_id,
+                    run_id: RunId::new(),
+                    image_id: ImageId::new(),
+                    annotation_id: AnnotationId::new(),
+                    source_node_id: NodeId::from("detector"),
+                    source_model_profile_id: Some(model_id),
+                    source_model_revision: Some(2),
+                    candidate_artifact_id: ArtifactId::new(),
+                    reference_artifact_id: ArtifactId::new(),
+                    original_geometry: GeometrySnapshot {
+                        rect: NormalizedRect::new(0.1, 0.1, 0.05, 0.05).expect("prediction"),
+                        image_width: 640,
+                        image_height: 480,
+                    },
+                    corrected_geometry: GeometrySnapshot {
+                        rect: NormalizedRect::new(0.1 + index as f32 * 0.000_001, 0.1, 0.05, 0.05)
+                            .expect("reference"),
+                        image_width: 640,
+                        image_height: 480,
+                    },
+                    reason: GeometryCorrectionReason::Other,
+                    created_at: Utc::now(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let report = evaluate_geometry_calibration(
+            key.clone(),
+            GeometryCalibrationThresholds::default(),
+            &evidence,
+            40,
+            Utc::now(),
+        );
+        assert_eq!(report.status, GeometryCalibrationStatus::Passed);
+        assert_eq!(report.sample_count, 30);
+        assert_eq!(report.small_object_sample_count, 30);
+        assert!(report.p10_iou.is_some_and(|value| value > 0.99));
+        assert_eq!(report.manual_adjustment_rate, Some(0.75));
+        assert_eq!(
+            report.effective_status(&key),
+            GeometryCalibrationStatus::Passed
+        );
+
+        let mut changed = key.clone();
+        changed.project_id = ProjectId::new();
+        changed.task_id = TaskId::from("other-task");
+        changed.label_id = Some(LabelId::from("other-label"));
+        changed.model_profile_id = ModelProfileId::new();
+        changed.model_profile_revision += 1;
+        changed.node_definition_id = "other.detect".to_owned();
+        changed.prompt_version = Some("prompt-v2".to_owned());
+        changed.preprocessing_hash = "preprocess-v2".to_owned();
+        changed.node_config_hash = "node-v2".to_owned();
+        changed.label_schema_hash = "labels-v2".to_owned();
+        changed.refinement_hash = "refiners-v2".to_owned();
+        changed.dataset_profile_revision = "dataset-v2".to_owned();
+        let stale = report.staleness_reasons(&changed);
+        assert!(stale.contains(&GeometryCalibrationStaleness::Project));
+        assert!(stale.contains(&GeometryCalibrationStaleness::Task));
+        assert!(stale.contains(&GeometryCalibrationStaleness::Label));
+        assert!(stale.contains(&GeometryCalibrationStaleness::ModelProfile));
+        assert!(stale.contains(&GeometryCalibrationStaleness::ModelRevision));
+        assert!(stale.contains(&GeometryCalibrationStaleness::NodeDefinition));
+        assert!(stale.contains(&GeometryCalibrationStaleness::Prompt));
+        assert!(stale.contains(&GeometryCalibrationStaleness::Preprocessing));
+        assert!(stale.contains(&GeometryCalibrationStaleness::NodeConfiguration));
+        assert!(stale.contains(&GeometryCalibrationStaleness::LabelSchema));
+        assert!(stale.contains(&GeometryCalibrationStaleness::Refinement));
+        assert!(stale.contains(&GeometryCalibrationStaleness::DatasetProfile));
+        assert_eq!(
+            report.effective_status(&changed),
+            GeometryCalibrationStatus::Stale
+        );
+        assert!(
+            !serde_json::to_string(&report)
+                .expect("calibration JSON")
+                .contains("credential")
+        );
+    }
+
+    #[test]
+    fn insufficient_calibration_never_passes_as_production_evidence() {
+        let project_id = ProjectId::new();
+        let report = evaluate_geometry_calibration(
+            calibration_key(project_id, ModelProfileId::new()),
+            GeometryCalibrationThresholds::default(),
+            &[],
+            0,
+            Utc::now(),
+        );
+        assert_eq!(report.status, GeometryCalibrationStatus::Uncalibrated);
+        assert!(!report.status.permits_calibrated_acceptance());
     }
 }

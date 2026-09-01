@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-02 CST
 
+## Geometry-Safe Pipeline Builder M4 — 2026-09-02
+
+- Added exact Project/model/node/prompt/preprocessing/schema/refiner/dataset geometry calibration,
+  robust distribution metrics, six lifecycle states and immutable SQLite persistence.
+- Project geometry thresholds and calibration history are available through HTTP APIs. Published
+  Draft and formal-Run validation use the persisted exact-context state and mark relevant changes
+  Stale; credential rotation is intentionally excluded.
+- Passing historical calibration cannot make a semantic confidence gate safe. It must be consumed
+  by an explicit geometry evaluation and decision boundary.
+- Focused Core, Storage, Application and Server calibration tests pass; complete release checks are
+  recorded in the geometry acceptance evidence. No remote was changed.
+
 ## Geometry-Safe Pipeline Builder M3 — 2026-09-02
 
 - Human bbox edits now produce durable structured geometry evidence instead of only replacing the

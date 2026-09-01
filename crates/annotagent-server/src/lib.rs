@@ -15,8 +15,8 @@ use std::{
 use annotagent_application::load_settings;
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, DetectionWorkerSettings,
-    LocalApplication, ModelBinding, ProjectSummary, Settings, WorkflowVersion, stable_project_id,
-    validate_settings,
+    GeometryCalibrationRequest, LocalApplication, ModelBinding, ProjectSummary, Settings,
+    WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
@@ -24,18 +24,20 @@ use annotagent_core::{
     BindingMutationActor, BoxPrompt, BoxPromptSetArtifact, CandidateAgreement,
     CapabilityDeclarationSource, ContractEvidenceSource, CorrectionFeatures, CorrectionRecord,
     CredentialReference, CredentialSource, DetectionEvidence, EnabledSkillConfig,
-    ExpertModelManifest, GenerationDefaults, GeometryCorrectionInput, GeometryCorrectionReason,
+    ExpertModelManifest, GenerationDefaults, GeometryAutoAcceptPolicy, GeometryCalibrationId,
+    GeometryCalibrationThresholds, GeometryCorrectionInput, GeometryCorrectionReason,
     GeometryQualitySummary, GeometrySemantics, GeometrySnapshot, GlobalModelDefaults,
     ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability, ModelBindingId,
     ModelBindingMatch, ModelBindingRole, ModelCapability, ModelCapabilityQualityContract,
     ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineInferenceRequest, PipelineModelBackend,
-    ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
-    ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
-    ProviderId, ProviderProfile, PublishedWorkflowVersion, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError,
-    SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
+    ProjectGeometryPolicy, ProjectModelBinding, ProjectSchema, ProtocolFeatures,
+    ProviderAdapterKind, ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot,
+    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
+    RequiredGeometryQuality, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
+    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue,
+    SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
     VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus, WorkflowConstraints,
     WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence, check_model_compatibility,
     effective_model_quality_contracts,
@@ -636,6 +638,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(list_project_geometry_corrections),
         )
         .route(
+            "/api/projects/{project_id}/geometry-policy",
+            get(get_project_geometry_policy).put(put_project_geometry_policy),
+        )
+        .route(
+            "/api/projects/{project_id}/geometry-calibrations",
+            get(list_project_geometry_calibrations).post(create_project_geometry_calibration),
+        )
+        .route(
             "/api/projects/{project_id}/images/{index}/content",
             get(image_content),
         )
@@ -684,6 +694,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/reviews/{review_id}", get(get_review))
         .route("/api/reviews/{review_id}/next", get(get_next_review))
         .route("/api/reviews/{review_id}/decision", post(review_decision))
+        .route(
+            "/api/geometry-calibrations/{calibration_id}",
+            get(get_geometry_calibration),
+        )
         .route(
             "/api/reviews/{review_id}/accept-and-next",
             post(accept_review_and_next),
@@ -2331,6 +2345,84 @@ fn geometry_correction_response(
         "reports": reports,
         "evidence": evidence,
     })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateGeometryPolicyRequest {
+    task_kind: TaskKind,
+    required_quality: RequiredGeometryQuality,
+    auto_accept_policy: GeometryAutoAcceptPolicy,
+    calibration_thresholds: GeometryCalibrationThresholds,
+}
+
+async fn get_project_geometry_policy(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let policies = state
+        .application
+        .project_geometry_policies(&project_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!({"policies": policies})))
+}
+
+async fn put_project_geometry_policy(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<UpdateGeometryPolicyRequest>,
+) -> ApiResult<Json<Value>> {
+    let policy = state
+        .application
+        .save_project_geometry_policy(
+            &project_id,
+            ProjectGeometryPolicy {
+                project_id: annotagent_core::ProjectId::new(),
+                task_kind: request.task_kind,
+                required_quality: request.required_quality,
+                auto_accept_policy: request.auto_accept_policy,
+                calibration_thresholds: request.calibration_thresholds,
+            },
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"policy": policy})))
+}
+
+async fn list_project_geometry_calibrations(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let calibrations = state
+        .application
+        .project_geometry_calibrations(&project_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!({"calibrations": calibrations})))
+}
+
+async fn create_project_geometry_calibration(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<GeometryCalibrationRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let report = state
+        .application
+        .create_geometry_calibration(&project_id, &request)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!({"calibration": report}))))
+}
+
+async fn get_geometry_calibration(
+    State(state): State<ServerState>,
+    AxumPath(calibration_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let id = calibration_id
+        .parse::<GeometryCalibrationId>()
+        .map_err(|_| ApiError::bad_request("calibration_id must be a UUID"))?;
+    let report = state
+        .application
+        .geometry_calibration(id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("geometry calibration was not found"))?;
+    Ok(Json(json!({"calibration": report})))
 }
 
 fn workspace_model_binding(settings: &Settings) -> ModelBinding {
@@ -5464,7 +5556,7 @@ fn geometry_correction_lineage(
         if let Some(node) = workflow.draft.nodes.iter().find(|node| node.id == node_id)
             && let Some(binding) = node.model_profile_binding.as_ref()
         {
-            bound_model = Some(binding.model_profile_id);
+            bound_model = Some((node.id.clone(), binding.model_profile_id));
             break;
         }
         queue.extend(
@@ -5476,13 +5568,23 @@ fn geometry_correction_lineage(
                 .map(|edge| edge.from_node.clone()),
         );
     }
+    let bound_model = bound_model.or_else(|| {
+        let mut bound_nodes = workflow.draft.nodes.iter().filter_map(|node| {
+            node.model_profile_binding
+                .as_ref()
+                .map(|binding| (node.id.clone(), binding.model_profile_id))
+        });
+        let only = bound_nodes.next()?;
+        bound_nodes.next().is_none().then_some(only)
+    });
     let profile = bound_model
-        .and_then(|model_id| {
+        .as_ref()
+        .and_then(|(_, model_id)| {
             workflow
                 .snapshot
                 .model_profiles
                 .iter()
-                .find(|profile| profile.model_profile_id == model_id)
+                .find(|profile| profile.model_profile_id == *model_id)
         })
         .or_else(|| {
             (workflow.snapshot.model_profiles.len() == 1)
@@ -5490,7 +5592,7 @@ fn geometry_correction_lineage(
                 .flatten()
         });
     (
-        NodeId::from(source_node),
+        NodeId::from(bound_model.map_or(source_node, |(node_id, _)| node_id)),
         profile.map(|profile| profile.model_profile_id),
         profile.map(|profile| profile.revision),
     )
@@ -6188,6 +6290,151 @@ mod tests {
             .expect("body");
         let value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
         (status, value)
+    }
+
+    #[tokio::test]
+    async fn geometry_policy_and_calibration_apis_are_project_scoped() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "geometry-api",
+                r"
+version: 1
+project:
+  name: Geometry API
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: objects
+    kind: bounding_box
+    labels: [ball]
+    required: false
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+",
+            )
+            .expect("Project");
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+
+        let (status, default_policy) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/geometry-api/geometry-policy",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            default_policy["policies"][0]["auto_accept_policy"],
+            json!("refiner_or_review")
+        );
+
+        let (status, saved_policy) = call_json(
+            &service,
+            axum::http::Method::PUT,
+            "/api/projects/geometry-api/geometry-policy",
+            json!({
+                "task_kind": "bounding_box",
+                "required_quality": "tight_bounding_box",
+                "auto_accept_policy": "calibration_required",
+                "calibration_thresholds": {
+                    "minimum_iou": 0.8,
+                    "maximum_normalized_center_shift": 0.03,
+                    "minimum_area_ratio": 0.85,
+                    "maximum_area_ratio": 1.2,
+                    "minimum_sample_count": 12
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{saved_policy:#?}");
+        assert_eq!(
+            saved_policy["policy"]["calibration_thresholds"]["minimum_sample_count"],
+            json!(12)
+        );
+
+        let project_path = application
+            .project_path("geometry-api")
+            .expect("Project path");
+        let project_id = stable_project_id(project_path.parent().expect("Project root"));
+        let report = annotagent_core::evaluate_geometry_calibration(
+            annotagent_core::GeometryCalibrationKey {
+                project_id,
+                task_id: annotagent_core::TaskId::from("objects"),
+                label_id: Some(annotagent_core::LabelId::from("ball")),
+                model_profile_id: annotagent_core::ModelProfileId::new(),
+                model_profile_revision: 1,
+                node_definition_id: "vlm_detection.detect".to_owned(),
+                node_config_hash: "node-v1".to_owned(),
+                prompt_version: Some("prompt-v1".to_owned()),
+                preprocessing_hash: "preprocess-v1".to_owned(),
+                dataset_profile_revision: "dataset-v1".to_owned(),
+                label_schema_hash: "labels-v1".to_owned(),
+                refinement_hash: "refinement-v1".to_owned(),
+            },
+            annotagent_core::GeometryCalibrationThresholds::default(),
+            &[],
+            0,
+            chrono::Utc::now(),
+        );
+        application
+            .store()
+            .save_geometry_calibration(&report)
+            .expect("calibration report");
+
+        let (status, listed) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/geometry-api/geometry-calibrations",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(listed["calibrations"][0]["report"]["id"], json!(report.id));
+        assert_eq!(
+            listed["calibrations"][0]["effective_status"],
+            json!("stale"),
+            "a report without a matching current Published Workflow fails closed"
+        );
+
+        let (status, detail) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/geometry-calibrations/{}", report.id),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail["calibration"]["id"], json!(report.id));
+
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/geometry-api/geometry-calibrations",
+            json!({
+                "workflow_id": "missing",
+                "workflow_version": 1,
+                "node_id": "detector",
+                "task_id": "objects",
+                "label_id": "ball",
+                "evidence_run_ids": []
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[test]

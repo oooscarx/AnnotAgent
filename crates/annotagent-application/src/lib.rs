@@ -25,19 +25,21 @@ use annotagent_core::{
     CandidateGeometryQualityReport, CapabilityDeclarationSource, CheckpointIdentity,
     ContractDataType, CredentialReference, CredentialSource, DatasetExporter, DatasetImporter,
     DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport, ExportRequest,
-    FullRunEstimate, GenerationDefaults, ImageId, ImportIssue, ImportReport, ImportRequest,
-    InputModality, LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
-    LicenseMetadata, LicensePermission, ModelAvailability, ModelAvailabilityEvidence,
-    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
-    ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
-    ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile,
-    ModelProfileId, ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest,
-    ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort,
-    NodeRegistry, NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints,
-    PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
-    PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGrammarValidator,
-    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, PricingSource,
-    ProjectId, ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
+    FullRunEstimate, GenerationDefaults, GeometryCalibrationKey, GeometryCalibrationReport,
+    GeometryCalibrationStaleness, GeometryCalibrationStatus, GeometryCorrectionReason, ImageId,
+    ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
+    ModelAvailability, ModelAvailabilityEvidence, ModelAvailabilityStatus,
+    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
+    ModelBindingSource, ModelCapability, ModelConnection, ModelInputContract, ModelLimits,
+    ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
+    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
+    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
+    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
+    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
+    PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
+    PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
+    ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
     ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
     ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
     RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
@@ -4345,6 +4347,24 @@ pub struct RunAnnotationInspection {
     pub annotations: Vec<Annotation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeometryCalibrationRequest {
+    pub workflow_id: String,
+    pub workflow_version: u32,
+    pub node_id: String,
+    pub task_id: TaskId,
+    pub label_id: Option<LabelId>,
+    #[serde(default)]
+    pub evidence_run_ids: Vec<RunId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GeometryCalibrationView {
+    pub report: GeometryCalibrationReport,
+    pub effective_status: GeometryCalibrationStatus,
+    pub staleness_reasons: Vec<GeometryCalibrationStaleness>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RunResultSummary {
     pub run_id: RunId,
@@ -5776,6 +5796,434 @@ impl LocalApplication {
         self.store
             .list_run_geometry_corrections(run_id, 1_000)
             .map_err(anyhow::Error::from)
+    }
+
+    pub fn project_geometry_policies(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectGeometryPolicy>> {
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let stored = self.store.list_project_geometry_policies(stable_id)?;
+        let mut policies = Vec::new();
+        for task_kind in project
+            .tasks
+            .iter()
+            .map(|task| task.kind)
+            .collect::<BTreeSet<_>>()
+        {
+            policies.push(
+                stored
+                    .iter()
+                    .find(|policy| policy.task_kind == task_kind)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        ProjectGeometryPolicy::conservative_default(stable_id, task_kind)
+                    }),
+            );
+        }
+        Ok(policies)
+    }
+
+    pub fn save_project_geometry_policy(
+        &self,
+        project_id: &str,
+        mut policy: ProjectGeometryPolicy,
+    ) -> Result<ProjectGeometryPolicy> {
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        if !project
+            .tasks
+            .iter()
+            .any(|task| task.kind == policy.task_kind)
+        {
+            bail!(
+                "Project has no {:?} task for this geometry policy",
+                policy.task_kind
+            );
+        }
+        policy.project_id = stable_id;
+        policy.validate().map_err(|error| anyhow!(error))?;
+        self.store.save_project_geometry_policy(&policy)?;
+        Ok(policy)
+    }
+
+    pub fn create_geometry_calibration(
+        &self,
+        project_id: &str,
+        request: &GeometryCalibrationRequest,
+    ) -> Result<GeometryCalibrationReport> {
+        if request.evidence_run_ids.is_empty() {
+            bail!("geometry calibration requires at least one explicitly selected Evidence Run");
+        }
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let published = self
+            .store
+            .get_published_workflow_version(&request.workflow_id, request.workflow_version)?;
+        if published.project_id != project_id {
+            bail!("calibration Workflow does not belong to the requested Project");
+        }
+        let task = project
+            .tasks
+            .iter()
+            .find(|task| task.id == request.task_id)
+            .ok_or_else(|| anyhow!("calibration task does not exist in the Project"))?;
+        if task.kind != TaskKind::BoundingBox {
+            bail!("geometry calibration currently requires a bounding-box task");
+        }
+        if request.label_id.as_ref().is_some_and(|label| {
+            !task
+                .labels
+                .iter()
+                .any(|candidate| candidate == label.as_str())
+        }) {
+            bail!("calibration Label does not exist in the selected task");
+        }
+        let key = self.geometry_calibration_key(
+            project_id,
+            &project,
+            &published.draft,
+            &published.snapshot.model_profiles,
+            &request.node_id,
+            (request.task_id.clone(), request.label_id.clone()),
+        )?;
+        let selected_runs = request
+            .evidence_run_ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let persisted_runs = self.store.list_runs()?;
+        for run_id in &selected_runs {
+            let run = persisted_runs
+                .iter()
+                .find(|run| run.id == *run_id)
+                .ok_or_else(|| anyhow!("Evidence Run {run_id} does not exist"))?;
+            if run.project_id != Some(key.project_id) {
+                bail!("Evidence Run {run_id} does not belong to the requested Project");
+            }
+            let evidence_workflow = run
+                .workflow_snapshot_json
+                .as_deref()
+                .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(snapshot).ok())
+                .and_then(|snapshot| snapshot.get("selected_workflow").cloned())
+                .and_then(|workflow| {
+                    serde_json::from_value::<PublishedWorkflowVersion>(workflow).ok()
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Evidence Run {run_id} has no exact immutable Published Workflow snapshot"
+                    )
+                })?;
+            if evidence_workflow.workflow_id != published.workflow_id
+                || evidence_workflow.version != published.version
+                || evidence_workflow.content_hash != published.content_hash
+            {
+                bail!("Evidence Run {run_id} does not use the selected immutable Workflow Version");
+            }
+        }
+        let mut all_evidence = Vec::new();
+        for run_id in &selected_runs {
+            all_evidence.extend(self.store.list_run_geometry_corrections(*run_id, 1_000)?);
+        }
+        let mut scoped_evidence = Vec::new();
+        let mut seen_samples = BTreeSet::new();
+        for (report, evidence) in all_evidence {
+            if !selected_runs.contains(&evidence.run_id)
+                || evidence.source_node_id.as_str() != request.node_id
+                || evidence.source_model_profile_id != Some(key.model_profile_id)
+                || evidence.source_model_revision != Some(key.model_profile_revision)
+                || report
+                    .issue_codes
+                    .contains(&annotagent_core::GeometryIssueCode::InsufficientEvidence)
+                || !matches!(
+                    evidence.reason,
+                    GeometryCorrectionReason::TooLoose
+                        | GeometryCorrectionReason::TooTight
+                        | GeometryCorrectionReason::Shifted
+                        | GeometryCorrectionReason::Other
+                )
+            {
+                continue;
+            }
+            let annotation_matches = self
+                .store
+                .find_annotation(evidence.annotation_id)?
+                .is_some_and(|(run_id, annotation)| {
+                    run_id == evidence.run_id
+                        && annotation.task_id == request.task_id
+                        && request
+                            .label_id
+                            .as_ref()
+                            .is_none_or(|label| annotation.label.as_ref() == Some(label))
+                });
+            if annotation_matches && seen_samples.insert((evidence.run_id, evidence.annotation_id))
+            {
+                scoped_evidence.push((report, evidence));
+            }
+        }
+        let evaluated_sample_count = selected_runs
+            .iter()
+            .map(|run_id| {
+                self.store.list_annotations(*run_id).map(|annotations| {
+                    annotations
+                        .into_iter()
+                        .filter(|annotation| {
+                            annotation.task_id == request.task_id
+                                && request
+                                    .label_id
+                                    .as_ref()
+                                    .is_none_or(|label| annotation.label.as_ref() == Some(label))
+                                && matches!(
+                                    annotation.review_status,
+                                    ReviewStatus::HumanAccepted | ReviewStatus::Rejected
+                                )
+                        })
+                        .count()
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .sum::<usize>()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        let thresholds = self
+            .project_geometry_policies(project_id)?
+            .into_iter()
+            .find(|policy| policy.task_kind == task.kind)
+            .map_or_else(Default::default, |policy| policy.calibration_thresholds);
+        let report = annotagent_core::evaluate_geometry_calibration(
+            key,
+            thresholds,
+            &scoped_evidence,
+            evaluated_sample_count,
+            chrono::Utc::now(),
+        );
+        self.store.save_geometry_calibration(&report)?;
+        Ok(report)
+    }
+
+    pub fn project_geometry_calibrations(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<GeometryCalibrationView>> {
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let reports = self.store.list_project_geometry_calibrations(stable_id)?;
+        let current = self
+            .store
+            .list_published_workflow_versions(Some(project_id))?
+            .into_iter()
+            .last();
+        reports
+            .into_iter()
+            .map(|report| {
+                let current_keys = current.as_ref().map_or_else(Vec::new, |workflow| {
+                    workflow
+                        .draft
+                        .nodes
+                        .iter()
+                        .filter(|node| node.node_type == report.key.node_definition_id)
+                        .filter_map(|node| {
+                            self.geometry_calibration_key(
+                                project_id,
+                                &project,
+                                &workflow.draft,
+                                &workflow.snapshot.model_profiles,
+                                &node.id,
+                                (report.key.task_id.clone(), report.key.label_id.clone()),
+                            )
+                            .ok()
+                        })
+                        .collect::<Vec<_>>()
+                });
+                let current_key = current_keys
+                    .iter()
+                    .find(|key| report.exact_key_match(key))
+                    .or_else(|| {
+                        current_keys
+                            .iter()
+                            .find(|key| calibration_scope_related(&report.key, key))
+                    })
+                    .or_else(|| current_keys.first());
+                let (effective_status, staleness_reasons) = match current_key {
+                    Some(key) => (report.effective_status(key), report.staleness_reasons(key)),
+                    _ => (
+                        GeometryCalibrationStatus::Stale,
+                        vec![GeometryCalibrationStaleness::NodeDefinition],
+                    ),
+                };
+                Ok(GeometryCalibrationView {
+                    report,
+                    effective_status,
+                    staleness_reasons,
+                })
+            })
+            .collect()
+    }
+
+    pub fn geometry_calibration(
+        &self,
+        id: annotagent_core::GeometryCalibrationId,
+    ) -> Result<Option<GeometryCalibrationReport>> {
+        self.store
+            .get_geometry_calibration(id)
+            .map_err(anyhow::Error::from)
+    }
+
+    fn geometry_calibration_key(
+        &self,
+        project_id: &str,
+        project: &ProjectSchema,
+        draft: &WorkflowDraft,
+        profiles: &[ModelProfileSnapshot],
+        node_id: &str,
+        scope: (TaskId, Option<LabelId>),
+    ) -> Result<GeometryCalibrationKey> {
+        let (task_id, label_id) = scope;
+        let project_path = self.project_path(project_id)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let node = draft
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            .ok_or_else(|| anyhow!("calibration node {node_id:?} does not exist"))?;
+        let binding = node
+            .model_profile_binding
+            .as_ref()
+            .ok_or_else(|| anyhow!("calibration node has no revisioned Model Profile binding"))?;
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.model_profile_id == binding.model_profile_id)
+            .ok_or_else(|| {
+                anyhow!("calibration node Model Profile is not frozen in the Workflow")
+            })?;
+        let prompt_version = [
+            "prompt_version",
+            "prompt_template_version",
+            "system_prompt_version",
+        ]
+        .into_iter()
+        .find_map(|key| {
+            node.parameters
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| profile.generation_defaults.system_prompt_version.clone());
+        let preprocessing = draft
+            .nodes
+            .iter()
+            .filter(|candidate| {
+                candidate.id != node.id
+                    && workflow_path_exists(draft, &candidate.id, &node.id)
+                    && (matches!(candidate.node_type.as_str(), "core.resize" | "core.tile")
+                        || candidate.parameters.keys().any(|key| {
+                            key.contains("resize")
+                                || key.contains("tile")
+                                || key.contains("grid")
+                                || key.contains("preprocess")
+                        }))
+            })
+            .collect::<Vec<_>>();
+        let refinement = draft
+            .nodes
+            .iter()
+            .filter(|candidate| {
+                candidate.id != node.id
+                    && workflow_path_exists(draft, &node.id, &candidate.id)
+                    && (candidate.node_type.contains("segment")
+                        || candidate.node_type.contains("mask_to_bbox")
+                        || candidate.node_type.contains("geometry")
+                        || candidate.node_type.contains("refiner")
+                        || !candidate.refiners.is_empty())
+            })
+            .collect::<Vec<_>>();
+        let image_hashes = self
+            .list_project_images(project_id)?
+            .into_iter()
+            .map(|path| {
+                std::fs::read(&path)
+                    .with_context(|| format!("cannot read calibration image {}", path.display()))
+                    .map(|bytes| sha256(&bytes))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let node_config_hash = sha256(&serde_json::to_vec(node)?);
+        let preprocessing_hash = sha256(&serde_json::to_vec(&preprocessing)?);
+        let refinement_hash = sha256(&serde_json::to_vec(&refinement)?);
+        let label_schema_hash = sha256(&serde_json::to_vec(&project.tasks)?);
+        let dataset_profile_revision = sha256(&serde_json::to_vec(&json!({
+            "dataset": &project.dataset,
+            "image_hashes": image_hashes,
+        }))?);
+        let key = GeometryCalibrationKey {
+            project_id: stable_id,
+            task_id,
+            label_id,
+            model_profile_id: profile.model_profile_id,
+            model_profile_revision: profile.revision,
+            node_definition_id: node.node_type.clone(),
+            node_config_hash,
+            prompt_version,
+            preprocessing_hash,
+            dataset_profile_revision,
+            label_schema_hash,
+            refinement_hash,
+        };
+        key.validate().map_err(|error| anyhow!(error))?;
+        Ok(key)
+    }
+
+    fn geometry_safety_validation_context(
+        &self,
+        project_id: &str,
+        project: &ProjectSchema,
+        draft: &WorkflowDraft,
+        profiles: &[ModelProfileSnapshot],
+    ) -> Result<annotagent_core::GeometrySafetyValidationContext> {
+        let project_path = self.project_path(project_id)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let mut context =
+            annotagent_core::geometry_safety_context(stable_id, project, draft, profiles);
+        context.project_policies = self.project_geometry_policies(project_id)?;
+        let reports = self.store.list_project_geometry_calibrations(stable_id)?;
+        let node_ids = context
+            .node_contracts
+            .iter()
+            .map(|contract| contract.node_id.clone())
+            .collect::<Vec<_>>();
+        for node_id in node_ids {
+            let Some((task_id, label_id)) = calibration_scope_for_node(project, draft, &node_id)
+            else {
+                continue;
+            };
+            let Ok(key) = self.geometry_calibration_key(
+                project_id,
+                project,
+                draft,
+                profiles,
+                &node_id,
+                (task_id, label_id),
+            ) else {
+                continue;
+            };
+            let status = reports
+                .iter()
+                .find(|report| report.exact_key_match(&key))
+                .map(|report| report.status)
+                .or_else(|| {
+                    reports
+                        .iter()
+                        .any(|report| calibration_scope_related(&report.key, &key))
+                        .then_some(GeometryCalibrationStatus::Stale)
+                })
+                .unwrap_or(GeometryCalibrationStatus::Uncalibrated);
+            context.set_calibration_status(&node_id, status);
+        }
+        Ok(context)
     }
 
     pub fn active_run_for_project(&self, project_name: &str) -> Result<Option<RunId>> {
@@ -11375,12 +11823,12 @@ impl LocalApplication {
             .get_published_workflow_version(workflow_id, version)?;
         let project_path = self.project_path(&published.project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let geometry_context = annotagent_core::geometry_safety_context(
-            stable_project_id(project_path.parent().unwrap_or(&self.workspace)),
+        let geometry_context = self.geometry_safety_validation_context(
+            &published.project_id,
             &project,
             &published.draft,
             &published.snapshot.model_profiles,
-        );
+        )?;
         let unsafe_geometry =
             annotagent_core::workflow_safety_compatibility(&published.draft, &geometry_context)
                 == annotagent_core::WorkflowSafetyCompatibility::UnsafeForNewRuns;
@@ -11432,12 +11880,12 @@ impl LocalApplication {
                 ModelProfileSnapshot::frozen(model, provider).ok()
             })
             .collect::<Vec<_>>();
-        let geometry_context = annotagent_core::geometry_safety_context(
-            stable_project_id(project_path.parent().unwrap_or(&self.workspace)),
+        let geometry_context = self.geometry_safety_validation_context(
+            &draft.project_id,
             &project,
             draft,
             &frozen_profiles,
-        );
+        )?;
         let mut report = WorkflowStaticValidator.validate_for_publish_with_geometry(
             draft,
             &nodes,
@@ -12692,12 +13140,12 @@ impl LocalApplication {
                 self.validate_published_registry_models(&published)?;
                 let (project, _) =
                     load_project_schema_with_registry(&canonical, &self.skills)?;
-                let geometry_context = annotagent_core::geometry_safety_context(
-                    stable_project_id(canonical.parent().unwrap_or(&self.workspace)),
+                let geometry_context = self.geometry_safety_validation_context(
+                    &published.project_id,
                     &project,
                     &published.draft,
                     &published.snapshot.model_profiles,
-                );
+                )?;
                 if annotagent_core::workflow_safety_compatibility(
                     &published.draft,
                     &geometry_context,
@@ -13681,6 +14129,95 @@ fn validate_project_id(project_id: &str) -> Result<()> {
         bail!("invalid project id {project_id:?}");
     }
     Ok(())
+}
+
+fn workflow_path_exists(draft: &WorkflowDraft, from: &str, to: &str) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut stack = vec![from.to_owned()];
+    let mut visited = BTreeSet::new();
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        for edge in draft.edges.iter().filter(|edge| edge.from_node == current) {
+            if edge.to_node == to {
+                return true;
+            }
+            stack.push(edge.to_node.clone());
+        }
+    }
+    false
+}
+
+fn calibration_scope_for_node(
+    project: &ProjectSchema,
+    draft: &WorkflowDraft,
+    node_id: &str,
+) -> Option<(TaskId, Option<LabelId>)> {
+    let node = draft.nodes.iter().find(|node| node.id == node_id)?;
+    let task_id = node
+        .parameters
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .map(TaskId::from)
+        .or_else(|| {
+            draft.nodes.iter().find_map(|candidate| {
+                (candidate.kind == WorkflowNodeKind::Commit
+                    && workflow_path_exists(draft, node_id, &candidate.id))
+                .then(|| {
+                    candidate
+                        .parameters
+                        .get("task_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(TaskId::from)
+                })
+                .flatten()
+            })
+        })
+        .or_else(|| {
+            project
+                .tasks
+                .iter()
+                .find(|task| task.kind == TaskKind::BoundingBox)
+                .map(|task| task.id.clone())
+        })?;
+    let task = project.tasks.iter().find(|task| task.id == task_id)?;
+    let label_id = node
+        .parameters
+        .get("target_label")
+        .and_then(serde_json::Value::as_str)
+        .map(LabelId::from)
+        .or_else(|| {
+            node.parameters
+                .get("target_labels")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|labels| labels.first())
+                .and_then(serde_json::Value::as_str)
+                .map(LabelId::from)
+        })
+        .or_else(|| {
+            (task.labels.len() == 1)
+                .then(|| {
+                    task.labels
+                        .first()
+                        .map(|label| LabelId::from(label.as_str()))
+                })
+                .flatten()
+        });
+    Some((task_id, label_id))
+}
+
+fn calibration_scope_related(
+    stored: &GeometryCalibrationKey,
+    current: &GeometryCalibrationKey,
+) -> bool {
+    stored.project_id == current.project_id
+        && stored.task_id == current.task_id
+        && stored.label_id == current.label_id
+        && stored.model_profile_id == current.model_profile_id
+        && stored.node_definition_id == current.node_definition_id
 }
 
 #[must_use]
@@ -20297,6 +20834,198 @@ export:
         assert_eq!(
             safe_version.snapshot.safety_compatibility,
             annotagent_core::WorkflowSafetyCompatibility::Safe
+        );
+    }
+
+    #[tokio::test]
+    async fn reviewed_geometry_calibrates_only_the_exact_published_model_and_node() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "geometry-calibration",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("Project");
+        annotagent_image_tools::generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("geometry-calibration/images/component.png"),
+        )
+        .expect("calibration image");
+        let settings = load_settings(None).expect("settings");
+        application
+            .apply_legacy_registry_import(&settings)
+            .expect("revisioned compatibility Model Profile");
+        let draft = application
+            .suggest_workflow(
+                "geometry-calibration",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe geometry Draft")
+            .draft;
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("Published Workflow");
+        let model_node = published
+            .draft
+            .nodes
+            .iter()
+            .find(|node| node.model_profile_binding.is_some())
+            .expect("revisioned model node");
+        let binding = model_node
+            .model_profile_binding
+            .as_ref()
+            .expect("Model Profile binding");
+        let frozen_profile = published
+            .snapshot
+            .model_profiles
+            .iter()
+            .find(|profile| profile.model_profile_id == binding.model_profile_id)
+            .expect("frozen Model Profile");
+        let project_path = application
+            .project_path("geometry-calibration")
+            .expect("Project path");
+        let project_root = project_path.parent().expect("Project root");
+        let project_scope = stable_project_id(project_root);
+        let run_id = RunId::new();
+        let image_id = ImageId::new();
+        let annotation = Annotation {
+            id: annotagent_core::AnnotationId::new(),
+            image_id,
+            task_id: TaskId::from("objects"),
+            label: Some(LabelId::from("ball")),
+            value: annotagent_core::AnnotationValue::BoundingBox {
+                rect: annotagent_core::NormalizedRect::new(0.201, 0.201, 0.02, 0.02)
+                    .expect("corrected bbox"),
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.9),
+            source: AnnotationSource::Model,
+            review_status: ReviewStatus::HumanAccepted,
+            provenance: annotagent_core::AnnotationProvenance {
+                tool_names: vec![model_node.id.clone()],
+                ..annotagent_core::AnnotationProvenance::default()
+            },
+            created_at: chrono::Utc::now(),
+        };
+        application
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: run_id,
+                project_id: project_scope,
+                project_name: "Geometry calibration".to_owned(),
+                skill_id: "geometry-calibration".to_owned(),
+                provider: "mock".to_owned(),
+                model: frozen_profile.remote_model_id.clone(),
+                status: RunStatus::Completed,
+                project_schema_json: std::fs::read_to_string(&project_path)
+                    .expect("Project schema"),
+                workflow_snapshot_json: Some(json!({"selected_workflow": &published}).to_string()),
+            })
+            .await
+            .expect("Evidence Run");
+        application
+            .store
+            .commit_annotation(run_id, &annotation)
+            .await
+            .expect("reviewed annotation");
+        let (quality, evidence) = annotagent_core::build_geometry_correction_evidence(
+            annotagent_core::GeometryCorrectionInput {
+                project_id: project_scope,
+                run_id,
+                image_id,
+                annotation_id: annotation.id,
+                source_node_id: annotagent_core::NodeId::from(model_node.id.clone()),
+                source_model_profile_id: Some(frozen_profile.model_profile_id),
+                source_model_revision: Some(frozen_profile.revision),
+                candidate_artifact_id: annotagent_core::ArtifactId::new(),
+                reference_artifact_id: annotagent_core::ArtifactId::new(),
+                original_geometry: annotagent_core::GeometrySnapshot {
+                    rect: annotagent_core::NormalizedRect::new(0.2, 0.2, 0.02, 0.02)
+                        .expect("candidate bbox"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                corrected_geometry: annotagent_core::GeometrySnapshot {
+                    rect: annotagent_core::NormalizedRect::new(0.201, 0.201, 0.02, 0.02)
+                        .expect("reference bbox"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                reason: GeometryCorrectionReason::Shifted,
+                created_at: chrono::Utc::now(),
+            },
+        );
+        application
+            .store
+            .save_geometry_correction(&quality, &evidence)
+            .expect("geometry evidence");
+        let mut policy =
+            ProjectGeometryPolicy::conservative_default(project_scope, TaskKind::BoundingBox);
+        policy.auto_accept_policy = annotagent_core::GeometryAutoAcceptPolicy::CalibrationRequired;
+        policy.calibration_thresholds.minimum_sample_count = 1;
+        application
+            .save_project_geometry_policy("geometry-calibration", policy)
+            .expect("calibration policy");
+
+        let report = application
+            .create_geometry_calibration(
+                "geometry-calibration",
+                &GeometryCalibrationRequest {
+                    workflow_id: published.workflow_id.clone(),
+                    workflow_version: published.version,
+                    node_id: model_node.id.clone(),
+                    task_id: TaskId::from("objects"),
+                    label_id: Some(LabelId::from("ball")),
+                    evidence_run_ids: vec![run_id],
+                },
+            )
+            .expect("geometry calibration");
+        assert_eq!(report.status, GeometryCalibrationStatus::Passed);
+        assert_eq!(report.sample_count, 1);
+        assert_eq!(report.small_object_sample_count, 1);
+        assert_eq!(report.evidence_run_ids, vec![run_id]);
+
+        let (project, _) = load_project_schema_with_registry(&project_path, &application.skills)
+            .expect("Project schema");
+        let context = application
+            .geometry_safety_validation_context(
+                "geometry-calibration",
+                &project,
+                &published.draft,
+                &published.snapshot.model_profiles,
+            )
+            .expect("geometry safety context");
+        assert_eq!(
+            context
+                .node(&model_node.id)
+                .map(|contract| contract.calibration_status),
+            Some(GeometryCalibrationStatus::Passed)
+        );
+
+        let mut changed = published.draft.clone();
+        changed
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == model_node.id)
+            .expect("model node")
+            .parameters
+            .insert("grid_size".to_owned(), json!(24));
+        let changed_context = application
+            .geometry_safety_validation_context(
+                "geometry-calibration",
+                &project,
+                &changed,
+                &published.snapshot.model_profiles,
+            )
+            .expect("changed geometry safety context");
+        assert_eq!(
+            changed_context
+                .node(&model_node.id)
+                .map(|contract| contract.calibration_status),
+            Some(GeometryCalibrationStatus::Stale)
         );
     }
 

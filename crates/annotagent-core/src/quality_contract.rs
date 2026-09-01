@@ -50,6 +50,34 @@ impl Default for GeometryCalibrationThresholds {
     }
 }
 
+impl GeometryCalibrationThresholds {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("minimum_iou", self.minimum_iou),
+            (
+                "maximum_normalized_center_shift",
+                self.maximum_normalized_center_shift,
+            ),
+            ("minimum_area_ratio", self.minimum_area_ratio),
+            ("maximum_area_ratio", self.maximum_area_ratio),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("{name} must be finite and non-negative"));
+            }
+        }
+        if self.minimum_iou > 1.0 {
+            return Err("minimum_iou must be within [0,1]".to_owned());
+        }
+        if self.minimum_area_ratio > self.maximum_area_ratio {
+            return Err("minimum_area_ratio cannot exceed maximum_area_ratio".to_owned());
+        }
+        if self.minimum_sample_count == 0 {
+            return Err("minimum_sample_count must be greater than zero".to_owned());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGeometryPolicy {
@@ -97,6 +125,22 @@ impl ProjectGeometryPolicy {
                 self.required_quality,
                 RequiredGeometryQuality::CoarseLocalization
             )
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.calibration_thresholds.validate()?;
+        if self.task_kind != TaskKind::BoundingBox
+            && matches!(
+                self.required_quality,
+                RequiredGeometryQuality::TrainingBoundingBox
+                    | RequiredGeometryQuality::TightBoundingBox
+            )
+        {
+            return Err(
+                "training/tight bounding-box quality requires a bounding-box task".to_owned(),
+            );
+        }
+        Ok(())
     }
 }
 

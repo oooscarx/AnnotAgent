@@ -1,5 +1,23 @@
 # AnnotAgent Acceptance Evidence
 
+## Geometry-Safe Pipeline Builder M4 — 2026-09-02
+
+1. Core calibration tests exercise all six states, robust IoU/center/area metrics, small-object
+   counts and every exact-key staleness dimension. Calibration records contain no credential or API
+   key field.
+2. Static validation proves an exact passing report does not authorize a semantic score gate. A
+   calibration-backed explicit Geometry Quality Evaluation → Geometry Decision path is the only
+   calibration-consuming path.
+3. Application regression publishes a revisioned Workflow, stores human-reference geometry for a
+   small object, creates a `Passed` Project calibration, hydrates it into safety validation, then
+   changes node/grid configuration and observes `Stale`.
+4. SQLite migration 11 persists validated Project policies and immutable calibration reports.
+   Server tests cover Project policy GET/PUT, calibration list/detail, stale display and explicit
+   Evidence Run requirements on creation.
+5. Verification passed all 329 active Rust tests and doc tests (one explicitly billable smoke
+   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt, Web TypeScript, all
+   41 Web unit tests and the production Web build.
+
 ## Geometry-Safe Pipeline Builder M3 — 2026-09-02
 
 1. Core tests construct a loose-box correction and verify IoU, pixel/normalized center shift,
