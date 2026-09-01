@@ -6513,8 +6513,11 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
 }
 
 const GENERIC_REVIEW_REASONS = [
-  { value: "not_target", label: "Not the target" },
-  { value: "wrong_box", label: "Wrong box" },
+  { value: "too_loose", label: "Too loose" },
+  { value: "too_tight", label: "Too tight" },
+  { value: "shifted", label: "Shifted" },
+  { value: "wrong_object", label: "Wrong object" },
+  { value: "missed_object", label: "Missed object" },
   { value: "duplicate", label: "Duplicate" },
   { value: "wrong_label", label: "Wrong label" },
   { value: "other", label: "Other" },
@@ -6560,7 +6563,7 @@ function ReviewPage({
   const [editing, setEditing] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectReason, setRejectReason] = useState("not_target");
+  const [rejectReason, setRejectReason] = useState("wrong_object");
   const [completedProject, setCompletedProject] = useState<ProjectSummary>();
   const [compareMode, setCompareMode] = useState<"after" | "before" | "split">("after");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() =>
@@ -6651,7 +6654,7 @@ function ReviewPage({
             : enabled[0]?.id ?? "",
         );
         setSkillReasonOptions(options);
-        setReason("manual_edit");
+        setReason("other");
       })
       .catch((error: Error) => onError(error.message));
   }, [reviewProject?.id, selected?.source_skill_id]);
@@ -6697,7 +6700,7 @@ function ReviewPage({
       selected_detection_evidence: evidence,
     }, null, 2));
     setEditing(true);
-    setReason("wrong_box");
+    setReason("shifted");
     if (!note.trim()) setNote(`Used the ${sourceModelLabel(evidence.source_model_id)} source box.`);
   };
   const undo = () => {
@@ -7149,8 +7152,7 @@ function ReviewPage({
               <label>
                 Correction reason
                 <select aria-label="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)}>
-                  <option value="manual_edit">Manual edit</option>
-                  {GENERIC_REVIEW_REASONS.filter((option) => option.value === "wrong_box" || option.value === "wrong_label" || option.value === "other").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   {skillReasonOptions.map((option) => <option key={`${option.skillId}:${option.value}`} value={option.value}>{option.label}</option>)}
                 </select>
               </label>

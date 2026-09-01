@@ -105,3 +105,4 @@ uuid_id!(GeometryQualityReportId);
 string_id!(TaskId);
 string_id!(LabelId);
 string_id!(ToolCallId);
+string_id!(NodeId);

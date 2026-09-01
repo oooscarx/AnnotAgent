@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-02 CST
 
+## Geometry-Safe Pipeline Builder M3 — 2026-09-02
+
+- Human bbox edits now produce durable structured geometry evidence instead of only replacing the
+  annotation value: typed reason, original/reference boxes, IoU, normalized/pixel center movement,
+  area/width/height ratios, size bucket, Run/node and revisioned Model Profile lineage.
+- SQLite migration 10 stores quality report plus correction evidence atomically. Bounded Project and
+  Run APIs return the records and scale-aware aggregate summary; Dry Run summaries read the same
+  source.
+- Review uses the controlled common taxonomy plus registered Skill reasons; unknown codes fail
+  before mutation. Legacy records without a frozen Model Profile remain visible but explicitly
+  ineligible for calibration.
+- Full workspace/all-feature Rust tests, strict all-target/all-feature Clippy, all-feature build,
+  Web TypeScript, 41 Web unit tests and production build pass. No remote was changed.
+
 ## Run Preview Selection Focus Hotfix — 2026-09-02
 
 - Removed the focusable wrapper around the Run result annotation viewer. Clicking a small bbox no

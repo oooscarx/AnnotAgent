@@ -4,8 +4,8 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 2 — static geometry safety (implementation and verification complete; commit in
-progress).
+Milestone 3 — structured Review geometry evidence (implementation and verification complete;
+commit in progress).
 
 ## Completed
 
@@ -42,14 +42,25 @@ progress).
   re-assessed before a new formal Run, and unsafe versions fail with `unsafe_legacy_workflow`.
 - Added `Create geometry-safe Draft`, which clones a historical version and inserts mandatory
   Review boundaries without editing the original version.
+- Split ephemeral Dry Run candidate observations from durable, Project-scoped
+  `GeometryQualityReport` records.
+- Bounding-box edits now persist typed correction reasons, original/reference geometry, IoU,
+  normalized and pixel center shift, predicted/reference area, area/width/height ratios, target
+  size bucket, Run/node lineage and exact Model Profile revision when available.
+- Added small/medium/large correction summaries so small-object failures cannot disappear inside a
+  single average.
+- Added transactional SQLite persistence and Project/Run read APIs; Dry Run summaries consume the
+  new records while retaining a compatibility read of legacy correction memory.
+- Review now offers the controlled common reason taxonomy, plus enabled Skill-specific domain
+  reasons. Unknown reason codes fail before the annotation is mutated.
 
 ## In progress
 
-- Create the independent M2 local commit, then begin structured Review geometry evidence.
+- Create the independent M3 local commit, then begin exact calibration work in M4.
 
 ## Next
 
-- Milestone 3: structured Review geometry feedback, reports and correction lineage.
+- Milestone 4: exact Project/model/config geometry calibration and staleness.
 
 ## Recent verification
 
@@ -62,6 +73,11 @@ progress).
 - Workspace: full Rust tests, all-feature build, all-target/all-feature Clippy with warnings denied,
   formatting and diff checks passed.
 - Web: TypeScript, 41 unit tests, and production build passed.
+- M3 focused: 85 Core tests, 14 Storage unit tests plus Storage integration suites, and the HTTP
+  Review revision flow passed; Web TypeScript passed.
+- M3 release: full workspace/all-feature Rust and doc tests passed (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy passed, all-feature build passed, and Web
+  TypeScript, 41 unit tests and production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -71,10 +87,11 @@ progress).
 
 - `93882e7 test(geometry): reproduce unsafe vlm bbox auto-acceptance` (M0).
 - `291f20c feat(models): separate semantic confidence from geometry quality` (M1).
+- `0cb775c feat(workflow): block uncalibrated geometry from score-only commit` (M2).
 
 ## Release-blocking remainder
 
-- M3 through M8 remain open. M2 acceptance evidence is implemented and verified.
+- M4 through M8 remain open. M3 acceptance evidence is implemented and verified.
 
 ## Live-conditional items
 

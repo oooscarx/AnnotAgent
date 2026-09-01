@@ -13,12 +13,13 @@ use std::{
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
     ArtifactId, ArtifactValidationState, BindingMutationActor, CorrectionRecord,
-    GlobalModelDefaults, ImageId, LabelId, ModelBindingId, ModelBindingMatch, ModelMessage,
-    ModelProfile, ModelProfileId, ProjectId, ProjectModelBinding, ProviderAdapterKind, ProviderId,
-    ProviderProfile, PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor,
-    RunEvent, RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult,
-    UsageRecord, ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunReport, WorkflowSnapshot,
+    GeometryCorrectionEvidence, GeometryQualityReport, GlobalModelDefaults, ImageId, LabelId,
+    ModelBindingId, ModelBindingMatch, ModelMessage, ModelProfile, ModelProfileId, ProjectId,
+    ProjectModelBinding, ProviderAdapterKind, ProviderId, ProviderProfile,
+    PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
+    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
+    WorkflowDryRunReport, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -40,6 +41,8 @@ const PROVIDER_PROBE_USAGE_MIGRATION: &str =
     include_str!("../../../migrations/0008_provider_probe_usage.sql");
 const LEGACY_REGISTRY_IMPORT_MIGRATION: &str =
     include_str!("../../../migrations/0009_legacy_registry_imports.sql");
+const GEOMETRY_CORRECTION_EVIDENCE_MIGRATION: &str =
+    include_str!("../../../migrations/0010_geometry_correction_evidence.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -349,6 +352,13 @@ impl SqliteStore {
             transaction.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (9, ?1, ?2)",
                 params!["legacy_registry_imports", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(GEOMETRY_CORRECTION_EVIDENCE_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (10, ?1, ?2)",
+                params!["geometry_correction_evidence", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
             Ok(())
@@ -2487,6 +2497,124 @@ impl SqliteStore {
         })
     }
 
+    pub fn save_geometry_correction(
+        &self,
+        report: &GeometryQualityReport,
+        evidence: &GeometryCorrectionEvidence,
+    ) -> Result<(), StorageError> {
+        if evidence.quality_report_id != report.id
+            || evidence.project_id != report.project_id
+            || evidence.image_id != report.image_id
+        {
+            return Err(StorageError::InvalidEnum(
+                "geometry report and correction evidence scopes do not match".to_owned(),
+            ));
+        }
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute(
+                "INSERT INTO geometry_quality_reports
+                 (id, project_id, image_id, candidate_artifact_id, reference_artifact_id,
+                  source, report_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    report.id.to_string(),
+                    report.project_id.to_string(),
+                    report.image_id.to_string(),
+                    report.candidate_artifact_id.to_string(),
+                    report.reference_artifact_id.map(|id| id.to_string()),
+                    enum_string(report.source)?,
+                    serde_json::to_string(report)?,
+                    report.created_at.to_rfc3339(),
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO geometry_correction_evidence
+                 (quality_report_id, project_id, run_id, image_id, annotation_id,
+                  source_node_id, source_model_profile_id, source_model_revision, reason,
+                  evidence_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    evidence.quality_report_id.to_string(),
+                    evidence.project_id.to_string(),
+                    evidence.run_id.to_string(),
+                    evidence.image_id.to_string(),
+                    evidence.annotation_id.to_string(),
+                    evidence.source_node_id.as_str(),
+                    evidence.source_model_profile_id.map(|id| id.to_string()),
+                    evidence
+                        .source_model_revision
+                        .map(|revision| i64::try_from(revision).unwrap_or(i64::MAX)),
+                    enum_string(evidence.reason)?,
+                    serde_json::to_string(evidence)?,
+                    evidence.created_at.to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn list_project_geometry_corrections(
+        &self,
+        project_id: ProjectId,
+        limit: usize,
+    ) -> Result<Vec<(GeometryQualityReport, GeometryCorrectionEvidence)>, StorageError> {
+        let limit = i64::try_from(limit.clamp(1, 1_000)).unwrap_or(1_000);
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT q.report_json, e.evidence_json
+                 FROM geometry_correction_evidence e
+                 JOIN geometry_quality_reports q ON q.id = e.quality_report_id
+                 WHERE e.project_id = ?1
+                 ORDER BY e.created_at DESC LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(params![project_id.to_string(), limit], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter()
+                .map(|(report, evidence)| {
+                    Ok((
+                        serde_json::from_str(&report)?,
+                        serde_json::from_str(&evidence)?,
+                    ))
+                })
+                .collect()
+        })
+    }
+
+    pub fn list_run_geometry_corrections(
+        &self,
+        run_id: RunId,
+        limit: usize,
+    ) -> Result<Vec<(GeometryQualityReport, GeometryCorrectionEvidence)>, StorageError> {
+        let limit = i64::try_from(limit.clamp(1, 1_000)).unwrap_or(1_000);
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT q.report_json, e.evidence_json
+                 FROM geometry_correction_evidence e
+                 JOIN geometry_quality_reports q ON q.id = e.quality_report_id
+                 WHERE e.run_id = ?1
+                 ORDER BY e.created_at DESC LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(params![run_id.to_string(), limit], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter()
+                .map(|(report, evidence)| {
+                    Ok((
+                        serde_json::from_str(&report)?,
+                        serde_json::from_str(&evidence)?,
+                    ))
+                })
+                .collect()
+        })
+    }
+
     pub fn query_corrections(
         &self,
         project_id: ProjectId,
@@ -3354,8 +3482,9 @@ mod tests {
     use annotagent_core::{
         ArtifactProvenance, ArtifactRole, AttributeValue, CapabilityDeclarationSource,
         CorrectionFeatures, CredentialReference, CredentialSource,
-        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, InputModality, IssueSeverity,
-        ModelBindingRole, ModelCapability, ModelLimits, ModelPricing, ModelProfileStatus,
+        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, GeometryCorrectionInput,
+        GeometryCorrectionReason, GeometrySnapshot, InputModality, IssueSeverity, ModelBindingRole,
+        ModelCapability, ModelLimits, ModelPricing, ModelProfileStatus, NodeId, NormalizedRect,
         PipelineArtifact, PricingSource, ProtocolFeatures, ProviderAdapterKind,
         ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus, RunEventKind,
         RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
@@ -3404,6 +3533,8 @@ mod tests {
             "project_model_bindings",
             "global_model_defaults",
             "legacy_registry_imports",
+            "geometry_quality_reports",
+            "geometry_correction_evidence",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
@@ -4335,5 +4466,51 @@ mod tests {
             .expect("isolated query");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].project_id, project_a);
+    }
+
+    #[test]
+    fn structured_geometry_correction_round_trips_with_model_revision_and_metrics() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_id = ProjectId::new();
+        let run_id = RunId::new();
+        let image_id = ImageId::new();
+        let model_id = ModelProfileId::new();
+        let (report, evidence) =
+            annotagent_core::build_geometry_correction_evidence(GeometryCorrectionInput {
+                project_id,
+                run_id,
+                image_id,
+                annotation_id: annotagent_core::AnnotationId::new(),
+                source_node_id: NodeId::from("detector"),
+                source_model_profile_id: Some(model_id),
+                source_model_revision: Some(4),
+                candidate_artifact_id: ArtifactId::new(),
+                reference_artifact_id: ArtifactId::new(),
+                original_geometry: GeometrySnapshot {
+                    rect: NormalizedRect::new(0.1, 0.1, 0.3, 0.3).expect("original"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                corrected_geometry: GeometrySnapshot {
+                    rect: NormalizedRect::new(0.15, 0.15, 0.15, 0.15).expect("corrected"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                reason: GeometryCorrectionReason::TooLoose,
+                created_at: Utc::now(),
+            });
+        store
+            .save_geometry_correction(&report, &evidence)
+            .expect("geometry evidence");
+        let project_records = store
+            .list_project_geometry_corrections(project_id, 20)
+            .expect("project records");
+        assert_eq!(project_records, vec![(report.clone(), evidence.clone())]);
+        assert_eq!(
+            store
+                .list_run_geometry_corrections(run_id, 20)
+                .expect("Run records"),
+            vec![(report, evidence)]
+        );
     }
 }

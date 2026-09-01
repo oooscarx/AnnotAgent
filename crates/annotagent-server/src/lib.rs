@@ -19,23 +19,26 @@ use annotagent_application::{
     validate_settings,
 };
 use annotagent_core::{
-    Annotation, AnnotationId, AnnotationValue, ArtifactKind, ArtifactRef, ArtifactValidationState,
-    AttributeDefinition, AutoAcceptEligibility, BatchId, BindingMutationActor, BoxPrompt,
-    BoxPromptSetArtifact, CandidateAgreement, CapabilityDeclarationSource, ContractEvidenceSource,
-    CorrectionFeatures, CorrectionRecord, CredentialReference, CredentialSource, DetectionEvidence,
-    EnabledSkillConfig, ExpertModelManifest, GenerationDefaults, GeometrySemantics,
-    GlobalModelDefaults, ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability,
-    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelCapability,
-    ModelCapabilityQualityContract, ModelLimits, ModelPricing, ModelProfile, ModelProfileId,
-    ModelProfileSnapshot, ModelProfileStatus, ModelRequirements, NormalizedRect, PipelineArtifact,
+    Annotation, AnnotationId, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
+    ArtifactValidationState, AttributeDefinition, AutoAcceptEligibility, BatchId,
+    BindingMutationActor, BoxPrompt, BoxPromptSetArtifact, CandidateAgreement,
+    CapabilityDeclarationSource, ContractEvidenceSource, CorrectionFeatures, CorrectionRecord,
+    CredentialReference, CredentialSource, DetectionEvidence, EnabledSkillConfig,
+    ExpertModelManifest, GenerationDefaults, GeometryCorrectionInput, GeometryCorrectionReason,
+    GeometryQualitySummary, GeometrySemantics, GeometrySnapshot, GlobalModelDefaults,
+    ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability, ModelBindingId,
+    ModelBindingMatch, ModelBindingRole, ModelCapability, ModelCapabilityQualityContract,
+    ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineInferenceRequest, PipelineModelBackend,
     ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
     ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
-    ProviderId, ProviderProfile, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue,
-    SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
+    ProviderId, ProviderProfile, PublishedWorkflowVersion, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError,
+    SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
     VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus, WorkflowConstraints,
-    WorkflowDraft, WorkflowNodeKind, check_model_compatibility, effective_model_quality_contracts,
+    WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence, check_model_compatibility,
+    effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_provider::{
@@ -629,6 +632,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(list_project_correction_memory),
         )
         .route(
+            "/api/projects/{project_id}/geometry-corrections",
+            get(list_project_geometry_corrections),
+        )
+        .route(
             "/api/projects/{project_id}/images/{index}/content",
             get(image_content),
         )
@@ -652,6 +659,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/runs/{run_id}/debug-summary",
             get(get_run_debug_summary),
+        )
+        .route(
+            "/api/runs/{run_id}/geometry-quality",
+            get(get_run_geometry_quality),
         )
         .route(
             "/api/runs/{run_id}/pipeline-artifacts",
@@ -2279,6 +2290,47 @@ async fn list_project_correction_memory(
         .list_project_correction_memory(&project_id)
         .map_err(ApiError::not_found)?;
     Ok(Json(json!({"records": records})))
+}
+
+async fn list_project_geometry_corrections(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let records = state
+        .application
+        .list_project_geometry_corrections(&project_id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(geometry_correction_response(records)))
+}
+
+async fn get_run_geometry_quality(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let run_id = parse_run_id(&run_id)?;
+    let records = state
+        .application
+        .list_run_geometry_corrections(run_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(geometry_correction_response(records)))
+}
+
+fn geometry_correction_response(
+    records: Vec<(
+        annotagent_core::GeometryQualityReport,
+        annotagent_core::GeometryCorrectionEvidence,
+    )>,
+) -> Value {
+    let mut summary = GeometryQualitySummary::default();
+    for (report, evidence) in &records {
+        summary.add_correction(report, evidence);
+    }
+    let (reports, evidence): (Vec<_>, Vec<_>) = records.into_iter().unzip();
+    json!({
+        "summary": summary,
+        "reports": reports,
+        "evidence": evidence,
+    })
 }
 
 fn workspace_model_binding(settings: &Settings) -> ModelBinding {
@@ -5374,6 +5426,172 @@ struct ReviewDecisionRequest {
     corrected_label: Option<LabelId>,
 }
 
+fn correction_artifact_id(run_id: RunId, annotation_id: AnnotationId, role: &str) -> ArtifactId {
+    ArtifactId(uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_URL,
+        format!("annotagent://runs/{run_id}/annotations/{annotation_id}/{role}").as_bytes(),
+    ))
+}
+
+fn geometry_correction_lineage(
+    history: &HistoryRun,
+    annotation: &Annotation,
+) -> (NodeId, Option<ModelProfileId>, Option<u64>) {
+    let snapshot = history
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let workflow = snapshot
+        .as_ref()
+        .and_then(|value| value.get("selected_workflow").cloned())
+        .and_then(|value| serde_json::from_value::<PublishedWorkflowVersion>(value).ok());
+    let source_node = annotation
+        .provenance
+        .tool_names
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "legacy.unresolved".to_owned());
+    let Some(workflow) = workflow else {
+        return (NodeId::from(source_node), None, None);
+    };
+    let mut queue = vec![source_node.clone()];
+    let mut visited = BTreeSet::new();
+    let mut bound_model = None;
+    while let Some(node_id) = queue.pop() {
+        if !visited.insert(node_id.clone()) {
+            continue;
+        }
+        if let Some(node) = workflow.draft.nodes.iter().find(|node| node.id == node_id)
+            && let Some(binding) = node.model_profile_binding.as_ref()
+        {
+            bound_model = Some(binding.model_profile_id);
+            break;
+        }
+        queue.extend(
+            workflow
+                .draft
+                .edges
+                .iter()
+                .filter(|edge| edge.to_node == node_id)
+                .map(|edge| edge.from_node.clone()),
+        );
+    }
+    let profile = bound_model
+        .and_then(|model_id| {
+            workflow
+                .snapshot
+                .model_profiles
+                .iter()
+                .find(|profile| profile.model_profile_id == model_id)
+        })
+        .or_else(|| {
+            (workflow.snapshot.model_profiles.len() == 1)
+                .then(|| workflow.snapshot.model_profiles.first())
+                .flatten()
+        });
+    (
+        NodeId::from(source_node),
+        profile.map(|profile| profile.model_profile_id),
+        profile.map(|profile| profile.revision),
+    )
+}
+
+fn save_structured_geometry_correction(
+    state: &ServerState,
+    run_id: RunId,
+    project_id: annotagent_core::ProjectId,
+    annotation: &Annotation,
+    original: &annotagent_core::AnnotationSnapshot,
+    corrected: &annotagent_core::AnnotationSnapshot,
+    reason_code: &str,
+) -> ApiResult<Option<annotagent_core::GeometryQualityReport>> {
+    let (
+        AnnotationValue::BoundingBox {
+            rect: original_rect,
+        },
+        AnnotationValue::BoundingBox {
+            rect: corrected_rect,
+        },
+    ) = (&original.value, &corrected.value)
+    else {
+        return Ok(None);
+    };
+    if original_rect == corrected_rect {
+        return Ok(None);
+    }
+    let history = state
+        .application
+        .store()
+        .list_runs()
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|run| run.id == run_id)
+        .ok_or_else(|| ApiError::not_found("source Run was not found"))?;
+    let snapshot = history
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let width = snapshot
+        .as_ref()
+        .and_then(|value| value.pointer("/image/width"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_default();
+    let height = snapshot
+        .as_ref()
+        .and_then(|value| value.pointer("/image/height"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or_default();
+    let (source_node_id, source_model_profile_id, source_model_revision) =
+        geometry_correction_lineage(&history, annotation);
+    let candidate_artifact_id = annotation
+        .provenance
+        .artifact_ids
+        .first()
+        .copied()
+        .or_else(|| {
+            annotation
+                .attributes
+                .get("pipeline_artifact_ref")
+                .and_then(|value| match value {
+                    annotagent_core::AttributeValue::String(value) => value.parse().ok(),
+                    _ => None,
+                })
+        })
+        .unwrap_or_else(|| correction_artifact_id(run_id, annotation.id, "candidate"));
+    let created_at = Utc::now();
+    let (report, evidence) = build_geometry_correction_evidence(GeometryCorrectionInput {
+        project_id,
+        run_id,
+        image_id: annotation.image_id,
+        annotation_id: annotation.id,
+        source_node_id,
+        source_model_profile_id,
+        source_model_revision,
+        candidate_artifact_id,
+        reference_artifact_id: correction_artifact_id(run_id, annotation.id, "human-reference"),
+        original_geometry: GeometrySnapshot {
+            rect: *original_rect,
+            image_width: width,
+            image_height: height,
+        },
+        corrected_geometry: GeometrySnapshot {
+            rect: *corrected_rect,
+            image_width: width,
+            image_height: height,
+        },
+        reason: GeometryCorrectionReason::from_code(reason_code),
+        created_at,
+    });
+    state
+        .application
+        .store()
+        .save_geometry_correction(&report, &evidence)
+        .map_err(ApiError::internal)?;
+    Ok(Some(report))
+}
+
 async fn review_decision(
     State(state): State<ServerState>,
     AxumPath(review_id): AxumPath<String>,
@@ -5410,6 +5628,66 @@ async fn apply_review_decision(
                 .and_then(|(before, after)| annotagent_core::manual_geometry_metrics(before, after))
                 .is_some()
         });
+    let project_path = state
+        .application
+        .project_path(&request.project_id)
+        .map_err(ApiError::bad_request)?;
+    let project = ProjectSchema::from_yaml(
+        &std::fs::read_to_string(&project_path).map_err(ApiError::bad_request)?,
+    )
+    .map_err(ApiError::bad_request)?;
+    let configured_skills = project.project.enabled_skill_versions();
+    let requested_skill_id = request
+        .skill_id
+        .clone()
+        .or_else(|| configured_skills.keys().next().cloned());
+    if request
+        .skill_id
+        .as_ref()
+        .is_some_and(|id| !configured_skills.contains_key(id))
+    {
+        return Err(ApiError::bad_request(
+            "Review correction referenced a Skill not enabled by the Project",
+        ));
+    }
+    let common_reason = matches!(
+        request.reason_code.as_str(),
+        "accepted_as_is"
+            | "too_loose"
+            | "too_tight"
+            | "shifted"
+            | "wrong_object"
+            | "missed_object"
+            | "duplicate"
+            | "wrong_label"
+            | "other"
+            | "manual_edit"
+            | "not_target"
+            | "wrong_box"
+    );
+    let skill_registry = state.application.skills();
+    let layered_registry = state.application.layered_skills();
+    let skill_reason = configured_skills.keys().any(|skill_id| {
+        skill_registry
+            .get(skill_id)
+            .map(|skill| skill.correction_taxonomy())
+            .or_else(|_| {
+                layered_registry
+                    .get(skill_id)
+                    .map(|skill| skill.correction_taxonomy())
+            })
+            .is_ok_and(|taxonomy| {
+                taxonomy
+                    .into_iter()
+                    .any(|kind| kind.code == request.reason_code)
+            })
+    });
+    if !common_reason && !skill_reason {
+        return Err(ApiError::bad_request(format!(
+            "unknown structured Review reason {:?}",
+            request.reason_code
+        )));
+    }
     let requested_status = match request.decision.as_str() {
         "accept" => ReviewStatus::HumanAccepted,
         "reject" | "delete" => ReviewStatus::Rejected,
@@ -5435,43 +5713,22 @@ async fn apply_review_decision(
                 .map_err(ApiError::bad_request)?,
         )
     };
-    let project_path = state
-        .application
-        .project_path(&request.project_id)
-        .map_err(ApiError::bad_request)?;
-    let project = ProjectSchema::from_yaml(
-        &std::fs::read_to_string(&project_path).map_err(ApiError::bad_request)?,
-    )
-    .map_err(ApiError::bad_request)?;
-    let configured_skills = project.project.enabled_skill_versions();
-    let requested_skill_id = request
-        .skill_id
-        .clone()
-        .or_else(|| configured_skills.keys().next().cloned());
-    if request
-        .skill_id
+    let stable_project = stable_project_id(
+        project_path
+            .parent()
+            .unwrap_or(state.application.workspace()),
+    );
+    let correction_original = geometry_revision
         .as_ref()
-        .is_some_and(|id| !configured_skills.contains_key(id))
-    {
-        return Err(ApiError::bad_request(
-            "Review correction referenced a Skill not enabled by the Project",
-        ));
-    }
+        .and_then(|revision| revision.before.clone())
+        .unwrap_or_else(|| original.clone());
+    let corrected = annotation.snapshot();
     let correction_id = if already_applied {
         None
     } else if let Some(skill_id) = requested_skill_id {
-        let correction_original = geometry_revision
-            .as_ref()
-            .and_then(|revision| revision.before.clone())
-            .unwrap_or_else(|| original.clone());
-        let corrected = annotation.snapshot();
         let record = CorrectionRecord {
             id: uuid::Uuid::new_v4(),
-            project_id: stable_project_id(
-                project_path
-                    .parent()
-                    .unwrap_or(state.application.workspace()),
-            ),
+            project_id: stable_project,
             skill_id,
             task_id: annotation.task_id.clone(),
             predicted_label: original.label.clone(),
@@ -5498,6 +5755,19 @@ async fn apply_review_decision(
     } else {
         None
     };
+    let geometry_quality = if already_applied {
+        None
+    } else {
+        save_structured_geometry_correction(
+            state,
+            run_id,
+            stable_project,
+            &annotation,
+            &correction_original,
+            &corrected,
+            &request.reason_code,
+        )?
+    };
     if annotation.review_status == ReviewStatus::HumanAccepted {
         let settings = state.settings.read().await.clone();
         let resumed = state
@@ -5510,6 +5780,7 @@ async fn apply_review_decision(
                 "annotation": annotation,
                 "revision": revision,
                 "correction_id": correction_id,
+                "geometry_quality": geometry_quality,
             })));
         }
         let artifact_ids = annotation.provenance.artifact_ids.clone();
@@ -5596,7 +5867,7 @@ async fn apply_review_decision(
         }
     }
     Ok(Json(
-        json!({"annotation": annotation, "revision": revision, "correction_id": correction_id}),
+        json!({"annotation": annotation, "revision": revision, "correction_id": correction_id, "geometry_quality": geometry_quality}),
     ))
 }
 
@@ -7157,6 +7428,32 @@ export:
         assert_eq!(reviews["progress"]["reviewed_count"], json!(0));
         assert_eq!(reviews["progress"]["remaining_count"], json!(1));
         assert_eq!(reviews["progress"]["total_count"], json!(1));
+        let unknown_reason = request(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/reviews/{review_id}/decision"),
+            Some(json!({
+                "project_id": "review-demo",
+                "decision": "accept",
+                "reason_code": "unregistered_free_form_reason"
+            })),
+        )
+        .await;
+        assert_eq!(unknown_reason.status(), StatusCode::BAD_REQUEST);
+        let untouched = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/reviews/{review_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            untouched["annotation"]["review_status"],
+            json!("needs_review")
+        );
         let navigation = response_json(
             request(
                 &service,
@@ -7343,7 +7640,7 @@ export:
                 "project_id": "review-demo",
                 "queue_project_id": "review-demo",
                 "decision": "accept",
-                "reason_code": "accepted_as_is",
+                "reason_code": "too_loose",
                 "note": "deterministic accept-and-next test"
             })),
         )
@@ -7354,6 +7651,49 @@ export:
         assert_eq!(accepted["progress"]["reviewed_count"], json!(2));
         assert_eq!(accepted["progress"]["remaining_count"], json!(1));
         assert_eq!(accepted["progress"]["total_count"], json!(3));
+        assert_eq!(
+            accepted["geometry_quality"]["source"],
+            json!("human_correction")
+        );
+        assert!(accepted["geometry_quality"]["iou"].is_number());
+        assert!(accepted["geometry_quality"]["pixel_center_shift"].is_number());
+        assert!(accepted["geometry_quality"]["area_ratio"].is_number());
+        assert!(accepted["geometry_quality"]["width_ratio"].is_number());
+        assert!(accepted["geometry_quality"]["height_ratio"].is_number());
+        assert!(accepted["geometry_quality"]["size_bucket"].is_string());
+        let geometry_history = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/review-demo/geometry-corrections",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            geometry_history["reports"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            geometry_history["evidence"][0]["reason"],
+            json!("too_loose")
+        );
+        assert_eq!(
+            geometry_history["summary"]["human_adjustment_count"],
+            json!(1)
+        );
+        let run_geometry = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{run_id}/geometry-quality"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(run_geometry["reports"].as_array().map(Vec::len), Some(1));
         let memory_after_adjustment = response_json(
             request(
                 &service,

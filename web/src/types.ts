@@ -958,7 +958,7 @@ export interface WorkflowDryRunReport {
       status: "ready_to_accept" | "needs_review" | "invalid";
       value?: AnnotationValue | null;
       failure_classes?: AnnotationFailureClass[];
-      geometry_quality?: GeometryQualityReport | null;
+      geometry_quality?: CandidateGeometryQualityReport | null;
     }[];
     failure_classes?: AnnotationFailureClass[];
     nodes: {
@@ -1031,9 +1031,10 @@ export type AnnotationFailureClass =
   | "missing_score"
   | "domain_risk"
   | "invalid_artifact"
-  | "budget_limit";
+  | "budget_limit"
+  | "insufficient_evidence";
 
-export interface GeometryQualityReport {
+export interface CandidateGeometryQualityReport {
   artifact_id: string;
   geometry_semantics:
     | "not_applicable"

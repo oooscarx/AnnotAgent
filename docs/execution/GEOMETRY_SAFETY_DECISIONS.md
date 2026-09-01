@@ -50,3 +50,17 @@ Until exact calibration exists, bbox Projects require training-quality geometry 
 mandatory Review or an available geometry-refinement path. `allow_unvalidated_commit` is not a
 geometry-risk override. Typed risk acceptance is hash-bound but cannot bypass the conservative
 default policy.
+
+## D-010 — Candidate observations and reference-backed evidence are distinct types
+
+Dry Run candidate heuristics remain `CandidateGeometryQualityReport`; a durable
+`GeometryQualityReport` exists only when it has Project/image/artifact scope and an explicit evidence
+source. Human edits create a paired `GeometryCorrectionEvidence` record transactionally. Legacy
+records with no frozen Model Profile are preserved but marked insufficient and cannot later count as
+calibration evidence.
+
+## D-011 — Geometry aggregation preserves object scale
+
+Human-reference metrics use both normalized and pixel units. Aggregate readers retain
+small/medium/large reference-area buckets with independent counts and means; a global mean is never
+the only representation of bbox quality.

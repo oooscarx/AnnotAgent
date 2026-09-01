@@ -10,10 +10,11 @@
   prevents semantic/relative score-only bbox publication.
 - The RoboCup field-relation validator is not geometry calibration and may be inapplicable when no
   field geometry exists.
-- Existing dry-run geometry reports are useful but do not provide exact project/model/config
-  calibration or small/medium/large buckets.
-- Review stores revised annotations and correction memory, but does not yet persist the complete
-  geometry-correction lineage required by the master prompt.
+- Dry Run candidate reports remain intentionally unscoped; human-reference reports now provide
+  Project/Run/model lineage and size buckets, but exact node-config/preprocessing calibration is M4.
+- Historical Runs that predate frozen Model Profiles retain their bbox correction evidence with an
+  explicit insufficient-evidence marker and cannot contribute to calibration until reviewed under a
+  revisioned Workflow.
 - Prompted-segmentation and mask-to-bbox code exists, but no real active SAM availability can be
   inferred from source presence.
 - Exact Project/model/prompt/config calibration persistence is not implemented until M4, so

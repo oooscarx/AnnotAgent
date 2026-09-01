@@ -11,14 +11,14 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 5. Provider failure does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
 | 6. No candidate does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
 | 7. Wrong object does not use SAM as primary fix | open | Domain guidance exists; Agent behavior test pending. |
-| 8. Bbox edit creates geometry evidence | open | Manual geometry helpers exist; durable lineage record pending. |
+| 8. Bbox edit creates geometry evidence | verified | HTTP Review regression persists typed report/evidence records with original/corrected geometry, five requested metrics, reason and lineage, then reads them through Project and Run APIs. |
 | 9. Calibration can pass with sufficient evidence | open | Not implemented. |
 | 10. Configuration changes stale calibration | open | Not implemented. |
 | 11. Qwen-only first Draft requires Review | implemented | Deterministic bbox drafts and the VLM bootstrap template now make Review mandatory; LLM Builder policy is M5. |
 | 12. Registered SAM enables improvement Draft | open | Not implemented end to end. |
 | 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
 | 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
-| 15. Small objects are evaluated separately | open | Existing summary lacks size buckets. |
+| 15. Small objects are evaluated separately | verified | Reference pixel area is bucketed using small/medium/large thresholds and each bucket retains sample count, adjustment count, mean IoU and mean center shift. |
 | 16. Generic Project remains domain-neutral | verified | Generic Core/Application workflows pass without RoboCup content. |
 
 ## M0 evidence
@@ -67,3 +67,23 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
   unchanged, formal execution is blocked, safe clone creation works, and the replacement snapshot
   is marked `safe`.
 - Application, Core, Server, RoboCup and 100-image batch/control-plane regressions pass.
+
+## M3 evidence
+
+- `GeometryCorrectionReason` contains the eight common Review reasons and the four requested
+  RoboCup hard-negative reasons; registered Skill taxonomies remain available as controlled
+  extensions.
+- `build_geometry_correction_evidence` derives IoU, normalized/pixel center shift, predicted and
+  reference pixel area, area ratio, width ratio and height ratio from original/reference boxes.
+- `GeometryIssueCode` is typed and includes loose/tight/shift/width/height/aspect/partial/background,
+  refiner-conflict and insufficient-evidence states.
+- SQLite migration 10 persists a `GeometryQualityReport` and its `GeometryCorrectionEvidence` in
+  one transaction with Project, Run, image, annotation, node and model-revision indexes.
+- `GET /api/projects/{project_id}/geometry-corrections` and
+  `GET /api/runs/{run_id}/geometry-quality` return bounded reports, evidence and aggregate size
+  buckets for Dry Run, Builder, Improve and future calibration readers.
+- Legacy Runs without a frozen Model Profile are retained with an explicit
+  `insufficient_evidence` issue and are ineligible for calibration rather than receiving a
+  fabricated model identity.
+- Core metric/bucket tests, Storage round-trip/migration tests and the complete HTTP Review edit,
+  accept, persist and reread regression pass.

@@ -22,11 +22,11 @@ use annotagent_core::{
     AnnotationSource, ArtifactContract, ArtifactKind, AttributeDefinition, AttributeValue,
     BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
     BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
-    CapabilityDeclarationSource, CheckpointIdentity, ContractDataType, CredentialReference,
-    CredentialSource, DatasetExporter, DatasetImporter, DomainSkill, EnabledSkillConfig,
-    ExpertModelManifest, ExportReport, ExportRequest, FullRunEstimate, GenerationDefaults,
-    GeometryQualityReport, ImageId, ImportIssue, ImportReport, ImportRequest, InputModality,
-    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
+    CandidateGeometryQualityReport, CapabilityDeclarationSource, CheckpointIdentity,
+    ContractDataType, CredentialReference, CredentialSource, DatasetExporter, DatasetImporter,
+    DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport, ExportRequest,
+    FullRunEstimate, GenerationDefaults, ImageId, ImportIssue, ImportReport, ImportRequest,
+    InputModality, LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
     LicenseMetadata, LicensePermission, ModelAvailability, ModelAvailabilityEvidence,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
     ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
@@ -5745,6 +5745,36 @@ impl LocalApplication {
         let project_root = project_path.parent().unwrap_or(&self.workspace);
         self.store
             .list_project_corrections(stable_project_id(project_root), 200)
+            .map_err(anyhow::Error::from)
+    }
+
+    pub fn list_project_geometry_corrections(
+        &self,
+        project_id: &str,
+    ) -> Result<
+        Vec<(
+            annotagent_core::GeometryQualityReport,
+            annotagent_core::GeometryCorrectionEvidence,
+        )>,
+    > {
+        let project_path = self.project_path(project_id)?;
+        let project_root = project_path.parent().unwrap_or(&self.workspace);
+        self.store
+            .list_project_geometry_corrections(stable_project_id(project_root), 1_000)
+            .map_err(anyhow::Error::from)
+    }
+
+    pub fn list_run_geometry_corrections(
+        &self,
+        run_id: RunId,
+    ) -> Result<
+        Vec<(
+            annotagent_core::GeometryQualityReport,
+            annotagent_core::GeometryCorrectionEvidence,
+        )>,
+    > {
+        self.store
+            .list_run_geometry_corrections(run_id, 1_000)
             .map_err(anyhow::Error::from)
     }
 
@@ -11828,7 +11858,10 @@ impl LocalApplication {
         let historical_corrections = self
             .store
             .list_project_corrections(stable_project_id(&project_root), 500)?;
-        let geometry_correction_count = historical_corrections
+        let structured_geometry_corrections = self
+            .store
+            .list_project_geometry_corrections(stable_project_id(&project_root), 500)?;
+        let legacy_geometry_correction_count = historical_corrections
             .iter()
             .filter(|record| {
                 record
@@ -11837,8 +11870,14 @@ impl LocalApplication {
                     .contains_key("manual_center_shift")
             })
             .count();
-        let historical_geometry_correction_rate = (!historical_corrections.is_empty())
-            .then(|| geometry_correction_count as f32 / historical_corrections.len() as f32);
+        let geometry_correction_count = structured_geometry_corrections
+            .len()
+            .max(legacy_geometry_correction_count);
+        let correction_sample_count = historical_corrections
+            .len()
+            .max(structured_geometry_corrections.len());
+        let historical_geometry_correction_rate = (correction_sample_count > 0)
+            .then(|| geometry_correction_count as f32 / correction_sample_count as f32);
         let mut samples = Vec::new();
         let mut execution_issues = Vec::new();
         let mut summary = SampleTestSummary::default();
@@ -11889,10 +11928,11 @@ impl LocalApplication {
                             sample_detections = sample_detections.max(set.detections.len());
                             for detection in &set.detections {
                                 let status = sample_test_outcome_status(Some(set.validation_state));
-                                let mut geometry_quality = GeometryQualityReport::from_detection(
-                                    set.reference.artifact_id.clone(),
-                                    detection,
-                                );
+                                let mut geometry_quality =
+                                    CandidateGeometryQualityReport::from_detection(
+                                        set.reference.artifact_id.clone(),
+                                        detection,
+                                    );
                                 geometry_quality.historical_correction_rate =
                                     historical_geometry_correction_rate;
                                 let mut failure_classes = Vec::new();
@@ -12141,15 +12181,21 @@ impl LocalApplication {
             });
         }
         let total_latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
-        for record in &historical_corrections {
-            let geometry = &record.image_features.geometry;
-            if let (Some(center_shift), Some(area_change)) = (
-                geometry.get("manual_center_shift"),
-                geometry.get("manual_area_change"),
-            ) {
-                summary
-                    .geometry_quality
-                    .add_manual_adjustment(*center_shift as f32, *area_change as f32);
+        if structured_geometry_corrections.is_empty() {
+            for record in &historical_corrections {
+                let geometry = &record.image_features.geometry;
+                if let (Some(center_shift), Some(area_change)) = (
+                    geometry.get("manual_center_shift"),
+                    geometry.get("manual_area_change"),
+                ) {
+                    summary
+                        .geometry_quality
+                        .add_manual_adjustment(*center_shift as f32, *area_change as f32);
+                }
+            }
+        } else {
+            for (report, evidence) in &structured_geometry_corrections {
+                summary.geometry_quality.add_correction(report, evidence);
             }
         }
         summary.manual_resize_count = summary.geometry_quality.human_adjustment_count as usize;
@@ -13717,7 +13763,9 @@ fn record_dry_run_failure(
         AnnotationFailureClass::ProviderFailure => summary.provider_failure_count += 1,
         AnnotationFailureClass::NoCandidate => summary.no_candidate_count += 1,
         AnnotationFailureClass::SemanticError => summary.semantic_review_count += 1,
-        AnnotationFailureClass::GeometryError => summary.geometry_review_count += 1,
+        AnnotationFailureClass::GeometryError | AnnotationFailureClass::InsufficientEvidence => {
+            summary.geometry_review_count += 1;
+        }
         AnnotationFailureClass::MissingScore => summary.missing_score_count += 1,
         AnnotationFailureClass::DomainRisk => summary.domain_risk_count += 1,
         AnnotationFailureClass::InfrastructureFailure
@@ -15376,6 +15424,7 @@ export:
                 mean_manual_area_change: Some(-0.41),
                 mean_refiner_iou: None,
                 inaccurate_bbox_reason_count: 5,
+                ..annotagent_core::GeometryQualitySummary::default()
             },
             ..AgentDryRunSummary::default()
         };
@@ -15459,6 +15508,7 @@ export:
                 mean_manual_area_change: Some(-0.35),
                 mean_refiner_iou: None,
                 inaccurate_bbox_reason_count: 4,
+                ..annotagent_core::GeometryQualitySummary::default()
             },
             ..AgentDryRunSummary::default()
         };

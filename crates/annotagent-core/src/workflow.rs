@@ -424,7 +424,7 @@ pub struct SampleTestOutcome {
     #[serde(default)]
     pub failure_classes: Vec<crate::AnnotationFailureClass>,
     #[serde(default)]
-    pub geometry_quality: Option<crate::GeometryQualityReport>,
+    pub geometry_quality: Option<crate::CandidateGeometryQualityReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

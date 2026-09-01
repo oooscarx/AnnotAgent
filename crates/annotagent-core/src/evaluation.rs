@@ -2,10 +2,13 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnnotationSnapshot, AnnotationValue, DetectionArtifactItem, GeometrySemantics, NormalizedRect,
+    AnnotationId, AnnotationSnapshot, AnnotationValue, ArtifactId, DetectionArtifactItem,
+    GeometryQualityReportId, GeometrySemantics, ImageId, ModelProfileId, NodeId, NormalizedRect,
+    ProjectId, RunId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -20,6 +23,7 @@ pub enum AnnotationFailureClass {
     DomainRisk,
     InvalidArtifact,
     BudgetLimit,
+    InsufficientEvidence,
 }
 
 /// Classifies an already-structured Runtime/validation code. This is intentionally conservative:
@@ -27,7 +31,16 @@ pub enum AnnotationFailureClass {
 #[must_use]
 pub fn classify_annotation_failure(code: &str, message: &str) -> AnnotationFailureClass {
     let evidence = format!("{code} {message}").to_ascii_lowercase();
-    if contains_any(&evidence, &["budget", "cost_limit", "token_limit"]) {
+    if contains_any(
+        &evidence,
+        &[
+            "insufficient_evidence",
+            "insufficient evidence",
+            "missing_reference",
+        ],
+    ) {
+        AnnotationFailureClass::InsufficientEvidence
+    } else if contains_any(&evidence, &["budget", "cost_limit", "token_limit"]) {
         AnnotationFailureClass::BudgetLimit
     } else if contains_any(
         &evidence,
@@ -111,8 +124,12 @@ fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
 
+/// Lightweight quality observations emitted while a candidate is still inside a Dry Run.
+///
+/// This intentionally has no Project/Run identity. Durable human-reference evidence uses
+/// [`GeometryQualityReport`] instead.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GeometryQualityReport {
+pub struct CandidateGeometryQualityReport {
     /// Pipeline Artifact IDs are stable strings and may not be UUIDs.
     pub artifact_id: String,
     pub geometry_semantics: GeometrySemantics,
@@ -131,7 +148,7 @@ pub struct GeometryQualityReport {
     pub issue_codes: Vec<String>,
 }
 
-impl GeometryQualityReport {
+impl CandidateGeometryQualityReport {
     #[must_use]
     pub fn from_detection(
         artifact_id: impl Into<String>,
@@ -215,6 +232,292 @@ impl GeometryQualityReport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryEvidenceSource {
+    HumanCorrection,
+    PromptedSegmentation,
+    SpecialistDetector,
+    ImportedReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryIssueCode {
+    TooLoose,
+    TooTight,
+    CenterShift,
+    WidthError,
+    HeightError,
+    AspectRatioError,
+    PartialObject,
+    IncludesBackground,
+    RefinerConflict,
+    InsufficientEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryCorrectionReason {
+    TooLoose,
+    TooTight,
+    Shifted,
+    WrongObject,
+    MissedObject,
+    Duplicate,
+    WrongLabel,
+    WhiteShoe,
+    WhiteSock,
+    PenaltyMark,
+    FieldLineIntersection,
+    Other,
+}
+
+impl GeometryCorrectionReason {
+    #[must_use]
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            "too_loose" => Self::TooLoose,
+            "too_tight" => Self::TooTight,
+            "shifted" => Self::Shifted,
+            "wrong_object" | "not_target" => Self::WrongObject,
+            "missed_object" | "missed_small_ball" => Self::MissedObject,
+            "duplicate" | "duplicate_ball" => Self::Duplicate,
+            "wrong_label" => Self::WrongLabel,
+            "white_shoe" | "white_shoe_as_ball" => Self::WhiteShoe,
+            "white_sock" | "white_sock_as_ball" => Self::WhiteSock,
+            "penalty_mark" | "penalty_mark_as_ball" => Self::PenaltyMark,
+            "field_line_intersection" | "line_intersection_as_ball" => Self::FieldLineIntersection,
+            _ => Self::Other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectSizeBucket {
+    Small,
+    Medium,
+    Large,
+}
+
+impl ObjectSizeBucket {
+    /// COCO-compatible pixel-area buckets keep small objects visible in aggregate reports.
+    #[must_use]
+    pub const fn from_pixel_area(area: f32) -> Self {
+        if area < 32.0 * 32.0 {
+            Self::Small
+        } else if area < 96.0 * 96.0 {
+            Self::Medium
+        } else {
+            Self::Large
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GeometrySnapshot {
+    pub rect: NormalizedRect,
+    pub image_width: u32,
+    pub image_height: u32,
+}
+
+impl GeometrySnapshot {
+    #[must_use]
+    pub fn pixel_area(self) -> f32 {
+        self.rect.area() * self.image_width as f32 * self.image_height as f32
+    }
+
+    #[must_use]
+    pub fn size_bucket(self) -> ObjectSizeBucket {
+        ObjectSizeBucket::from_pixel_area(self.pixel_area())
+    }
+}
+
+/// Durable, scoped geometry evidence. Unlike semantic confidence, every numeric field here is
+/// derived from geometry or an explicit reference source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeometryQualityReport {
+    pub id: GeometryQualityReportId,
+    pub project_id: ProjectId,
+    pub image_id: ImageId,
+    pub candidate_artifact_id: ArtifactId,
+    pub reference_artifact_id: Option<ArtifactId>,
+    pub source: GeometryEvidenceSource,
+    pub iou: Option<f32>,
+    pub normalized_center_shift: Option<f32>,
+    pub pixel_center_shift: Option<f32>,
+    pub predicted_area: Option<f32>,
+    pub reference_area: Option<f32>,
+    pub area_ratio: Option<f32>,
+    pub width_ratio: Option<f32>,
+    pub height_ratio: Option<f32>,
+    pub foreground_occupancy: Option<f32>,
+    pub mask_support: Option<f32>,
+    pub edge_support: Option<f32>,
+    pub size_bucket: Option<ObjectSizeBucket>,
+    pub issue_codes: Vec<GeometryIssueCode>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeometryCorrectionEvidence {
+    pub project_id: ProjectId,
+    pub run_id: RunId,
+    pub image_id: ImageId,
+    pub annotation_id: AnnotationId,
+    pub source_node_id: NodeId,
+    /// Legacy Runs may not contain a revisioned Model Profile. Such evidence is still retained,
+    /// but is ineligible for calibration and carries `InsufficientEvidence` in its report.
+    pub source_model_profile_id: Option<ModelProfileId>,
+    pub source_model_revision: Option<u64>,
+    pub original_geometry: GeometrySnapshot,
+    pub corrected_geometry: GeometrySnapshot,
+    pub reason: GeometryCorrectionReason,
+    pub quality_report_id: GeometryQualityReportId,
+    pub created_at: DateTime<Utc>,
+}
+
+impl GeometryCorrectionEvidence {
+    #[must_use]
+    pub const fn calibration_eligible(&self) -> bool {
+        self.source_model_profile_id.is_some() && self.source_model_revision.is_some()
+    }
+}
+
+pub struct GeometryCorrectionInput {
+    pub project_id: ProjectId,
+    pub run_id: RunId,
+    pub image_id: ImageId,
+    pub annotation_id: AnnotationId,
+    pub source_node_id: NodeId,
+    pub source_model_profile_id: Option<ModelProfileId>,
+    pub source_model_revision: Option<u64>,
+    pub candidate_artifact_id: ArtifactId,
+    pub reference_artifact_id: ArtifactId,
+    pub original_geometry: GeometrySnapshot,
+    pub corrected_geometry: GeometrySnapshot,
+    pub reason: GeometryCorrectionReason,
+    pub created_at: DateTime<Utc>,
+}
+
+#[must_use]
+pub fn build_geometry_correction_evidence(
+    input: GeometryCorrectionInput,
+) -> (GeometryQualityReport, GeometryCorrectionEvidence) {
+    let predicted = input.original_geometry.rect;
+    let reference = input.corrected_geometry.rect;
+    let predicted_area = input.original_geometry.pixel_area();
+    let reference_area = input.corrected_geometry.pixel_area();
+    let area_ratio = predicted_area / reference_area.max(f32::EPSILON);
+    let width_ratio = predicted.width() / reference.width().max(f32::EPSILON);
+    let height_ratio = predicted.height() / reference.height().max(f32::EPSILON);
+    let normalized_center_shift = center_shift(predicted, reference);
+    let pixel_center_shift = pixel_center_shift(input.original_geometry, input.corrected_geometry);
+    let iou = rect_iou(predicted, reference);
+    let mut issue_codes = geometry_issue_codes(
+        area_ratio,
+        width_ratio,
+        height_ratio,
+        normalized_center_shift,
+        input.reason,
+    );
+    if input.source_model_profile_id.is_none()
+        || input.source_model_revision.is_none()
+        || input.original_geometry.image_width == 0
+        || input.original_geometry.image_height == 0
+        || input.corrected_geometry.image_width == 0
+        || input.corrected_geometry.image_height == 0
+    {
+        issue_codes.push(GeometryIssueCode::InsufficientEvidence);
+    }
+    issue_codes.sort();
+    issue_codes.dedup();
+    let report_id = GeometryQualityReportId::new();
+    let report = GeometryQualityReport {
+        id: report_id,
+        project_id: input.project_id,
+        image_id: input.image_id,
+        candidate_artifact_id: input.candidate_artifact_id,
+        reference_artifact_id: Some(input.reference_artifact_id),
+        source: GeometryEvidenceSource::HumanCorrection,
+        iou: Some(iou),
+        normalized_center_shift: Some(normalized_center_shift),
+        pixel_center_shift: Some(pixel_center_shift),
+        predicted_area: Some(predicted_area),
+        reference_area: Some(reference_area),
+        area_ratio: Some(area_ratio),
+        width_ratio: Some(width_ratio),
+        height_ratio: Some(height_ratio),
+        foreground_occupancy: None,
+        mask_support: None,
+        edge_support: None,
+        size_bucket: Some(input.corrected_geometry.size_bucket()),
+        issue_codes,
+        created_at: input.created_at,
+    };
+    let evidence = GeometryCorrectionEvidence {
+        project_id: input.project_id,
+        run_id: input.run_id,
+        image_id: input.image_id,
+        annotation_id: input.annotation_id,
+        source_node_id: input.source_node_id,
+        source_model_profile_id: input.source_model_profile_id,
+        source_model_revision: input.source_model_revision,
+        original_geometry: input.original_geometry,
+        corrected_geometry: input.corrected_geometry,
+        reason: input.reason,
+        quality_report_id: report_id,
+        created_at: input.created_at,
+    };
+    (report, evidence)
+}
+
+fn geometry_issue_codes(
+    area_ratio: f32,
+    width_ratio: f32,
+    height_ratio: f32,
+    center_shift: f32,
+    reason: GeometryCorrectionReason,
+) -> Vec<GeometryIssueCode> {
+    let mut issues = Vec::new();
+    if area_ratio > 1.2 || reason == GeometryCorrectionReason::TooLoose {
+        issues.extend([
+            GeometryIssueCode::TooLoose,
+            GeometryIssueCode::IncludesBackground,
+        ]);
+    }
+    if area_ratio < 0.8 || reason == GeometryCorrectionReason::TooTight {
+        issues.extend([
+            GeometryIssueCode::TooTight,
+            GeometryIssueCode::PartialObject,
+        ]);
+    }
+    if center_shift > 0.05 || reason == GeometryCorrectionReason::Shifted {
+        issues.push(GeometryIssueCode::CenterShift);
+    }
+    if !(0.85..=1.15).contains(&width_ratio) {
+        issues.push(GeometryIssueCode::WidthError);
+    }
+    if !(0.85..=1.15).contains(&height_ratio) {
+        issues.push(GeometryIssueCode::HeightError);
+    }
+    let aspect_ratio_change = width_ratio / height_ratio.max(f32::EPSILON);
+    if !(0.8..=1.25).contains(&aspect_ratio_change) {
+        issues.push(GeometryIssueCode::AspectRatioError);
+    }
+    issues
+}
+
+fn pixel_center_shift(left: GeometrySnapshot, right: GeometrySnapshot) -> f32 {
+    let left_center = left.rect.center();
+    let right_center = right.rect.center();
+    let width = right.image_width.max(left.image_width) as f32;
+    let height = right.image_height.max(left.image_height) as f32;
+    ((left_center.x() - right_center.x()) * width)
+        .hypot((left_center.y() - right_center.y()) * height)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GeometryQualitySummary {
     pub total_candidates: u32,
@@ -225,10 +528,22 @@ pub struct GeometryQualitySummary {
     pub mean_manual_area_change: Option<f32>,
     pub mean_refiner_iou: Option<f32>,
     pub inaccurate_bbox_reason_count: u32,
+    #[serde(default)]
+    pub size_buckets: BTreeMap<ObjectSizeBucket, GeometrySizeBucketSummary>,
+    #[serde(default)]
+    pub correction_reasons: BTreeMap<GeometryCorrectionReason, u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GeometrySizeBucketSummary {
+    pub sample_count: u32,
+    pub human_adjustment_count: u32,
+    pub mean_iou: Option<f32>,
+    pub mean_center_shift: Option<f32>,
 }
 
 impl GeometryQualitySummary {
-    pub fn add_report(&mut self, report: &GeometryQualityReport, needs_review: bool) {
+    pub fn add_report(&mut self, report: &CandidateGeometryQualityReport, needs_review: bool) {
         self.total_candidates = self.total_candidates.saturating_add(1);
         if report.geometry_semantics == GeometrySemantics::CoarseHypothesis {
             self.coarse_geometry_count = self.coarse_geometry_count.saturating_add(1);
@@ -239,6 +554,37 @@ impl GeometryQualitySummary {
         if report.has_geometry_issue() {
             self.inaccurate_bbox_reason_count = self.inaccurate_bbox_reason_count.saturating_add(1);
         }
+    }
+
+    pub fn add_correction(
+        &mut self,
+        report: &GeometryQualityReport,
+        evidence: &GeometryCorrectionEvidence,
+    ) {
+        self.human_adjustment_count = self.human_adjustment_count.saturating_add(1);
+        self.inaccurate_bbox_reason_count = self.inaccurate_bbox_reason_count.saturating_add(1);
+        *self.correction_reasons.entry(evidence.reason).or_default() += 1;
+        if let Some(bucket) = report.size_bucket {
+            let summary = self.size_buckets.entry(bucket).or_default();
+            summary.sample_count = summary.sample_count.saturating_add(1);
+            summary.human_adjustment_count = summary.human_adjustment_count.saturating_add(1);
+            push_mean(&mut summary.mean_iou, report.iou, summary.sample_count);
+            push_mean(
+                &mut summary.mean_center_shift,
+                report.normalized_center_shift,
+                summary.sample_count,
+            );
+        }
+        push_mean(
+            &mut self.mean_manual_center_shift,
+            report.normalized_center_shift,
+            self.human_adjustment_count,
+        );
+        push_mean(
+            &mut self.mean_manual_area_change,
+            report.area_ratio.map(|ratio| ratio - 1.0),
+            self.human_adjustment_count,
+        );
     }
 
     pub fn add_manual_adjustment(&mut self, center_shift: f32, area_change: f32) {
@@ -388,7 +734,7 @@ mod tests {
             "geometry_refinement".to_owned(),
             serde_json::json!({"original_bbox": original, "refined_bbox": refined}),
         );
-        let report = GeometryQualityReport::from_detection("refined", &detection);
+        let report = CandidateGeometryQualityReport::from_detection("refined", &detection);
         assert_eq!(
             report.geometry_semantics,
             GeometrySemantics::CoarseHypothesis
@@ -412,5 +758,88 @@ mod tests {
         assert!(features["manual_center_shift"] > 0.0);
         assert!(features["manual_area_change"] > 0.0);
         assert!(features["manual_iou"] < 1.0);
+    }
+
+    #[test]
+    fn bbox_correction_builds_scoped_typed_geometry_evidence() {
+        let project_id = ProjectId::new();
+        let run_id = RunId::new();
+        let image_id = ImageId::new();
+        let annotation_id = AnnotationId::new();
+        let model_id = ModelProfileId::new();
+        let original = GeometrySnapshot {
+            rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("original"),
+            image_width: 640,
+            image_height: 480,
+        };
+        let corrected = GeometrySnapshot {
+            rect: NormalizedRect::new(0.12, 0.12, 0.1, 0.1).expect("corrected"),
+            image_width: 640,
+            image_height: 480,
+        };
+        let (report, evidence) = build_geometry_correction_evidence(GeometryCorrectionInput {
+            project_id,
+            run_id,
+            image_id,
+            annotation_id,
+            source_node_id: NodeId::from("vlm-detect"),
+            source_model_profile_id: Some(model_id),
+            source_model_revision: Some(3),
+            candidate_artifact_id: ArtifactId::new(),
+            reference_artifact_id: ArtifactId::new(),
+            original_geometry: original,
+            corrected_geometry: corrected,
+            reason: GeometryCorrectionReason::TooLoose,
+            created_at: Utc::now(),
+        });
+        assert_eq!(report.project_id, project_id);
+        assert_eq!(report.iou, Some(0.25));
+        assert_eq!(report.area_ratio, Some(4.0));
+        assert_eq!(report.width_ratio, Some(2.0));
+        assert_eq!(report.height_ratio, Some(2.0));
+        assert!(report.pixel_center_shift.is_some_and(|shift| shift > 0.0));
+        assert!(report.issue_codes.contains(&GeometryIssueCode::TooLoose));
+        assert!(
+            report
+                .issue_codes
+                .contains(&GeometryIssueCode::IncludesBackground)
+        );
+        assert_eq!(report.size_bucket, Some(ObjectSizeBucket::Medium));
+        assert!(evidence.calibration_eligible());
+        assert_eq!(evidence.quality_report_id, report.id);
+    }
+
+    #[test]
+    fn small_object_bucket_and_missing_lineage_remain_visible() {
+        let (report, evidence) = build_geometry_correction_evidence(GeometryCorrectionInput {
+            project_id: ProjectId::new(),
+            run_id: RunId::new(),
+            image_id: ImageId::new(),
+            annotation_id: AnnotationId::new(),
+            source_node_id: NodeId::from("legacy.unresolved"),
+            source_model_profile_id: None,
+            source_model_revision: None,
+            candidate_artifact_id: ArtifactId::new(),
+            reference_artifact_id: ArtifactId::new(),
+            original_geometry: GeometrySnapshot {
+                rect: NormalizedRect::new(0.1, 0.1, 0.02, 0.02).expect("original"),
+                image_width: 640,
+                image_height: 480,
+            },
+            corrected_geometry: GeometrySnapshot {
+                rect: NormalizedRect::new(0.1, 0.1, 0.025, 0.025).expect("corrected"),
+                image_width: 640,
+                image_height: 480,
+            },
+            reason: GeometryCorrectionReason::TooTight,
+            created_at: Utc::now(),
+        });
+        assert_eq!(report.size_bucket, Some(ObjectSizeBucket::Small));
+        assert!(
+            report
+                .issue_codes
+                .contains(&GeometryIssueCode::InsufficientEvidence)
+        );
+        assert!(!evidence.calibration_eligible());
     }
 }

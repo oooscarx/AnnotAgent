@@ -1,5 +1,23 @@
 # AnnotAgent Acceptance Evidence
 
+## Geometry-Safe Pipeline Builder M3 — 2026-09-02
+
+1. Core tests construct a loose-box correction and verify IoU, pixel/normalized center shift,
+   predicted/reference area, area/width/height ratios, typed issue codes, exact model revision and
+   medium-object bucket. A separate small-object fixture proves scale isolation and explicit
+   insufficient evidence for legacy lineage.
+2. Storage migration tests prove the new report/evidence tables exist. A round-trip test persists
+   both records in one transaction and queries the exact pair by Project and Run.
+3. The HTTP Review regression edits a persisted bbox, accepts it with `too_loose`, receives the
+   computed report, reloads the Project correction summary and reloads the Run geometry history.
+   Refresh/restart durability therefore comes from SQLite, not client memory.
+4. Dry Run summary reads structured geometry records and falls back to legacy correction memory
+   only when no structured record exists, avoiding double counting.
+5. Verification passed: 85 Core tests; 14 Storage unit tests and all Storage integration suites;
+   the complete workspace/all-feature Rust and doc suite with one explicitly billable smoke
+   ignored; strict all-target/all-feature Clippy; all-feature build; Web TypeScript, 41 unit tests
+   and production build.
+
 ## Run Preview Selection Focus Hotfix — 2026-09-02
 
 - On Run `1f40eaed-2b3b-479b-866c-82a55ce4cf31`, clicking the visible ball bbox previously focused
