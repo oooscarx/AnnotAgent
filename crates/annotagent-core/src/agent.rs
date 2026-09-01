@@ -322,6 +322,30 @@ pub struct AgentSession {
     pub model_selection: Option<AgentModelSelection>,
     #[serde(default)]
     pub model_calls: Vec<AgentModelCall>,
+    #[serde(default)]
+    pub phase: Option<crate::PipelineBuilderPhase>,
+    #[serde(default)]
+    pub outcome: Option<crate::PipelineBuilderOutcome>,
+    #[serde(default)]
+    pub builder_stop_reason: Option<crate::BuilderStopReason>,
+    #[serde(default)]
+    pub builder_budget: Option<crate::PipelineBuilderBudget>,
+    #[serde(default)]
+    pub progress_invariant: Option<crate::BuilderProgressInvariant>,
+    #[serde(default)]
+    pub model_turns: u32,
+    #[serde(default)]
+    pub phase_tool_calls: u32,
+    #[serde(default)]
+    pub duplicate_tool_calls: u32,
+    #[serde(default)]
+    pub cache_hits: u32,
+    #[serde(default)]
+    pub draft_id: Option<String>,
+    #[serde(default)]
+    pub unresolved_bindings: Vec<String>,
+    #[serde(default)]
+    pub next_action: Option<String>,
     pub usage: AgentUsage,
     pub steps: Vec<AgentToolStep>,
     pub stop_reason: Option<String>,
@@ -344,6 +368,18 @@ impl AgentSession {
             builder_constraints: None,
             model_selection: None,
             model_calls: Vec::new(),
+            phase: None,
+            outcome: None,
+            builder_stop_reason: None,
+            builder_budget: None,
+            progress_invariant: None,
+            model_turns: 0,
+            phase_tool_calls: 0,
+            duplicate_tool_calls: 0,
+            cache_hits: 0,
+            draft_id: None,
+            unresolved_bindings: Vec::new(),
+            next_action: None,
             usage: AgentUsage::default(),
             steps: Vec::new(),
             stop_reason: None,
@@ -375,6 +411,95 @@ impl AgentSession {
     }
 
     #[must_use]
+    pub fn with_builder_progress(
+        mut self,
+        budget: crate::PipelineBuilderBudget,
+        invariant: crate::BuilderProgressInvariant,
+    ) -> Self {
+        self.phase = Some(crate::PipelineBuilderPhase::ContextLoading);
+        self.builder_budget = Some(budget);
+        self.progress_invariant = Some(invariant);
+        self.next_action = Some("Load the bounded Pipeline Builder context".to_owned());
+        self
+    }
+
+    pub fn transition_builder_phase(
+        &mut self,
+        next: crate::PipelineBuilderPhase,
+        next_action: impl Into<String>,
+    ) -> Result<(), String> {
+        let current = self
+            .phase
+            .ok_or_else(|| "Pipeline Builder progress is not initialized".to_owned())?;
+        if !current.can_transition_to(next) {
+            return Err(format!(
+                "invalid Pipeline Builder phase transition {current:?} -> {next:?}"
+            ));
+        }
+        if current != next {
+            self.phase = Some(next);
+            self.phase_tool_calls = 0;
+        }
+        self.next_action = Some(next_action.into());
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn remaining_builder_tool_calls(&self) -> u32 {
+        self.builder_budget
+            .as_ref()
+            .map_or_else(
+                || self.budget.max_tool_calls,
+                |budget| budget.max_total_tool_calls,
+            )
+            .saturating_sub(self.usage.tool_calls)
+    }
+
+    pub fn set_builder_draft(&mut self, draft_id: impl Into<String>) {
+        self.draft_id = Some(draft_id.into());
+        self.updated_at = Utc::now();
+    }
+
+    pub fn complete_builder(
+        &mut self,
+        outcome: crate::PipelineBuilderOutcome,
+        reason: crate::BuilderStopReason,
+        next_action: impl Into<String>,
+    ) {
+        self.outcome = Some(outcome);
+        self.builder_stop_reason = Some(reason);
+        self.next_action = Some(next_action.into());
+        self.pending_human_action = None;
+        match outcome {
+            crate::PipelineBuilderOutcome::DraftReadyForHumanReview
+            | crate::PipelineBuilderOutcome::BlockedDraftReady
+            | crate::PipelineBuilderOutcome::ProviderSetupRequired => {
+                self.status = AgentSessionStatus::WaitingForHuman;
+                self.phase = Some(crate::PipelineBuilderPhase::WaitingForHuman);
+            }
+            crate::PipelineBuilderOutcome::UnsupportedRequest => {
+                self.status = AgentSessionStatus::Succeeded;
+                self.phase = Some(crate::PipelineBuilderPhase::Completed);
+            }
+            crate::PipelineBuilderOutcome::Cancelled => {
+                self.status = AgentSessionStatus::Cancelled;
+                self.phase = Some(crate::PipelineBuilderPhase::Cancelled);
+            }
+            crate::PipelineBuilderOutcome::BudgetExceeded => {
+                self.status = AgentSessionStatus::BudgetExceeded;
+                self.phase = Some(crate::PipelineBuilderPhase::Failed);
+            }
+            crate::PipelineBuilderOutcome::Failed => {
+                self.status = AgentSessionStatus::Failed;
+                self.phase = Some(crate::PipelineBuilderPhase::Failed);
+            }
+        }
+        self.stop_reason = Some(format!("{reason:?}"));
+        self.updated_at = Utc::now();
+    }
+
+    #[must_use]
     pub fn with_run(mut self, run_id: crate::RunId) -> Self {
         self.run_id = Some(run_id);
         self
@@ -399,6 +524,9 @@ impl AgentSession {
         let now = Utc::now();
         self.usage.steps += 1;
         self.usage.tool_calls += 1;
+        if self.phase.is_some() {
+            self.phase_tool_calls = self.phase_tool_calls.saturating_add(1);
+        }
         self.steps.push(AgentToolStep {
             sequence: self.usage.steps,
             call_id: format!("{}:{}", self.id, self.usage.steps),
@@ -437,6 +565,9 @@ impl AgentSession {
             .saturating_add(1);
         self.add_model_usage(call.input_tokens, call.output_tokens, call.cost);
         self.model_calls.push(call);
+        if self.phase.is_some() {
+            self.model_turns = self.model_turns.saturating_add(1);
+        }
         self.updated_at = Utc::now();
     }
 

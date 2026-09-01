@@ -6735,11 +6735,18 @@ impl LocalApplication {
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
+        let progress_budget =
+            annotagent_core::PipelineBuilderBudget::from_constraints(&builder_constraints);
+        progress_budget.validate().map_err(|error| anyhow!(error))?;
         let mut session = AgentSession::start(
             AgentKind::PipelineBuilder,
             builder_constraints.agent_budget(),
         )
         .with_builder_constraints(builder_constraints.clone())
+        .with_builder_progress(
+            progress_budget,
+            annotagent_core::BuilderProgressInvariant::default(),
+        )
         .with_project(project_id);
         self.agent_cancellations
             .lock()

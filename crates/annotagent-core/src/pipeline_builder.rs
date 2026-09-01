@@ -523,6 +523,220 @@ impl PipelineBuilderConstraints {
     }
 }
 
+/// Durable execution phase for the constrained Pipeline Builder. The phase is persisted on the
+/// Agent Session so a UI or retry can distinguish discovery from draft work and finalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineBuilderPhase {
+    ContextLoading,
+    FeasibilityAnalysis,
+    Drafting,
+    Validating,
+    DryRunning,
+    Revising,
+    Finalizing,
+    WaitingForHuman,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+impl Default for PipelineBuilderPhase {
+    fn default() -> Self {
+        Self::ContextLoading
+    }
+}
+
+impl PipelineBuilderPhase {
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        matches!(
+            (self, next),
+            (Self::ContextLoading, Self::FeasibilityAnalysis)
+                | (Self::FeasibilityAnalysis, Self::Drafting | Self::Completed)
+                | (
+                    Self::Drafting,
+                    Self::Validating | Self::Finalizing | Self::Failed
+                )
+                | (
+                    Self::Validating,
+                    Self::DryRunning | Self::Revising | Self::Finalizing | Self::Failed
+                )
+                | (
+                    Self::DryRunning,
+                    Self::Revising | Self::Finalizing | Self::Failed
+                )
+                | (
+                    Self::Revising,
+                    Self::Validating | Self::Finalizing | Self::Failed
+                )
+                | (
+                    Self::Finalizing,
+                    Self::WaitingForHuman | Self::Completed | Self::Failed
+                )
+                | (_, Self::Cancelled)
+        )
+    }
+
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::WaitingForHuman | Self::Completed | Self::Cancelled | Self::Failed
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineBuilderOutcome {
+    DraftReadyForHumanReview,
+    BlockedDraftReady,
+    ProviderSetupRequired,
+    UnsupportedRequest,
+    Cancelled,
+    BudgetExceeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuilderStopReason {
+    DraftReady,
+    SetupRequired,
+    UnsupportedRequest,
+    DiscoveryLimitReached,
+    DraftDeadlineReached,
+    ValidationRepairLimitReached,
+    DryRunLimitReached,
+    TotalToolBudgetReached,
+    ModelTurnBudgetReached,
+    TokenBudgetReached,
+    CostBudgetReached,
+    Cancelled,
+    ProviderError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PipelineBuilderBudget {
+    pub max_model_turns: u32,
+    pub max_total_tool_calls: u32,
+    pub max_discovery_tool_calls: u32,
+    pub max_draft_tool_calls: u32,
+    pub max_validation_tool_calls: u32,
+    pub max_dry_run_tool_calls: u32,
+    pub reserved_finalization_calls: u32,
+    pub max_parallel_tools_per_turn: u32,
+    pub max_duplicate_calls: u32,
+}
+
+impl Default for PipelineBuilderBudget {
+    fn default() -> Self {
+        Self {
+            max_model_turns: 16,
+            max_total_tool_calls: 48,
+            max_discovery_tool_calls: 10,
+            max_draft_tool_calls: 10,
+            max_validation_tool_calls: 10,
+            max_dry_run_tool_calls: 10,
+            reserved_finalization_calls: 6,
+            max_parallel_tools_per_turn: 4,
+            max_duplicate_calls: 1,
+        }
+    }
+}
+
+impl PipelineBuilderBudget {
+    #[must_use]
+    pub fn from_constraints(constraints: &PipelineBuilderConstraints) -> Self {
+        let mut budget = Self {
+            max_model_turns: constraints.maximum_agent_turns,
+            max_total_tool_calls: constraints.maximum_tool_calls,
+            ..Self::default()
+        };
+        budget.reserved_finalization_calls = budget
+            .reserved_finalization_calls
+            .min(budget.max_total_tool_calls.saturating_sub(1));
+        let discovery_capacity = budget
+            .max_total_tool_calls
+            .saturating_sub(budget.reserved_finalization_calls);
+        budget.max_discovery_tool_calls = budget
+            .max_discovery_tool_calls
+            .min(discovery_capacity)
+            .min(budget.max_total_tool_calls / 4);
+        budget
+    }
+
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.max_model_turns == 0
+            || self.max_total_tool_calls == 0
+            || self.max_parallel_tools_per_turn == 0
+        {
+            return Err(CoreError::Validation(
+                "Pipeline Builder model, Tool Call, and parallel limits must be greater than zero"
+                    .to_owned(),
+            ));
+        }
+        if self.reserved_finalization_calls >= self.max_total_tool_calls {
+            return Err(CoreError::Validation(
+                "Pipeline Builder finalization reserve must leave at least one non-finalization Tool Call"
+                    .to_owned(),
+            ));
+        }
+        if self.max_discovery_tool_calls
+            > self
+                .max_total_tool_calls
+                .saturating_sub(self.reserved_finalization_calls)
+        {
+            return Err(CoreError::Validation(
+                "Pipeline Builder discovery budget cannot consume the finalization reserve"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn remaining(&self, used: u32) -> u32 {
+        self.max_total_tool_calls.saturating_sub(used)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BuilderProgressInvariant {
+    pub context_deadline_tool_call: u32,
+    pub feasibility_deadline_tool_call: u32,
+    pub draft_deadline_tool_call: u32,
+    pub maximum_validation_repairs: u32,
+    pub maximum_dry_runs: u32,
+}
+
+impl Default for BuilderProgressInvariant {
+    fn default() -> Self {
+        Self {
+            context_deadline_tool_call: 6,
+            feasibility_deadline_tool_call: 10,
+            draft_deadline_tool_call: 12,
+            maximum_validation_repairs: 2,
+            maximum_dry_runs: 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvailableAgentActions {
+    pub phase: PipelineBuilderPhase,
+    pub tools: Vec<String>,
+    pub remaining_tool_calls: u32,
+    pub reserved_finalization_calls: u32,
+    pub required_next_actions: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineBuilderStatus {
@@ -917,6 +1131,10 @@ impl PipelineBuilderSession {
         let now = Utc::now();
         let audit = AgentSession::start(AgentKind::PipelineBuilder, constraints.agent_budget())
             .with_builder_constraints(constraints.clone())
+            .with_builder_progress(
+                PipelineBuilderBudget::from_constraints(&constraints),
+                BuilderProgressInvariant::default(),
+            )
             .with_project(project_id.clone());
         Ok(Self {
             protocol_version: PIPELINE_BUILDER_PROTOCOL_VERSION,
@@ -2372,5 +2590,51 @@ mod tests {
             Some(PipelineBuilderStopReason::DraftReadyForHumanReview)
         );
         assert_eq!(approval.audit.status, AgentSessionStatus::WaitingForHuman);
+    }
+
+    #[test]
+    fn phased_budget_preserves_finalization_and_rejects_phase_regression() {
+        let budget =
+            PipelineBuilderBudget::from_constraints(&PipelineBuilderConstraints::default());
+        budget.validate().expect("valid phased budget");
+        assert_eq!(budget.max_discovery_tool_calls, 10);
+        assert_eq!(budget.reserved_finalization_calls, 6);
+        assert_eq!(budget.remaining(42), 6);
+
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            PipelineBuilderConstraints::default().agent_budget(),
+        )
+        .with_builder_progress(budget, BuilderProgressInvariant::default());
+        session
+            .transition_builder_phase(
+                PipelineBuilderPhase::FeasibilityAnalysis,
+                "Resolve feasibility",
+            )
+            .expect("context to feasibility");
+        session
+            .transition_builder_phase(PipelineBuilderPhase::Drafting, "Create a Draft")
+            .expect("feasibility to drafting");
+        assert!(
+            session
+                .transition_builder_phase(
+                    PipelineBuilderPhase::ContextLoading,
+                    "invalid regression"
+                )
+                .is_err()
+        );
+        session.set_builder_draft("draft-1");
+        session.complete_builder(
+            PipelineBuilderOutcome::ProviderSetupRequired,
+            BuilderStopReason::SetupRequired,
+            "Configure a compatible model",
+        );
+        assert_eq!(session.phase, Some(PipelineBuilderPhase::WaitingForHuman));
+        assert_eq!(session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(session.draft_id.as_deref(), Some("draft-1"));
+        assert_eq!(
+            session.outcome,
+            Some(PipelineBuilderOutcome::ProviderSetupRequired)
+        );
     }
 }
