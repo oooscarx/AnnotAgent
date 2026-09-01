@@ -725,6 +725,20 @@ main { min-width: 0; padding-bottom: 48px; }
 .runs-table > .run-row { display: grid; grid-template-columns: 6px minmax(0, 1fr) auto auto 18px; gap: 13px; align-items: center; width: 100%; padding: 14px 5px; border: 0; border-top: 1px solid var(--aa-border); border-radius: 0; background: transparent; color: var(--aa-text); text-align: left; }
 .runs-table > .run-row:first-child { border-top: 0; }
 .runs-table > .run-row:hover { background: var(--aa-surface-muted); }
+.runs-table > .batch-run-group { border-top: 1px solid var(--aa-border); }
+.runs-table > .batch-run-group:first-child { border-top: 0; }
+.batch-run-group > summary { list-style: none; }
+.batch-run-group > summary::-webkit-details-marker { display: none; }
+.batch-run-row { display: grid; grid-template-columns: 6px minmax(0, 1fr) auto auto 18px; gap: 13px; align-items: center; width: 100%; padding: 14px 5px; cursor: pointer; }
+.batch-run-row:hover { background: var(--aa-surface-muted); }
+.batch-run-group[open] > .batch-run-row { background: var(--aa-primary-soft); }
+.batch-run-group[open] > .batch-run-row .row-arrow { transform: rotate(180deg); }
+.batch-run-children { display: grid; margin: 0 5px 14px 24px; overflow: hidden; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.batch-run-explanation { display: grid; gap: 3px; padding: 11px 14px; border-bottom: 1px solid var(--aa-border); color: var(--aa-text-muted); }
+.batch-run-explanation strong { color: var(--aa-text); }
+.batch-run-children > .run-row { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto auto 18px; gap: 12px; align-items: center; width: 100%; padding: 12px 14px; border: 0; border-top: 1px solid var(--aa-border); border-radius: 0; background: var(--aa-surface); color: var(--aa-text); text-align: left; }
+.batch-run-children > .run-row:first-of-type { border-top: 0; }
+.batch-run-children > .run-row:hover { background: var(--aa-surface-raised); }
 .runs-table strong, .runs-table small, .runs-table code { display: block; }
 .runs-table small { margin: 3px 0; color: var(--aa-text-muted); font-size: 9px; }
 .runs-table .run-reason { max-width: 760px; margin-top: 7px; color: var(--aa-danger-text); font-size: 11px; line-height: 1.45; }
@@ -1140,8 +1154,8 @@ main { min-width: 0; padding-bottom: 48px; }
   .trace-panel { grid-template-columns: 1fr; }
   .settings-save { align-items: stretch; flex-direction: column; }
   .boundary-note { grid-template-columns: 1fr; gap: 8px; }
-  .runs-table > .run-row { grid-template-columns: 6px minmax(0, 1fr) auto 18px; }
-  .runs-table > .run-row .status { grid-column: 2; justify-self: start; }
+  .runs-table > .run-row, .batch-run-row, .batch-run-children > .run-row { grid-template-columns: 6px minmax(0, 1fr) auto 18px; }
+  .runs-table > .run-row .status, .batch-run-row .status, .batch-run-children > .run-row .status { grid-column: 2; justify-self: start; }
   .run-usage { grid-column: 2; text-align: left; }
   .workflow-facts { grid-template-columns: 1fr; }
   .schema-label-authoring { grid-template-columns: 1fr; }

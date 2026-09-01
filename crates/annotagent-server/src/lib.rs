@@ -4360,6 +4360,30 @@ async fn list_batches(State(state): State<ServerState>) -> ApiResult<Json<Value>
         .store()
         .list_batches(false)
         .map_err(ApiError::internal)?;
+    let batches = batches
+        .into_iter()
+        .map(|batch| {
+            let progress = state
+                .application
+                .store()
+                .batch_progress(batch.id)
+                .map_err(ApiError::internal)?;
+            let child_run_ids = state
+                .application
+                .store()
+                .list_batch_images(batch.id)
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .filter_map(|image| image.child_run_id)
+                .collect::<Vec<_>>();
+            let mut summary = serde_json::to_value(batch).map_err(ApiError::internal)?;
+            if let Value::Object(fields) = &mut summary {
+                fields.insert("progress".to_owned(), json!(progress));
+                fields.insert("child_run_ids".to_owned(), json!(child_run_ids));
+            }
+            Ok(summary)
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
     Ok(Json(json!({"batches": batches})))
 }
 
@@ -7558,6 +7582,8 @@ export:
             response_json(request(&service, axum::http::Method::GET, "/api/batches", None).await)
                 .await;
         assert_eq!(listed["batches"][0]["id"], json!(batch.id));
+        assert_eq!(listed["batches"][0]["progress"]["total_images"], json!(1));
+        assert_eq!(listed["batches"][0]["child_run_ids"], json!([]));
         let detail = response_json(
             request(
                 &service,

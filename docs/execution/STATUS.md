@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-02 CST
 
+## Dataset Run History Grouping Hotfix — 2026-09-02
+
+- Runs now treats one full-dataset launch as one top-level Dataset Run instead of flattening every
+  per-image child Run into apparently duplicated history rows.
+- A Dataset Run row shows aggregate image progress, status, usage, Workflow Version and Batch ID.
+  It expands on demand to the child image Runs that retain individual Artifacts, errors, Replay and
+  Review history.
+- `GET /api/batches` now includes persisted aggregate progress and ordered child Run identities, so
+  grouping survives refresh and server restart without timestamp heuristics.
+- The reported launch is confirmed as one completed Batch containing four image Runs. No additional
+  model execution was triggered during diagnosis or verification.
+- Server tests pass 17/17 and Web tests pass 41/41; production Web build, strict Server Clippy,
+  TypeScript, Rustfmt and `git diff --check` pass.
+
 ## Full Dataset Run Entry Hotfix — 2026-09-02
 
 - Test & Activate now exposes `Start full Run` beside the activated immutable Version, and Project

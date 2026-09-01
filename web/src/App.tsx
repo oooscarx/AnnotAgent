@@ -26,6 +26,7 @@ import type {
   AgentSession,
   Annotation,
   CorrectionMemoryRecord,
+  DatasetBatchSummary,
   DetectionWorkerTestResult,
   DetectionWorkerSampleTestResult,
   DetectionEvidenceDto,
@@ -5748,6 +5749,10 @@ function RunsPage({
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
+  const [batches, setBatches] = useState<DatasetBatchSummary[]>([]);
+  useEffect(() => {
+    void api.batches().then((value) => setBatches(value.batches)).catch((error: Error) => onError(error.message));
+  }, [runs.length, runs[0]?.updated_at]);
   const run = runs.find((item) => item.id === route.runId);
   if (route.runId && run)
     return (
@@ -5762,7 +5767,25 @@ function RunsPage({
     );
   const projectRuns = runsForContext(runs, scopeProject);
   const statusFilter = route.status ?? "all";
-  const visibleRuns = runsForContext(runs, scopeProject, statusFilter);
+  const projectBatches = batches.filter(
+    (batch) => !scopeProject || batch.project_id === scopeProject.id,
+  );
+  const childRunIds = new Set(projectBatches.flatMap((batch) => batch.child_run_ids));
+  const standaloneRuns = projectRuns.filter((item) => !childRunIds.has(item.id));
+  const visibleBatches = projectBatches.filter(
+    (batch) => statusFilter === "all" || batch.status === statusFilter,
+  );
+  const visibleStandaloneRuns = standaloneRuns.filter(
+    (item) => statusFilter === "all" || item.status === statusFilter,
+  );
+  const visibleExecutions = [
+    ...visibleBatches.map((batch) => ({ kind: "batch" as const, created_at: batch.created_at, batch })),
+    ...visibleStandaloneRuns.map((item) => ({ kind: "run" as const, created_at: item.created_at, run: item })),
+  ].sort((left, right) => right.created_at.localeCompare(left.created_at));
+  const availableStatuses = [...new Set([
+    ...projectBatches.map((batch) => batch.status),
+    ...standaloneRuns.map((item) => item.status),
+  ])];
   const setListFilters = (projectId: string, status: string) => {
     const params = new URLSearchParams();
     if (projectId) params.set("project_id", projectId);
@@ -5778,7 +5801,7 @@ function RunsPage({
         onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)}
       />}
       <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
-      <Panel title="Run history" eyebrow={`${visibleRuns.length} visible · ${runs.length} recorded`}>
+      <Panel title="Run history" eyebrow={`${visibleExecutions.length} executions visible · ${runs.length} image Runs recorded`}>
         <div className="list-filters">
           <label>Project
             <select
@@ -5793,26 +5816,75 @@ function RunsPage({
           <label>Status
             <select aria-label="Status filter" value={statusFilter} onChange={(event) => setListFilters(scopeProject?.id ?? "", event.target.value)}>
               <option value="all">All statuses</option>
-              {[...new Set(projectRuns.map((item) => item.status))].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
+              {availableStatuses.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
             </select>
           </label>
         </div>
         <div className="runs-table">
-          {visibleRuns.map((item) => (
-            <button key={item.id} className="run-row" onClick={() => onNavigate(`/runs/${item.id}`)}>
-              <span className="event-rail" />
-              <div><strong>{item.project_name}</strong><small>{item.workflow_name}@v{item.workflow_version}</small><code>{item.model_identity} · {item.artifact_count} Artifacts</code>{item.terminal_reason && <small className="run-reason">{item.terminal_reason}</small>}</div>
-              <div className="run-usage"><span>{(item.input_tokens + item.output_tokens).toLocaleString()} tokens</span><span>${item.cost}</span></div>
-              <Status status={item.status} />
-              <span className="row-arrow" aria-hidden="true">→</span>
-            </button>
-          ))}
-          {visibleRuns.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
+          {visibleExecutions.map((execution) => execution.kind === "batch"
+            ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={runs} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} />
+            : <RunHistoryRow key={execution.run.id} run={execution.run} onNavigate={onNavigate} />)}
+          {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
       </Panel>
       {route.runId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
     </section>
   );
+}
+
+function BatchRunGroup({
+  batch,
+  runs,
+  project,
+  onNavigate,
+}: {
+  batch: DatasetBatchSummary;
+  runs: HistoryRun[];
+  project?: ProjectSummary;
+  onNavigate: (path: string) => void;
+}) {
+  const childRuns = batch.child_run_ids.flatMap((id) => {
+    const run = runs.find((candidate) => candidate.id === id);
+    return run ? [run] : [];
+  });
+  const workflowName = childRuns[0]?.workflow_name
+    ?? batch.workflow_snapshot.workflow?.draft?.name
+    ?? batch.workflow_snapshot.draft?.name
+    ?? "Published workflow";
+  const workflowVersion = childRuns[0]?.workflow_version ?? batch.workflow_version.split("@").at(-1) ?? "unknown";
+  const usage = batch.budget_ledger.consumed;
+  return <details className="batch-run-group">
+    <summary className="batch-run-row">
+      <span className="event-rail" />
+      <div><strong>{project?.name ?? batch.project_id}</strong><small>Dataset Run · {workflowName}@v{workflowVersion}</small><code>{batch.progress.completed_images}/{batch.progress.total_images} images completed · Batch {batch.id.slice(0, 8)}</code></div>
+      <div className="run-usage"><span>{usage.total_tokens.toLocaleString()} tokens</span><span>${usage.cost}</span></div>
+      <Status status={batch.status} />
+      <span className="row-arrow" aria-hidden="true">⌄</span>
+    </summary>
+    <div className="batch-run-children">
+      <div className="batch-run-explanation"><strong>One Dataset Run</strong><span>AnnotAgent created {batch.progress.total_images} image Runs so each image keeps its own Artifacts, errors, Replay and Review history.</span></div>
+      {childRuns.map((run, index) => <RunHistoryRow key={run.id} run={run} onNavigate={onNavigate} childLabel={`Image ${index + 1} of ${batch.progress.total_images}`} />)}
+      {childRuns.length === 0 && <Empty title="No image Runs recorded" detail="This Dataset Run stopped before an image Run was created." />}
+    </div>
+  </details>;
+}
+
+function RunHistoryRow({
+  run,
+  onNavigate,
+  childLabel,
+}: {
+  run: HistoryRun;
+  onNavigate: (path: string) => void;
+  childLabel?: string;
+}) {
+  return <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(`/runs/${run.id}`)}>
+    <span className="event-rail" />
+    <div><strong>{childLabel ?? run.project_name}</strong><small>{run.workflow_name}@v{run.workflow_version}</small><code>{run.model_identity} · {run.artifact_count} Artifacts</code>{run.terminal_reason && <small className="run-reason">{run.terminal_reason}</small>}</div>
+    <div className="run-usage"><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div>
+    <Status status={run.status} />
+    <span className="row-arrow" aria-hidden="true">→</span>
+  </button>;
 }
 
 function RunDetailWorkspace({

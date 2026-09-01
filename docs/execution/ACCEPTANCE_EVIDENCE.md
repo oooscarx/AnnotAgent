@@ -1,5 +1,19 @@
 # AnnotAgent Acceptance Evidence
 
+## Dataset Run History Grouping Hotfix — 2026-09-02
+
+- Persisted Batch `0a24985b-8ced-4843-a578-1585e05d85eb` records one launch, four images and four
+  child Run identities; this proves the reported rows were per-image execution records rather than
+  repeated Dataset launches.
+- The Batch list API retains its existing record fields and adds `progress` plus `child_run_ids`.
+  The Server API regression verifies those fields for a durable one-image Batch.
+- Runs filters and sorts Dataset Runs alongside legacy standalone Runs. Child Runs owned by a Batch
+  are removed from the top level and remain directly navigable after expanding their Dataset Run.
+- Browser verification confirms the completed four-image execution renders as one collapsed
+  Dataset Run with an explanatory four-item child group.
+- Verification: 17 Server tests and 41 Web tests passed; production Web build, strict Server
+  Clippy, TypeScript, Rustfmt and `git diff --check` completed successfully.
+
 ## Full Dataset Run Entry Hotfix — 2026-09-02
 
 - Activated Sample Test evidence includes a visible `Start full Run` action. Project Overview also

@@ -3,6 +3,7 @@ import type {
   AgentSession,
   CorrectionMemoryRecord,
   DashboardData,
+  DatasetBatchSummary,
   DetectionWorkerTestResult,
   DetectionWorkerSampleTestResult,
   CredentialSource,
@@ -301,6 +302,7 @@ export const api = {
   runEvents: (runId: string) =>
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
   runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
+  batches: () => request<{ batches: DatasetBatchSummary[] }>("/api/batches"),
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
   workflowDrafts: (projectId?: string) =>
     request<{ drafts: WorkflowDraft[] }>(

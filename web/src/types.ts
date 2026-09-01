@@ -110,6 +110,41 @@ export interface HistoryRun {
   updated_at: string;
 }
 
+export interface DatasetBatchSummary {
+  id: string;
+  project_id: string;
+  provider: string;
+  status: RunStatus;
+  max_concurrency: number;
+  workflow_version: string;
+  workflow_snapshot: {
+    draft?: { name?: string };
+    workflow?: { draft?: { name?: string } };
+  };
+  budget_ledger: {
+    consumed: {
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      request_count: number;
+      image_count: number;
+      cost: string;
+    };
+  };
+  progress: {
+    total_images: number;
+    pending_images: number;
+    running_images: number;
+    completed_images: number;
+    failed_images: number;
+    review_images: number;
+    cancelled_images: number;
+  };
+  child_run_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export type WorkflowStatus =
   | "draft"
   | "invalid"
