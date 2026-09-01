@@ -4,9 +4,9 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 
 | Case | Status | Current evidence |
 |---|---|---|
-| 1. High semantic score cannot pass geometry safety | open | M0 fixture currently proves the unsafe legacy acceptance. |
-| 2. VLM plus mandatory Review is legal | open | Existing graph primitives are present; geometry policy test pending. |
-| 3. Healthy SAM refinement path | open | Core conversion nodes exist; availability/quality policy pending. |
+| 1. High semantic score cannot pass geometry safety | verified | Core regression now rejects the exact M0 graph with semantic-score and uncalibrated-geometry blockers. |
+| 2. VLM plus mandatory Review is legal | verified | Core dominance-path test and published Runtime regressions pass. |
+| 3. Healthy SAM refinement path | live-conditional | Typed available-refiner path and offline prompted-segmentation Runtime pass; a real SAM Worker is not configured. |
 | 4. Unavailable SAM becomes setup alternative | open | Builder has availability concepts; exact safe fallback test pending. |
 | 5. Provider failure does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
 | 6. No candidate does not suggest SAM | open | Failure classifier exists; Agent behavior test pending. |
@@ -14,20 +14,22 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 8. Bbox edit creates geometry evidence | open | Manual geometry helpers exist; durable lineage record pending. |
 | 9. Calibration can pass with sufficient evidence | open | Not implemented. |
 | 10. Configuration changes stale calibration | open | Not implemented. |
-| 11. Qwen-only first Draft requires Review | open | Current published template violates the desired rule. |
+| 11. Qwen-only first Draft requires Review | implemented | Deterministic bbox drafts and the VLM bootstrap template now make Review mandatory; LLM Builder policy is M5. |
 | 12. Registered SAM enables improvement Draft | open | Not implemented end to end. |
 | 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
-| 14. Legacy Workflow remains immutable and new Run is guarded | open | Version immutability exists; safety compatibility pending. |
+| 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
 | 15. Small objects are evaluated separately | open | Existing summary lacks size buckets. |
-| 16. Generic Project remains domain-neutral | open | Must be covered by static and UI tests. |
+| 16. Generic Project remains domain-neutral | verified | Generic Core/Application workflows pass without RoboCup content. |
 
 ## M0 evidence
 
-- Fixture: `workflow::tests::baseline_reproduces_unsafe_vlm_semantic_score_auto_commit`.
+- Historical fixture commit: `93882e7`; current regression:
+  `workflow::tests::unsafe_vlm_semantic_score_auto_commit_is_blocked`.
 - Predicted box: `[0.40, 0.40, 0.30, 0.30]`.
 - Human reference: `[0.48, 0.48, 0.10, 0.10]`.
 - Declared semantic score: `0.99`; geometry: `coarse_hypothesis`.
-- Legacy result: validation report is valid and contains no geometry-safety blocker.
+- M0 result: validation was valid and had no geometry-safety blocker. M2 retains the same graph and
+  now requires four exact blocking codes.
 - Verification: `cargo test -p annotagent-core` passed all 74 Core tests; formatting and diff
   whitespace checks passed.
 
@@ -48,3 +50,20 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
   conservative defaults.
 - `/api/model-profiles/:modelId/quality-contracts` exposes effective revision-bound contracts.
 - Provider test proves new VLM Detection output is `semantic_confidence` and `coarse_hypothesis`.
+
+## M2 evidence
+
+- `ProjectGeometryPolicy::conservative_default` maps bbox tasks to `TrainingBoundingBox` and
+  `RefinerOrReview`.
+- Static validation emits `semantic_score_used_as_geometry_evidence`,
+  `uncalibrated_geometry_auto_commit`, `geometry_acceptance_path_missing`, and a calibration state
+  error for the former production graph.
+- Separate tests prove mandatory Review and an available
+  Detection → Box Prompt → Prompted Segmentation → Mask to BBox path are legal.
+- Stale calibration emits `geometry_calibration_stale` rather than being silently reused.
+- Draft Dry Runs keep blockers inspectable as non-blocking warnings; publication and new formal Runs
+  enforce them.
+- `unsafe_legacy_workflow_is_immutable_blocked_and_clonable_as_safe_draft` proves historical JSON is
+  unchanged, formal execution is blocked, safe clone creation works, and the replacement snapshot
+  is marked `safe`.
+- Application, Core, Server, RoboCup and 100-image batch/control-plane regressions pass.

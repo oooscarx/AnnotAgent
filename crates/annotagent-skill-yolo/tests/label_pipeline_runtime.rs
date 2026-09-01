@@ -115,6 +115,7 @@ fn workflow(
         resource_versions: BTreeMap::new(),
         runtime_policies: BTreeMap::new(),
         allow_unvalidated_commit: false,
+        geometry_risk_acceptance: None,
         label_pipeline: None,
         created_at: now,
         updated_at: now,
@@ -126,6 +127,7 @@ fn workflow(
         models: Vec::new(),
         model_profiles: Vec::new(),
         prompt_resources: BTreeMap::new(),
+        safety_compatibility: annotagent_core::WorkflowSafetyCompatibility::Safe,
     };
     let content_hash = format!(
         "{:x}",

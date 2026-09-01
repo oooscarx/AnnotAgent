@@ -7,8 +7,108 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DetectionScore, GeometryQualityReportId, GeometrySemantics, ModelCapability, ModelProfile,
-    ModelProfileId, ScoreSemantics, VisionCapability,
+    ModelProfileId, ProjectId, ScoreSemantics, TaskKind, VisionCapability,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequiredGeometryQuality {
+    CoarseLocalization,
+    TrainingBoundingBox,
+    TightBoundingBox,
+    PixelAccurateMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryAutoAcceptPolicy {
+    HumanReviewRequired,
+    RefinerOrReview,
+    CalibrationRequired,
+    ExplicitRiskAcceptance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryCalibrationThresholds {
+    pub minimum_iou: f32,
+    pub maximum_normalized_center_shift: f32,
+    pub minimum_area_ratio: f32,
+    pub maximum_area_ratio: f32,
+    pub minimum_sample_count: u32,
+}
+
+impl Default for GeometryCalibrationThresholds {
+    fn default() -> Self {
+        Self {
+            minimum_iou: 0.70,
+            maximum_normalized_center_shift: 0.05,
+            minimum_area_ratio: 0.75,
+            maximum_area_ratio: 1.35,
+            minimum_sample_count: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGeometryPolicy {
+    pub project_id: ProjectId,
+    pub task_kind: TaskKind,
+    pub required_quality: RequiredGeometryQuality,
+    pub auto_accept_policy: GeometryAutoAcceptPolicy,
+    pub calibration_thresholds: GeometryCalibrationThresholds,
+}
+
+impl ProjectGeometryPolicy {
+    #[must_use]
+    pub fn conservative_default(project_id: ProjectId, task_kind: TaskKind) -> Self {
+        let (required_quality, auto_accept_policy) = match task_kind {
+            TaskKind::BoundingBox => (
+                RequiredGeometryQuality::TrainingBoundingBox,
+                GeometryAutoAcceptPolicy::RefinerOrReview,
+            ),
+            TaskKind::SemanticMask | TaskKind::InstanceMask | TaskKind::Polygon => (
+                RequiredGeometryQuality::PixelAccurateMask,
+                GeometryAutoAcceptPolicy::RefinerOrReview,
+            ),
+            TaskKind::Keypoints | TaskKind::Polyline => (
+                RequiredGeometryQuality::TightBoundingBox,
+                GeometryAutoAcceptPolicy::HumanReviewRequired,
+            ),
+            TaskKind::Classification | TaskKind::Attributes | TaskKind::Relations => (
+                RequiredGeometryQuality::CoarseLocalization,
+                GeometryAutoAcceptPolicy::CalibrationRequired,
+            ),
+        };
+        Self {
+            project_id,
+            task_kind,
+            required_quality,
+            auto_accept_policy,
+            calibration_thresholds: GeometryCalibrationThresholds::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn protects_bounding_boxes(&self) -> bool {
+        matches!(self.task_kind, TaskKind::BoundingBox)
+            && !matches!(
+                self.required_quality,
+                RequiredGeometryQuality::CoarseLocalization
+            )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowSafetyCompatibility {
+    Safe,
+    #[default]
+    RequiresMigration,
+    LegacyRiskAccepted,
+    UnsafeForNewRuns,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -473,5 +573,20 @@ mod tests {
         contract.output_geometry = GeometrySemantics::PredictedGeometry;
         model.quality_contracts.push(contract);
         model.validate().expect("valid user-declared contract");
+    }
+
+    #[test]
+    fn bounding_box_projects_default_to_training_quality_and_refiner_or_review() {
+        let policy =
+            ProjectGeometryPolicy::conservative_default(ProjectId::new(), TaskKind::BoundingBox);
+        assert_eq!(
+            policy.required_quality,
+            RequiredGeometryQuality::TrainingBoundingBox
+        );
+        assert_eq!(
+            policy.auto_accept_policy,
+            GeometryAutoAcceptPolicy::RefinerOrReview
+        );
+        assert!(policy.protects_bounding_boxes());
     }
 }

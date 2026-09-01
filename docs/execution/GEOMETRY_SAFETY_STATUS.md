@@ -4,8 +4,8 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 1 — quality semantics and Model Capability Quality Contracts (implementation and
-verification complete; commit in progress).
+Milestone 2 — static geometry safety (implementation and verification complete; commit in
+progress).
 
 ## Completed
 
@@ -29,21 +29,39 @@ verification complete; commit in progress).
   `SemanticConfidence` and `CoarseHypothesis` instead of masquerading as specialist detections.
 - Added the read-only Model Profile quality-contract API and user-declared override input; server
   binds overrides to the actual Model Profile revision and marks their source truthfully.
+- Added conservative Project Geometry Policy defaults: bounding-box annotation requires training
+  quality and uses Refiner-or-Review acceptance.
+- Geometry-aware Core validation now follows every candidate-source-to-Commit path and rejects
+  score-only acceptance of coarse or uncalibrated predicted geometry.
+- Mandatory Human Review and an available prompted-refinement plus mask-to-bbox chain are legal;
+  missing and stale calibration have distinct blocking codes.
+- `allow_unvalidated_commit` cannot bypass geometry policy.
+- New bbox suggestions and RoboCup Ball templates route uncalibrated geometry through mandatory
+  Review; classification behavior remains unchanged.
+- Published snapshots record safety compatibility. Legacy snapshots remain immutable, are
+  re-assessed before a new formal Run, and unsafe versions fail with `unsafe_legacy_workflow`.
+- Added `Create geometry-safe Draft`, which clones a historical version and inserts mandatory
+  Review boundaries without editing the original version.
 
 ## In progress
 
-- Create the independent M1 commit, then begin M2 policy enforcement.
+- Create the independent M2 local commit, then begin structured Review geometry evidence.
 
 ## Next
 
-- Milestone 2: Project Geometry Policy, static geometry-safe publication and legacy run guards.
+- Milestone 3: structured Review geometry feedback, reports and correction lineage.
 
 ## Recent verification
 
-- Rust: `cargo test -p annotagent-core -p annotagent-provider -p annotagent-server` — passed
-  (79 Core, 44 Provider, 17 Server tests).
-- Workspace: `cargo clippy --workspace --all-targets --all-features -- -D warnings` — passed.
-- Formatting: `cargo fmt --all --check` and `git diff --check` — passed.
+- Rust: `cargo test -p annotagent-core -p annotagent-skill-robocup -p annotagent-server` — passed
+  (83 Core, 17 RoboCup including integration tests, 17 Server tests).
+- Application: all 54 active tests passed; the billable provider smoke test remains explicitly
+  ignored.
+- The 100-image pause/restart/resume regression passed after moving that control-plane fixture to
+  a non-geometric classification Project.
+- Workspace: full Rust tests, all-feature build, all-target/all-feature Clippy with warnings denied,
+  formatting and diff checks passed.
+- Web: TypeScript, 41 unit tests, and production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -52,10 +70,11 @@ verification complete; commit in progress).
 ## Recent local commit
 
 - `93882e7 test(geometry): reproduce unsafe vlm bbox auto-acceptance` (M0).
+- `291f20c feat(models): separate semantic confidence from geometry quality` (M1).
 
 ## Release-blocking remainder
 
-- M2 through M8 remain open. M1 acceptance evidence is implemented and verified.
+- M3 through M8 remain open. M2 acceptance evidence is implemented and verified.
 
 ## Live-conditional items
 

@@ -10,6 +10,7 @@ use crate::{
     AgentBudget, ArtifactKind, DetectionFallbackQuery, DetectionRecoveryPolicy, EvidenceAcceptRule,
     EvidenceFallbackRule, LabelId, ModelAvailabilityStatus, ModelRegistry, NodeRegistry,
     ProjectSchema, TaskId, TaskKind, ValidationCatalog, VisionCapability, VisionModelDescriptor,
+    WorkflowSafetyCompatibility,
 };
 
 pub const WORKFLOW_SCHEMA_VERSION: u32 = 2;
@@ -197,6 +198,10 @@ pub struct WorkflowDraft {
     pub runtime_policies: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub allow_unvalidated_commit: bool,
+    /// Explicit, immutable-on-publication acknowledgement for Projects whose policy permits a
+    /// bounded geometry risk exception. Conservative Project defaults do not permit this path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_risk_acceptance: Option<GeometryRiskAcceptance>,
     /// Optional authoring projection for label-oriented workflows. Runtime execution remains the
     /// compiled, flat `nodes`/`edges` DAG so shared stages execute once per image.
     #[serde(default)]
@@ -241,10 +246,29 @@ impl WorkflowTemplate {
             resource_versions: self.resource_versions.clone(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: self.allow_unvalidated_commit,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryRiskAcceptance {
+    pub approved_by: String,
+    pub reason: String,
+    pub policy_revision: u64,
+    pub approved_at: DateTime<Utc>,
+}
+
+impl GeometryRiskAcceptance {
+    #[must_use]
+    pub fn is_auditable(&self) -> bool {
+        !self.approved_by.trim().is_empty()
+            && !self.reason.trim().is_empty()
+            && self.policy_revision > 0
     }
 }
 
@@ -555,6 +579,10 @@ pub struct WorkflowSnapshot {
     pub model_profiles: Vec<crate::ModelProfileSnapshot>,
     #[serde(default)]
     pub prompt_resources: BTreeMap<String, String>,
+    /// Old snapshots deserialize conservatively as `RequiresMigration`; new publication records
+    /// the result of geometry-aware static validation without rewriting historical versions.
+    #[serde(default)]
+    pub safety_compatibility: WorkflowSafetyCompatibility,
 }
 
 impl WorkflowSnapshot {
@@ -582,6 +610,7 @@ impl WorkflowSnapshot {
             models: model_snapshots,
             model_profiles: Vec::new(),
             prompt_resources: draft.resource_versions.clone(),
+            safety_compatibility: WorkflowSafetyCompatibility::RequiresMigration,
         }
     }
 
@@ -594,6 +623,15 @@ impl WorkflowSnapshot {
         });
         profiles.dedup_by_key(|profile| (profile.model_profile_id, profile.revision));
         self.model_profiles = profiles;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_safety_compatibility(
+        mut self,
+        compatibility: WorkflowSafetyCompatibility,
+    ) -> Self {
+        self.safety_compatibility = compatibility;
         self
     }
 
@@ -614,10 +652,12 @@ impl WorkflowSnapshot {
             resource_versions: &'a BTreeMap<String, String>,
             runtime_policies: &'a BTreeMap<String, serde_json::Value>,
             allow_unvalidated_commit: bool,
+            geometry_risk_acceptance: &'a Option<GeometryRiskAcceptance>,
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
             model_profiles: &'a [crate::ModelProfileSnapshot],
             prompt_resources: &'a BTreeMap<String, String>,
+            safety_compatibility: WorkflowSafetyCompatibility,
         }
         let Some(draft) = self.draft.as_ref() else {
             return serde_json::to_vec(self);
@@ -631,10 +671,12 @@ impl WorkflowSnapshot {
             resource_versions: &draft.resource_versions,
             runtime_policies: &draft.runtime_policies,
             allow_unvalidated_commit: draft.allow_unvalidated_commit,
+            geometry_risk_acceptance: &draft.geometry_risk_acceptance,
             label_pipeline: &draft.label_pipeline,
             models: &self.models,
             model_profiles: &self.model_profiles,
             prompt_resources: &self.prompt_resources,
+            safety_compatibility: self.safety_compatibility,
         })
     }
 }
@@ -806,7 +848,13 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
         ));
 
         let mut commit_dependency = "validate_candidates".to_owned();
-        if constraints.require_review_gate && node_catalog.get("review_gate").is_some() {
+        let geometry_review_required = project_schema
+            .tasks
+            .iter()
+            .any(|task| task.kind == TaskKind::BoundingBox);
+        if (constraints.require_review_gate || geometry_review_required)
+            && node_catalog.get("review_gate").is_some()
+        {
             nodes.push(system_node(
                 "review_gate",
                 "review_gate",
@@ -876,6 +924,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 resource_versions: BTreeMap::new(),
                 runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
+                geometry_risk_acceptance: None,
                 label_pipeline: None,
                 created_at: now,
                 updated_at: now,
@@ -1206,7 +1255,7 @@ fn suggest_detection_workflow(
             edge(
                 "recovery",
                 "candidates",
-                "commit",
+                "review",
                 "candidates",
                 Some("accept"),
             ),
@@ -1269,6 +1318,7 @@ fn suggest_detection_workflow(
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -1591,6 +1641,154 @@ const fn artifact_for_task(kind: TaskKind) -> ArtifactKind {
     }
 }
 
+/// Model- and revision-bound geometry semantics supplied to static validation by the Application
+/// layer. Calibration is deliberately external evidence rather than a model score.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryNodeSafetyContext {
+    pub node_id: String,
+    pub output_geometry: crate::GeometrySemantics,
+    pub score_semantics: crate::ScoreSemantics,
+    pub auto_accept_eligibility: crate::AutoAcceptEligibility,
+    pub calibration_status: crate::GeometryCalibrationStatus,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GeometrySafetyValidationContext {
+    #[serde(default)]
+    pub project_policies: Vec<crate::ProjectGeometryPolicy>,
+    #[serde(default)]
+    pub node_contracts: Vec<GeometryNodeSafetyContext>,
+}
+
+impl GeometrySafetyValidationContext {
+    #[must_use]
+    pub fn requires_bounding_box_safety(&self) -> bool {
+        self.project_policies
+            .iter()
+            .any(crate::ProjectGeometryPolicy::protects_bounding_boxes)
+    }
+
+    #[must_use]
+    pub fn node(&self, node_id: &str) -> Option<&GeometryNodeSafetyContext> {
+        self.node_contracts
+            .iter()
+            .find(|contract| contract.node_id == node_id)
+    }
+
+    pub fn set_calibration_status(
+        &mut self,
+        node_id: &str,
+        status: crate::GeometryCalibrationStatus,
+    ) {
+        if let Some(contract) = self
+            .node_contracts
+            .iter_mut()
+            .find(|contract| contract.node_id == node_id)
+        {
+            contract.calibration_status = status;
+        }
+    }
+}
+
+/// Builds conservative validation input from immutable Project and Model Profile semantics.
+/// Missing legacy metadata is inferred by operation, never upgraded to calibrated geometry.
+#[must_use]
+pub fn geometry_safety_context(
+    project_id: crate::ProjectId,
+    project: &ProjectSchema,
+    draft: &WorkflowDraft,
+    model_profiles: &[crate::ModelProfileSnapshot],
+) -> GeometrySafetyValidationContext {
+    let project_policies = project
+        .tasks
+        .iter()
+        .map(|task| crate::ProjectGeometryPolicy::conservative_default(project_id, task.kind))
+        .collect();
+    let node_contracts = draft
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let frozen_contract = node
+                .model_profile_binding
+                .as_ref()
+                .and_then(|binding| {
+                    model_profiles
+                        .iter()
+                        .find(|profile| profile.model_profile_id == binding.model_profile_id)
+                })
+                .and_then(|profile| {
+                    profile
+                        .quality_contracts
+                        .iter()
+                        .find(|contract| contract.operation == node.node_type)
+                });
+            let (output_geometry, score_semantics, auto_accept_eligibility, available) =
+                if let Some(contract) = frozen_contract {
+                    (
+                        contract.output_geometry,
+                        contract.score_semantics,
+                        contract.auto_accept_eligibility,
+                        true,
+                    )
+                } else {
+                    legacy_operation_quality(&node.node_type)?
+                };
+            Some(GeometryNodeSafetyContext {
+                node_id: node.id.clone(),
+                output_geometry,
+                score_semantics,
+                auto_accept_eligibility,
+                calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
+                available,
+            })
+        })
+        .collect();
+    GeometrySafetyValidationContext {
+        project_policies,
+        node_contracts,
+    }
+}
+
+fn legacy_operation_quality(
+    operation: &str,
+) -> Option<(
+    crate::GeometrySemantics,
+    crate::ScoreSemantics,
+    crate::AutoAcceptEligibility,
+    bool,
+)> {
+    match operation {
+        "vlm_detection.detect" | "vision_language" => Some((
+            crate::GeometrySemantics::CoarseHypothesis,
+            crate::ScoreSemantics::SemanticConfidence,
+            crate::AutoAcceptEligibility::NeverFromScoreAlone,
+            true,
+        )),
+        "capability.detect"
+        | "capability.detect_open_vocabulary"
+        | "capability.ground"
+        | "object_detection.detect"
+        | "open_vocabulary.detect"
+        | "phrase_grounding.detect"
+        | "yolo.detect" => Some((
+            crate::GeometrySemantics::PredictedGeometry,
+            crate::ScoreSemantics::DetectionConfidence,
+            crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            true,
+        )),
+        "capability.segment" | "sam_prompted_refiner" => Some((
+            crate::GeometrySemantics::RefinedGeometry,
+            crate::ScoreSemantics::NotProvided,
+            crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            false,
+        )),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WorkflowStaticValidator;
 
@@ -1821,6 +2019,255 @@ impl WorkflowStaticValidator {
             execution_order,
         }
     }
+
+    /// Adds Project- and model-revision-aware geometry safety to ordinary graph validation.
+    /// Callers that can publish or start a new production Run must use this entry point.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_for_publish_with_geometry(
+        &self,
+        draft: &WorkflowDraft,
+        node_catalog: &NodeRegistry,
+        model_registry: &ModelRegistry,
+        extensions: &ValidationCatalog,
+        enabled_skills: &BTreeSet<String>,
+        publishing: bool,
+        geometry: &GeometrySafetyValidationContext,
+    ) -> WorkflowValidationReport {
+        let mut report = self.validate_for_publish(
+            draft,
+            node_catalog,
+            model_registry,
+            extensions,
+            enabled_skills,
+            publishing,
+        );
+        validate_geometry_commit_safety(draft, geometry, &mut report.issues, publishing);
+        report.valid = report.issues.iter().all(|issue| !issue.blocking);
+        report
+    }
+}
+
+#[must_use]
+pub fn workflow_safety_compatibility(
+    draft: &WorkflowDraft,
+    geometry: &GeometrySafetyValidationContext,
+) -> WorkflowSafetyCompatibility {
+    let mut issues = Vec::new();
+    validate_geometry_commit_safety(draft, geometry, &mut issues, true);
+    if issues.iter().any(|issue| issue.blocking) {
+        WorkflowSafetyCompatibility::UnsafeForNewRuns
+    } else if draft
+        .geometry_risk_acceptance
+        .as_ref()
+        .is_some_and(GeometryRiskAcceptance::is_auditable)
+    {
+        WorkflowSafetyCompatibility::LegacyRiskAccepted
+    } else {
+        WorkflowSafetyCompatibility::Safe
+    }
+}
+
+fn validate_geometry_commit_safety(
+    draft: &WorkflowDraft,
+    geometry: &GeometrySafetyValidationContext,
+    issues: &mut Vec<WorkflowValidationIssue>,
+    blocking: bool,
+) {
+    if !geometry.requires_bounding_box_safety() {
+        return;
+    }
+    let first_geometry_issue = issues.len();
+    let commits = draft
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == WorkflowNodeKind::Commit)
+        .collect::<Vec<_>>();
+    for source in draft.nodes.iter().filter(|node| {
+        geometry.node(&node.id).is_some_and(|contract| {
+            matches!(
+                contract.output_geometry,
+                crate::GeometrySemantics::CoarseHypothesis
+                    | crate::GeometrySemantics::PredictedGeometry
+            ) && !contract.calibration_status.permits_calibrated_acceptance()
+        })
+    }) {
+        let Some(contract) = geometry.node(&source.id) else {
+            continue;
+        };
+        for (commit_index, commit) in &commits {
+            if !path_exists(draft, &source.id, &commit.id, None) {
+                continue;
+            }
+            let mandatory_review = draft.nodes.iter().any(|node| {
+                node.kind == WorkflowNodeKind::HumanReview
+                    && node_dominates_path(draft, &source.id, &commit.id, &node.id)
+            });
+            let available_refiner = draft.nodes.iter().any(|node| {
+                geometry.node(&node.id).is_some_and(|node_contract| {
+                    node_contract.available
+                        && node_contract.output_geometry.is_refined()
+                        && node_dominates_path(draft, &source.id, &commit.id, &node.id)
+                        && draft.nodes.iter().any(|conversion| {
+                            conversion.node_type == "core.mask_to_bbox"
+                                && node_dominates_path(draft, &node.id, &commit.id, &conversion.id)
+                        })
+                })
+            });
+            let geometry_evaluation = draft.nodes.iter().any(|evaluation| {
+                evaluation.node_type == "core.geometry_quality_evaluation"
+                    && node_dominates_path(draft, &source.id, &commit.id, &evaluation.id)
+                    && draft.nodes.iter().any(|decision| {
+                        decision.node_type == "core.geometry_decision"
+                            && node_dominates_path(draft, &evaluation.id, &commit.id, &decision.id)
+                    })
+            });
+            let calibrated = contract.calibration_status.permits_calibrated_acceptance();
+            let risk_accepted = draft
+                .geometry_risk_acceptance
+                .as_ref()
+                .is_some_and(GeometryRiskAcceptance::is_auditable);
+            let policy_allows = geometry.project_policies.iter().all(|policy| {
+                if !policy.protects_bounding_boxes() {
+                    return true;
+                }
+                match policy.auto_accept_policy {
+                    crate::GeometryAutoAcceptPolicy::HumanReviewRequired => mandatory_review,
+                    crate::GeometryAutoAcceptPolicy::RefinerOrReview => {
+                        mandatory_review || available_refiner || geometry_evaluation || calibrated
+                    }
+                    crate::GeometryAutoAcceptPolicy::CalibrationRequired => {
+                        mandatory_review || geometry_evaluation || calibrated
+                    }
+                    crate::GeometryAutoAcceptPolicy::ExplicitRiskAcceptance => {
+                        mandatory_review
+                            || available_refiner
+                            || geometry_evaluation
+                            || calibrated
+                            || risk_accepted
+                    }
+                }
+            });
+            if policy_allows {
+                continue;
+            }
+
+            let path = format!("nodes[{commit_index}]");
+            if contract.score_semantics.is_semantic()
+                && draft.nodes.iter().any(|node| {
+                    node.kind == WorkflowNodeKind::Gate
+                        && node_dominates_path(draft, &source.id, &commit.id, &node.id)
+                })
+            {
+                push_unique_issue(
+                    issues,
+                    issue(
+                        "semantic_score_used_as_geometry_evidence",
+                        &path,
+                        "semantic or relative confidence cannot prove bounding-box localization quality",
+                    ),
+                );
+            }
+            match contract.calibration_status {
+                crate::GeometryCalibrationStatus::Stale => push_unique_issue(
+                    issues,
+                    issue(
+                        "geometry_calibration_stale",
+                        &path,
+                        "the geometry calibration does not match the current Project, model revision, prompt, preprocessing, and node configuration",
+                    ),
+                ),
+                crate::GeometryCalibrationStatus::Uncalibrated
+                | crate::GeometryCalibrationStatus::CollectingEvidence
+                | crate::GeometryCalibrationStatus::Provisional
+                | crate::GeometryCalibrationStatus::Failed => push_unique_issue(
+                    issues,
+                    issue(
+                        "geometry_calibration_missing",
+                        &path,
+                        "no passing geometry calibration is available for this exact Project and model/node revision",
+                    ),
+                ),
+                crate::GeometryCalibrationStatus::Passed => {}
+            }
+            if draft.nodes.iter().any(|node| {
+                geometry.node(&node.id).is_some_and(|node_contract| {
+                    node_contract.output_geometry.is_refined() && !node_contract.available
+                })
+            }) {
+                push_unique_issue(
+                    issues,
+                    issue(
+                        "geometry_refiner_unavailable",
+                        &path,
+                        "the configured geometry refiner is not available and cannot protect the Commit path",
+                    ),
+                );
+            }
+            push_unique_issue(
+                issues,
+                issue(
+                    "uncalibrated_geometry_auto_commit",
+                    &path,
+                    "coarse or uncalibrated predicted geometry cannot enter Commit without mandatory Review, an available refiner, geometry evaluation, valid calibration, or policy-authorized risk acceptance",
+                ),
+            );
+            push_unique_issue(
+                issues,
+                issue(
+                    "geometry_acceptance_path_missing",
+                    &path,
+                    "the bounding-box Project has no geometry-safe acceptance path to Commit",
+                ),
+            );
+        }
+    }
+    if !blocking {
+        for issue in &mut issues[first_geometry_issue..] {
+            issue.blocking = false;
+        }
+    }
+}
+
+fn push_unique_issue(
+    issues: &mut Vec<WorkflowValidationIssue>,
+    candidate: WorkflowValidationIssue,
+) {
+    if !issues
+        .iter()
+        .any(|issue| issue.code == candidate.code && issue.path == candidate.path)
+    {
+        issues.push(candidate);
+    }
+}
+
+fn node_dominates_path(draft: &WorkflowDraft, from: &str, to: &str, candidate: &str) -> bool {
+    candidate != from
+        && candidate != to
+        && path_exists(draft, from, candidate, None)
+        && path_exists(draft, candidate, to, None)
+        && !path_exists(draft, from, to, Some(candidate))
+}
+
+fn path_exists(draft: &WorkflowDraft, from: &str, to: &str, excluded: Option<&str>) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut queue = VecDeque::from([from.to_owned()]);
+    let mut visited = BTreeSet::from([from.to_owned()]);
+    while let Some(current) = queue.pop_front() {
+        for next in outgoing_nodes(draft, &current) {
+            if excluded == Some(next.as_str()) || !visited.insert(next.clone()) {
+                continue;
+            }
+            if next == to {
+                return true;
+            }
+            queue.push_back(next);
+        }
+    }
+    false
 }
 
 fn requests_visual_prompt(parameters: &BTreeMap<String, serde_json::Value>) -> bool {
@@ -2291,6 +2738,7 @@ mod tests {
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -2454,14 +2902,70 @@ export:
         models
     }
 
-    /// Milestone-0 regression fixture for the production `RoboCup` failure mode.
-    ///
-    /// The coarse VLM proposal carries a high semantic score and passes through a domain
-    /// validator before a generic confidence gate. The current validator mistakes the presence
-    /// of any Validator for a safe Commit path, even though no geometry evidence or mandatory
-    /// review exists. Milestone 2 changes this fixture to require a geometry-safety error.
+    fn geometry_policy_context(
+        calibration_status: crate::GeometryCalibrationStatus,
+    ) -> GeometrySafetyValidationContext {
+        GeometrySafetyValidationContext {
+            project_policies: vec![crate::ProjectGeometryPolicy::conservative_default(
+                crate::ProjectId::new(),
+                TaskKind::BoundingBox,
+            )],
+            node_contracts: vec![GeometryNodeSafetyContext {
+                node_id: "detector".to_owned(),
+                output_geometry: crate::GeometrySemantics::CoarseHypothesis,
+                score_semantics: crate::ScoreSemantics::SemanticConfidence,
+                auto_accept_eligibility: crate::AutoAcceptEligibility::NeverFromScoreAlone,
+                calibration_status,
+                available: true,
+            }],
+        }
+    }
+
+    fn simple_geometry_workflow(
+        middle: &[(&str, &str, WorkflowNodeKind)],
+    ) -> (WorkflowDraft, NodeRegistry) {
+        let mut image = node("image", WorkflowNodeKind::ImageInput);
+        image.node_type = "core.image_input".to_owned();
+        let mut detector = node("detector", WorkflowNodeKind::VisionLanguageModel);
+        detector.node_type = "vlm_detection.detect".to_owned();
+        detector.depends_on = vec!["image".to_owned()];
+        detector.model_profile_binding = Some(crate::WorkflowModelBinding {
+            model_profile_id: crate::ModelProfileId::new(),
+            locked: true,
+        });
+        let mut nodes = vec![image, detector];
+        let mut previous = "detector".to_owned();
+        for (id, operation, kind) in middle {
+            let mut next = node(id, *kind);
+            next.node_type = (*operation).to_owned();
+            next.depends_on = vec![previous];
+            previous = (*id).to_owned();
+            nodes.push(next);
+        }
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.node_type = "commit".to_owned();
+        commit.depends_on = vec![previous];
+        nodes.push(commit);
+        let mut operations = vec![
+            ("core.image_input", Vec::new()),
+            (
+                "vlm_detection.detect",
+                vec![VisionCapability::VisionLanguage],
+            ),
+            ("commit", Vec::new()),
+        ];
+        operations.extend(
+            middle
+                .iter()
+                .map(|(_, operation, _)| (*operation, Vec::new())),
+        );
+        (draft(nodes, Vec::new()), catalog(&operations))
+    }
+
+    /// Milestone-0 regression fixture for the production `RoboCup` failure mode, now retained as
+    /// proof that Milestone 2 blocks the formerly accepted graph.
     #[test]
-    fn baseline_reproduces_unsafe_vlm_semantic_score_auto_commit() {
+    fn unsafe_vlm_semantic_score_auto_commit_is_blocked() {
         let port = |id: &str, artifact_type| NodePort {
             id: id.to_owned(),
             artifact_type,
@@ -2553,7 +3057,21 @@ export:
         );
         workflow.allow_unvalidated_commit = false;
 
-        let report = WorkflowStaticValidator.validate_for_publish(
+        let geometry = GeometrySafetyValidationContext {
+            project_policies: vec![crate::ProjectGeometryPolicy::conservative_default(
+                crate::ProjectId::new(),
+                TaskKind::BoundingBox,
+            )],
+            node_contracts: vec![GeometryNodeSafetyContext {
+                node_id: "detector".to_owned(),
+                output_geometry: crate::GeometrySemantics::CoarseHypothesis,
+                score_semantics: crate::ScoreSemantics::SemanticConfidence,
+                auto_accept_eligibility: crate::AutoAcceptEligibility::NeverFromScoreAlone,
+                calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
+                available: true,
+            }],
+        };
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
             &workflow,
             &catalog(&[
                 ("core.image_input", Vec::new()),
@@ -2570,19 +3088,109 @@ export:
             &ValidationCatalog::default(),
             &BTreeSet::new(),
             true,
+            &geometry,
         );
 
+        assert!(!report.valid, "unsafe geometry must block publication");
+        for code in [
+            "semantic_score_used_as_geometry_evidence",
+            "uncalibrated_geometry_auto_commit",
+            "geometry_acceptance_path_missing",
+            "geometry_calibration_missing",
+        ] {
+            assert!(
+                report.issues.iter().any(|issue| issue.code == code),
+                "missing {code}: {:#?}",
+                report.issues
+            );
+        }
+    }
+
+    #[test]
+    fn mandatory_human_review_is_a_legal_geometry_path() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            ("validator", "static_validator", WorkflowNodeKind::Validator),
+            ("review", "core.human_review", WorkflowNodeKind::HumanReview),
+        ]);
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry_policy_context(crate::GeometryCalibrationStatus::Uncalibrated),
+        );
         assert!(
             report.valid,
-            "baseline should reproduce the old unsafe acceptance: {:#?}",
+            "mandatory Review must be legal: {:#?}",
             report.issues
         );
-        assert!(!report.issues.iter().any(|issue| {
-            matches!(
-                issue.code.as_str(),
-                "semantic_score_used_as_geometry_evidence" | "uncalibrated_geometry_auto_commit"
-            )
-        }));
+    }
+
+    #[test]
+    fn available_prompted_refiner_with_mask_conversion_is_a_legal_geometry_path() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            (
+                "prompts",
+                "core.detections_to_box_prompts",
+                WorkflowNodeKind::Transform,
+            ),
+            (
+                "segment",
+                "capability.segment",
+                WorkflowNodeKind::VisionModel,
+            ),
+            ("bbox", "core.mask_to_bbox", WorkflowNodeKind::Transform),
+            ("validator", "static_validator", WorkflowNodeKind::Validator),
+        ]);
+        let mut geometry = geometry_policy_context(crate::GeometryCalibrationStatus::Uncalibrated);
+        geometry.node_contracts.push(GeometryNodeSafetyContext {
+            node_id: "segment".to_owned(),
+            output_geometry: crate::GeometrySemantics::RefinedGeometry,
+            score_semantics: crate::ScoreSemantics::NotProvided,
+            auto_accept_eligibility: crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
+            available: true,
+        });
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry,
+        );
+        assert!(
+            report.valid,
+            "available refiner must be legal: {:#?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn stale_geometry_calibration_is_reported_and_blocks_publish() {
+        let (workflow, nodes) = simple_geometry_workflow(&[
+            ("validator", "static_validator", WorkflowNodeKind::Validator),
+            ("gate", "core.confidence_gate", WorkflowNodeKind::Gate),
+        ]);
+        let report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            &workflow,
+            &nodes,
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+            &geometry_policy_context(crate::GeometryCalibrationStatus::Stale),
+        );
+        assert!(!report.valid);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "geometry_calibration_stale")
+        );
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub enum ScoreSemantics {
 impl ScoreSemantics {
     #[must_use]
     pub const fn is_semantic(self) -> bool {
-        matches!(self, Self::SemanticConfidence)
+        matches!(self, Self::SemanticConfidence | Self::RelativeConfidence)
     }
 
     #[must_use]

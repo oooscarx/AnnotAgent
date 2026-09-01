@@ -2486,6 +2486,93 @@ fn task_kind_name(kind: annotagent_core::TaskKind) -> String {
     .to_owned()
 }
 
+fn add_mandatory_geometry_review_boundaries(draft: &mut WorkflowDraft) -> Result<()> {
+    let commits = draft
+        .nodes
+        .iter()
+        .filter(|node| node.kind == WorkflowNodeKind::Commit)
+        .cloned()
+        .collect::<Vec<_>>();
+    for commit in commits {
+        let base = format!("{}.geometry_review", commit.id);
+        let mut review_id = base.clone();
+        let mut suffix = 2_u32;
+        while draft.nodes.iter().any(|node| node.id == review_id) {
+            review_id = format!("{base}_{suffix}");
+            suffix = suffix.saturating_add(1);
+        }
+        let ports = if commit.inputs.is_empty() {
+            vec![annotagent_core::NodePort {
+                id: "candidates".to_owned(),
+                artifact_type: ArtifactKind::AnnotationCandidateSet,
+                required: true,
+                multiple: true,
+            }]
+        } else {
+            commit.inputs.clone()
+        };
+        let review = annotagent_core::WorkflowDraftNode {
+            id: review_id.clone(),
+            node_type: "core.human_review".to_owned(),
+            kind: WorkflowNodeKind::HumanReview,
+            depends_on: commit.depends_on.clone(),
+            inputs: ports.clone(),
+            outputs: ports.clone(),
+            model_binding: None,
+            model_profile_binding: None,
+            unresolved_model_requirement: None,
+            required_skills: Vec::new(),
+            validators: Vec::new(),
+            refiners: Vec::new(),
+            fallback: None,
+            max_retries: 0,
+            review_gate: true,
+            parameters: BTreeMap::from([(
+                "reason".to_owned(),
+                serde_json::json!("geometry_verification_required"),
+            )]),
+            retry_policy: RetryPolicy::default(),
+            fallback_policy: annotagent_core::FallbackPolicy::default(),
+            gate: ReviewGate {
+                required: true,
+                allow_manual_override: false,
+            },
+            resources: ResourceRequirements::default(),
+        };
+        let mut rewired = false;
+        for edge in draft
+            .edges
+            .iter_mut()
+            .filter(|edge| edge.to_node == commit.id)
+        {
+            edge.to_node.clone_from(&review_id);
+            rewired = true;
+        }
+        if rewired {
+            draft
+                .edges
+                .extend(ports.iter().map(|port| annotagent_core::WorkflowEdge {
+                    from_node: review_id.clone(),
+                    from_port: port.id.clone(),
+                    to_node: commit.id.clone(),
+                    to_port: port.id.clone(),
+                    route: None,
+                }));
+        } else if let Some(commit_node) = draft.nodes.iter_mut().find(|node| node.id == commit.id) {
+            commit_node.depends_on = vec![review_id.clone()];
+        }
+        draft.nodes.push(review);
+    }
+    if draft
+        .nodes
+        .iter()
+        .all(|node| node.kind != WorkflowNodeKind::Commit)
+    {
+        bail!("geometry-safe migration requires at least one Commit node");
+    }
+    Ok(())
+}
+
 fn compatibility_workflow(
     project: &ProjectSchema,
     skills: &[Arc<dyn DomainSkill>],
@@ -4025,8 +4112,38 @@ fn controlled_label_composition(
                 },
                 ArtifactKind::DetectionSet,
             );
+            let review_id = format!("{target_task_id}.{target_label}.geometry_review");
+            let review_step = PipelineStep {
+                id: review_id.clone(),
+                node_type: "core.human_review".to_owned(),
+                kind: WorkflowNodeKind::HumanReview,
+                inputs: BTreeMap::from([(
+                    "candidates".to_owned(),
+                    PipelineSource::Step {
+                        step_id: gate_id.clone(),
+                        port: "candidates".to_owned(),
+                        artifact_type: ArtifactKind::DetectionSet,
+                    },
+                )]),
+                outputs: BTreeMap::from([("candidates".to_owned(), ArtifactKind::DetectionSet)]),
+                model_binding: None,
+                skill_binding: None,
+                parameters: BTreeMap::from([(
+                    "reason".to_owned(),
+                    json!("geometry_verification_required"),
+                )]),
+                validators: Vec::new(),
+                refiners: Vec::new(),
+                fallback: None,
+                retry_policy: RetryPolicy::default(),
+                review_gate: ReviewGate {
+                    required: true,
+                    allow_manual_override: false,
+                },
+                resources: ResourceRequirements::default(),
+            };
             let commit_step = commit(PipelineSource::Step {
-                step_id: gate_id,
+                step_id: review_id,
                 port: "candidates".to_owned(),
                 artifact_type: ArtifactKind::DetectionSet,
             });
@@ -4036,7 +4153,7 @@ fn controlled_label_composition(
                     name: "Shared detector".to_owned(),
                     steps: vec![detector],
                 }],
-                vec![filter, gate_step, commit_step],
+                vec![filter, gate_step, review_step, commit_step],
             )
         }
         other => bail!(
@@ -7537,6 +7654,7 @@ impl LocalApplication {
                 resource_versions: BTreeMap::new(),
                 runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
+                geometry_risk_acceptance: None,
                 label_pipeline: None,
                 created_at: now,
                 updated_at: now,
@@ -11215,6 +11333,45 @@ impl LocalApplication {
         self.save_workflow_draft(draft)
     }
 
+    /// Clones an immutable version and inserts a mandatory Human Review boundary before every
+    /// Commit when its historical geometry path is unsafe for new production Runs.
+    pub fn create_geometry_safe_draft(
+        &self,
+        workflow_id: &str,
+        version: u32,
+    ) -> Result<WorkflowDraft> {
+        let published = self
+            .store
+            .get_published_workflow_version(workflow_id, version)?;
+        let project_path = self.project_path(&published.project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let geometry_context = annotagent_core::geometry_safety_context(
+            stable_project_id(project_path.parent().unwrap_or(&self.workspace)),
+            &project,
+            &published.draft,
+            &published.snapshot.model_profiles,
+        );
+        let unsafe_geometry =
+            annotagent_core::workflow_safety_compatibility(&published.draft, &geometry_context)
+                == annotagent_core::WorkflowSafetyCompatibility::UnsafeForNewRuns;
+
+        let now = chrono::Utc::now();
+        let mut draft = published.draft;
+        draft.id = uuid::Uuid::new_v4().to_string();
+        draft.name = format!("{} (geometry-safe from v{version})", draft.name);
+        draft.status = WorkflowDraftStatus::Editing;
+        draft.geometry_risk_acceptance = None;
+        draft.created_at = now;
+        draft.updated_at = now;
+        if unsafe_geometry {
+            add_mandatory_geometry_review_boundaries(&mut draft)?;
+            // The executable DAG is authoritative for a migrated legacy version. Keeping an old
+            // authoring projection would recompile and silently discard the inserted boundary.
+            draft.label_pipeline = None;
+        }
+        self.save_workflow_draft(draft)
+    }
+
     fn validate_workflow_draft(
         &self,
         draft: &WorkflowDraft,
@@ -11231,14 +11388,6 @@ impl LocalApplication {
             .collect::<BTreeSet<_>>();
         let enabled_skill_ids = enabled_skills.iter().cloned().collect::<Vec<_>>();
         let validation_catalog = self.skills.validation_catalog_for(&enabled_skill_ids)?;
-        let mut report = WorkflowStaticValidator.validate_for_publish(
-            draft,
-            &nodes,
-            &models,
-            &validation_catalog,
-            &enabled_skills,
-            require_publish_ready,
-        );
         let model_profiles = self.store.list_model_profiles(None, false)?;
         let providers = self
             .store
@@ -11246,6 +11395,28 @@ impl LocalApplication {
             .into_iter()
             .map(|provider| (provider.id, provider))
             .collect::<BTreeMap<_, _>>();
+        let frozen_profiles = model_profiles
+            .iter()
+            .filter_map(|model| {
+                let provider = providers.get(&model.provider_id)?;
+                ModelProfileSnapshot::frozen(model, provider).ok()
+            })
+            .collect::<Vec<_>>();
+        let geometry_context = annotagent_core::geometry_safety_context(
+            stable_project_id(project_path.parent().unwrap_or(&self.workspace)),
+            &project,
+            draft,
+            &frozen_profiles,
+        );
+        let mut report = WorkflowStaticValidator.validate_for_publish_with_geometry(
+            draft,
+            &nodes,
+            &models,
+            &validation_catalog,
+            &enabled_skills,
+            require_publish_ready,
+            &geometry_context,
+        );
         let definitions = nodes.definitions();
         for node in &draft.nodes {
             let Some(binding) = node.model_profile_binding.as_ref() else {
@@ -12217,13 +12388,21 @@ impl LocalApplication {
         draft.updated_at = chrono::Utc::now();
         let publish_report = self.validate_workflow_draft(&draft, settings, true)?;
         if !publish_report.valid {
-            bail!("workflow has unresolved bindings and cannot be published");
+            let blockers = publish_report
+                .issues
+                .iter()
+                .filter(|issue| issue.blocking)
+                .map(|issue| format!("{}: {}", issue.code, issue.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            bail!("workflow cannot be published: {blockers}");
         }
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
         let (_, models) = workflow_catalog(settings)?;
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
-            .with_model_profiles(model_profiles);
+            .with_model_profiles(model_profiles)
+            .with_safety_compatibility(annotagent_core::WorkflowSafetyCompatibility::Safe);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
         Ok(self
@@ -12465,6 +12644,23 @@ impl LocalApplication {
                     bail!("selected Workflow Version belongs to a different Project");
                 }
                 self.validate_published_registry_models(&published)?;
+                let (project, _) =
+                    load_project_schema_with_registry(&canonical, &self.skills)?;
+                let geometry_context = annotagent_core::geometry_safety_context(
+                    stable_project_id(canonical.parent().unwrap_or(&self.workspace)),
+                    &project,
+                    &published.draft,
+                    &published.snapshot.model_profiles,
+                );
+                if annotagent_core::workflow_safety_compatibility(
+                    &published.draft,
+                    &geometry_context,
+                ) == annotagent_core::WorkflowSafetyCompatibility::UnsafeForNewRuns
+                {
+                    bail!(
+                        "unsafe_legacy_workflow: new production Runs are blocked because this immutable Workflow Version can auto-commit uncalibrated bounding-box geometry; create a geometry-safe Draft or use Sandbox Replay"
+                    );
+                }
                 Ok(published)
             })
             .transpose()?;
@@ -13790,6 +13986,12 @@ fn add_crop_verification_revision(
         .find(|step| step.kind == WorkflowNodeKind::Commit)
         .cloned()
         .ok_or_else(|| anyhow!("Crop verification requires a Commit step"))?;
+    let review = pipeline
+        .steps
+        .iter()
+        .find(|step| step.kind == WorkflowNodeKind::HumanReview)
+        .cloned()
+        .ok_or_else(|| anyhow!("Crop verification requires a geometry Review step"))?;
     let prefix = format!("{target_task_id}.{target_label}.crop_verify");
     let crop = PipelineStep {
         id: format!("{prefix}.crop"),
@@ -13915,8 +14117,8 @@ fn add_crop_verification_revision(
         "threshold".to_owned(),
         json!(project.review.auto_accept_confidence.min(0.9)),
     );
-    let mut revised_commit = commit;
-    revised_commit.inputs = BTreeMap::from([(
+    let mut revised_review = review;
+    revised_review.inputs = BTreeMap::from([(
         "candidates".to_owned(),
         PipelineSource::Step {
             step_id: revised_gate.id.clone(),
@@ -13924,15 +14126,40 @@ fn add_crop_verification_revision(
             artifact_type: ArtifactKind::AnnotationCandidateSet,
         },
     )]);
+    revised_review.outputs = BTreeMap::from([(
+        "candidates".to_owned(),
+        ArtifactKind::AnnotationCandidateSet,
+    )]);
+    let mut revised_commit = commit;
+    revised_commit.inputs = BTreeMap::from([(
+        "candidates".to_owned(),
+        PipelineSource::Step {
+            step_id: revised_review.id.clone(),
+            port: "candidates".to_owned(),
+            artifact_type: ArtifactKind::AnnotationCandidateSet,
+        },
+    )]);
     let revised_gate_id = revised_gate.id.clone();
+    let revised_review_id = revised_review.id.clone();
     let revised_commit_id = revised_commit.id.clone();
     let pipeline = &mut composition.label_pipelines[pipeline_index];
     pipeline.steps = pipeline
         .steps
         .iter()
-        .filter(|step| step.id != revised_gate_id && step.id != revised_commit_id)
+        .filter(|step| {
+            step.id != revised_gate_id
+                && step.id != revised_review_id
+                && step.id != revised_commit_id
+        })
         .cloned()
-        .chain([crop, classifier, attach, revised_gate, revised_commit])
+        .chain([
+            crop,
+            classifier,
+            attach,
+            revised_gate,
+            revised_review,
+            revised_commit,
+        ])
         .collect();
 
     let old = suggestion.draft.clone();
@@ -15579,6 +15806,7 @@ export:
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -16186,14 +16414,19 @@ export:
             )
             .expect("selected Published Workflow Run");
         let result = application.wait_run(started.run_id).await.expect("DAG Run");
-        assert_eq!(result.status, RunStatus::Completed, "{:#?}", result.issues);
-        assert_eq!(result.committed.len(), 1);
+        assert_eq!(
+            result.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            result.issues
+        );
+        assert!(!result.review_queue.is_empty());
         let history = application
             .store
             .history(started.run_id)
             .expect("persisted history");
         assert!(history.artifacts.is_empty());
-        assert_eq!(history.annotations.len(), 1);
+        assert_eq!(history.annotations.len(), result.review_queue.len());
         let snapshot: serde_json::Value = serde_json::from_str(
             history
                 .run
@@ -16386,6 +16619,7 @@ export:
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -16656,6 +16890,7 @@ export:
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -16815,6 +17050,7 @@ export:
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -18264,7 +18500,7 @@ export:
                 output_tokens: 5,
             },
         };
-        let gate = "components.component.confidence";
+        let gate = "components.component.geometry_review";
         let commit = "components.component.commit";
         let provider = MockVisionProvider::new(MockScript {
             steps: vec![
@@ -18752,7 +18988,7 @@ export:
             .execute(batch.id, None)
             .await
             .expect("Dataset Batch execution");
-        assert_eq!(execution.batch.status, BatchStatus::Completed);
+        assert_eq!(execution.batch.status, BatchStatus::AwaitingReview);
         assert_eq!(execution.results.len(), 2);
         for result in execution.results {
             let history = application
@@ -19224,7 +19460,12 @@ export:
             .wait_run(started.run_id)
             .await
             .expect("hybrid Run");
-        assert_eq!(run.status, RunStatus::Completed, "{:#?}", run.issues);
+        assert_eq!(
+            run.status,
+            RunStatus::CompletedWithReview,
+            "{:#?}",
+            run.issues
+        );
         let inspection = application
             .inspect_run_pipeline_artifacts(started.run_id)
             .expect("pipeline inspection");
@@ -19232,7 +19473,7 @@ export:
             inspection
                 .nodes
                 .iter()
-                .any(|node| node.node_id == "commit_evidence")
+                .any(|node| node.node_id == "review_evidence")
         );
         assert!(
             !inspection
@@ -19245,13 +19486,17 @@ export:
         let replay = application
             .replay_run_from_node(
                 started.run_id,
-                "commit_evidence",
+                "review_evidence",
                 &load_settings(None).expect("Replay settings"),
             )
             .await
-            .expect("hybrid Commit Replay");
+            .expect("hybrid Review Replay");
         assert!(replay.sandbox);
-        assert_eq!(replay.reexecuted_nodes, ["commit_evidence"]);
+        assert!(
+            replay
+                .reexecuted_nodes
+                .contains(&"review_evidence".to_owned())
+        );
         for upstream in ["specialist", "validate_primary", "recovery"] {
             assert!(
                 replay
@@ -19268,8 +19513,8 @@ export:
                 .expect("history after sandbox Replay")
                 .annotations
                 .len(),
-            1,
-            "sandbox Replay must not duplicate a committed Annotation"
+            run.review_queue.len(),
+            "sandbox Replay must not duplicate a Review Annotation"
         );
 
         let mut fallback_draft = application
@@ -19884,6 +20129,128 @@ export:
     }
 
     #[tokio::test]
+    async fn unsafe_legacy_workflow_is_immutable_blocked_and_clonable_as_safe_draft() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("legacy-geometry", GENERIC_BBOX_PROJECT)
+            .expect("Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary
+                .path()
+                .join("legacy-geometry/images/component.png"),
+        )
+        .expect("image");
+        let settings = load_settings(None).expect("settings");
+        let mut unsafe_draft = application
+            .suggest_workflow(
+                "legacy-geometry",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe suggestion")
+            .draft;
+        let review_ids = unsafe_draft
+            .nodes
+            .iter()
+            .filter(|node| node.kind == WorkflowNodeKind::HumanReview)
+            .map(|node| node.id.clone())
+            .collect::<BTreeSet<_>>();
+        let commit_id = unsafe_draft
+            .nodes
+            .iter()
+            .find(|node| node.kind == WorkflowNodeKind::Commit)
+            .map(|node| node.id.clone())
+            .expect("Commit");
+        let mut bypass_edges = unsafe_draft
+            .edges
+            .iter()
+            .filter(|edge| review_ids.contains(&edge.to_node))
+            .cloned()
+            .collect::<Vec<_>>();
+        for edge in &mut bypass_edges {
+            edge.to_node.clone_from(&commit_id);
+        }
+        unsafe_draft.edges.retain(|edge| {
+            !review_ids.contains(&edge.from_node) && !review_ids.contains(&edge.to_node)
+        });
+        unsafe_draft.edges.extend(bypass_edges);
+        unsafe_draft
+            .nodes
+            .retain(|node| !review_ids.contains(&node.id));
+        unsafe_draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == commit_id)
+            .expect("Commit")
+            .inputs
+            .iter_mut()
+            .for_each(|port| port.multiple = true);
+        unsafe_draft.updated_at = chrono::Utc::now();
+        application
+            .store
+            .save_workflow_draft(&unsafe_draft)
+            .expect("unsafe legacy Draft fixture");
+        let (_, models) = workflow_catalog(&settings).expect("catalog");
+        let legacy_snapshot =
+            WorkflowSnapshot::frozen(&unsafe_draft, &models, unsafe_draft.enabled_skills.clone());
+        assert_eq!(
+            legacy_snapshot.safety_compatibility,
+            annotagent_core::WorkflowSafetyCompatibility::RequiresMigration
+        );
+        let legacy_hash = annotagent_image_tools::sha256(
+            &legacy_snapshot
+                .content_hash_material()
+                .expect("legacy hash material"),
+        );
+        let legacy = application
+            .store
+            .publish_workflow_draft(&unsafe_draft, legacy_hash, legacy_snapshot)
+            .expect("historical publication fixture");
+        let immutable_before = serde_json::to_value(&legacy).expect("immutable snapshot");
+
+        let error = application
+            .start_run_path_with_settings_idempotent_workflow(
+                &temporary.path().join("legacy-geometry/project.yaml"),
+                "mock",
+                settings.clone(),
+                None,
+                Some("unsafe-legacy-run"),
+                Some((&legacy.workflow_id, legacy.version)),
+            )
+            .expect_err("new production Run must be blocked");
+        assert!(error.to_string().contains("unsafe_legacy_workflow"));
+        assert_eq!(
+            serde_json::to_value(
+                application
+                    .store
+                    .get_published_workflow_version(&legacy.workflow_id, legacy.version)
+                    .expect("unchanged legacy version")
+            )
+            .expect("immutable snapshot"),
+            immutable_before
+        );
+
+        let safe_draft = application
+            .create_geometry_safe_draft(&legacy.workflow_id, legacy.version)
+            .expect("geometry-safe Draft");
+        assert!(safe_draft.nodes.iter().any(|node| {
+            node.kind == WorkflowNodeKind::HumanReview
+                && node
+                    .parameters
+                    .get("reason")
+                    .is_some_and(|reason| reason == "geometry_verification_required")
+        }));
+        let safe_version = application
+            .publish_workflow(&safe_draft.id, &settings)
+            .expect("safe publication");
+        assert_eq!(
+            safe_version.snapshot.safety_compatibility,
+            annotagent_core::WorkflowSafetyCompatibility::Safe
+        );
+    }
+
+    #[tokio::test]
     async fn workflow_alpha_editor_journey_is_persistent_and_version_explicit() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -20050,9 +20417,10 @@ export:
         let temp = tempfile::tempdir().expect("temp");
         let workspace = temp.path().join("workspace");
         std::fs::create_dir(&workspace).expect("workspace");
-        let project_yaml = include_str!("../../../examples/robocup-ball-hybrid-mock/project.yaml");
+        let project_yaml = GENERIC_CLASSIFICATION_PROJECT
+            .replace("runtime: {}", "runtime:\n  max_parallel_images: 1");
         let app = Arc::new(LocalApplication::new(&workspace).expect("app"));
-        app.create_project("batch-demo", project_yaml)
+        app.create_project("batch-demo", &project_yaml)
             .expect("project");
         let image_root = workspace.join("batch-demo/images");
         for index in 0..100 {
@@ -20068,33 +20436,13 @@ export:
         let config_path = workspace.join("batch-config.toml");
         std::fs::write(&config_path, config).expect("config");
         let settings = load_settings(Some(&config_path)).expect("hybrid batch settings");
-        let mut draft = app
-            .create_workflow_draft_with_template(
-                "batch-demo",
-                &settings,
-                false,
-                Some("robocup.ball.specialist_with_open_vocab_fallback"),
-            )
-            .expect("hybrid batch Draft");
-        draft
-            .nodes
-            .iter_mut()
-            .find(|node| node.id == "specialist")
-            .expect("specialist")
-            .parameters
-            .insert("mock_confidence".to_owned(), json!(0.92));
-        draft
-            .nodes
-            .iter_mut()
-            .find(|node| node.id == "specialist")
-            .expect("specialist")
-            .parameters
-            .insert("mock_bbox".to_owned(), json!([0.55, 0.72, 0.04, 0.04]));
-        app.save_workflow_draft(draft.clone())
-            .expect("save hybrid batch Draft");
+        let draft = app
+            .suggest_workflow("batch-demo", &settings, &WorkflowConstraints::default())
+            .expect("classification batch Draft")
+            .draft;
         let published = app
             .publish_workflow(&draft.id, &settings)
-            .expect("publish hybrid batch Workflow");
+            .expect("publish classification batch Workflow");
         let coordinator = DatasetCoordinator::new(app.as_ref());
         let batch = coordinator
             .create_with_workflow(

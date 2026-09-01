@@ -291,13 +291,17 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
             select,
             validator,
             gate,
-            node(
-                "review",
-                "review_gate",
-                WorkflowNodeKind::HumanReview,
-                vec![port("detections", ArtifactKind::DetectionSet)],
-                vec![port("detections", ArtifactKind::DetectionSet)],
-            ),
+            {
+                let mut review = node(
+                    "review",
+                    "review_gate",
+                    WorkflowNodeKind::HumanReview,
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                    vec![port("detections", ArtifactKind::DetectionSet)],
+                );
+                review.inputs[0].multiple = true;
+                review
+            },
             {
                 let mut commit = node(
                     "commit",
@@ -315,7 +319,7 @@ fn vlm_bootstrap_template() -> WorkflowTemplate {
             edge("detector", "detections", "select_football", "detections", None),
             edge("select_football", "detections", "validate_ball", "detections", None),
             edge("validate_ball", "detections", "gate", "detections", None),
-            edge("gate", "detections", "commit", "detections", Some("pass")),
+            edge("gate", "detections", "review", "detections", Some("pass")),
             edge("gate", "detections", "review", "detections", Some("review")),
             edge("review", "detections", "commit", "detections", None),
         ],
@@ -538,20 +542,28 @@ fn specialist_fallback_template() -> WorkflowTemplate {
             verify,
             attach,
             verified_gate,
-            node(
-                "review_evidence",
-                "review_gate",
-                WorkflowNodeKind::HumanReview,
-                vec![port("candidates", ArtifactKind::CandidateClusterSet)],
-                vec![port("candidates", ArtifactKind::CandidateClusterSet)],
-            ),
-            node(
-                "review_verified",
-                "review_gate",
-                WorkflowNodeKind::HumanReview,
-                vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
-                vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
-            ),
+            {
+                let mut review = node(
+                    "review_evidence",
+                    "review_gate",
+                    WorkflowNodeKind::HumanReview,
+                    vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+                    vec![port("candidates", ArtifactKind::CandidateClusterSet)],
+                );
+                review.inputs[0].multiple = true;
+                review
+            },
+            {
+                let mut review = node(
+                    "review_verified",
+                    "review_gate",
+                    WorkflowNodeKind::HumanReview,
+                    vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+                    vec![port("candidates", ArtifactKind::AnnotationCandidateSet)],
+                );
+                review.inputs[0].multiple = true;
+                review
+            },
             {
                 let mut commit = node(
                     "commit_evidence",
@@ -594,7 +606,7 @@ fn specialist_fallback_template() -> WorkflowTemplate {
             edge("specialist", "detections", "validate_primary", "detections", None),
             edge("image", "image", "recovery", "image", None),
             edge("validate_primary", "detections", "recovery", "primary", None),
-            edge("recovery", "candidates", "commit_evidence", "candidates", Some("accept")),
+            edge("recovery", "candidates", "review_evidence", "candidates", Some("accept")),
             edge("recovery", "candidates", "review_evidence", "candidates", Some("review")),
             edge("recovery", "candidates", "project_candidates", "candidates", Some("verify")),
             edge("project_candidates", "detections", "validate_recovered", "detections", None),
@@ -608,7 +620,7 @@ fn specialist_fallback_template() -> WorkflowTemplate {
             edge("verify_crop", "classifications", "attach_verified", "classifications", Some("review")),
             edge("verify_crop", "classifications", "reject_hard_negative", "classifications", Some("reject")),
             edge("attach_verified", "candidates", "verified_gate", "candidates", None),
-            edge("verified_gate", "candidates", "commit_verified", "candidates", Some("pass")),
+            edge("verified_gate", "candidates", "review_verified", "candidates", Some("pass")),
             edge("verified_gate", "candidates", "review_verified", "candidates", Some("review")),
             edge("review_verified", "candidates", "commit_verified", "candidates", None),
             edge("review_evidence", "candidates", "commit_evidence", "candidates", None),

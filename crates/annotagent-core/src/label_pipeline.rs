@@ -1529,6 +1529,7 @@ impl LabelWorkflowComposition {
             resource_versions: BTreeMap::new(),
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
             label_pipeline: Some(self.clone()),
             created_at: now,
             updated_at: now,

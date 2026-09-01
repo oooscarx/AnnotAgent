@@ -569,6 +569,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflows/{workflow_id}/versions/{version}/clone",
             post(clone_workflow_version),
         )
+        .route(
+            "/api/workflows/{workflow_id}/versions/{version}/create-geometry-safe-draft",
+            post(create_geometry_safe_draft),
+        )
         .route("/api/workflows/compare", post(compare_workflow_versions))
         .route("/api/models", get(list_models))
         .route("/api/models/{model_id}/test", post(test_detection_worker))
@@ -3217,6 +3221,17 @@ async fn clone_workflow_version(
     let draft = state
         .application
         .clone_workflow_version(&workflow_id, version)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(draft))))
+}
+
+async fn create_geometry_safe_draft(
+    State(state): State<ServerState>,
+    AxumPath((workflow_id, version)): AxumPath<(String, u32)>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let draft = state
+        .application
+        .create_geometry_safe_draft(&workflow_id, version)
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(json!(draft))))
 }

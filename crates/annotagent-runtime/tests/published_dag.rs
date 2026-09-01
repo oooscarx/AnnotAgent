@@ -98,6 +98,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         resource_versions: BTreeMap::from([("prompt".to_owned(), "sha256:test".to_owned())]),
         runtime_policies: BTreeMap::new(),
         allow_unvalidated_commit: false,
+        geometry_risk_acceptance: None,
         label_pipeline: None,
         created_at: now,
         updated_at: now,
@@ -109,6 +110,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         models: Vec::new(),
         model_profiles: Vec::new(),
         prompt_resources: draft.resource_versions.clone(),
+        safety_compatibility: annotagent_core::WorkflowSafetyCompatibility::Safe,
     };
     let content_hash = format!(
         "{:x}",
