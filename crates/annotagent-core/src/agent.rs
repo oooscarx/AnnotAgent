@@ -346,6 +346,14 @@ pub struct AgentSession {
     pub unresolved_bindings: Vec<String>,
     #[serde(default)]
     pub next_action: Option<String>,
+    /// Denormalized progress counters exposed directly by the Agent Session API. `usage` remains
+    /// the canonical accounting record; these fields make refresh/retry UIs unambiguous.
+    #[serde(default)]
+    pub total_tool_calls: u32,
+    #[serde(default)]
+    pub remaining_tool_calls: u32,
+    #[serde(default)]
+    pub reserved_finalization_calls: u32,
     pub usage: AgentUsage,
     pub steps: Vec<AgentToolStep>,
     pub stop_reason: Option<String>,
@@ -358,6 +366,7 @@ impl AgentSession {
     #[must_use]
     pub fn start(kind: AgentKind, budget: AgentBudget) -> Self {
         let now = Utc::now();
+        let remaining_tool_calls = budget.max_tool_calls;
         Self {
             id: Uuid::new_v4(),
             project_id: None,
@@ -380,6 +389,9 @@ impl AgentSession {
             draft_id: None,
             unresolved_bindings: Vec::new(),
             next_action: None,
+            total_tool_calls: 0,
+            remaining_tool_calls,
+            reserved_finalization_calls: 0,
             usage: AgentUsage::default(),
             steps: Vec::new(),
             stop_reason: None,
@@ -417,6 +429,8 @@ impl AgentSession {
         invariant: crate::BuilderProgressInvariant,
     ) -> Self {
         self.phase = Some(crate::PipelineBuilderPhase::ContextLoading);
+        self.remaining_tool_calls = budget.max_total_tool_calls;
+        self.reserved_finalization_calls = budget.reserved_finalization_calls;
         self.builder_budget = Some(budget);
         self.progress_invariant = Some(invariant);
         self.next_action = Some("Load the bounded Pipeline Builder context".to_owned());
@@ -504,6 +518,7 @@ impl AgentSession {
             }
         }
         self.stop_reason = Some(format!("{reason:?}"));
+        self.sync_builder_progress_counters();
         self.updated_at = Utc::now();
     }
 
@@ -532,6 +547,7 @@ impl AgentSession {
         let now = Utc::now();
         self.usage.steps += 1;
         self.usage.tool_calls += 1;
+        self.sync_builder_progress_counters();
         if self.phase.is_some() {
             self.phase_tool_calls = self.phase_tool_calls.saturating_add(1);
         }
@@ -547,6 +563,15 @@ impl AgentSession {
         });
         self.updated_at = Utc::now();
         Ok(())
+    }
+
+    fn sync_builder_progress_counters(&mut self) {
+        self.total_tool_calls = self.usage.tool_calls;
+        self.remaining_tool_calls = self.remaining_builder_tool_calls();
+        self.reserved_finalization_calls = self
+            .builder_budget
+            .as_ref()
+            .map_or(0, |budget| budget.reserved_finalization_calls);
     }
 
     pub fn add_model_usage(&mut self, input_tokens: u64, output_tokens: u64, cost: Decimal) {
@@ -588,14 +613,26 @@ impl AgentSession {
 
     pub fn cancel(&mut self) {
         self.status = AgentSessionStatus::Cancelled;
+        if self.phase.is_some() {
+            self.phase = Some(crate::PipelineBuilderPhase::Cancelled);
+            self.outcome = Some(crate::PipelineBuilderOutcome::Cancelled);
+            self.builder_stop_reason = Some(crate::BuilderStopReason::Cancelled);
+            self.next_action = Some("The saved Draft is unchanged".to_owned());
+        }
         self.pending_human_action = None;
         self.stop_reason = Some("cancelled by operator".to_owned());
+        self.sync_builder_progress_counters();
         self.updated_at = Utc::now();
     }
 
     pub fn fail(&mut self, reason: impl Into<String>) {
         self.status = AgentSessionStatus::Failed;
+        if self.phase.is_some() {
+            self.phase = Some(crate::PipelineBuilderPhase::Failed);
+            self.outcome = Some(crate::PipelineBuilderOutcome::Failed);
+        }
         self.stop_reason = Some(reason.into());
+        self.sync_builder_progress_counters();
         self.updated_at = Utc::now();
     }
 
@@ -607,7 +644,15 @@ impl AgentSession {
 
     fn stop_budget(&mut self, reason: &str) {
         self.status = AgentSessionStatus::BudgetExceeded;
+        if self.phase.is_some() {
+            self.phase = Some(crate::PipelineBuilderPhase::Failed);
+            self.outcome = Some(crate::PipelineBuilderOutcome::BudgetExceeded);
+            self.builder_stop_reason = Some(crate::BuilderStopReason::TotalToolBudgetReached);
+            self.next_action =
+                Some("Open the latest saved Draft and retry from that state".to_owned());
+        }
         self.stop_reason = Some(reason.to_owned());
+        self.sync_builder_progress_counters();
         self.updated_at = Utc::now();
     }
 }

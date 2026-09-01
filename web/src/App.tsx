@@ -97,6 +97,23 @@ const DEFAULT_PIPELINE_BUILDER_CONSTRAINTS: PipelineBuilderConstraints = {
   maximum_agent_cost: "1",
 };
 
+function readableErrorMessage(value: string): string {
+  const decoded = value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) =>
+      String.fromCodePoint(Number.parseInt(code, 16)),
+    )
+    .replace(/&#([0-9]+);/g, (_match, code: string) =>
+      String.fromCodePoint(Number.parseInt(code, 10)),
+    )
+    .replaceAll("&nbsp;", " ")
+    .replace(/\\+\s*$/g, "")
+    .trim();
+  if (/^step or tool-call budget exhausted$/i.test(decoded)) {
+    return "The Pipeline Builder used its available work budget before it saved an outcome. Reload the latest state, then retry with fresh counters from the current persisted Draft.";
+  }
+  return decoded;
+}
+
 const PROJECT_MODEL_CHOICES: {
   role: ModelBindingRole;
   capability: ModelCapability;
@@ -434,12 +451,12 @@ export function App() {
           <div className="error-banner" role="alert">
             <span className="error-message">
               <strong>AnnotAgent couldn’t complete that action.</strong>
-              <span>{error}</span>
-              <small>Saved workspace data remains on the server. Retry reloads the latest state before you continue.</small>
+              <span>{readableErrorMessage(error)}</span>
+              <small>Saved workspace data remains on the server. Reloading recovers the latest persisted state; retry is a separate Agent action.</small>
             </span>
             <span className="error-actions">
               <button onClick={() => window.location.reload()}>
-                Retry from latest state
+                Reload latest state
               </button>
               <button aria-label="Dismiss error" onClick={() => setError("")}>
                 Dismiss
@@ -2567,7 +2584,7 @@ function WorkflowsPage({
             (session) =>
               session.kind === "pipeline_builder" &&
               ["running", "waiting_for_human"].includes(session.status),
-          );
+          ) ?? sessions.find((session) => session.kind === "pipeline_builder");
           setActiveAgentSession(latest);
           setAdvisorRunning(latest?.status === "running");
         })
@@ -2627,7 +2644,10 @@ function WorkflowsPage({
           ),
         )
       : onError("Select a Project before creating a Workflow.");
-  const runAdvisor = (target?: { task_id: string; label: string }) => {
+  const runAdvisor = (
+    target?: { task_id: string; label: string },
+    retry?: { session_id?: string; base_draft_id?: string },
+  ) => {
     if (!activeProjectId)
       return onError("Select a Project before suggesting a Pipeline.");
     if (advisorKind === "llm" && !selectedAgentModelId)
@@ -2660,6 +2680,7 @@ function WorkflowsPage({
           },
           builderConstraints,
           advisorKind === "llm" ? selectedAgentModelId : undefined,
+          retry,
         );
         setAdvisorProposal(proposal);
         setActiveAgentSession(proposal.agent_session);
@@ -2683,6 +2704,28 @@ function WorkflowsPage({
     targetTaskId && targetLabel
       ? runAdvisor({ task_id: targetTaskId, label: targetLabel })
       : onError("Choose a Project task and target Label first.");
+  const retryAgentSession = (session: AgentSession) =>
+    targetTaskId && targetLabel
+      ? runAdvisor(
+          { task_id: targetTaskId, label: targetLabel },
+          {
+            session_id: session.id,
+            base_draft_id: session.draft_id ?? draft?.id,
+          },
+        )
+      : onError("Choose the original target task and Label before retrying.");
+  const openAgentDraft = (draftId: string) => {
+    const selectedDraft = drafts.find((candidate) => candidate.id === draftId);
+    if (selectedDraft) {
+      setDraft(selectedDraft);
+      return;
+    }
+    void api.workflowDrafts(activeProjectId || undefined).then(({ drafts: latest }) => {
+      const recovered = latest.find((candidate) => candidate.id === draftId);
+      if (recovered) setDraft(recovered);
+      else onError("The saved Agent Draft is no longer available in this Project.");
+    }).catch((error: Error) => onError(error.message));
+  };
   const applyProposalChanges = (changeIds = selectedProposalChanges) => {
     if (!draft || !advisorProposal || !proposalDiff)
       return onError("Create a Current Draft before applying Agent changes.");
@@ -3145,6 +3188,10 @@ function WorkflowsPage({
           {activeAgentSession ? (
             <AgentSessionTrace
               session={activeAgentSession}
+              onRetry={() => retryAgentSession(activeAgentSession)}
+              onOpenDraft={openAgentDraft}
+              onConfigureProvider={onOpenProviders}
+              onConfigureModel={onOpenModels}
               onCancel={() =>
                 void api
                   .cancelAgentSession(activeAgentSession.id)
@@ -3202,6 +3249,10 @@ function WorkflowsPage({
               session={advisorProposal.agent_session}
               validation={advisorProposal.agent_validation}
               dryRun={advisorProposal.agent_dry_run}
+              onRetry={() => retryAgentSession(advisorProposal.agent_session!)}
+              onOpenDraft={openAgentDraft}
+              onConfigureProvider={onOpenProviders}
+              onConfigureModel={onOpenModels}
               onCancel={() =>
                 void api
                   .cancelAgentSession(advisorProposal.agent_session!.id)
@@ -7026,6 +7077,20 @@ function Trace({ events }: { events: RunEvent[] }) {
 }
 
 function agentStageLabel(session: AgentSession): string {
+  const phaseLabels: Record<NonNullable<AgentSession["phase"]>, string> = {
+    context_loading: "Loading bounded context",
+    feasibility_analysis: "Resolving feasibility",
+    drafting: "Building the Draft",
+    validating: "Validating the Draft",
+    dry_running: "Testing sample images",
+    revising: "Revising from evidence",
+    finalizing: "Saving the outcome",
+    waiting_for_human: "Ready for your review",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    failed: "Needs attention",
+  };
+  if (session.phase) return phaseLabels[session.phase];
   if (session.status === "waiting_for_human") return "Ready for your review";
   if (session.status === "cancelled") return "Cancelled";
   if (session.status === "budget_exceeded") return "Stopped at budget";
@@ -7038,27 +7103,57 @@ function agentStageLabel(session: AgentSession): string {
   return "Revising the recommendation";
 }
 
+function agentOutcomeLabel(session: AgentSession): string {
+  const labels: Record<NonNullable<AgentSession["outcome"]>, string> = {
+    draft_ready_for_human_review: "Draft ready for human review",
+    blocked_draft_ready: "Blocked Draft saved",
+    provider_setup_required: "Provider setup required",
+    unsupported_request: "Request is not supported by the current catalog",
+    cancelled: "Agent cancelled",
+    budget_exceeded: "Progress-safety budget reached",
+    failed: "Agent needs attention",
+  };
+  if (session.outcome) return labels[session.outcome];
+  if (session.status === "running") return "Agent is running";
+  if (session.status === "waiting_for_human") return "Waiting for your action";
+  return session.status.replaceAll("_", " ");
+}
+
 function AgentSessionTrace({
   session,
   validation,
   dryRun,
   onCancel,
+  onRetry,
+  onOpenDraft,
+  onConfigureProvider,
+  onConfigureModel,
 }: {
   session: AgentSession;
   validation?: WorkflowDryRunReport["validation"];
   dryRun?: WorkflowDryRunReport;
   onCancel?: () => void;
+  onRetry?: () => void;
+  onOpenDraft?: (draftId: string) => void;
+  onConfigureProvider?: () => void;
+  onConfigureModel?: () => void;
 }) {
   const cancellable = ["running", "waiting_for_human"].includes(session.status);
   const stage = agentStageLabel(session);
-  const progress = Math.min(100, Math.round((session.usage.steps / Math.max(1, session.budget.max_steps)) * 100));
+  const totalCalls = session.total_tool_calls ?? session.usage.tool_calls;
+  const maximumCalls = session.builder_budget?.max_total_tool_calls ?? session.budget.max_tool_calls;
+  const remainingCalls = session.remaining_tool_calls ?? Math.max(0, maximumCalls - totalCalls);
+  const reservedCalls = session.reserved_finalization_calls ?? session.builder_budget?.reserved_finalization_calls ?? 0;
+  const progress = Math.min(100, Math.round((totalCalls / Math.max(1, maximumCalls)) * 100));
+  const needsSetup = ["provider_setup_required", "blocked_draft_ready"].includes(session.outcome ?? "");
+  const retryable = ["failed", "budget_exceeded"].includes(session.status) || needsSetup;
   return (
     <div className="agent-session-trace" aria-label={`${session.kind} Agent trace`}>
       <div className="context-line">
         <strong>Pipeline Builder</strong>
         <Status status={session.status} />
         <span>{stage}</span>
-        <span>{session.usage.tool_calls} tool calls</span>
+        <span>{totalCalls} tool calls</span>
         <span>{session.usage.input_tokens + session.usage.output_tokens} tokens</span>
         <span>${session.usage.cost}</span>
         {onCancel && (
@@ -7067,11 +7162,16 @@ function AgentSessionTrace({
           </button>
         )}
       </div>
-      <div className="agent-progress" role="progressbar" aria-label="Agent progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+      <div className="agent-progress" role="progressbar" aria-label="Tool budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
         <span style={{ width: `${progress}%` }} />
       </div>
       <div className="fact-grid">
         <Fact label="Current stage" value={stage} />
+        <Fact label="Model turns" value={session.model_turns ?? session.model_calls.length} />
+        <Fact label="Tool budget" value={`${remainingCalls} remaining · ${reservedCalls} reserved`} />
+        <Fact label="Phase calls" value={session.phase_tool_calls ?? "Not recorded"} />
+        <Fact label="Cache reuse" value={session.cache_hits ?? 0} />
+        <Fact label="Duplicates blocked" value={session.duplicate_tool_calls ?? 0} />
         <Fact
           label="Provider"
           value={session.model_selection?.provider_display_name ?? "Not recorded"}
@@ -7103,6 +7203,26 @@ function AgentSessionTrace({
         />
         {session.builder_constraints && <Fact label="Priority" value={session.builder_constraints.priority.replaceAll("_", " ")} />}
       </div>
+      {session.status !== "running" && (
+        <section className={`agent-outcome-card ${needsSetup ? "setup" : ""}`} aria-label="Pipeline Builder outcome">
+          <div>
+            <span className="eyebrow">Outcome</span>
+            <h4>{agentOutcomeLabel(session)}</h4>
+            <p>{session.next_action ?? readableErrorMessage(session.stop_reason ?? "Open the saved session for details.")}</p>
+          </div>
+          <div className="agent-outcome-facts">
+            {session.draft_id && <span><small>Draft</small><strong>{session.draft_id.slice(0, 8)}</strong></span>}
+            <span><small>Stop reason</small><strong>{session.builder_stop_reason?.replaceAll("_", " ") ?? session.stop_reason ?? "Completed"}</strong></span>
+            {!!session.unresolved_bindings?.length && <span><small>Unresolved</small><strong>{session.unresolved_bindings.length} model binding{session.unresolved_bindings.length === 1 ? "" : "s"}</strong></span>}
+          </div>
+          <div className="button-row">
+            {session.draft_id && onOpenDraft && <button className="primary" onClick={() => onOpenDraft(session.draft_id!)}>{session.outcome === "draft_ready_for_human_review" ? "Review Draft" : needsSetup ? "Open blocked Draft" : "Open Draft"}</button>}
+            {needsSetup && onConfigureProvider && <button onClick={onConfigureProvider}>Configure Provider</button>}
+            {needsSetup && onConfigureModel && <button onClick={onConfigureModel}>Configure Model</button>}
+            {retryable && onRetry && <button onClick={onRetry}>Retry from current Draft</button>}
+          </div>
+        </section>
+      )}
       <details className="agent-tool-trace" open={session.status === "running"}>
         <summary>Tool actions ({session.steps.length})</summary>
       <ol className="agent-action-list">

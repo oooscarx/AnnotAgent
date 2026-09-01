@@ -2767,6 +2767,10 @@ struct SuggestWorkflowRequest {
     target_task_id: Option<String>,
     target_label: Option<String>,
     agent_model_profile_id: Option<ModelProfileId>,
+    /// Optional persisted session/Draft used for a progress-safe retry. Fresh budgets are created;
+    /// the editable Draft and its unresolved requirements are retained.
+    retry_session_id: Option<uuid::Uuid>,
+    base_draft_id: Option<String>,
     #[serde(default = "default_workflow_advisor")]
     advisor: String,
     #[serde(default)]
@@ -2804,6 +2808,25 @@ async fn suggest_workflow(
         .target_task_id
         .as_deref()
         .zip(request.target_label.as_deref());
+    let retry_draft_id = if let Some(session_id) = request.retry_session_id {
+        let session = state
+            .application
+            .list_agent_sessions(&request.project_id)
+            .map_err(ApiError::bad_request)?
+            .into_iter()
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| {
+                ApiError::bad_request("retry session does not belong to this Project")
+            })?;
+        if session.status == annotagent_core::AgentSessionStatus::Running {
+            return Err(ApiError::bad_request(
+                "cancel or wait for the active Pipeline Builder before retrying",
+            ));
+        }
+        session.draft_id.or(request.base_draft_id.clone())
+    } else {
+        request.base_draft_id.clone()
+    };
     let (suggestion, agent_report) = match request.advisor.as_str() {
         #[cfg(test)]
         "mock" | "agent" => {
@@ -2855,7 +2878,7 @@ async fn suggest_workflow(
             .map_err(ApiError::bad_request)?;
             let report = state
                 .application
-                .run_workflow_advisor_with_selected_model(
+                .run_workflow_advisor_with_selected_model_from_draft(
                     &request.project_id,
                     &settings,
                     &selected_model,
@@ -2863,6 +2886,7 @@ async fn suggest_workflow(
                     &workflow_constraints,
                     target,
                     request.builder_constraints.clone(),
+                    retry_draft_id.as_deref(),
                     CancellationToken::default(),
                 )
                 .await
@@ -7615,6 +7639,13 @@ export:
             suggestion["agent_session"]["status"],
             json!("waiting_for_human")
         );
+        assert!(suggestion["agent_session"]["phase"].is_string());
+        assert!(suggestion["agent_session"]["outcome"].is_string());
+        assert!(suggestion["agent_session"]["total_tool_calls"].is_number());
+        assert!(suggestion["agent_session"]["remaining_tool_calls"].is_number());
+        assert!(suggestion["agent_session"]["reserved_finalization_calls"].is_number());
+        assert!(suggestion["agent_session"]["draft_id"].is_string());
+        assert!(suggestion["agent_session"]["next_action"].is_string());
         let sessions = response_json(
             request(
                 &service,

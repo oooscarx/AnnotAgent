@@ -338,6 +338,7 @@ export const api = {
     },
     builderConstraints?: PipelineBuilderConstraints,
     agentModelProfileId?: string,
+    retry?: { session_id?: string; base_draft_id?: string },
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -352,6 +353,8 @@ export const api = {
         ...(agentModelProfileId
           ? { agent_model_profile_id: agentModelProfileId }
           : {}),
+        ...(retry?.session_id ? { retry_session_id: retry.session_id } : {}),
+        ...(retry?.base_draft_id ? { base_draft_id: retry.base_draft_id } : {}),
       }),
     }),
   workflowDraftDiff: (baseDraftId: string, proposedDraftId: string) =>

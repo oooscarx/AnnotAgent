@@ -708,7 +708,15 @@ fn default_provider_kind() -> String {
 
 const PIPELINE_BUILDER_SYSTEM_PROMPT: &str = "You are AnnotAgent's constrained Pipeline Builder. \
 Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
-and inspected evidence. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
+and inspected evidence. Start with get_pipeline_builder_context, then call the deterministic \
+resolve_pipeline_feasibility tool. Do not enumerate the catalog with single-item inspection calls. \
+Request one batch inspection only when an omitted contract would materially change the Draft. Never \
+repeat an identical Tool Call: reuse the returned observation reference and advance the phase. Respect \
+the runtime phase, remaining Tool Calls, and reserved finalization calls supplied on every turn. By the \
+draft deadline, persist either the smallest runnable Draft or a structurally complete blocked Draft. A \
+missing compatible model is a setup requirement, not a reason to continue discovery: preserve an \
+unresolved binding and finish_with_setup_requirements. Never spend the finalization reserve on broad \
+inspection, and always terminate with an explicit typed outcome. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
 fixture backend, or test-only fallback. If a real binding is unavailable, leave it explicitly unresolved \
 and explain the required Provider or Vision Worker setup. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
 uncalibrated CoarseHypothesis even when confidence is high. Provider or Worker failure is infrastructure \
@@ -725,11 +733,14 @@ detector may cold-start. Missing scores remain missing and require evidence deci
 fabricated confidence. Never bind unavailable, disabled, unconfigured, missing-weights, unreachable, \
 incompatible, invalid-contract, failed-smoke, or Unknown models. Setup-only models may appear only as \
 unapplied Alternatives with a setup action. Never invent a capability, score, health result, benchmark, \
-Validator, Refiner, model, or node. Inspect the Project, current Pipeline, enabled Skills, Node Definitions, \
-available capabilities, compatible models, model contracts, and relevant Skill resources before creating a \
-Draft. Modify only the persisted editable Draft through bounded tools. Validate with Rust, run a \
+Validator, Refiner, model, or node. The compact context snapshot is authoritative for Project, Label, \
+Skill, Node, Model, Draft, template, and capability summaries. Modify only the persisted editable Draft \
+through bounded tools. Validate with Rust, run a \
 non-committing Dry Run, inspect failure classes and geometry quality, revise only from that structured \
-evidence, then submit for explicit human approval. Never publish, start a formal Run, set credentials, \
+evidence, then submit for explicit human approval. An unresolved binding must never reach Dry Run or \
+Publish. A VisionLanguage profile with image input and structured output or Tool Calls may bind only to \
+a VLM Detection node that declares DetectionSet output; it is not a native ObjectDetection model unless \
+that capability is separately declared. Never publish, start a formal Run, set credentials, \
 create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal \
 hidden reasoning. check_provider_availability is passive only and must not send a billable request.";
 
@@ -1164,6 +1175,125 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
     ]
 }
 
+fn pipeline_builder_visible_tools(
+    all: &[ToolDefinition],
+    session: &AgentSession,
+) -> Vec<ToolDefinition> {
+    use annotagent_core::PipelineBuilderPhase as Phase;
+
+    let phase = session.phase.unwrap_or(Phase::ContextLoading);
+    let remaining = session.remaining_builder_tool_calls();
+    let reserve = session
+        .builder_budget
+        .as_ref()
+        .map_or(0, |budget| budget.reserved_finalization_calls);
+    all.iter()
+        .filter(|definition| {
+            let Ok(tool) = PipelineBuilderToolRegistry.resolve(&definition.name) else {
+                return false;
+            };
+            let finalization = matches!(
+                tool,
+                PipelineBuilderTool::CreateBlockedDraft
+                    | PipelineBuilderTool::SetUnresolvedBinding
+                    | PipelineBuilderTool::FinishWithSetupRequirements
+                    | PipelineBuilderTool::SubmitDraftForHumanApproval
+                    | PipelineBuilderTool::FinishAgentSession
+            );
+            if remaining <= reserve {
+                return finalization;
+            }
+            let broad_inspection = matches!(
+                tool,
+                PipelineBuilderTool::InspectNodesBatch
+                    | PipelineBuilderTool::InspectModelsBatch
+                    | PipelineBuilderTool::InspectContractsBatch
+                    | PipelineBuilderTool::LoadSkillResource
+                    | PipelineBuilderTool::FindArtifactConversionPath
+            );
+            if remaining <= reserve.saturating_add(4) && broad_inspection {
+                return false;
+            }
+            match phase {
+                Phase::ContextLoading => tool == PipelineBuilderTool::GetPipelineBuilderContext,
+                Phase::FeasibilityAnalysis => matches!(
+                    tool,
+                    PipelineBuilderTool::ResolvePipelineFeasibility
+                        | PipelineBuilderTool::InspectNodesBatch
+                        | PipelineBuilderTool::InspectModelsBatch
+                        | PipelineBuilderTool::InspectContractsBatch
+                        | PipelineBuilderTool::LoadSkillResource
+                        | PipelineBuilderTool::FindArtifactConversionPath
+                ),
+                Phase::Drafting => {
+                    tool.mutates_draft()
+                        || matches!(
+                            tool,
+                            PipelineBuilderTool::ValidatePipeline
+                                | PipelineBuilderTool::EstimatePipelineCost
+                                | PipelineBuilderTool::FinishWithSetupRequirements
+                        )
+                }
+                Phase::Validating => {
+                    tool.mutates_draft()
+                        || matches!(
+                            tool,
+                            PipelineBuilderTool::ValidatePipeline
+                                | PipelineBuilderTool::EstimatePipelineCost
+                                | PipelineBuilderTool::DryRunPipeline
+                                | PipelineBuilderTool::FinishWithSetupRequirements
+                        )
+                }
+                Phase::DryRunning => {
+                    tool.mutates_draft()
+                        || matches!(
+                            tool,
+                            PipelineBuilderTool::DryRunPipeline
+                                | PipelineBuilderTool::InspectDryRunSummary
+                                | PipelineBuilderTool::InspectFailureClasses
+                                | PipelineBuilderTool::InspectGeometryQuality
+                                | PipelineBuilderTool::InspectFailedSamples
+                                | PipelineBuilderTool::InspectReviewSamples
+                                | PipelineBuilderTool::InspectNodeStatistics
+                                | PipelineBuilderTool::InspectNodeArtifacts
+                                | PipelineBuilderTool::CompareDryRuns
+                                | PipelineBuilderTool::ValidatePipeline
+                        )
+                }
+                Phase::Revising => {
+                    tool.mutates_draft()
+                        || matches!(
+                            tool,
+                            PipelineBuilderTool::ValidatePipeline
+                                | PipelineBuilderTool::EstimatePipelineCost
+                        )
+                }
+                Phase::Finalizing => finalization,
+                Phase::WaitingForHuman | Phase::Completed | Phase::Cancelled | Phase::Failed => {
+                    false
+                }
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+fn pipeline_builder_action_state(
+    session: &AgentSession,
+    tools: &[ToolDefinition],
+) -> annotagent_core::AvailableAgentActions {
+    annotagent_core::AvailableAgentActions {
+        phase: session.phase.unwrap_or_default(),
+        tools: tools.iter().map(|tool| tool.name.clone()).collect(),
+        remaining_tool_calls: session.remaining_builder_tool_calls(),
+        reserved_finalization_calls: session
+            .builder_budget
+            .as_ref()
+            .map_or(0, |budget| budget.reserved_finalization_calls),
+        required_next_actions: session.next_action.iter().cloned().collect(),
+    }
+}
+
 fn pipeline_builder_constraints(
     constraints: &WorkflowConstraints,
     mut builder: PipelineBuilderConstraints,
@@ -1352,6 +1482,7 @@ fn canonical_json(value: &serde_json::Value) -> String {
 
 #[derive(Debug, Clone)]
 struct CachedBuilderObservation {
+    tool_name: String,
     result: annotagent_core::AgentToolResult,
     original_call_id: String,
     duplicate_count: u32,
@@ -7803,7 +7934,38 @@ impl LocalApplication {
                 json!({"published": false, "requires_human": true}),
             )
         {
-            session.wait_for_human("approve_pipeline_draft");
+            session.set_builder_draft(revised.draft.id.clone());
+            for (phase, action) in [
+                (
+                    annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                    "Resolved deterministic feasibility",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Drafting,
+                    "Persisted the editable Draft",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Validating,
+                    "Validated the editable Draft",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::DryRunning,
+                    "Completed the sandbox Dry Run",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Finalizing,
+                    "Saved the human-review outcome",
+                ),
+            ] {
+                session
+                    .transition_builder_phase(phase, action)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            session.complete_builder(
+                annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+                annotagent_core::BuilderStopReason::DraftReady,
+                "Open and review the saved editable Draft",
+            );
         }
         self.store.save_agent_session(&session)?;
         Ok(WorkflowAdvisorAgentReport {
@@ -8020,6 +8182,35 @@ impl LocalApplication {
         builder_constraints: PipelineBuilderConstraints,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
+        self.run_workflow_advisor_with_selected_model_from_draft(
+            project_id,
+            settings,
+            selected_model,
+            provider,
+            constraints,
+            target,
+            builder_constraints,
+            None,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Retry a Builder session from a persisted editable Draft. The new session gets fresh
+    /// counters while the Draft, unresolved requirements, and stable context revision are reused.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_workflow_advisor_with_selected_model_from_draft(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        selected_model: &PipelineBuilderModelRuntime,
+        provider: &dyn VisionModelProvider,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        builder_constraints: PipelineBuilderConstraints,
+        base_draft_id: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
         let input = self.workflow_advisor_input_for_label(
             project_id,
             settings,
@@ -8027,7 +8218,45 @@ impl LocalApplication {
             target.map(|value| value.0),
             target.map(|value| value.1),
         )?;
-        let suggestion = if let Some((task_id, label)) = target {
+        let suggestion = if let Some(draft_id) = base_draft_id {
+            let draft = self.store.get_workflow_draft(draft_id)?;
+            if draft.project_id != project_id {
+                bail!("retry Draft does not belong to the requested Project");
+            }
+            if matches!(
+                draft.status,
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+            ) {
+                bail!("retry requires an editable Draft");
+            }
+            let unresolved_model_bindings = draft
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    node.unresolved_model_requirement
+                        .as_ref()
+                        .map(|requirement| requirement.reason.clone())
+                })
+                .collect::<Vec<_>>();
+            WorkflowSuggestion {
+                estimated_model_calls_per_image: draft
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.model_binding.is_some() || node.model_profile_binding.is_some()
+                    })
+                    .count(),
+                draft,
+                rationale: vec![
+                    "Retry continues from the latest persisted editable Draft.".to_owned(),
+                ],
+                estimated_latency_ms: None,
+                estimated_cost_tier: "unresolved".to_owned(),
+                unresolved_model_bindings,
+                warnings: Vec::new(),
+                alternatives: Vec::new(),
+            }
+        } else if let Some((task_id, label)) = target {
             self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
         } else {
             self.suggest_workflow_preview(project_id, settings, constraints)?
@@ -8042,6 +8271,7 @@ impl LocalApplication {
             provider,
             Some(selected_model),
             builder_constraints,
+            base_draft_id.is_some(),
             cancellation,
         )
         .await
@@ -8070,6 +8300,7 @@ impl LocalApplication {
             provider,
             None,
             builder_constraints,
+            false,
             cancellation,
         )
         .await
@@ -8087,6 +8318,7 @@ impl LocalApplication {
         provider: &dyn VisionModelProvider,
         selected_model: Option<&PipelineBuilderModelRuntime>,
         builder_constraints: PipelineBuilderConstraints,
+        resume_existing_draft: bool,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
@@ -8131,6 +8363,10 @@ impl LocalApplication {
                     "workflow_constraints": constraints,
                     "builder_constraints": builder_constraints,
                     "enabled_skill_summaries": input.enabled_skills,
+                    "retry": {
+                        "resume_existing_draft": resume_existing_draft,
+                        "draft_id": resume_existing_draft.then(|| safe_suggestion.draft.id.clone()),
+                    },
                     "rule": "Inspect details with tools; do not assume Registry identities."
                 }))?,
                 tool_call_id: None,
@@ -8156,7 +8392,15 @@ impl LocalApplication {
         let extensions = self
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
-        let mut current: Option<WorkflowSuggestion> = None;
+        let mut current = resume_existing_draft.then(|| safe_suggestion.clone());
+        if let Some(suggestion) = current.as_ref() {
+            session.set_builder_draft(suggestion.draft.id.clone());
+            session.unresolved_bindings = suggestion.unresolved_model_bindings.clone();
+            session.next_action = Some(
+                "Load the bounded context, then validate or repair the persisted Draft".to_owned(),
+            );
+            self.store.save_agent_session(&session)?;
+        }
         let mut validation: Option<WorkflowValidationReport> = None;
         let mut dry_run: Option<WorkflowDryRunReport> = None;
         let mut inspected_dry_run = false;
@@ -8179,7 +8423,11 @@ impl LocalApplication {
 
         while session.status == AgentSessionStatus::Running {
             if cancellation.is_cancelled() {
-                session.cancel();
+                session.complete_builder(
+                    annotagent_core::PipelineBuilderOutcome::Cancelled,
+                    annotagent_core::BuilderStopReason::Cancelled,
+                    "The saved Draft is unchanged",
+                );
                 break;
             }
             if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
@@ -8271,11 +8519,19 @@ impl LocalApplication {
                 break;
             }
             if session.usage.steps >= session.budget.max_steps {
-                session.fail("maximum Pipeline Builder Tool Calls reached");
+                session.complete_builder(
+                    annotagent_core::PipelineBuilderOutcome::BudgetExceeded,
+                    annotagent_core::BuilderStopReason::TotalToolBudgetReached,
+                    "Open the latest saved Draft and retry from that state",
+                );
                 break;
             }
             if provider_turns >= builder_constraints.maximum_agent_turns {
-                session.fail("maximum Pipeline Builder turns reached");
+                session.complete_builder(
+                    annotagent_core::PipelineBuilderOutcome::BudgetExceeded,
+                    annotagent_core::BuilderStopReason::ModelTurnBudgetReached,
+                    "Open the latest saved Draft and retry from that state",
+                );
                 break;
             }
             compact_pipeline_builder_messages(
@@ -8304,14 +8560,78 @@ impl LocalApplication {
                     .map_or(0.0, |value| value.to_string().parse().unwrap_or(0.0))
             });
             let started_at = Instant::now();
+            let visible_tools = pipeline_builder_visible_tools(&tools, &session);
+            let action_state = pipeline_builder_action_state(&session, &visible_tools);
+            let context_digest = annotagent_core::BuilderContextDigest {
+                context_revision: context_revision.clone(),
+                project_summary: format!(
+                    "{}: {} image(s), {} task(s)",
+                    context_snapshot.project.display_name,
+                    context_snapshot.project.image_count,
+                    context_snapshot.project.task_count
+                ),
+                capability_summary: format!(
+                    "{} available node contract(s), {} unresolved capability requirement(s)",
+                    context_snapshot
+                        .node_catalog
+                        .iter()
+                        .filter(|node| node.available)
+                        .count(),
+                    context_snapshot.unavailable_capabilities.len()
+                ),
+                model_summary: format!(
+                    "{} registered Model Profile(s)",
+                    context_snapshot.model_profiles.len()
+                ),
+                draft_summary: current.as_ref().map(|suggestion| {
+                    format!(
+                        "{} ({:?}, {} nodes)",
+                        suggestion.draft.id,
+                        suggestion.draft.status,
+                        suggestion.draft.nodes.len()
+                    )
+                }),
+                validation_summary: validation.as_ref().map(|report| {
+                    format!("valid={}, issues={}", report.valid, report.issues.len())
+                }),
+                dry_run_summary: dry_run.as_ref().map(|report| {
+                    format!(
+                        "samples={}, failures={}",
+                        report.samples.len(),
+                        report.samples.iter().filter(|sample| sample.failed).count()
+                    )
+                }),
+                observation_refs: observation_cache
+                    .values()
+                    .map(|cached| annotagent_core::ObservationRef {
+                        id: cached.original_call_id.clone(),
+                        tool_name: cached.tool_name.clone(),
+                        original_call_id: cached.original_call_id.clone(),
+                        context_revision: context_revision.clone(),
+                    })
+                    .collect(),
+            };
+            let mut request_messages = messages.clone();
+            request_messages.push(ModelMessage {
+                role: ModelRole::System,
+                content: format!(
+                    "PIPELINE_BUILDER_RUNTIME_STATE {}",
+                    serde_json::to_string(&json!({
+                        "available_actions": action_state,
+                        "context_digest": context_digest,
+                    }))?
+                ),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            });
             let response = match provider
                 .complete(
                     ModelRequest {
                         model: remote_model_id.clone(),
                         task_id: "pipeline_builder".into(),
-                        messages: messages.clone(),
+                        messages: request_messages,
                         images: Vec::new(),
-                        tools: tools.clone(),
+                        tools: visible_tools,
                         max_output_tokens: maximum_output_tokens,
                         temperature,
                         extra: BTreeMap::from([(
@@ -8351,7 +8671,11 @@ impl LocalApplication {
                         safe_error: Some("Provider request failed".to_owned()),
                         created_at: chrono::Utc::now(),
                     });
-                    session.fail(format!("Pipeline Builder provider error: {error}"));
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::Failed,
+                        annotagent_core::BuilderStopReason::ProviderError,
+                        format!("Check the selected Provider and retry: {error}"),
+                    );
                     break;
                 }
             };
@@ -8404,7 +8728,15 @@ impl LocalApplication {
                     );
                     break;
                 }
-                let required_next_tool = if current.is_none() {
+                let required_next_tool = if session.phase
+                    == Some(annotagent_core::PipelineBuilderPhase::ContextLoading)
+                {
+                    "call get_pipeline_builder_context"
+                } else if session.phase
+                    == Some(annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis)
+                {
+                    "call resolve_pipeline_feasibility"
+                } else if current.is_none() {
                     "finish the required inspection, then call create_draft_from_template with template_id safe_default"
                 } else if !validation.as_ref().is_some_and(|report| report.valid) {
                     "call validate_pipeline"
@@ -8447,7 +8779,11 @@ impl LocalApplication {
 
             for call in accepted_tool_calls {
                 if cancellation.is_cancelled() {
-                    session.cancel();
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::Cancelled,
+                        annotagent_core::BuilderStopReason::Cancelled,
+                        "The saved Draft is unchanged",
+                    );
                     break;
                 }
                 if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
@@ -10425,6 +10761,7 @@ impl LocalApplication {
                         observation_cache.insert(
                             key,
                             CachedBuilderObservation {
+                                tool_name: call.name.clone(),
                                 result: result.clone(),
                                 original_call_id: call.id.to_string(),
                                 duplicate_count: 0,
@@ -10458,6 +10795,14 @@ impl LocalApplication {
                                 .transition_builder_phase(
                                     annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
                                     "Resolve Pipeline feasibility",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(PipelineBuilderTool::ResolvePipelineFeasibility) => {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::Drafting,
+                                    "Persist a runnable or blocked editable Draft",
                                 )
                                 .map_err(anyhow::Error::msg)?;
                         }
@@ -10554,6 +10899,12 @@ impl LocalApplication {
                                 session.unresolved_bindings =
                                     suggestion.unresolved_model_bindings.clone();
                             }
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::Finalizing,
+                                    "Present the saved setup requirements",
+                                )
+                                .map_err(anyhow::Error::msg)?;
                             session.complete_builder(
                                 annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired,
                                 annotagent_core::BuilderStopReason::SetupRequired,
@@ -10572,6 +10923,12 @@ impl LocalApplication {
                 }
                 if success && call.name == PipelineBuilderTool::SubmitDraftForHumanApproval.as_str()
                 {
+                    session
+                        .transition_builder_phase(
+                            annotagent_core::PipelineBuilderPhase::Finalizing,
+                            "Present the tested editable Draft",
+                        )
+                        .map_err(anyhow::Error::msg)?;
                     session.complete_builder(
                         annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
                         annotagent_core::BuilderStopReason::DraftReady,
@@ -10582,7 +10939,48 @@ impl LocalApplication {
             }
         }
         if session.status == AgentSessionStatus::Running {
-            session.fail("Pipeline Builder stopped without requesting human approval");
+            session.complete_builder(
+                annotagent_core::PipelineBuilderOutcome::Failed,
+                annotagent_core::BuilderStopReason::ProviderError,
+                "The Provider stopped without a final Builder action; retry from the saved Draft",
+            );
+        } else if session.outcome.is_none() {
+            match session.status {
+                AgentSessionStatus::BudgetExceeded => {
+                    let detail = session.stop_reason.clone();
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::BudgetExceeded,
+                        annotagent_core::BuilderStopReason::TotalToolBudgetReached,
+                        "Open the latest saved Draft and retry from that state",
+                    );
+                    if detail.is_some() {
+                        session.stop_reason = detail;
+                    }
+                }
+                AgentSessionStatus::Cancelled => {
+                    let detail = session.stop_reason.clone();
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::Cancelled,
+                        annotagent_core::BuilderStopReason::Cancelled,
+                        "The saved Draft is unchanged",
+                    );
+                    if detail.is_some() {
+                        session.stop_reason = detail;
+                    }
+                }
+                AgentSessionStatus::Failed => {
+                    let detail = session.stop_reason.clone();
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::Failed,
+                        annotagent_core::BuilderStopReason::ProviderError,
+                        "Inspect the failed Tool action and retry from the saved Draft",
+                    );
+                    if detail.is_some() {
+                        session.stop_reason = detail;
+                    }
+                }
+                _ => {}
+            }
         }
         self.store.save_agent_session(&session)?;
         self.agent_cancellations
@@ -14037,6 +14435,69 @@ export:
         assert!(!encoded.contains("ANNOTAGENT_SUPER_SECRET_FIXTURE"));
         assert!(!encoded.contains("credential_ref"));
         assert!(!encoded.contains("locator"));
+
+        let progress_budget = annotagent_core::PipelineBuilderBudget {
+            max_total_tool_calls: 8,
+            reserved_finalization_calls: 3,
+            max_discovery_tool_calls: 4,
+            ..annotagent_core::PipelineBuilderBudget::default()
+        };
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            AgentBudget {
+                max_steps: 8,
+                max_tool_calls: 8,
+                ..AgentBudget::default()
+            },
+        )
+        .with_builder_progress(
+            progress_budget,
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        let context_tools = pipeline_builder_visible_tools(&tools, &session);
+        assert_eq!(
+            context_tools
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![PipelineBuilderTool::GetPipelineBuilderContext.as_str()]
+        );
+        session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                "Resolve feasibility",
+            )
+            .expect("feasibility phase");
+        let feasibility_tools = pipeline_builder_visible_tools(&tools, &session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::ResolvePipelineFeasibility.as_str())
+        );
+        assert!(feasibility_tools.contains(PipelineBuilderTool::InspectModelsBatch.as_str()));
+        assert!(!feasibility_tools.contains(PipelineBuilderTool::InspectModelProfile.as_str()));
+        session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::Drafting,
+                "Persist Draft",
+            )
+            .expect("draft phase");
+        for index in 0..5 {
+            session
+                .record_tool("bounded_test", json!({"index": index}), json!({}), true)
+                .expect("bounded Tool Call");
+        }
+        let reserve_tools = pipeline_builder_visible_tools(&tools, &session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(reserve_tools.contains(PipelineBuilderTool::CreateBlockedDraft.as_str()));
+        assert!(reserve_tools.contains(PipelineBuilderTool::FinishWithSetupRequirements.as_str()));
+        assert!(!reserve_tools.contains(PipelineBuilderTool::InspectModelsBatch.as_str()));
+        assert_eq!(session.total_tool_calls, 5);
+        assert_eq!(session.remaining_tool_calls, 3);
+        assert_eq!(session.reserved_finalization_calls, 3);
     }
 
     #[tokio::test]
@@ -14390,6 +14851,11 @@ export:
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("white footwear"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Missing scores remain missing"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("submit for explicit human approval"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("get_pipeline_builder_context"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Never repeat an identical Tool Call"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("finalization reserve"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("blocked Draft"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("it is not a native ObjectDetection"));
 
         let geometry = AgentDryRunSummary {
             image_count: 4,
@@ -16902,6 +17368,41 @@ export:
                 )
                 .is_err()
         );
+
+        let retry_provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                step("get_pipeline_builder_context"),
+                step("resolve_pipeline_feasibility"),
+                step("finish_with_setup_requirements"),
+            ],
+        });
+        let retry = application
+            .run_workflow_advisor_with_selected_model_from_draft(
+                "blocked-detection",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &retry_provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                Some(&suggestion.draft.id),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("retry from blocked Draft");
+        assert_eq!(retry_provider.remaining_steps(), 0);
+        assert_ne!(retry.session.id, report.session.id);
+        assert_eq!(
+            retry.session.draft_id.as_deref(),
+            Some(suggestion.draft.id.as_str())
+        );
+        assert_eq!(retry.session.total_tool_calls, 3);
+        assert_eq!(retry.session.cache_hits, 0);
+        assert_eq!(retry.session.duplicate_tool_calls, 0);
+        assert_eq!(
+            retry.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+        );
     }
 
     #[tokio::test]
@@ -17507,6 +18008,7 @@ export:
                 &provider,
                 Some(&selected_builder),
                 builder_constraints,
+                false,
                 CancellationToken::new(),
             )
             .await

@@ -958,6 +958,15 @@ main { min-width: 0; padding-bottom: 48px; }
 .agent-session-trace .fact-grid { margin: 0; }
 .agent-progress { height: 7px; overflow: hidden; border-radius: 999px; background: var(--aa-border); }
 .agent-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--aa-primary); transition: width 180ms ease; }
+.agent-outcome-card { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(220px, .8fr); gap: 14px 20px; align-items: start; padding: 14px; border: 1px solid var(--aa-border-strong); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
+.agent-outcome-card.setup { border-color: var(--aa-warning); background: var(--aa-warning-soft); }
+.agent-outcome-card h4 { margin: 3px 0 5px; }
+.agent-outcome-card p { margin: 0; color: var(--aa-text-muted); }
+.agent-outcome-card .button-row { grid-column: 1 / -1; margin: 0; }
+.agent-outcome-facts { display: grid; gap: 8px; }
+.agent-outcome-facts span { display: grid; gap: 2px; min-width: 0; }
+.agent-outcome-facts small { color: var(--aa-text-muted); }
+.agent-outcome-facts strong { overflow-wrap: anywhere; }
 .agent-tool-trace > summary { cursor: pointer; font-weight: 750; }
 .agent-model-call-trace > summary { cursor: pointer; font-weight: 750; }
 .agent-action-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -1069,6 +1078,8 @@ main { min-width: 0; padding-bottom: 48px; }
 }
 
 @media (max-width: 760px) {
+  .agent-outcome-card { grid-template-columns: 1fr; }
+  .agent-outcome-card .button-row { grid-column: auto; display: grid; }
   .export-format-grid { grid-template-columns: 1fr; }
   .build-footer { position: static; align-items: stretch; flex-direction: column; }
   .build-footer .button-row { display: grid; }

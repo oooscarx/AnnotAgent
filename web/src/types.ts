@@ -721,6 +721,48 @@ export interface AgentSession {
     max_cost?: string;
   };
   builder_constraints?: PipelineBuilderConstraints;
+  phase?:
+    | "context_loading"
+    | "feasibility_analysis"
+    | "drafting"
+    | "validating"
+    | "dry_running"
+    | "revising"
+    | "finalizing"
+    | "waiting_for_human"
+    | "completed"
+    | "cancelled"
+    | "failed";
+  outcome?:
+    | "draft_ready_for_human_review"
+    | "blocked_draft_ready"
+    | "provider_setup_required"
+    | "unsupported_request"
+    | "cancelled"
+    | "budget_exceeded"
+    | "failed";
+  builder_stop_reason?: string;
+  builder_budget?: {
+    max_model_turns: number;
+    max_total_tool_calls: number;
+    max_discovery_tool_calls: number;
+    max_draft_tool_calls: number;
+    max_validation_tool_calls: number;
+    max_dry_run_tool_calls: number;
+    reserved_finalization_calls: number;
+    max_parallel_tools_per_turn: number;
+    max_duplicate_calls: number;
+  };
+  model_turns?: number;
+  phase_tool_calls?: number;
+  duplicate_tool_calls?: number;
+  cache_hits?: number;
+  draft_id?: string;
+  unresolved_bindings?: string[];
+  next_action?: string;
+  total_tool_calls?: number;
+  remaining_tool_calls?: number;
+  reserved_finalization_calls?: number;
   model_selection?: {
     provider_profile_id: string;
     provider_display_name: string;

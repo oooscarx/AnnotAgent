@@ -74,3 +74,22 @@ detection operations as distinct contracts. The Qwen-style fixture uses only `vi
 `image_classification`, binds the structured VLM node, validates and Dry Runs the resulting RoboCup
 ball Draft in seven Builder Tool Calls, and proves it cannot bind the native detector contract.
 Unavailable prompted-segmentation expert models are not added to that runnable Draft.
+
+## Milestone 5 prompt, API, UI, and retry
+
+The live Builder prompt now mandates compact context first, deterministic feasibility second,
+batch-only detail inspection, duplicate suppression, the Draft deadline, and protected finalization.
+Every Provider turn receives a phase-specific `AvailableAgentActions` mask plus a compact
+`BuilderContextDigest`; the full 59-tool catalog is no longer exposed on every turn. Once only the
+finalization reserve remains, broad inspection tools disappear.
+
+Persisted Agent Sessions and the HTTP API now expose phase, outcome, typed stop reason, model turns,
+total/remaining/reserved Tool Calls, per-phase calls, cache hits, duplicate calls, Draft ID,
+unresolved bindings, and the concrete next action. The web trace renders those values directly and
+shows distinct outcome actions for review, Provider/Model setup, opening a blocked Draft, and retry.
+Numeric HTML entities and trailing escape artifacts in error messages are normalized; reloading
+saved state is no longer mislabeled as an Agent retry.
+
+Retry creates a fresh Agent Session with reset budgets and duplicate/cache counters while retaining
+the exact persisted editable Draft and unresolved requirements. A regression fixture retries the
+four-call no-detector outcome in three calls and verifies that the Draft ID remains unchanged.
