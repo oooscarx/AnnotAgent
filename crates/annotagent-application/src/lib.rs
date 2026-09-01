@@ -15536,6 +15536,88 @@ export:
     }
 
     #[tokio::test]
+    async fn pipeline_builder_baseline_reproduces_repeated_inspection_budget_exhaustion() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("inspection-loop", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-inspection-loop");
+
+        let repeated_calls = |count: usize, inspect_models: bool| {
+            (0..count)
+                .map(|index| {
+                    if inspect_models && index % 2 == 1 {
+                        MockToolCall {
+                            name: "inspect_model_profile".to_owned(),
+                            arguments: json!({"model_profile_id": selected_model.model.id}),
+                        }
+                    } else {
+                        MockToolCall {
+                            name: "inspect_node_definition".to_owned(),
+                            arguments: json!({"node_type": "core.image_input"}),
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        // Six turns leave ten calls in the budget. The seventh response asks for eleven more,
+        // reproducing the live GLM trace where the 49th read changes the generic Agent outcome to
+        // BudgetExceeded after 48 successful, non-progressing observations.
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![5_usize, 3, 4, 8, 8, 10, 11]
+                .into_iter()
+                .enumerate()
+                .map(|(turn, count)| MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCalls {
+                        calls: repeated_calls(count, turn % 2 == 1),
+                        content: None,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 13_618,
+                        output_tokens: 1_290,
+                    },
+                })
+                .collect(),
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "inspection-loop",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bounded Pipeline Builder loop");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::BudgetExceeded);
+        assert_eq!(report.session.usage.tool_calls, 48);
+        assert_eq!(report.session.model_calls.len(), 7);
+        assert_eq!(report.session.usage.input_tokens, 95_326);
+        assert!(report.suggestion.is_none());
+        assert!(
+            application
+                .store
+                .list_workflow_drafts(Some("inspection-loop"))
+                .expect("Drafts")
+                .is_empty()
+        );
+        assert_eq!(
+            report.session.stop_reason.as_deref(),
+            Some("step or tool-call budget exhausted")
+        );
+    }
+
+    #[tokio::test]
     async fn live_pipeline_builder_exposes_and_loads_exact_domain_resource_ids() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
