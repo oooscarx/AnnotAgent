@@ -1,5 +1,22 @@
 # AnnotAgent Acceptance Evidence
 
+## Provider Registry Dry Run Credential Hotfix — 2026-09-02
+
+- Root cause: `dry_run_workflow_samples_with_provider` forwarded the resolved credential only to
+  Label Pipeline execution. Its compatibility flat-Workflow branch rebuilt the OpenAI-compatible
+  backend without that credential, causing an incorrect `ANNOTAGENT_API_KEY` environment fallback.
+- `workflow_catalog_with_api_key` now injects the transient in-memory credential into the model
+  provider. Static catalog consumers retain the credential-free wrapper.
+- Regression test
+  `flat_workflow_dry_run_uses_registry_credential_without_environment_fallback` starts a local
+  OpenAI-compatible endpoint, requires the exact injected bearer token, leaves the configured
+  environment locator unset, and verifies the Classification node completes in the sandbox.
+- No credential value is persisted by the fix or included in production descriptors, reports, or
+  logs. The test credential is a fixture-only literal.
+- Verification: `cargo test --workspace --all-features` passed 308 tests with one explicitly
+  ignored billable smoke; `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo fmt --all -- --check`, and `git diff --check` all exited successfully.
+
 ## Baseline — 2026-08-27 03:35 CST
 
 Repository state before Milestone 0 edits:

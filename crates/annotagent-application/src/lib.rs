@@ -2645,6 +2645,13 @@ fn registry_requirement_for_node(
 }
 
 fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
+    workflow_catalog_with_api_key(settings, None)
+}
+
+fn workflow_catalog_with_api_key(
+    settings: &Settings,
+    temporary_api_key: Option<&str>,
+) -> Result<(NodeRegistry, ModelRegistry)> {
     let capabilities = vec![
         VisionCapability::VisionLanguage,
         VisionCapability::OpenVocabularyDetection,
@@ -2665,8 +2672,11 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         )))?;
     } else {
         let provider: Arc<dyn VisionModelProvider> = Arc::new(
-            OpenAiCompatibleProvider::new(settings.provider.clone())
-                .map_err(|error| anyhow!(error))?,
+            OpenAiCompatibleProvider::new_with_api_key(
+                settings.provider.clone(),
+                temporary_api_key.map(str::to_owned),
+            )
+            .map_err(|error| anyhow!(error))?,
         );
         models.register_backend(Arc::new(OpenAiVisionBackend::new(
             "workspace-provider-adapter",
@@ -11415,7 +11425,7 @@ impl LocalApplication {
             })?;
             return Ok(report);
         }
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
         let mut samples = Vec::new();
         if validation.valid {
             for index in selected {
@@ -14220,6 +14230,12 @@ mod tests {
         LabelId, NodePort, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
     };
     use annotagent_provider::MockToolCall;
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::post,
+    };
 
     use super::*;
 
@@ -14896,6 +14912,63 @@ export:
   formats: [native]
 ";
 
+    const REGISTRY_CLASSIFICATION_PROJECT: &str = r#"
+version: 1
+project:
+  name: Registry-backed scene classification
+  language: en
+  enabled_skills:
+    - id: annotagent.classification
+      version: "1"
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: scene
+    kind: classification
+    labels: [day, night]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+"#;
+
+    async fn registry_credential_completion(headers: HeaderMap) -> Response {
+        if headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer persisted-workspace-secret")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let content = serde_json::to_string(&annotagent_core::VisionInferenceResponse::default())
+            .expect("fixture response JSON");
+        Json(json!({
+            "id": "registry-credential-fixture",
+            "choices": [{"message": {"role": "assistant", "content": content}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .into_response()
+    }
+
+    async fn spawn_registry_credential_fixture() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(registry_credential_completion)),
+            )
+            .await
+            .expect("fixture server");
+        });
+        format!("http://{address}/v1")
+    }
+
     const OPEN_VOCABULARY_PROJECT: &str = r#"
 version: 1
 project:
@@ -15516,6 +15589,65 @@ export:
                 .any(|edge| { edge.from_node == "refine" && edge.to_node == "next" })
         );
         assert!(!migrate_legacy_expert_workflow(&mut draft).expect("idempotent migration"));
+    }
+
+    #[tokio::test]
+    async fn flat_workflow_dry_run_uses_registry_credential_without_environment_fallback() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("registry-classification", REGISTRY_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("registry-classification/images/sample.png"),
+        )
+        .expect("sample image");
+
+        let mut settings = load_settings(None).expect("settings");
+        settings.default_provider = "openai_compatible".to_owned();
+        settings.provider.endpoint = spawn_registry_credential_fixture().await;
+        settings.provider.model = "fixture-vision-model".to_owned();
+        settings.provider.api_key_env = "ANNOTAGENT_INTENTIONALLY_UNSET_DRY_RUN_KEY".to_owned();
+        settings.provider.max_retries = 0;
+
+        let mut draft = application
+            .create_workflow_draft_with_template(
+                "registry-classification",
+                &settings,
+                false,
+                Some("classification.whole-image"),
+            )
+            .expect("whole-image Draft");
+        draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "classifier")
+            .expect("classifier node")
+            .model_binding = Some("default-vision".to_owned());
+        let draft = application
+            .save_workflow_draft(draft)
+            .expect("bound classification Draft");
+
+        let report = application
+            .dry_run_workflow_samples_with_provider(
+                &draft.id,
+                &settings,
+                &[0],
+                "openai_compatible",
+                Some("persisted-workspace-secret"),
+            )
+            .await
+            .expect("Registry-backed Dry Run");
+
+        assert!(report.validation.valid, "{:#?}", report.validation.issues);
+        assert_eq!(report.samples.len(), 1);
+        assert!(
+            report.samples[0].nodes.iter().any(|node| {
+                node.node_id == "classifier" && node.status == "completed_in_sandbox"
+            })
+        );
     }
 
     #[tokio::test]

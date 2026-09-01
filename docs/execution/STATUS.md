@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-02 CST
 
+## Provider Registry Dry Run Credential Hotfix — 2026-09-02
+
+- Fixed the legacy flat-Workflow Dry Run path so it receives the already-resolved Provider
+  Registry credential, matching Label Pipeline Dry Run and published Run behavior.
+- A persisted workspace-file credential no longer falls through to the legacy
+  `ANNOTAGENT_API_KEY` environment lookup when a model node executes in the sandbox.
+- Added a local OpenAI-compatible regression fixture that rejects every request except the exact
+  injected bearer credential. The test passes without configuring the referenced environment
+  variable and executes the Classification model node successfully.
+- `cargo test --workspace --all-features` passes 308 tests with one opt-in billable smoke ignored;
+  strict all-target/all-feature Clippy, Rustfmt and `git diff --check` also pass.
+
 ## Product Mock Session Cleanup Hotfix — 2026-09-02
 
 - Confirmed the live Registry, all 11 RoboCup Drafts/versions and the active Workflow contain no
