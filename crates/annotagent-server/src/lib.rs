@@ -14,7 +14,8 @@ use std::{
 #[cfg(test)]
 use annotagent_application::load_settings;
 use annotagent_application::{
-    ActiveRunExists, AnnotAgentApplication, DatasetCoordinator, DetectionWorkerSettings,
+    ActiveRunExists, AnnotAgentApplication, ApplyPipelineImprovementRequest,
+    CreatePipelineImprovementRequest, DatasetCoordinator, DetectionWorkerSettings,
     GeometryCalibrationRequest, LocalApplication, ModelBinding, ProjectSummary, Settings,
     WorkflowVersion, stable_project_id, validate_settings,
 };
@@ -31,16 +32,16 @@ use annotagent_core::{
     ModelBindingMatch, ModelBindingRole, ModelCapability, ModelCapabilityQualityContract,
     ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
-    PipelineBuilderConstraints, PipelineInferenceRequest, PipelineModelBackend,
-    ProjectGeometryPolicy, ProjectModelBinding, ProjectSchema, ProtocolFeatures,
-    ProviderAdapterKind, ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot,
-    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
-    RequiredGeometryQuality, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
-    RunStatus, ScoreSemantics, SecretScope, SecretStore, SecretStoreError, SecretValue,
-    SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals, VisionCapability,
-    VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus, WorkflowConstraints,
-    WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence, check_model_compatibility,
-    effective_model_quality_contracts,
+    PipelineBuilderConstraints, PipelineImprovementId, PipelineImprovementPolicy,
+    PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectModelBinding,
+    ProjectSchema, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
+    ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus, ProviderId,
+    ProviderProfile, PublishedWorkflowVersion, RequiredGeometryQuality, ReviewStatus, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope, SecretStore,
+    SecretStoreError, SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals,
+    VisionCapability, VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus,
+    WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence,
+    check_model_compatibility, effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_provider::{
@@ -579,6 +580,22 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(create_geometry_safe_draft),
         )
         .route("/api/workflows/compare", post(compare_workflow_versions))
+        .route(
+            "/api/projects/{project_id}/pipeline-improvements",
+            get(list_pipeline_improvements).post(create_pipeline_improvement),
+        )
+        .route(
+            "/api/pipeline-improvements/{improvement_id}",
+            get(get_pipeline_improvement),
+        )
+        .route(
+            "/api/pipeline-improvements/{improvement_id}/compare",
+            post(compare_pipeline_improvement),
+        )
+        .route(
+            "/api/pipeline-improvements/{improvement_id}/apply-to-draft",
+            post(apply_pipeline_improvement),
+        )
         .route("/api/models", get(list_models))
         .route("/api/models/{model_id}/test", post(test_detection_worker))
         .route(
@@ -3402,6 +3419,96 @@ async fn compare_workflow_versions(
         )
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(comparison)))
+}
+
+async fn list_pipeline_improvements(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let sessions = state
+        .application
+        .project_pipeline_improvements(&project_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"pipeline_improvements": sessions})))
+}
+
+async fn create_pipeline_improvement(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<CreatePipelineImprovementRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let settings = state.settings.read().await.clone();
+    let session = state
+        .application
+        .create_pipeline_improvement(&project_id, &settings, &request)
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(json!(session))))
+}
+
+async fn get_pipeline_improvement(
+    State(state): State<ServerState>,
+    AxumPath(improvement_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let id = improvement_id
+        .parse::<PipelineImprovementId>()
+        .map_err(ApiError::bad_request)?;
+    let session = state
+        .application
+        .pipeline_improvement(id)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(json!(session)))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ComparePipelineImprovementRequest {
+    #[serde(default)]
+    policy: PipelineImprovementPolicy,
+}
+
+async fn compare_pipeline_improvement(
+    State(state): State<ServerState>,
+    AxumPath(improvement_id): AxumPath<String>,
+    payload: Option<Json<ComparePipelineImprovementRequest>>,
+) -> ApiResult<Json<Value>> {
+    let id = improvement_id
+        .parse::<PipelineImprovementId>()
+        .map_err(ApiError::bad_request)?;
+    let session = state
+        .application
+        .pipeline_improvement(id)
+        .map_err(ApiError::not_found)?;
+    let settings = state.settings.read().await.clone();
+    let (candidate, profiles) = state
+        .application
+        .resolved_workflow_draft_model_profiles(&session.candidate_draft_id)
+        .map_err(ApiError::bad_request)?;
+    reject_unresolved_registry_model_nodes(&candidate)?;
+    let (provider_kind, credential) =
+        resolve_runtime_model_profiles(&state, &profiles, workflow_uses_model(&candidate)).await?;
+    let policy = payload.map_or_else(PipelineImprovementPolicy::default, |Json(value)| {
+        value.policy
+    });
+    let session = state
+        .application
+        .compare_pipeline_improvement(id, &settings, policy, &provider_kind, credential.as_deref())
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(session)))
+}
+
+async fn apply_pipeline_improvement(
+    State(state): State<ServerState>,
+    AxumPath(improvement_id): AxumPath<String>,
+    Json(request): Json<ApplyPipelineImprovementRequest>,
+) -> ApiResult<Json<Value>> {
+    let id = improvement_id
+        .parse::<PipelineImprovementId>()
+        .map_err(ApiError::bad_request)?;
+    let session = state
+        .application
+        .apply_pipeline_improvement(id, &request)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(session)))
 }
 
 async fn list_models(State(state): State<ServerState>) -> Json<Value> {
@@ -7013,6 +7120,40 @@ export:
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
         ));
+    }
+
+    #[tokio::test]
+    async fn pipeline_improvement_http_surface_is_registered_and_project_scoped() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        app.create_project(
+            "improvement-api",
+            include_str!("../../../examples/robocup/project.yaml"),
+        )
+        .expect("Project");
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let response = request(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/improvement-api/pipeline-improvements",
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["pipeline_improvements"], json!([]));
+
+        let response = request(
+            &service,
+            axum::http::Method::GET,
+            "/api/pipeline-improvements/not-a-uuid",
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -94,3 +94,11 @@ pass an explicit geometry comparison and decision. The comparison uses box/mask-
 never the upstream semantic score. A returned mask, a high mask ranking value or a Mask-to-BBox
 conversion alone cannot satisfy a Refiner-or-Review publication policy; incomplete or unstable
 evidence routes to Human Review.
+
+## D-016 — Improvement diagnosis and proof use independent evidence
+
+Improve Automation stores diagnosis Runs, evaluation Runs, baseline/candidate Drafts, their exact
+diff, static validation and before/after metrics as one durable session. Run IDs and Project image
+indices may not overlap across diagnosis and holdout. Four images cannot recommend a candidate;
+five to nine are provisional under the default policy. Even a sufficient recommendation only
+permits a human to apply selected changes to an editable Draft—publication remains separate.

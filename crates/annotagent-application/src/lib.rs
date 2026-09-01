@@ -35,26 +35,31 @@ use annotagent_core::{
     ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
     ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
     ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
-    NodeSideEffect, PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
+    NodeSideEffect, NormalizedRect, ObjectSizeBucket, PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
+    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
     PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
-    PipelineDraftTools, PipelineGrammarValidator, PipelineSource, PipelineStep, PortCardinality,
-    PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
-    ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
-    ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
-    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
-    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
-    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, resolve_model_binding,
+    PipelineDraftTools, PipelineGeometryMetrics, PipelineGeometrySizeMetrics,
+    PipelineGrammarValidator, PipelineImprovementDiagnosis, PipelineImprovementId,
+    PipelineImprovementPolicy, PipelineImprovementSession, PipelineImprovementStatus,
+    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, PricingSource,
+    ProjectGeometryPolicy, ProjectId, ProjectModelBinding, ProjectSchema, ProjectSnapshot,
+    PromptContract, PromptKind, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
+    ProviderHealthSnapshot, ProviderHealthStatus, ProviderId, ProviderProfile,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
+    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
+    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
+    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftNode,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds, center_shift, compare_pipeline_geometry_metrics,
+    rect_iou, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -1192,6 +1197,11 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             "Compare the latest Dry Run summary with a persisted Dry Run from another Draft in the same Project.",
             json!({"type":"object","additionalProperties":false,"required":["other_draft_id"],"properties":{"other_draft_id":{"type":"string"}}}),
         ),
+        read(
+            PipelineBuilderTool::ComparePipelineGeometry,
+            "Read an independently evaluated baseline/candidate geometry comparison from a persisted Pipeline Improvement session. Insufficient or provisional evidence never becomes a recommendation.",
+            json!({"type":"object","additionalProperties":false,"required":["improvement_id"],"properties":{"improvement_id":{"type":"string"}}}),
+        ),
         mutate(
             PipelineBuilderTool::SubmitDraftForHumanApproval,
             "Stop with a validated and Dry-Run-tested editable Draft. Never publishes or starts a formal Run.",
@@ -1312,6 +1322,7 @@ fn pipeline_builder_visible_tools(
                                 | PipelineBuilderTool::InspectNodeStatistics
                                 | PipelineBuilderTool::InspectNodeArtifacts
                                 | PipelineBuilderTool::CompareDryRuns
+                                | PipelineBuilderTool::ComparePipelineGeometry
                                 | PipelineBuilderTool::ValidatePipeline
                         )
                 }
@@ -4471,6 +4482,23 @@ pub struct GeometryCalibrationRequest {
     pub evidence_run_ids: Vec<RunId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreatePipelineImprovementRequest {
+    pub workflow_id: String,
+    pub workflow_version: u32,
+    pub target_task_id: TaskId,
+    pub target_label: LabelId,
+    #[serde(default)]
+    pub evidence_run_ids: Vec<RunId>,
+    #[serde(default)]
+    pub evaluation_run_ids: Vec<RunId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyPipelineImprovementRequest {
+    pub selected_change_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeometryCalibrationView {
     pub report: GeometryCalibrationReport,
@@ -6185,6 +6213,450 @@ impl LocalApplication {
         self.store
             .get_geometry_calibration(id)
             .map_err(anyhow::Error::from)
+    }
+
+    pub fn create_pipeline_improvement(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        request: &CreatePipelineImprovementRequest,
+    ) -> Result<PipelineImprovementSession> {
+        if request.evidence_run_ids.is_empty() {
+            bail!("Pipeline improvement requires at least one selected Evidence Run");
+        }
+        if request.evidence_run_ids.len() > 100 || request.evaluation_run_ids.len() > 100 {
+            bail!("Pipeline improvement accepts at most 100 diagnosis and 100 evaluation Runs");
+        }
+        if request
+            .evidence_run_ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != request.evidence_run_ids.len()
+            || request
+                .evaluation_run_ids
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != request.evaluation_run_ids.len()
+        {
+            bail!("Pipeline improvement Run selections must not contain duplicates");
+        }
+        if request
+            .evidence_run_ids
+            .iter()
+            .any(|run_id| request.evaluation_run_ids.contains(run_id))
+        {
+            bail!("diagnosis Evidence Runs and evaluation holdout Runs must be disjoint");
+        }
+        let project_path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let task = project
+            .tasks
+            .iter()
+            .find(|task| task.id == request.target_task_id)
+            .ok_or_else(|| anyhow!("Pipeline improvement target task does not exist"))?;
+        if task.kind != TaskKind::BoundingBox {
+            bail!("geometry-safe Pipeline improvement currently requires a bounding-box task");
+        }
+        if !task
+            .labels
+            .iter()
+            .any(|label| label == request.target_label.as_str())
+        {
+            bail!("Pipeline improvement target Label does not exist");
+        }
+        let published = self
+            .store
+            .get_published_workflow_version(&request.workflow_id, request.workflow_version)?;
+        if published.project_id != project_id {
+            bail!("baseline Workflow does not belong to the requested Project");
+        }
+
+        let mut failure_counts = BTreeMap::<AnnotationFailureClass, u32>::new();
+        let mut geometry_correction_count = 0_u32;
+        let mut semantic_target_correct_count = 0_u32;
+        let mut correction_reason_counts = BTreeMap::<GeometryCorrectionReason, u32>::new();
+        for run_id in request
+            .evidence_run_ids
+            .iter()
+            .chain(request.evaluation_run_ids.iter())
+        {
+            let history = self.store.history(*run_id)?;
+            if history.run.project_id != Some(stable_id) {
+                bail!("Run {run_id} does not belong to the requested Project");
+            }
+            if request.evidence_run_ids.contains(run_id) {
+                for event in &history.events {
+                    let class = match &event.payload {
+                        RunEventPayload::ProviderFailure { .. } => {
+                            Some(AnnotationFailureClass::ProviderFailure)
+                        }
+                        RunEventPayload::TaskFailure {
+                            error_code,
+                            summary,
+                            ..
+                        } => Some(annotagent_core::classify_annotation_failure(
+                            error_code, summary,
+                        )),
+                        RunEventPayload::Validation {
+                            issue_codes,
+                            accepted,
+                        } if !accepted || !issue_codes.is_empty() => issue_codes
+                            .first()
+                            .map(|code| annotagent_core::classify_annotation_failure(code, code)),
+                        _ => None,
+                    };
+                    if let Some(class) = class {
+                        *failure_counts.entry(class).or_default() += 1;
+                    }
+                }
+                if let Some(reason) = history.run.terminal_reason.as_deref() {
+                    let class = annotagent_core::classify_annotation_failure("terminal", reason);
+                    *failure_counts.entry(class).or_default() += 1;
+                }
+                for (_, evidence) in self.store.list_run_geometry_corrections(*run_id, 1_000)? {
+                    let Some((_, annotation)) =
+                        self.store.find_annotation(evidence.annotation_id)?
+                    else {
+                        continue;
+                    };
+                    if annotation.task_id != request.target_task_id
+                        || annotation.label.as_ref() != Some(&request.target_label)
+                    {
+                        continue;
+                    }
+                    *correction_reason_counts.entry(evidence.reason).or_default() += 1;
+                    let class = match evidence.reason {
+                        GeometryCorrectionReason::TooLoose
+                        | GeometryCorrectionReason::TooTight
+                        | GeometryCorrectionReason::Shifted
+                        | GeometryCorrectionReason::Other => {
+                            geometry_correction_count = geometry_correction_count.saturating_add(1);
+                            semantic_target_correct_count =
+                                semantic_target_correct_count.saturating_add(1);
+                            AnnotationFailureClass::GeometryError
+                        }
+                        GeometryCorrectionReason::MissedObject => {
+                            AnnotationFailureClass::NoCandidate
+                        }
+                        GeometryCorrectionReason::WhiteShoe
+                        | GeometryCorrectionReason::WhiteSock
+                        | GeometryCorrectionReason::PenaltyMark
+                        | GeometryCorrectionReason::FieldLineIntersection => {
+                            AnnotationFailureClass::DomainRisk
+                        }
+                        GeometryCorrectionReason::WrongObject
+                        | GeometryCorrectionReason::Duplicate
+                        | GeometryCorrectionReason::WrongLabel => {
+                            AnnotationFailureClass::SemanticError
+                        }
+                    };
+                    *failure_counts.entry(class).or_default() += 1;
+                }
+            }
+        }
+        let primary_failure_class = failure_counts
+            .iter()
+            .max_by_key(|(class, count)| (**count, failure_priority(**class)))
+            .map_or(
+                AnnotationFailureClass::InsufficientEvidence,
+                |(class, _)| *class,
+            );
+        let provider_failure_count = failure_counts
+            .get(&AnnotationFailureClass::ProviderFailure)
+            .copied()
+            .unwrap_or_default();
+        let no_candidate_count = failure_counts
+            .get(&AnnotationFailureClass::NoCandidate)
+            .copied()
+            .unwrap_or_default();
+        let mut evidence_statements = failure_counts
+            .iter()
+            .map(|(class, count)| format!("Observed {count} structured {class:?} signal(s)."))
+            .collect::<Vec<_>>();
+        evidence_statements.extend(
+            correction_reason_counts
+                .iter()
+                .map(|(reason, count)| format!("Observed {count} human {reason:?} correction(s).")),
+        );
+        if evidence_statements.is_empty() {
+            evidence_statements.push(
+                "The selected Evidence Runs contain no scoped correction or failure signal."
+                    .to_owned(),
+            );
+        }
+
+        let baseline = self.clone_workflow_version(&published.workflow_id, published.version)?;
+        let now = chrono::Utc::now();
+        let mut candidate = baseline.clone();
+        candidate.id = uuid::Uuid::new_v4().to_string();
+        candidate.name = format!("{} (evidence repair)", baseline.name);
+        candidate.status = WorkflowDraftStatus::Editing;
+        candidate.geometry_risk_acceptance = None;
+        candidate.created_at = now;
+        candidate.updated_at = now;
+        let mut suggestion = WorkflowSuggestion {
+            draft: candidate,
+            rationale: vec![format!(
+                "Patch is scoped to {} / {} from explicitly selected Review evidence.",
+                request.target_task_id, request.target_label
+            )],
+            estimated_model_calls_per_image: 0,
+            estimated_latency_ms: None,
+            estimated_cost_tier: "must be measured by before/after Dry Run".to_owned(),
+            unresolved_model_bindings: Vec::new(),
+            warnings: Vec::new(),
+            alternatives: Vec::new(),
+        };
+        let mut setup_requirements = Vec::new();
+        if primary_failure_class == AnnotationFailureClass::GeometryError {
+            let (_, models) = workflow_catalog(settings)?;
+            let model_descriptors = models.models();
+            let mut summary = AgentDryRunSummary {
+                geometry_review_count: geometry_correction_count,
+                ..AgentDryRunSummary::default()
+            };
+            summary.geometry_quality.geometry_review_count = geometry_correction_count;
+            summary.geometry_quality.human_adjustment_count = geometry_correction_count;
+            summary.geometry_quality.inaccurate_bbox_reason_count = geometry_correction_count;
+            let applied = available_model_for_capability(
+                &model_descriptors,
+                VisionCapability::PromptedSegmentation,
+            )
+            .ok()
+            .and_then(|model_id| {
+                match add_prompted_segmentation_revision(
+                    &mut suggestion,
+                    request.target_task_id.as_str(),
+                    request.target_label.as_str(),
+                    &model_id,
+                    &summary,
+                ) {
+                    Ok(true) => Some(true),
+                    Ok(false) => None,
+                    Err(error) => {
+                        setup_requirements.push(format!(
+                            "Prompted geometry repair could not patch this Pipeline: {error}"
+                        ));
+                        None
+                    }
+                }
+            })
+            .unwrap_or(false);
+            if !applied {
+                setup_requirements.push(
+                    "Configure an Available prompted-segmentation Model Profile and a typed DetectionSet → BoxPromptSet → MaskSet → DetectionSet path."
+                        .to_owned(),
+                );
+                add_mandatory_geometry_review_boundaries(&mut suggestion.draft)?;
+                suggestion.draft.label_pipeline = None;
+            }
+        } else {
+            add_mandatory_geometry_review_boundaries(&mut suggestion.draft)?;
+            suggestion.draft.label_pipeline = None;
+            setup_requirements.push(match primary_failure_class {
+                AnnotationFailureClass::ProviderFailure
+                | AnnotationFailureClass::InfrastructureFailure =>
+                    "Repair Provider or worker availability before changing geometry nodes.".to_owned(),
+                AnnotationFailureClass::NoCandidate =>
+                    "Evaluate detector recall or fallback candidates; prompted segmentation cannot refine an absent box.".to_owned(),
+                AnnotationFailureClass::SemanticError | AnnotationFailureClass::DomainRisk =>
+                    "Add semantic verification or hard-negative handling before considering geometry refinement.".to_owned(),
+                _ =>
+                    "Collect scoped human correction evidence before recommending a model-chain change.".to_owned(),
+            });
+        }
+        let candidate = self.save_workflow_draft(suggestion.draft)?;
+        let validation = self.validate_workflow_draft(&candidate, settings, false)?;
+        let diff = PipelineDraftDiff::between(&baseline, &candidate).map_err(anyhow::Error::msg)?;
+        let session = PipelineImprovementSession {
+            schema_version: PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
+            id: PipelineImprovementId::new(),
+            project_id: project_id.to_owned(),
+            baseline_workflow_id: published.workflow_id,
+            baseline_workflow_version: published.version,
+            target_task_id: request.target_task_id.clone(),
+            target_label: request.target_label.clone(),
+            diagnosis: PipelineImprovementDiagnosis {
+                primary_failure_class,
+                evidence_run_ids: request.evidence_run_ids.clone(),
+                evidence_statements,
+                semantic_target_correct_count,
+                geometry_correction_count,
+                provider_failure_count,
+                no_candidate_count,
+            },
+            evaluation_run_ids: request.evaluation_run_ids.clone(),
+            baseline_draft_id: baseline.id,
+            candidate_draft_id: candidate.id,
+            diff,
+            validation,
+            comparison: None,
+            status: PipelineImprovementStatus::DraftCreated,
+            setup_requirements,
+            applied_draft_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.store.save_pipeline_improvement(&session)?;
+        Ok(session)
+    }
+
+    pub fn pipeline_improvement(
+        &self,
+        id: PipelineImprovementId,
+    ) -> Result<PipelineImprovementSession> {
+        self.store
+            .get_pipeline_improvement(id)?
+            .ok_or_else(|| anyhow!("Pipeline improvement {id} was not found"))
+    }
+
+    pub fn project_pipeline_improvements(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<PipelineImprovementSession>> {
+        self.project_path(project_id)?;
+        self.store
+            .list_project_pipeline_improvements(project_id)
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn compare_pipeline_improvement(
+        &self,
+        id: PipelineImprovementId,
+        settings: &Settings,
+        policy: PipelineImprovementPolicy,
+        provider_kind: &str,
+        temporary_api_key: Option<&str>,
+    ) -> Result<PipelineImprovementSession> {
+        policy.validate().map_err(anyhow::Error::msg)?;
+        let mut session = self.pipeline_improvement(id)?;
+        if session.evaluation_run_ids.is_empty() {
+            bail!("select independent evaluation holdout Runs before comparison");
+        }
+        let references = self.pipeline_improvement_references(&session)?;
+        let diagnosis_indices = self.pipeline_improvement_run_image_indices(
+            &session.project_id,
+            &session.diagnosis.evidence_run_ids,
+        )?;
+        let evaluation_indices = references.keys().copied().collect::<BTreeSet<_>>();
+        if !diagnosis_indices.is_disjoint(&evaluation_indices) {
+            bail!("diagnosis evidence and evaluation holdout contain the same Project image");
+        }
+        let image_indices = references.keys().copied().take(10).collect::<Vec<_>>();
+        if image_indices.is_empty() {
+            bail!("evaluation Runs contain no human-accepted bounding-box references");
+        }
+        let baseline = self
+            .dry_run_workflow_samples_with_provider(
+                &session.baseline_draft_id,
+                settings,
+                &image_indices,
+                provider_kind,
+                temporary_api_key,
+            )
+            .await?;
+        let candidate = self
+            .dry_run_workflow_samples_with_provider(
+                &session.candidate_draft_id,
+                settings,
+                &image_indices,
+                provider_kind,
+                temporary_api_key,
+            )
+            .await?;
+        let baseline_metrics =
+            pipeline_geometry_metrics(&baseline, &references, session.target_label.as_str());
+        let candidate_metrics =
+            pipeline_geometry_metrics(&candidate, &references, session.target_label.as_str());
+        let comparison =
+            compare_pipeline_geometry_metrics(baseline_metrics, candidate_metrics, true, policy);
+        session.comparison = Some(comparison);
+        session.status = PipelineImprovementStatus::AwaitingHumanApproval;
+        session.updated_at = chrono::Utc::now();
+        self.store.save_pipeline_improvement(&session)?;
+        Ok(session)
+    }
+
+    pub fn apply_pipeline_improvement(
+        &self,
+        id: PipelineImprovementId,
+        request: &ApplyPipelineImprovementRequest,
+    ) -> Result<PipelineImprovementSession> {
+        if request.selected_change_ids.is_empty() {
+            bail!("select at least one reviewed change to apply");
+        }
+        let mut session = self.pipeline_improvement(id)?;
+        if session.status != PipelineImprovementStatus::AwaitingHumanApproval {
+            bail!("compare the candidate on an independent holdout before human approval");
+        }
+        let report = self.apply_workflow_draft_diff(
+            &session.baseline_draft_id,
+            &session.candidate_draft_id,
+            &request.selected_change_ids,
+        )?;
+        session.applied_draft_id = Some(report.draft.id);
+        session.status = PipelineImprovementStatus::AppliedToDraft;
+        session.updated_at = chrono::Utc::now();
+        self.store.save_pipeline_improvement(&session)?;
+        Ok(session)
+    }
+
+    fn pipeline_improvement_references(
+        &self,
+        session: &PipelineImprovementSession,
+    ) -> Result<BTreeMap<usize, Vec<NormalizedRect>>> {
+        let project_path = self.project_path(&session.project_id)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let mut references = BTreeMap::<usize, Vec<NormalizedRect>>::new();
+        for run_id in &session.evaluation_run_ids {
+            let history = self.store.history(*run_id)?;
+            if history.run.project_id != Some(stable_id) {
+                bail!("evaluation Run {run_id} does not belong to the improvement Project");
+            }
+            let inspection = self.inspect_run_annotations(*run_id)?;
+            let image_index = inspection.image_index.ok_or_else(|| {
+                anyhow!("evaluation Run {run_id} has no recoverable Project image identity")
+            })?;
+            for annotation in inspection.annotations {
+                if annotation.task_id == session.target_task_id
+                    && annotation.label.as_ref() == Some(&session.target_label)
+                    && annotation.review_status == ReviewStatus::HumanAccepted
+                    && let annotagent_core::AnnotationValue::BoundingBox { rect } = annotation.value
+                {
+                    references.entry(image_index).or_default().push(rect);
+                }
+            }
+        }
+        Ok(references)
+    }
+
+    fn pipeline_improvement_run_image_indices(
+        &self,
+        project_id: &str,
+        run_ids: &[RunId],
+    ) -> Result<BTreeSet<usize>> {
+        let project_path = self.project_path(project_id)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
+        let mut indices = BTreeSet::new();
+        for run_id in run_ids {
+            let history = self.store.history(*run_id)?;
+            if history.run.project_id != Some(stable_id) {
+                bail!("Run {run_id} does not belong to the Pipeline improvement Project");
+            }
+            let index = self
+                .inspect_run_annotations(*run_id)?
+                .image_index
+                .ok_or_else(|| {
+                    anyhow!("diagnosis Run {run_id} has no recoverable Project image identity")
+                })?;
+            indices.insert(index);
+        }
+        Ok(indices)
     }
 
     fn geometry_calibration_key(
@@ -11841,6 +12313,41 @@ impl LocalApplication {
                             }),
                         ))
                     }
+                    Ok(PipelineBuilderTool::ComparePipelineGeometry) => {
+                        let improvement_id = required_string_argument(
+                            &call.arguments,
+                            "improvement_id",
+                        )?
+                        .parse::<PipelineImprovementId>()?;
+                        let improvement = self
+                            .store
+                            .get_pipeline_improvement(improvement_id)?
+                            .ok_or_else(|| {
+                                anyhow!("Pipeline improvement {improvement_id} was not found")
+                            })?;
+                        if improvement.project_id != project_id {
+                            bail!(
+                                "Pipeline geometry comparison must belong to the current Project"
+                            );
+                        }
+                        let comparison = improvement.comparison.as_ref().ok_or_else(|| {
+                            anyhow!(
+                                "Pipeline improvement has no independent before/after comparison"
+                            )
+                        })?;
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected independent Pipeline geometry comparison",
+                            json!({
+                                "improvement_id": improvement.id,
+                                "status": improvement.status,
+                                "target_task_id": improvement.target_task_id,
+                                "target_label": improvement.target_label,
+                                "comparison": comparison,
+                                "auto_published": false,
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::SubmitDraftForHumanApproval) => {
                         if !validation.as_ref().is_some_and(|report| report.valid) {
                             bail!("a valid static report is required before human approval");
@@ -14924,6 +15431,210 @@ fn revise_draft_after_failed_dry_run(
     true
 }
 
+const fn failure_priority(class: AnnotationFailureClass) -> u8 {
+    match class {
+        AnnotationFailureClass::ProviderFailure
+        | AnnotationFailureClass::InfrastructureFailure
+        | AnnotationFailureClass::BudgetLimit => 8,
+        AnnotationFailureClass::NoCandidate => 7,
+        AnnotationFailureClass::SemanticError => 6,
+        AnnotationFailureClass::DomainRisk => 5,
+        AnnotationFailureClass::GeometryError => 4,
+        AnnotationFailureClass::MissingScore => 3,
+        AnnotationFailureClass::InvalidArtifact => 2,
+        AnnotationFailureClass::InsufficientEvidence => 1,
+    }
+}
+
+#[derive(Default)]
+struct GeometryMetricAccumulator {
+    reference_count: u32,
+    ious: Vec<f32>,
+    center_shifts: Vec<f32>,
+    manual_resize_count: u32,
+    too_loose_count: u32,
+    too_tight_count: u32,
+}
+
+impl GeometryMetricAccumulator {
+    fn push(&mut self, predicted: NormalizedRect, reference: NormalizedRect) {
+        let shift = center_shift(predicted, reference);
+        let ratio = predicted.area() / reference.area().max(f32::EPSILON);
+        self.ious.push(rect_iou(predicted, reference));
+        self.center_shifts.push(shift);
+        if shift > 0.05 || !(0.8..=1.2).contains(&ratio) {
+            self.manual_resize_count = self.manual_resize_count.saturating_add(1);
+        }
+        if ratio > 1.2 {
+            self.too_loose_count = self.too_loose_count.saturating_add(1);
+        } else if ratio < 0.8 {
+            self.too_tight_count = self.too_tight_count.saturating_add(1);
+        }
+    }
+}
+
+fn pipeline_geometry_metrics(
+    report: &WorkflowDryRunReport,
+    references: &BTreeMap<usize, Vec<NormalizedRect>>,
+    target_label: &str,
+) -> PipelineGeometryMetrics {
+    let mut aggregate = GeometryMetricAccumulator::default();
+    let mut buckets = BTreeMap::<ObjectSizeBucket, GeometryMetricAccumulator>::new();
+    let mut reference_count = 0_u32;
+    let mut prediction_count = 0_u32;
+    let mut semantic_match_count = 0_u32;
+    let mut no_candidate_count = 0_u32;
+    let mut review_count = 0_u32;
+    let mut failure_classes = BTreeMap::<AnnotationFailureClass, u32>::new();
+    for sample in &report.samples {
+        let sample_references = references
+            .get(&sample.image_index)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        reference_count = reference_count
+            .saturating_add(u32::try_from(sample_references.len()).unwrap_or(u32::MAX));
+        let predictions = sample
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.label == target_label)
+            .filter_map(|outcome| match outcome.value {
+                Some(VisionArtifactValue::BoundingBox { rect }) => Some(rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        prediction_count =
+            prediction_count.saturating_add(u32::try_from(predictions.len()).unwrap_or(u32::MAX));
+        if predictions.is_empty() {
+            no_candidate_count = no_candidate_count.saturating_add(1);
+        }
+        if sample.review_count > 0
+            || sample
+                .outcomes
+                .iter()
+                .any(|outcome| outcome.status == SampleTestOutcomeStatus::NeedsReview)
+        {
+            review_count = review_count.saturating_add(1);
+        }
+        for class in sample
+            .failure_classes
+            .iter()
+            .chain(sample.nodes.iter().flat_map(|node| &node.failure_classes))
+            .chain(
+                sample
+                    .outcomes
+                    .iter()
+                    .flat_map(|outcome| &outcome.failure_classes),
+            )
+        {
+            *failure_classes.entry(*class).or_default() += 1;
+        }
+        let mut unmatched = (0..predictions.len()).collect::<BTreeSet<_>>();
+        for reference in sample_references {
+            let pixel_area = reference.area() * sample.width as f32 * sample.height as f32;
+            let bucket = ObjectSizeBucket::from_pixel_area(pixel_area);
+            let values = buckets.entry(bucket).or_default();
+            values.reference_count = values.reference_count.saturating_add(1);
+            let Some((index, _)) = unmatched
+                .iter()
+                .map(|index| (*index, rect_iou(predictions[*index], *reference)))
+                .max_by(|left, right| left.1.total_cmp(&right.1))
+            else {
+                continue;
+            };
+            unmatched.remove(&index);
+            let predicted = predictions[index];
+            let iou = rect_iou(predicted, *reference);
+            if iou >= 0.5 {
+                semantic_match_count = semantic_match_count.saturating_add(1);
+            }
+            aggregate.push(predicted, *reference);
+            buckets
+                .entry(bucket)
+                .or_default()
+                .push(predicted, *reference);
+        }
+    }
+    let image_count = u32::try_from(report.samples.len()).unwrap_or(u32::MAX);
+    let matched_count = u32::try_from(aggregate.ious.len()).unwrap_or(u32::MAX);
+    let rate = |numerator: u32, denominator: u32| {
+        (denominator > 0).then_some(numerator as f32 / denominator as f32)
+    };
+    let size_buckets = buckets
+        .into_iter()
+        .map(|(bucket, values)| {
+            let matched = u32::try_from(values.ious.len()).unwrap_or(u32::MAX);
+            (
+                bucket,
+                PipelineGeometrySizeMetrics {
+                    reference_count: values.reference_count,
+                    matched_count: matched,
+                    mean_iou: mean_metric(&values.ious),
+                    median_iou: percentile_metric(&values.ious, 0.5),
+                    p10_iou: percentile_metric(&values.ious, 0.1),
+                    median_center_shift: percentile_metric(&values.center_shifts, 0.5),
+                },
+            )
+        })
+        .collect();
+    let total_cost = report
+        .estimated_cost
+        .parse::<rust_decimal::Decimal>()
+        .unwrap_or(rust_decimal::Decimal::ZERO);
+    PipelineGeometryMetrics {
+        image_count,
+        reference_count,
+        prediction_count,
+        matched_count,
+        semantic_precision: rate(semantic_match_count, prediction_count),
+        semantic_recall: rate(semantic_match_count, reference_count),
+        mean_iou: mean_metric(&aggregate.ious),
+        median_iou: percentile_metric(&aggregate.ious, 0.5),
+        p10_iou: percentile_metric(&aggregate.ious, 0.1),
+        median_center_shift: percentile_metric(&aggregate.center_shifts, 0.5),
+        p90_center_shift: percentile_metric(&aggregate.center_shifts, 0.9),
+        manual_resize_rate: rate(aggregate.manual_resize_count, matched_count),
+        too_loose_rate: rate(aggregate.too_loose_count, matched_count),
+        too_tight_rate: rate(aggregate.too_tight_count, matched_count),
+        no_candidate_rate: if image_count == 0 {
+            0.0
+        } else {
+            no_candidate_count as f32 / image_count as f32
+        },
+        review_rate: if image_count == 0 {
+            0.0
+        } else {
+            review_count as f32 / image_count as f32
+        },
+        cost_per_image: if image_count == 0 {
+            rust_decimal::Decimal::ZERO
+        } else {
+            total_cost / rust_decimal::Decimal::from(image_count)
+        },
+        latency_per_image_ms: if image_count == 0 {
+            0
+        } else {
+            report.total_latency_ms / u64::from(image_count)
+        },
+        failure_count: failure_classes.values().copied().sum(),
+        failure_classes,
+        size_buckets,
+    }
+}
+
+fn mean_metric(values: &[f32]) -> Option<f32> {
+    (!values.is_empty()).then(|| values.iter().sum::<f32>() / values.len() as f32)
+}
+
+fn percentile_metric(values: &[f32], percentile: f32) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut values = values.to_vec();
+    values.sort_by(f32::total_cmp);
+    let index = ((values.len() - 1) as f32 * percentile).round() as usize;
+    values.get(index).copied()
+}
+
 fn agent_dry_run_summary(
     report: &WorkflowDryRunReport,
     draft: &WorkflowDraft,
@@ -15927,7 +16638,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 64);
+        assert_eq!(names.len(), 65);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -21661,6 +22372,153 @@ export:
                 .node(&model_node.id)
                 .map(|contract| contract.calibration_status),
             Some(GeometryCalibrationStatus::Stale)
+        );
+    }
+
+    #[tokio::test]
+    async fn improve_automation_patches_geometry_evidence_without_mutating_publication() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("pipeline-improvement", GENERIC_BBOX_PROJECT)
+            .expect("Project");
+        let settings = load_settings(None).expect("settings");
+        application
+            .apply_legacy_registry_import(&settings)
+            .expect("revisioned test Model Profile");
+        let draft = application
+            .suggest_workflow(
+                "pipeline-improvement",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("baseline Draft")
+            .draft;
+        let published = application
+            .publish_workflow(&draft.id, &settings)
+            .expect("Published baseline");
+        let immutable_before = serde_json::to_value(&published).expect("published JSON");
+        let project_path = application
+            .project_path("pipeline-improvement")
+            .expect("Project path");
+        let project_scope = stable_project_id(project_path.parent().expect("Project root"));
+        let run_id = RunId::new();
+        let image_id = ImageId::new();
+        let annotation = Annotation {
+            id: annotagent_core::AnnotationId::new(),
+            image_id,
+            task_id: TaskId::from("components"),
+            label: Some(LabelId::from("component")),
+            value: annotagent_core::AnnotationValue::BoundingBox {
+                rect: NormalizedRect::new(0.42, 0.42, 0.12, 0.12).expect("reference bbox"),
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.99),
+            source: AnnotationSource::Model,
+            review_status: ReviewStatus::HumanAccepted,
+            provenance: annotagent_core::AnnotationProvenance::default(),
+            created_at: chrono::Utc::now(),
+        };
+        application
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: run_id,
+                project_id: project_scope,
+                project_name: "Pipeline improvement".to_owned(),
+                skill_id: "none".to_owned(),
+                provider: "mock".to_owned(),
+                model: "mock".to_owned(),
+                status: RunStatus::CompletedWithReview,
+                project_schema_json: std::fs::read_to_string(&project_path)
+                    .expect("Project schema"),
+                workflow_snapshot_json: Some(json!({"selected_workflow": &published}).to_string()),
+            })
+            .await
+            .expect("Evidence Run");
+        application
+            .store
+            .commit_annotation(run_id, &annotation)
+            .await
+            .expect("reviewed annotation");
+        let (quality, evidence) = annotagent_core::build_geometry_correction_evidence(
+            annotagent_core::GeometryCorrectionInput {
+                project_id: project_scope,
+                run_id,
+                image_id,
+                annotation_id: annotation.id,
+                source_node_id: annotagent_core::NodeId::from("components.component.detect"),
+                source_model_profile_id: None,
+                source_model_revision: None,
+                candidate_artifact_id: annotagent_core::ArtifactId::new(),
+                reference_artifact_id: annotagent_core::ArtifactId::new(),
+                original_geometry: annotagent_core::GeometrySnapshot {
+                    rect: NormalizedRect::new(0.30, 0.30, 0.36, 0.36).expect("loose candidate"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                corrected_geometry: annotagent_core::GeometrySnapshot {
+                    rect: NormalizedRect::new(0.42, 0.42, 0.12, 0.12).expect("human reference"),
+                    image_width: 640,
+                    image_height: 480,
+                },
+                reason: GeometryCorrectionReason::TooLoose,
+                created_at: chrono::Utc::now(),
+            },
+        );
+        application
+            .store
+            .save_geometry_correction(&quality, &evidence)
+            .expect("geometry evidence");
+
+        let improvement = application
+            .create_pipeline_improvement(
+                "pipeline-improvement",
+                &settings,
+                &CreatePipelineImprovementRequest {
+                    workflow_id: published.workflow_id.clone(),
+                    workflow_version: published.version,
+                    target_task_id: TaskId::from("components"),
+                    target_label: LabelId::from("component"),
+                    evidence_run_ids: vec![run_id],
+                    evaluation_run_ids: Vec::new(),
+                },
+            )
+            .expect("Pipeline improvement");
+        assert_eq!(
+            improvement.diagnosis.primary_failure_class,
+            AnnotationFailureClass::GeometryError
+        );
+        assert_eq!(improvement.status, PipelineImprovementStatus::DraftCreated);
+        assert!(!improvement.diff.is_empty());
+        assert!(improvement.comparison.is_none());
+        assert!(improvement.applied_draft_id.is_none());
+        let candidate = application
+            .store
+            .get_workflow_draft(&improvement.candidate_draft_id)
+            .expect("candidate Draft");
+        let has_measured_refinement = candidate
+            .nodes
+            .iter()
+            .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION)
+            && candidate
+                .nodes
+                .iter()
+                .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_DECISION);
+        let has_conservative_fallback = !improvement.setup_requirements.is_empty()
+            && candidate
+                .nodes
+                .iter()
+                .any(|node| node.kind == WorkflowNodeKind::HumanReview);
+        assert!(has_measured_refinement || has_conservative_fallback);
+        assert_eq!(
+            serde_json::to_value(
+                application
+                    .store
+                    .get_published_workflow_version(&published.workflow_id, published.version,)
+                    .expect("unchanged publication")
+            )
+            .expect("published JSON"),
+            immutable_before
         );
     }
 

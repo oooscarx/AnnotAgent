@@ -102,6 +102,7 @@ uuid_id!(ModelProfileId);
 uuid_id!(ModelBindingId);
 uuid_id!(GeometryQualityReportId);
 uuid_id!(GeometryCalibrationId);
+uuid_id!(PipelineImprovementId);
 
 string_id!(TaskId);
 string_id!(LabelId);

@@ -4,7 +4,7 @@ Last updated: 2026-09-02
 
 ## Current milestone
 
-Milestone 6 — auditable prompted geometry refinement complete.
+Milestone 7 — evidence-driven Improve Automation complete.
 
 ## Completed
 
@@ -96,15 +96,31 @@ Milestone 6 — auditable prompted geometry refinement complete.
   conservative first publication boundary.
 - Static validation now rejects Refiner → Mask-to-BBox → Commit without evaluation/decision. A
   returned SAM mask is evidence, not proof of geometry quality.
+- Added persistent Improvement sessions that bind a Published baseline, diagnosis Runs,
+  independent evaluation Runs, two editable Drafts, a structured Patch diff, validation,
+  before/after comparison and human-selected application state.
+- Diagnosis classifies Provider/infrastructure, no-candidate, semantic, geometry, domain,
+  missing-score, invalid-Artifact, budget and insufficient-evidence failures before selecting a
+  repair. SAM is considered only for geometry errors with an existing candidate.
+- Baseline and candidate now run on the same non-committing holdout and compare semantic recall and
+  precision, robust geometry metrics, manual adjustment, review, cost, latency, failures and
+  small/medium/large object buckets.
+- Diagnosis and holdout Run sets must be disjoint, and comparison also rejects overlapping Project
+  image indices. Four images never recommend; five to nine are provisional under default policy.
+- Added Project-scoped persistence and the four requested Improvement REST operations. Applying
+  explicit selected changes produces an editable Draft and never publishes.
+- Added bounded read-only Builder Tool `compare_pipeline_geometry`; the registry now contains 65
+  Tools and still exposes no publish, full-Run, credential, shell, download or arbitrary-URL
+  escape hatch.
 
 ## In progress
 
-- None within M6; the next implementation milestone is M7.
+- None within M7; the next implementation milestone is M8.
 
 ## Next
 
-- Milestone 7: add evidence-driven Improve Automation with diagnosis/evaluation separation,
-  baseline-versus-candidate comparison, bounded patching and human-controlled promotion.
+- Milestone 8: expose the completed safety and improvement contracts coherently in GUI/TUI, add
+  release E2E coverage, finish user documentation and run the complete release verification.
 
 ## Recent verification
 
@@ -138,6 +154,12 @@ Milestone 6 — auditable prompted geometry refinement complete.
 - M6 release: all 332 active Rust tests and doc tests passed (one explicitly billable smoke
   ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
   Web TypeScript, 41 unit tests and production build passed.
+- M7 focused: four Core improvement-policy tests, the SQLite session round-trip, the exact 65-Tool
+  registry, the Application immutable-baseline Patch regression and the Project-scoped HTTP surface
+  passed.
+- M7 release: all 339 active Rust tests and doc tests passed (one explicitly billable smoke
+  ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt and diff checks passed;
+  Web TypeScript, all 41 unit tests and the production build passed.
 - Web: not run for M0; no Web behavior changed.
 - E2E: not run for M0; the baseline is a Core static-validation fixture.
 - Browser: 2026-09-02 read-only inspection of all four current RoboCup Ball Run Results confirmed
@@ -151,11 +173,12 @@ Milestone 6 — auditable prompted geometry refinement complete.
 - `77c5dea feat(review): capture structured bbox correction evidence` (M3).
 - `ee4a159 feat(evaluation): calibrate geometry quality by model and project` (M4).
 - `d07b180 feat(agent): build geometry-safe pipelines from the first draft` (M5).
-- `feat(workflow): add auditable prompted geometry refinement` (M6, this milestone commit).
+- `7ea44f8 feat(workflow): add auditable prompted geometry refinement` (M6).
+- `feat(agent): improve pipelines from review and geometry evidence` (M7, this milestone commit).
 
 ## Release-blocking remainder
 
-- M7 and M8 remain open. M6 acceptance evidence is implemented and verified offline.
+- M8 remains open. M7 implementation and full release-command verification are complete.
 
 ## Live-conditional items
 

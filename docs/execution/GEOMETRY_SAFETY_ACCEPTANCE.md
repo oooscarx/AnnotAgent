@@ -16,7 +16,7 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
 | 10. Configuration changes stale calibration | verified | Core exhaustively classifies staleness dimensions; the Application fixture changes grid/node configuration and observes effective `Stale`. |
 | 11. Qwen-only first Draft requires Review | verified | Scripted live Builder reads all five geometry Tools, observes coarse/uncalibrated Qwen and unavailable real SAM, then saves a valid Draft with Human Review and no segment node. |
 | 12. Registered SAM enables improvement Draft | live-conditional | An available prompted-segmentation binding creates a typed refinement/evaluation/decision revision and executes offline; live SAM registration/quality remains conditional. |
-| 13. No measured improvement means no recommendation | open | Comparison tools exist in partial form; holdout rule pending. |
+| 13. No measured improvement means no recommendation | verified | Typed comparison requires independent holdout, sufficient image count, recall safety, median/P10 IoU gain, lower manual adjustment and review/cost/latency/failure guards. Four images never recommend and five remain provisional. |
 | 14. Legacy Workflow remains immutable and new Run is guarded | verified | Application test preserves the serialized version, blocks a new Run, creates a safe Draft, and publishes it as Safe. |
 | 15. Small objects are evaluated separately | verified | Reference pixel area is bucketed using small/medium/large thresholds and each bucket retains sample count, adjustment count, mean IoU and mean center shift. |
 | 16. Generic Project remains domain-neutral | verified | Generic Core/Application workflows pass without RoboCup content. |
@@ -147,5 +147,31 @@ Status values: `open`, `implemented`, `verified`, `live-conditional`.
   and exact Artifact types, and suspends at its retained Human Review boundary. A real SAM Worker
   remains live-conditional and no Mock result is presented as model-quality evidence.
 - Release verification passed all 332 active Rust tests and doc tests (one explicitly billable
+  smoke ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
+  TypeScript, all 41 Web unit tests and the production build.
+
+## M7 evidence
+
+- `PipelineImprovementSession` durably binds the immutable baseline, target task/Label, diagnosis
+  Runs, disjoint evaluation Runs, comparison Draft, candidate Draft, exact structured diff, static
+  validation, recommendation and selected-change application state. SQLite migration 12 and the
+  round-trip test preserve sessions and comparisons across restart.
+- The Application classifies structured Run failures and human correction reasons before patching.
+  Prompted segmentation is considered only for geometry errors with a candidate; Provider,
+  no-candidate, semantic and domain failures receive distinct setup/remediation guidance and a
+  conservative Review boundary.
+- Baseline and candidate execute the same non-committing holdout images. The comparator derives
+  semantic precision/recall, IoU and center-shift percentiles, manual-resize/loose/tight/
+  no-candidate/review rates, cost, latency, failures and object-size buckets from human-accepted
+  bbox references.
+- Core tests prove four images cannot recommend even with many objects, five images remain
+  provisional, sufficient improvement can recommend, and geometry gains cannot hide recall or
+  cost regression.
+- The four requested REST operations plus Project-scoped listing are registered and tested. The
+  65th bounded Builder Tool, `compare_pipeline_geometry`, reads only a persisted comparison.
+- The Application regression proves geometry evidence creates a scoped Patch Draft or explicit
+  safe setup fallback and leaves the serialized Published Workflow unchanged. Apply-to-Draft
+  requires a prior comparison and explicit selected diff IDs; no path auto-publishes.
+- Release verification passed all 339 active Rust tests and doc tests (one explicitly billable
   smoke ignored), strict all-target/all-feature Clippy, all-feature build, Rustfmt/diff checks, Web
   TypeScript, all 41 Web unit tests and the production build.

@@ -15,12 +15,13 @@ use annotagent_core::{
     ArtifactId, ArtifactValidationState, BindingMutationActor, CorrectionRecord,
     GeometryCalibrationId, GeometryCalibrationReport, GeometryCorrectionEvidence,
     GeometryQualityReport, GlobalModelDefaults, ImageId, LabelId, ModelBindingId,
-    ModelBindingMatch, ModelMessage, ModelProfile, ModelProfileId, ProjectGeometryPolicy,
-    ProjectId, ProjectModelBinding, ProviderAdapterKind, ProviderId, ProviderProfile,
-    PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
-    RunEventPayload, RunId, RunStatus, TaskId, TaskKind, TaskRunStatus, ToolCallId, ToolResult,
-    UsageRecord, ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft,
-    WorkflowDraftStatus, WorkflowDryRunReport, WorkflowSnapshot,
+    ModelBindingMatch, ModelMessage, ModelProfile, ModelProfileId, PipelineImprovementId,
+    PipelineImprovementSession, ProjectGeometryPolicy, ProjectId, ProjectModelBinding,
+    ProviderAdapterKind, ProviderId, ProviderProfile, PublishedWorkflowVersion, RelationEndpoint,
+    ReviewStatus, RevisionActor, RunEvent, RunEventPayload, RunId, RunStatus, TaskId, TaskKind,
+    TaskRunStatus, ToolCallId, ToolResult, UsageRecord, ValidationIssue, VisionArtifact,
+    VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunReport,
+    WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -46,6 +47,8 @@ const GEOMETRY_CORRECTION_EVIDENCE_MIGRATION: &str =
     include_str!("../../../migrations/0010_geometry_correction_evidence.sql");
 const GEOMETRY_CALIBRATION_MIGRATION: &str =
     include_str!("../../../migrations/0011_geometry_calibration.sql");
+const PIPELINE_IMPROVEMENT_MIGRATION: &str =
+    include_str!("../../../migrations/0012_pipeline_improvements.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -65,6 +68,8 @@ pub enum StorageError {
     ProviderNotFound(ProviderId),
     #[error("Model Profile {0} revision {1} was not found")]
     ModelProfileNotFound(ModelProfileId, u64),
+    #[error("Pipeline improvement {0} was not found")]
+    PipelineImprovementNotFound(PipelineImprovementId),
     #[error("invalid Model Profile revision: {0}")]
     InvalidModelRevision(String),
     #[error("semantic Model Profile changes require a new revision")]
@@ -369,6 +374,13 @@ impl SqliteStore {
             transaction.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (11, ?1, ?2)",
                 params!["geometry_calibration", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(PIPELINE_IMPROVEMENT_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (12, ?1, ?2)",
+                params!["pipeline_improvements", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
             Ok(())
@@ -2752,6 +2764,70 @@ impl SqliteStore {
         })
     }
 
+    pub fn save_pipeline_improvement(
+        &self,
+        session: &PipelineImprovementSession,
+    ) -> Result<(), StorageError> {
+        session.validate().map_err(StorageError::InvalidEnum)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO pipeline_improvement_sessions
+                 (id, project_id, baseline_workflow_id, baseline_workflow_version, status,
+                  session_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET
+                   status = excluded.status,
+                   session_json = excluded.session_json,
+                   updated_at = excluded.updated_at",
+                params![
+                    session.id.to_string(),
+                    session.project_id,
+                    session.baseline_workflow_id,
+                    i64::from(session.baseline_workflow_version),
+                    enum_string(session.status)?,
+                    serde_json::to_string(session)?,
+                    session.created_at.to_rfc3339(),
+                    session.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_pipeline_improvement(
+        &self,
+        id: PipelineImprovementId,
+    ) -> Result<Option<PipelineImprovementSession>, StorageError> {
+        self.with_connection(|connection| {
+            let value = connection
+                .query_row(
+                    "SELECT session_json FROM pipeline_improvement_sessions WHERE id = ?1",
+                    [id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            value
+                .map(|value| serde_json::from_str(&value).map_err(StorageError::from))
+                .transpose()
+        })
+    }
+
+    pub fn list_project_pipeline_improvements(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<PipelineImprovementSession>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT session_json FROM pipeline_improvement_sessions
+                 WHERE project_id = ?1 ORDER BY updated_at DESC",
+            )?;
+            statement
+                .query_map([project_id], |row| row.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect()
+        })
+    }
+
     pub fn query_corrections(
         &self,
         project_id: ProjectId,
@@ -3675,12 +3751,68 @@ mod tests {
             "geometry_correction_evidence",
             "project_geometry_policies",
             "geometry_calibration_reports",
+            "pipeline_improvement_sessions",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn pipeline_improvement_session_round_trips_and_lists_by_project() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let now = Utc::now();
+        let run_id = RunId::new();
+        let session = PipelineImprovementSession {
+            schema_version: annotagent_core::PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
+            id: PipelineImprovementId::new(),
+            project_id: "geometry-project".to_owned(),
+            baseline_workflow_id: "geometry-workflow".to_owned(),
+            baseline_workflow_version: 1,
+            target_task_id: TaskId::from("objects"),
+            target_label: LabelId::from("ball"),
+            diagnosis: annotagent_core::PipelineImprovementDiagnosis {
+                primary_failure_class: annotagent_core::AnnotationFailureClass::GeometryError,
+                evidence_run_ids: vec![run_id],
+                evidence_statements: vec!["one human bbox correction".to_owned()],
+                semantic_target_correct_count: 1,
+                geometry_correction_count: 1,
+                provider_failure_count: 0,
+                no_candidate_count: 0,
+            },
+            evaluation_run_ids: Vec::new(),
+            baseline_draft_id: "baseline-draft".to_owned(),
+            candidate_draft_id: "candidate-draft".to_owned(),
+            diff: annotagent_core::PipelineDraftDiff::default(),
+            validation: annotagent_core::WorkflowValidationReport {
+                valid: true,
+                issues: Vec::new(),
+                execution_order: Vec::new(),
+            },
+            comparison: None,
+            status: annotagent_core::PipelineImprovementStatus::DraftCreated,
+            setup_requirements: Vec::new(),
+            applied_draft_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store
+            .save_pipeline_improvement(&session)
+            .expect("save improvement");
+        assert_eq!(
+            store
+                .get_pipeline_improvement(session.id)
+                .expect("load improvement"),
+            Some(session.clone())
+        );
+        assert_eq!(
+            store
+                .list_project_pipeline_improvements("geometry-project")
+                .expect("list improvements"),
+            vec![session]
+        );
     }
 
     #[test]

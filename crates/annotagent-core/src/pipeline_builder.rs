@@ -998,12 +998,13 @@ pub enum PipelineBuilderTool {
     InspectNodeStatistics,
     InspectNodeArtifacts,
     CompareDryRuns,
+    ComparePipelineGeometry,
     SubmitDraftForHumanApproval,
     FinishAgentSession,
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 64] = [
+    pub const ALL: [Self; 65] = [
         Self::GetPipelineBuilderContext,
         Self::ResolvePipelineFeasibility,
         Self::InspectNodesBatch,
@@ -1066,6 +1067,7 @@ impl PipelineBuilderTool {
         Self::InspectNodeStatistics,
         Self::InspectNodeArtifacts,
         Self::CompareDryRuns,
+        Self::ComparePipelineGeometry,
         Self::SubmitDraftForHumanApproval,
         Self::FinishAgentSession,
     ];
@@ -1135,6 +1137,7 @@ impl PipelineBuilderTool {
             Self::InspectNodeStatistics => "inspect_node_statistics",
             Self::InspectNodeArtifacts => "inspect_node_artifacts",
             Self::CompareDryRuns => "compare_dry_runs",
+            Self::ComparePipelineGeometry => "compare_pipeline_geometry",
             Self::SubmitDraftForHumanApproval => "submit_draft_for_human_approval",
             Self::FinishAgentSession => "finish_agent_session",
         }
@@ -1184,6 +1187,7 @@ impl PipelineBuilderTool {
                 | Self::InspectGeometryCalibration
                 | Self::FindGeometryRefinementPath
                 | Self::FindArtifactConversionPath
+                | Self::ComparePipelineGeometry
         )
     }
 
@@ -1250,7 +1254,8 @@ impl PipelineBuilderTool {
             | Self::InspectReviewSamples
             | Self::InspectNodeStatistics
             | Self::InspectNodeArtifacts
-            | Self::CompareDryRuns => PipelineBuilderPermission::DryRunSandbox,
+            | Self::CompareDryRuns
+            | Self::ComparePipelineGeometry => PipelineBuilderPermission::DryRunSandbox,
             Self::SubmitDraftForHumanApproval
             | Self::FinishWithSetupRequirements
             | Self::FinishAgentSession => PipelineBuilderPermission::RequestHumanApproval,
@@ -2502,7 +2507,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 64);
+        assert_eq!(tools.len(), 65);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",
