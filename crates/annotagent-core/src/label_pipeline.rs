@@ -1427,6 +1427,7 @@ impl LabelWorkflowComposition {
             }],
             model_binding: None,
             model_profile_binding: None,
+            unresolved_model_requirement: None,
             required_skills: Vec::new(),
             validators: Vec::new(),
             refiners: Vec::new(),
@@ -1493,6 +1494,7 @@ impl LabelWorkflowComposition {
                     .as_ref()
                     .map(|binding| binding.model_id.clone()),
                 model_profile_binding: None,
+                unresolved_model_requirement: None,
                 required_skills: step
                     .skill_binding
                     .as_ref()

@@ -23,6 +23,11 @@ pub type WorkflowVersion = PublishedWorkflowVersion;
 pub enum WorkflowDraftStatus {
     Suggested,
     Editing,
+    Invalid,
+    Valid,
+    Tested,
+    BlockedBySetup,
+    ReadyForHumanReview,
     Validated,
     Published,
     Archived,
@@ -130,6 +135,10 @@ pub struct WorkflowDraftNode {
     /// projection until legacy Projects are migrated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_profile_binding: Option<crate::WorkflowModelBinding>,
+    /// Required binding that is intentionally unresolved. This is a normal editable Draft state,
+    /// never a fabricated runtime model identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_model_requirement: Option<crate::UnresolvedModelRequirement>,
     #[serde(default)]
     pub required_skills: Vec<String>,
     #[serde(default)]
@@ -744,6 +753,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 }],
                 model_binding: preferred.clone(),
                 model_profile_binding: None,
+                unresolved_model_requirement: None,
                 required_skills: enabled_skills.to_vec(),
                 validators: task.validators.clone(),
                 refiners: task.refiners.clone(),
@@ -1549,6 +1559,7 @@ fn system_node(
         outputs,
         model_binding: None,
         model_profile_binding: None,
+        unresolved_model_requirement: None,
         required_skills: Vec::new(),
         validators: Vec::new(),
         refiners: Vec::new(),

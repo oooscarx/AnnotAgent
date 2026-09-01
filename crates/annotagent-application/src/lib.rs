@@ -825,6 +825,21 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             "Inspect input, output, prompt, score, geometry, and Label Space contracts for at most eight exact expert model IDs.",
             json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}),
         ),
+        mutate(
+            PipelineBuilderTool::CreateBlockedDraft,
+            "Create and persist the smallest structurally complete editable Draft with explicit unresolved model requirements. Never publishes or runs.",
+            json!({"type":"object","additionalProperties":false,"properties":{"template_id":{"type":"string"}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::SetUnresolvedBinding,
+            "Attach one typed unresolved model requirement to an existing model node.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":{"type":"string"}}}),
+        ),
+        mutate(
+            PipelineBuilderTool::FinishWithSetupRequirements,
+            "Finish with the persisted blocked Draft and concrete Provider or Model setup actions.",
+            no_arguments(),
+        ),
         read(
             PipelineBuilderTool::InspectProject,
             "Read a bounded Project summary without file paths or image bytes.",
@@ -1384,6 +1399,123 @@ fn compatible_builder_models(
         .collect()
 }
 
+fn materialize_feasibility_draft(
+    safe_suggestion: &WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+    feasibility: &annotagent_core::BuildFeasibility,
+) -> Result<(WorkflowSuggestion, annotagent_core::PipelineBuilderOutcome)> {
+    let mut suggestion = safe_suggestion.clone();
+    suggestion.draft.id = uuid::Uuid::new_v4().to_string();
+    suggestion.draft.created_at = chrono::Utc::now();
+    suggestion.draft.updated_at = suggestion.draft.created_at;
+    match feasibility {
+        annotagent_core::BuildFeasibility::Runnable {
+            compatible_bindings,
+            warnings,
+            ..
+        } => {
+            for binding in compatible_bindings {
+                let Some((node_type, model_id)) = binding.split_once(':') else {
+                    continue;
+                };
+                let Some(node) = suggestion
+                    .draft
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.node_type == node_type)
+                else {
+                    continue;
+                };
+                let Some(model) = input
+                    .model_profiles
+                    .iter()
+                    .find(|model| model.id.to_string() == model_id)
+                else {
+                    continue;
+                };
+                node.model_binding = Some(model.remote_model_id.clone());
+                node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                    model_profile_id: model.id,
+                    locked: true,
+                });
+                node.unresolved_model_requirement = None;
+            }
+            suggestion.warnings.extend(warnings.clone());
+            suggestion.warnings.sort();
+            suggestion.warnings.dedup();
+            suggestion.draft.status = WorkflowDraftStatus::ReadyForHumanReview;
+            Ok((
+                suggestion,
+                annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+            ))
+        }
+        annotagent_core::BuildFeasibility::RunnableWithDegradedQuality { warnings, .. } => {
+            suggestion.warnings.extend(warnings.clone());
+            suggestion.warnings.sort();
+            suggestion.warnings.dedup();
+            suggestion.draft.status = WorkflowDraftStatus::ReadyForHumanReview;
+            Ok((
+                suggestion,
+                annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+            ))
+        }
+        annotagent_core::BuildFeasibility::BlockedByBindings { requirements, .. } => {
+            let fallback_requirement = requirements.first().cloned();
+            for node in &mut suggestion.draft.nodes {
+                if !matches!(
+                    node.kind,
+                    WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+                ) {
+                    continue;
+                }
+                let requirement = requirements
+                    .iter()
+                    .find(|requirement| requirement.node_id == node.node_type)
+                    .cloned()
+                    .or_else(|| fallback_requirement.clone());
+                if let Some(mut requirement) = requirement {
+                    requirement.node_id.clone_from(&node.id);
+                    node.model_binding = None;
+                    node.model_profile_binding = None;
+                    node.unresolved_model_requirement = Some(requirement.clone());
+                    suggestion
+                        .unresolved_model_bindings
+                        .push(format!("{}: {}", node.id, requirement.reason));
+                }
+            }
+            suggestion.unresolved_model_bindings.sort();
+            suggestion.unresolved_model_bindings.dedup();
+            suggestion.warnings.push(
+                "Dry Run and Publish remain blocked until every required Model binding is resolved"
+                    .to_owned(),
+            );
+            suggestion.draft.status = WorkflowDraftStatus::BlockedBySetup;
+            Ok((
+                suggestion,
+                annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired,
+            ))
+        }
+        annotagent_core::BuildFeasibility::Unsupported { reasons, .. } => {
+            bail!("unsupported Pipeline request: {}", reasons.join("; "))
+        }
+    }
+}
+
+fn append_unresolved_binding_issues(draft: &WorkflowDraft, report: &mut WorkflowValidationReport) {
+    for node in &draft.nodes {
+        let Some(requirement) = node.unresolved_model_requirement.as_ref() else {
+            continue;
+        };
+        report.issues.push(WorkflowValidationIssue {
+            code: "unresolved_model_binding".to_owned(),
+            path: format!("nodes.{}.model_profile_binding", node.id),
+            message: requirement.reason.clone(),
+            blocking: true,
+        });
+    }
+    report.valid = report.issues.iter().all(|issue| !issue.blocking);
+}
+
 fn estimate_model_profile_cost(
     model: &ModelProfile,
     arguments: &serde_json::Value,
@@ -1557,6 +1689,7 @@ fn workflow_node_from_definition(
         outputs: ports(&definition.output_ports),
         model_binding: None,
         model_profile_binding: None,
+        unresolved_model_requirement: None,
         required_skills: Vec::new(),
         validators: Vec::new(),
         refiners: Vec::new(),
@@ -6915,6 +7048,120 @@ impl LocalApplication {
         Ok(snapshot)
     }
 
+    fn resolve_pipeline_feasibility(
+        &self,
+        input: &WorkflowAdvisorInput,
+        snapshot: &annotagent_core::PipelineBuilderContextSnapshot,
+    ) -> annotagent_core::BuildFeasibility {
+        let annotation_kind = snapshot
+            .target_labels
+            .first()
+            .map(|label| label.annotation_kind.as_str());
+        let candidate_node_ids: &[&str] = match annotation_kind {
+            Some("classification") => &["capability.classify"],
+            Some("bounding_box") => &[
+                annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION,
+                annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION,
+                "capability.detect",
+            ],
+            _ => &[],
+        };
+        let present_nodes = candidate_node_ids
+            .iter()
+            .filter_map(|id| input.node_catalog.iter().find(|node| node.id == **id))
+            .collect::<Vec<_>>();
+        if present_nodes.is_empty() {
+            return annotagent_core::BuildFeasibility::Unsupported {
+                missing_nodes: candidate_node_ids
+                    .iter()
+                    .map(|id| (*id).to_owned())
+                    .collect(),
+                missing_conversion_paths: Vec::new(),
+                reasons: vec![format!(
+                    "No installed Node Definition can produce the requested {} annotation",
+                    annotation_kind.unwrap_or("unknown")
+                )],
+            };
+        }
+        let compatible_bindings = present_nodes
+            .iter()
+            .flat_map(|node| {
+                snapshot
+                    .capability_matrix
+                    .node_to_model_profiles
+                    .get(&node.id)
+                    .into_iter()
+                    .flatten()
+                    .map(move |model_id| format!("{}:{model_id}", node.id))
+            })
+            .collect::<Vec<_>>();
+        let candidate_templates = input
+            .workflow_templates
+            .iter()
+            .filter(|template| {
+                template.nodes.iter().any(|node| {
+                    present_nodes
+                        .iter()
+                        .any(|definition| definition.id == node.node_type)
+                })
+            })
+            .map(|template| template.id.clone())
+            .collect::<Vec<_>>();
+        if !compatible_bindings.is_empty() {
+            return annotagent_core::BuildFeasibility::Runnable {
+                candidate_templates,
+                compatible_bindings,
+                warnings: if annotation_kind == Some("bounding_box") {
+                    vec!["Vision-language geometry remains a coarse hypothesis until measured by Dry Run evidence".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            };
+        }
+        let requirements = present_nodes
+            .iter()
+            .map(|node| {
+                let capability = node
+                    .required_model_capability
+                    .unwrap_or(ModelCapability::ObjectDetection);
+                let vlm_detection =
+                    node.id == annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION;
+                annotagent_core::UnresolvedModelRequirement {
+                    id: format!("{}-binding", node.id.replace('.', "-")),
+                    node_id: node.id.clone(),
+                    required_capabilities: vec![capability],
+                    required_modalities: vec![InputModality::Image],
+                    required_protocol_features: if vlm_detection {
+                        vec!["structured_output_or_tool_calls".to_owned()]
+                    } else {
+                        Vec::new()
+                    },
+                    reason: format!(
+                        "No available, credential-configured Model Profile can execute {}",
+                        node.display_name
+                    ),
+                    compatible_profiles: Vec::new(),
+                    setup_actions: vec![
+                        annotagent_core::SetupAction {
+                            kind: annotagent_core::SetupActionKind::AddModelProfile,
+                            label: "Configure compatible model".to_owned(),
+                            route: Some("/settings/models".to_owned()),
+                        },
+                        annotagent_core::SetupAction {
+                            kind: annotagent_core::SetupActionKind::ConfigureProvider,
+                            label: "Configure Provider credential".to_owned(),
+                            route: Some("/settings".to_owned()),
+                        },
+                    ],
+                }
+            })
+            .collect();
+        annotagent_core::BuildFeasibility::BlockedByBindings {
+            requirements,
+            candidate_templates,
+        }
+    }
+
     pub fn create_workflow_draft(
         &self,
         project_id: &str,
@@ -7783,11 +8030,18 @@ impl LocalApplication {
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
+        let progress_budget =
+            annotagent_core::PipelineBuilderBudget::from_constraints(&builder_constraints);
+        progress_budget.validate().map_err(|error| anyhow!(error))?;
         let mut session = AgentSession::start(
             AgentKind::PipelineBuilder,
             builder_constraints.agent_budget(),
         )
         .with_builder_constraints(builder_constraints.clone())
+        .with_builder_progress(
+            progress_budget,
+            annotagent_core::BuilderProgressInvariant::default(),
+        )
         .with_project(project_id);
         if let Some(selected_model) = selected_model {
             session = session.with_model_selection(selected_model.safe_selection());
@@ -7826,6 +8080,12 @@ impl LocalApplication {
         let tools = pipeline_builder_live_tools(&input);
         let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
         let context_revision = context_snapshot.context_revision.clone();
+        let feasibility = self.resolve_pipeline_feasibility(&input, &context_snapshot);
+        let forced_progress_deadline = match &feasibility {
+            annotagent_core::BuildFeasibility::BlockedByBindings { .. }
+            | annotagent_core::BuildFeasibility::Unsupported { .. } => 6,
+            _ => 10,
+        };
         let (nodes, models) = workflow_catalog(settings)?;
         let enabled_skills = safe_suggestion
             .draft
@@ -7860,6 +8120,94 @@ impl LocalApplication {
         while session.status == AgentSessionStatus::Running {
             if cancellation.is_cancelled() {
                 session.cancel();
+                break;
+            }
+            if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
+                session
+                    .transition_builder_phase(
+                        annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                        "Use deterministic feasibility",
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                let feasibility_result = annotagent_core::AgentToolResult::summary(
+                    "Runtime resolved feasibility at the discovery deadline",
+                    json!({"context_revision": context_revision, "feasibility": feasibility}),
+                );
+                session
+                    .record_tool(
+                        PipelineBuilderTool::ResolvePipelineFeasibility.as_str(),
+                        json!({"runtime_recovery": true}),
+                        serde_json::to_value(feasibility_result)?,
+                        true,
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                match &feasibility {
+                    annotagent_core::BuildFeasibility::Unsupported { reasons, .. } => {
+                        session.complete_builder(
+                            annotagent_core::PipelineBuilderOutcome::UnsupportedRequest,
+                            annotagent_core::BuilderStopReason::UnsupportedRequest,
+                            reasons.join("; "),
+                        );
+                    }
+                    _ => {
+                        session
+                            .transition_builder_phase(
+                                annotagent_core::PipelineBuilderPhase::Drafting,
+                                "Persist deterministic recovery Draft",
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                        let (created, outcome) =
+                            materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
+                        self.store.save_workflow_draft(&created.draft)?;
+                        session.set_builder_draft(created.draft.id.clone());
+                        session.unresolved_bindings = created.unresolved_model_bindings.clone();
+                        session.record_tool(
+                            if outcome
+                                == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
+                            {
+                                PipelineBuilderTool::CreateBlockedDraft.as_str()
+                            } else {
+                                PipelineBuilderTool::CreateDraftFromTemplate.as_str()
+                            },
+                            json!({"runtime_recovery": true}),
+                            serde_json::to_value(annotagent_core::AgentToolResult::summary(
+                                if outcome
+                                    == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
+                                {
+                                    "Runtime saved a blocked editable Draft"
+                                } else {
+                                    "Runtime saved a minimal editable Draft"
+                                },
+                                json!({
+                                    "draft_id": created.draft.id,
+                                    "status": created.draft.status,
+                                    "unresolved_bindings": created.unresolved_model_bindings,
+                                }),
+                            ))?,
+                            true,
+                        ).map_err(anyhow::Error::msg)?;
+                        current = Some(created);
+                        session
+                            .transition_builder_phase(
+                                annotagent_core::PipelineBuilderPhase::Finalizing,
+                                "Present the saved Draft and next action",
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                        let next_action = if outcome
+                            == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
+                        {
+                            "Configure a compatible image model, then retry from this Draft"
+                        } else {
+                            "Open and review the saved editable Draft"
+                        };
+                        session.complete_builder(
+                            outcome,
+                            annotagent_core::BuilderStopReason::DiscoveryLimitReached,
+                            next_action,
+                        );
+                    }
+                }
+                self.store.save_agent_session(&session)?;
                 break;
             }
             if session.usage.steps >= session.budget.max_steps {
@@ -8019,16 +8367,30 @@ impl LocalApplication {
                 continue;
             }
             consecutive_no_tool_responses = 0;
+            let maximum_parallel = session
+                .builder_budget
+                .as_ref()
+                .map_or(4, |budget| budget.max_parallel_tools_per_turn)
+                as usize;
+            let accepted_tool_calls = response
+                .tool_calls
+                .iter()
+                .take(maximum_parallel)
+                .cloned()
+                .collect::<Vec<_>>();
             messages.push(ModelMessage {
                 role: ModelRole::Assistant,
                 content: response.content.unwrap_or_default(),
                 tool_call_id: None,
-                tool_calls: response.tool_calls.clone(),
+                tool_calls: accepted_tool_calls.clone(),
             });
 
-            for call in response.tool_calls {
+            for call in accepted_tool_calls {
                 if cancellation.is_cancelled() {
                     session.cancel();
+                    break;
+                }
+                if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
                     break;
                 }
                 let resolved = PipelineBuilderToolRegistry.resolve(&call.name);
@@ -8099,21 +8461,9 @@ impl LocalApplication {
                         ))
                     }
                     Ok(PipelineBuilderTool::ResolvePipelineFeasibility) => {
-                        let runnable_nodes = context_snapshot
-                            .capability_matrix
-                            .node_to_model_profiles
-                            .iter()
-                            .filter(|(_, models)| !models.is_empty())
-                            .map(|(node, _)| node.clone())
-                            .collect::<Vec<_>>();
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Resolved Pipeline feasibility from the context snapshot",
-                            json!({
-                                "context_revision": context_revision,
-                                "runnable_node_ids": runnable_nodes,
-                                "unavailable_capabilities": context_snapshot.unavailable_capabilities,
-                                "candidate_template_ids": context_snapshot.templates.iter().map(|template| template.id.clone()).collect::<Vec<_>>(),
-                            }),
+                            json!({"context_revision": context_revision, "feasibility": feasibility}),
                         ))
                     }
                     Ok(PipelineBuilderTool::InspectNodesBatch) => {
@@ -8177,6 +8527,74 @@ impl LocalApplication {
                         Ok(annotagent_core::AgentToolResult::summary(
                             format!("Inspected {} expert model contracts", models.len()),
                             json!({"context_revision": context_revision, "models": models}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::CreateBlockedDraft) => {
+                        let (created, outcome) =
+                            materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
+                        if outcome != annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired {
+                            bail!("create_blocked_draft requires a blocked-by-bindings feasibility result");
+                        }
+                        self.store.save_workflow_draft(&created.draft)?;
+                        session.set_builder_draft(created.draft.id.clone());
+                        current = Some(created);
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Created a blocked editable Draft with unresolved model requirements",
+                            json!({
+                                "draft_id": current.as_ref().map(|value| value.draft.id.clone()),
+                                "status": "blocked_by_setup",
+                                "unresolved_bindings": current.as_ref().map(|value| value.unresolved_model_bindings.clone()).unwrap_or_default(),
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::SetUnresolvedBinding) => {
+                        let node_id = required_string_argument(&call.arguments, "node_id")?;
+                        let requirements = match &feasibility {
+                            annotagent_core::BuildFeasibility::BlockedByBindings { requirements, .. } => requirements,
+                            _ => bail!("the current feasibility result has no unresolved binding requirement"),
+                        };
+                        let suggestion = current
+                            .as_mut()
+                            .ok_or_else(|| anyhow!("create a Draft before setting an unresolved binding"))?;
+                        let node = suggestion
+                            .draft
+                            .nodes
+                            .iter_mut()
+                            .find(|node| node.id == node_id)
+                            .ok_or_else(|| anyhow!("unknown Draft node {node_id:?}"))?;
+                        let mut requirement = requirements
+                            .iter()
+                            .find(|requirement| requirement.node_id == node.node_type)
+                            .or_else(|| requirements.first())
+                            .cloned()
+                            .ok_or_else(|| anyhow!("no unresolved requirement is available"))?;
+                        requirement.node_id.clone_from(&node.id);
+                        node.model_binding = None;
+                        node.model_profile_binding = None;
+                        node.unresolved_model_requirement = Some(requirement.clone());
+                        suggestion.draft.status = WorkflowDraftStatus::BlockedBySetup;
+                        suggestion.draft.updated_at = chrono::Utc::now();
+                        self.store.save_workflow_draft(&suggestion.draft)?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Saved unresolved binding for {node_id}"),
+                            serde_json::to_value(requirement)?,
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::FinishWithSetupRequirements) => {
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a blocked Draft before finishing"))?;
+                        if suggestion.draft.status != WorkflowDraftStatus::BlockedBySetup {
+                            bail!("finish_with_setup_requirements requires a blocked Draft");
+                        }
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Blocked Draft saved; Provider setup is required",
+                            json!({
+                                "draft_id": suggestion.draft.id,
+                                "outcome": "provider_setup_required",
+                                "unresolved_bindings": suggestion.unresolved_model_bindings,
+                                "next_action": "Configure a compatible model",
+                            }),
                         ))
                     }
                     Ok(PipelineBuilderTool::InspectProject) => {
@@ -9414,7 +9832,7 @@ impl LocalApplication {
                         let suggestion = current
                             .as_ref()
                             .ok_or_else(|| anyhow!("create a Draft before validating it"))?;
-                        let report = if target.is_some() {
+                        let mut report = if target.is_some() {
                             PipelineGrammarValidator.validate(
                                 &suggestion.draft,
                                 &nodes,
@@ -9433,6 +9851,7 @@ impl LocalApplication {
                                 false,
                             )
                         };
+                        append_unresolved_binding_issues(&suggestion.draft, &mut report);
                         let result = annotagent_core::AgentToolResult::summary(
                             if report.valid {
                                 "Draft passed Rust static validation"
@@ -9922,6 +10341,118 @@ impl LocalApplication {
                     tool_call_id: Some(call.id),
                     tool_calls: Vec::new(),
                 });
+                if success {
+                    match PipelineBuilderToolRegistry.resolve(&call.name).ok() {
+                        Some(PipelineBuilderTool::GetPipelineBuilderContext) => {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                                    "Resolve Pipeline feasibility",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(
+                            PipelineBuilderTool::CreatePipelineDraft
+                            | PipelineBuilderTool::CreateDraftFromTemplate
+                            | PipelineBuilderTool::CreateBlockedDraft,
+                        ) => {
+                            if session.phase
+                                == Some(annotagent_core::PipelineBuilderPhase::ContextLoading)
+                            {
+                                session
+                                    .transition_builder_phase(
+                                        annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                                        "Use the inspected context",
+                                    )
+                                    .map_err(anyhow::Error::msg)?;
+                            }
+                            if let Some(suggestion) = current.as_ref() {
+                                session.set_builder_draft(suggestion.draft.id.clone());
+                            }
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::Drafting,
+                                    "Complete and validate the editable Draft",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(PipelineBuilderTool::ValidatePipeline) => {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::Validating,
+                                    "Use static validation results",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(PipelineBuilderTool::DryRunPipeline) => {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::DryRunning,
+                                    "Inspect bounded Dry Run evidence",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(tool)
+                            if tool.mutates_draft()
+                                && !matches!(
+                                    tool,
+                                    PipelineBuilderTool::CreatePipelineDraft
+                                        | PipelineBuilderTool::CreateDraftFromTemplate
+                                        | PipelineBuilderTool::CreateBlockedDraft
+                                        | PipelineBuilderTool::SubmitDraftForHumanApproval
+                                        | PipelineBuilderTool::FinishWithSetupRequirements
+                                )
+                                && matches!(
+                                    session.phase,
+                                    Some(
+                                        annotagent_core::PipelineBuilderPhase::Validating
+                                            | annotagent_core::PipelineBuilderPhase::DryRunning
+                                    )
+                                ) =>
+                        {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::Revising,
+                                    "Validate the bounded Draft revision",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(
+                            PipelineBuilderTool::InspectProject
+                            | PipelineBuilderTool::InspectLabelSchema
+                            | PipelineBuilderTool::InspectLabel
+                            | PipelineBuilderTool::ListEnabledSkills
+                            | PipelineBuilderTool::ListNodeDefinitions
+                            | PipelineBuilderTool::ListCompatibleModels,
+                        ) if inspected_project
+                            && inspected_label
+                            && inspected_skills
+                            && inspected_nodes
+                            && inspected_models
+                            && session.phase
+                                == Some(annotagent_core::PipelineBuilderPhase::ContextLoading) =>
+                        {
+                            session
+                                .transition_builder_phase(
+                                    annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                                    "Create a runnable or blocked Draft",
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                        }
+                        Some(PipelineBuilderTool::FinishWithSetupRequirements) => {
+                            if let Some(suggestion) = current.as_ref() {
+                                session.unresolved_bindings =
+                                    suggestion.unresolved_model_bindings.clone();
+                            }
+                            session.complete_builder(
+                                annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired,
+                                annotagent_core::BuilderStopReason::SetupRequired,
+                                "Configure a compatible model, then retry from the saved Draft",
+                            );
+                        }
+                        _ => {}
+                    }
+                }
                 if !success && failed_attempts >= 3 {
                     session.fail(format!(
                         "Pipeline Builder stopped after {failed_attempts} failed {} attempts; inspect the declared tool values before retrying",
@@ -9931,7 +10462,11 @@ impl LocalApplication {
                 }
                 if success && call.name == PipelineBuilderTool::SubmitDraftForHumanApproval.as_str()
                 {
-                    session.wait_for_human("approve_pipeline_draft");
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+                        annotagent_core::BuilderStopReason::DraftReady,
+                        "Open and review the saved editable Draft",
+                    );
                     break;
                 }
             }
@@ -10108,6 +10643,7 @@ impl LocalApplication {
         report
             .issues
             .extend(label_projection_issues(draft, &project, &nodes, &models));
+        append_unresolved_binding_issues(draft, &mut report);
         report.valid = report.issues.iter().all(|issue| !issue.blocking);
         Ok(report)
     }
@@ -13136,6 +13672,27 @@ export:
         }
     }
 
+    fn register_available_vision_model(
+        application: &LocalApplication,
+        builder: &PipelineBuilderModelRuntime,
+        remote_model_id: &str,
+        capabilities: impl IntoIterator<Item = ModelCapability>,
+    ) -> ModelProfile {
+        let mut model = builder.model.clone();
+        model.id = ModelProfileId::new();
+        model.display_name = remote_model_id.to_owned();
+        model.remote_model_id = remote_model_id.to_owned();
+        model.input_modalities = BTreeSet::from([InputModality::Text, InputModality::Image]);
+        model.task_capabilities = capabilities.into_iter().collect();
+        model.protocol_features.structured_output = true;
+        model.protocol_features.tool_calls = true;
+        application
+            .store
+            .save_model_profile(&model)
+            .expect("Vision Model Profile");
+        model
+    }
+
     #[test]
     fn pipeline_builder_model_selection_respects_registry_priority_and_requirements() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
@@ -13344,7 +13901,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 56);
+        assert_eq!(names.len(), 59);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -15896,6 +16453,12 @@ export:
         )
         .expect("sample image");
         let selected_model = register_pipeline_builder_model(&application, "scripted-builder-v1");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "scripted-classifier-v1",
+            [ModelCapability::ImageClassification],
+        );
         let settings = load_settings(None).expect("settings");
         let constraints = WorkflowConstraints::default();
         let scripted_step =
@@ -16017,7 +16580,7 @@ export:
     }
 
     #[tokio::test]
-    async fn pipeline_builder_baseline_reproduces_repeated_inspection_budget_exhaustion() {
+    async fn pipeline_builder_repeated_inspection_recovers_blocked_draft_before_budget() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
         application
@@ -16079,13 +16642,14 @@ export:
             .await
             .expect("bounded Pipeline Builder loop");
 
-        assert_eq!(provider.remaining_steps(), 0);
-        assert_eq!(report.session.status, AgentSessionStatus::BudgetExceeded);
-        assert_eq!(report.session.usage.tool_calls, 48);
-        assert_eq!(report.session.model_calls.len(), 7);
-        assert_eq!(report.session.usage.input_tokens, 95_326);
-        assert_eq!(report.session.cache_hits, 2);
-        assert_eq!(report.session.duplicate_tool_calls, 47);
+        assert_eq!(provider.remaining_steps(), 5);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(report.session.usage.tool_calls, 8);
+        assert_eq!(report.session.model_calls.len(), 2);
+        assert_eq!(report.session.usage.input_tokens, 27_236);
+        assert!(report.session.usage.input_tokens < 95_326 * 40 / 100);
+        assert_eq!(report.session.cache_hits, 1);
+        assert_eq!(report.session.duplicate_tool_calls, 4);
         assert_eq!(
             report
                 .session
@@ -16109,17 +16673,116 @@ export:
         assert!(report.session.steps.iter().any(|step| {
             step.result["model_payload"]["status"] == json!("repeated_inspection_blocked")
         }));
-        assert!(report.suggestion.is_none());
-        assert!(
+        let suggestion = report.suggestion.expect("saved recovery Draft");
+        assert_eq!(suggestion.draft.status, WorkflowDraftStatus::BlockedBySetup);
+        assert!(!suggestion.unresolved_model_bindings.is_empty());
+        assert_eq!(
             application
                 .store
                 .list_workflow_drafts(Some("inspection-loop"))
                 .expect("Drafts")
-                .is_empty()
+                .len(),
+            1
         );
         assert_eq!(
-            report.session.stop_reason.as_deref(),
-            Some("step or tool-call budget exhausted")
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+        );
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitReached)
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_builder_without_detection_model_saves_blocked_draft_in_four_calls() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "blocked-detection",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-blocked-detection");
+        let step = |name: &str| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments: json!({}),
+            },
+            usage: MockUsage {
+                input_tokens: 500,
+                output_tokens: 50,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                step("get_pipeline_builder_context"),
+                step("resolve_pipeline_feasibility"),
+                step("create_blocked_draft"),
+                step("finish_with_setup_requirements"),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "blocked-detection",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("blocked Pipeline Builder result");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.usage.tool_calls, 4);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+        );
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::SetupRequired)
+        );
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.pending_human_action.as_deref(),
+            Some("configure_model_binding")
+        );
+        let suggestion = report.suggestion.expect("blocked Draft");
+        assert_eq!(suggestion.draft.status, WorkflowDraftStatus::BlockedBySetup);
+        assert!(suggestion.draft.nodes.iter().any(|node| {
+            node.unresolved_model_requirement.is_some()
+                && node.model_profile_binding.is_none()
+                && node.model_binding.is_none()
+        }));
+        let validation = application
+            .dry_run_workflow(
+                &suggestion.draft.id,
+                &load_settings(None).expect("settings"),
+            )
+            .expect("blocked static validation");
+        assert!(!validation.valid);
+        assert!(
+            validation
+                .issues
+                .iter()
+                .any(|issue| issue.code == "unresolved_model_binding" && issue.blocking)
+        );
+        assert!(
+            application
+                .publish_workflow(
+                    &suggestion.draft.id,
+                    &load_settings(None).expect("settings")
+                )
+                .is_err()
         );
     }
 
@@ -16141,6 +16804,15 @@ export:
         .expect("synthetic image");
         let selected_model =
             register_pipeline_builder_model(&application, "scripted-resource-builder");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "scripted-vlm-detection-v1",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
         let scripted_step =
             |name: &str, arguments: serde_json::Value, expect_message_contains: Option<&str>| {
                 MockStep {
@@ -16322,6 +16994,15 @@ export:
         .expect("synthetic image");
         let selected_model =
             register_pipeline_builder_model(&application, "scripted-resource-stall");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "scripted-vlm-resource-stall",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
         let scripted_step = |name: &str, arguments: serde_json::Value| MockStep {
             expect_task: Some("pipeline_builder".to_owned()),
             expect_message_contains: None,

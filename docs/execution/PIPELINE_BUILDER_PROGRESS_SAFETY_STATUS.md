@@ -44,3 +44,20 @@ revision. The first duplicate returns an observation reference; later duplicates
 `repeated_inspection_blocked`. The production-loop regression now proves that its 48 attempted reads
 perform only two full underlying resource reads, with two cache hits and 47 duplicate requests
 recorded for diagnosis. Mutation, validation, and Dry Run operations are never cached.
+
+## Milestone 3 deterministic feasibility and blocked Drafts
+
+Rust now resolves `Runnable`, `RunnableWithDegradedQuality`, `BlockedByBindings`, or `Unsupported`
+from the compact context instead of asking the Builder model to enumerate the catalog. A typed
+`UnresolvedModelRequirement` carries capabilities, modalities, protocol features, reason, compatible
+profiles, and concrete setup actions on the affected Draft node.
+
+The Runtime enforces a six-call recovery deadline for blocked/unsupported requests and a ten-call
+deadline for runnable requests. Recovery itself records feasibility and Draft creation while using
+the reserved finalization budget. The original inspection-loop fixture now stops after two model
+turns and eight total Tool Calls, persists one blocked Draft, and reports `ProviderSetupRequired`
+instead of generic exhaustion. Its scripted input usage falls from 95,326 to 27,236 tokens (71.4%).
+
+A separate no-detection-model fixture completes the intended context → feasibility → blocked Draft
+→ setup-requirements path in four Tool Calls. Static validation emits the blocking
+`unresolved_model_binding` issue; Dry Run and Publish remain unavailable until the binding is fixed.

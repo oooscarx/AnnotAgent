@@ -842,6 +842,57 @@ pub struct BuilderContextDigest {
     pub observation_refs: Vec<ObservationRef>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupActionKind {
+    ConfigureProvider,
+    AddModelProfile,
+    SupplyWeights,
+    EnableModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetupAction {
+    pub kind: SetupActionKind,
+    pub label: String,
+    pub route: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnresolvedModelRequirement {
+    pub id: String,
+    pub node_id: String,
+    pub required_capabilities: Vec<crate::ModelCapability>,
+    pub required_modalities: Vec<crate::InputModality>,
+    pub required_protocol_features: Vec<String>,
+    pub reason: String,
+    pub compatible_profiles: Vec<crate::ModelProfileId>,
+    pub setup_actions: Vec<SetupAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildFeasibility {
+    Runnable {
+        candidate_templates: Vec<String>,
+        compatible_bindings: Vec<String>,
+        warnings: Vec<String>,
+    },
+    RunnableWithDegradedQuality {
+        candidate_templates: Vec<String>,
+        warnings: Vec<String>,
+    },
+    BlockedByBindings {
+        requirements: Vec<UnresolvedModelRequirement>,
+        candidate_templates: Vec<String>,
+    },
+    Unsupported {
+        missing_nodes: Vec<String>,
+        missing_conversion_paths: Vec<String>,
+        reasons: Vec<String>,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineBuilderStatus {
@@ -899,6 +950,9 @@ pub enum PipelineBuilderTool {
     InspectNodesBatch,
     InspectModelsBatch,
     InspectContractsBatch,
+    CreateBlockedDraft,
+    SetUnresolvedBinding,
+    FinishWithSetupRequirements,
     InspectProject,
     InspectLabelSchema,
     InspectLabel,
@@ -953,12 +1007,15 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 59] = [
         Self::GetPipelineBuilderContext,
         Self::ResolvePipelineFeasibility,
         Self::InspectNodesBatch,
         Self::InspectModelsBatch,
         Self::InspectContractsBatch,
+        Self::CreateBlockedDraft,
+        Self::SetUnresolvedBinding,
+        Self::FinishWithSetupRequirements,
         Self::InspectProject,
         Self::InspectLabelSchema,
         Self::InspectLabel,
@@ -1020,6 +1077,9 @@ impl PipelineBuilderTool {
             Self::InspectNodesBatch => "inspect_nodes_batch",
             Self::InspectModelsBatch => "inspect_models_batch",
             Self::InspectContractsBatch => "inspect_contracts_batch",
+            Self::CreateBlockedDraft => "create_blocked_draft",
+            Self::SetUnresolvedBinding => "set_unresolved_binding",
+            Self::FinishWithSetupRequirements => "finish_with_setup_requirements",
             Self::InspectProject => "inspect_project",
             Self::InspectLabelSchema => "inspect_label_schema",
             Self::InspectLabel => "inspect_label",
@@ -1080,6 +1140,8 @@ impl PipelineBuilderTool {
             self,
             Self::CreateDraftFromTemplate
                 | Self::CreatePipelineDraft
+                | Self::CreateBlockedDraft
+                | Self::SetUnresolvedBinding
                 | Self::AddPipelineNode
                 | Self::RemovePipelineNode
                 | Self::ConnectPipelineNodes
@@ -1147,9 +1209,9 @@ impl PipelineBuilderTool {
             | Self::CheckCapabilityPath
             | Self::EstimateModelCost => PipelineBuilderPermission::ReadRegistry,
             Self::CheckProviderAvailability => PipelineBuilderPermission::PassiveProviderCheck,
-            Self::CreatePipelineDraft | Self::CreateDraftFromTemplate => {
-                PipelineBuilderPermission::CreateDraft
-            }
+            Self::CreatePipelineDraft
+            | Self::CreateDraftFromTemplate
+            | Self::CreateBlockedDraft => PipelineBuilderPermission::CreateDraft,
             Self::AddPipelineNode
             | Self::RemovePipelineNode
             | Self::ConnectPipelineNodes
@@ -1159,6 +1221,7 @@ impl PipelineBuilderTool {
             | Self::SetLabelMapping
             | Self::SetDecisionPolicy
             | Self::SetRuntimePolicy
+            | Self::SetUnresolvedBinding
             | Self::UndoLastDraftChange => PipelineBuilderPermission::MutateDraft,
             Self::ComparePipelineDrafts | Self::ValidatePipeline | Self::EstimatePipelineCost => {
                 PipelineBuilderPermission::ReadDraft
@@ -1172,9 +1235,9 @@ impl PipelineBuilderTool {
             | Self::InspectNodeStatistics
             | Self::InspectNodeArtifacts
             | Self::CompareDryRuns => PipelineBuilderPermission::DryRunSandbox,
-            Self::SubmitDraftForHumanApproval | Self::FinishAgentSession => {
-                PipelineBuilderPermission::RequestHumanApproval
-            }
+            Self::SubmitDraftForHumanApproval
+            | Self::FinishWithSetupRequirements
+            | Self::FinishAgentSession => PipelineBuilderPermission::RequestHumanApproval,
         }
     }
 }
@@ -2385,7 +2448,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 56);
+        assert_eq!(tools.len(), 59);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",

@@ -470,29 +470,37 @@ impl AgentSession {
         self.outcome = Some(outcome);
         self.builder_stop_reason = Some(reason);
         self.next_action = Some(next_action.into());
-        self.pending_human_action = None;
         match outcome {
-            crate::PipelineBuilderOutcome::DraftReadyForHumanReview
-            | crate::PipelineBuilderOutcome::BlockedDraftReady
+            crate::PipelineBuilderOutcome::DraftReadyForHumanReview => {
+                self.status = AgentSessionStatus::WaitingForHuman;
+                self.phase = Some(crate::PipelineBuilderPhase::WaitingForHuman);
+                self.pending_human_action = Some("approve_pipeline_draft".to_owned());
+            }
+            crate::PipelineBuilderOutcome::BlockedDraftReady
             | crate::PipelineBuilderOutcome::ProviderSetupRequired => {
                 self.status = AgentSessionStatus::WaitingForHuman;
                 self.phase = Some(crate::PipelineBuilderPhase::WaitingForHuman);
+                self.pending_human_action = Some("configure_model_binding".to_owned());
             }
             crate::PipelineBuilderOutcome::UnsupportedRequest => {
                 self.status = AgentSessionStatus::Succeeded;
                 self.phase = Some(crate::PipelineBuilderPhase::Completed);
+                self.pending_human_action = None;
             }
             crate::PipelineBuilderOutcome::Cancelled => {
                 self.status = AgentSessionStatus::Cancelled;
                 self.phase = Some(crate::PipelineBuilderPhase::Cancelled);
+                self.pending_human_action = None;
             }
             crate::PipelineBuilderOutcome::BudgetExceeded => {
                 self.status = AgentSessionStatus::BudgetExceeded;
                 self.phase = Some(crate::PipelineBuilderPhase::Failed);
+                self.pending_human_action = None;
             }
             crate::PipelineBuilderOutcome::Failed => {
                 self.status = AgentSessionStatus::Failed;
                 self.phase = Some(crate::PipelineBuilderPhase::Failed);
+                self.pending_human_action = None;
             }
         }
         self.stop_reason = Some(format!("{reason:?}"));
