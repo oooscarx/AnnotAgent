@@ -738,7 +738,7 @@ async fn list_provider_presets() -> Json<Value> {
             adapter: ProviderAdapterKind::OpenAiCompatible,
             base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
             description: "OpenAI-compatible DashScope endpoint.",
-            suggested_models: &["qwen3.7-flash", "qwen-max"],
+            suggested_models: &["qwen3.7-flash-2026-07-15", "qwen-max"],
         },
         ProviderPresetDto {
             id: "openai",

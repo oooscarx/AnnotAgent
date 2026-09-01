@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-02 CST
 
+## Pinned Qwen VLM Revision — 2026-09-02
+
+- Updated the DashScope VLM default and Provider preset recommendation from the moving
+  `qwen3.7-flash` alias to `qwen3.7-flash-2026-07-15`.
+- The live Registry Model Profile now has immutable revision 2 with the exact dated remote model
+  ID. Existing Published Workflow snapshots retain revision 1; editable Drafts resolve revision 2.
+- The semantic Model Profile change is intentionally `unverified` until the user confirms a
+  potentially billable active probe or executes an explicit Sample Test.
+- Server tests pass 17/17, Web tests pass 40/40, the production Web build succeeds, and strict
+  Server all-target/all-feature Clippy plus Rustfmt pass.
+
 ## Provider Registry Dry Run Credential Hotfix — 2026-09-02
 
 - Fixed the legacy flat-Workflow Dry Run path so it receives the already-resolved Provider

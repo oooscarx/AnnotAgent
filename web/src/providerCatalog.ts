@@ -58,7 +58,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     docsUrl: "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
     reasoningMode: "medium",
     models: [
-      { id: "qwen3.7-flash", label: "Qwen 3.7 Flash", hint: "Fast · Recommended", recommended: true },
+      { id: "qwen3.7-flash-2026-07-15", label: "Qwen 3.7 Flash · 2026-07-15", hint: "Fast · Recommended", recommended: true },
       { id: "qwen3.7-plus", label: "Qwen 3.7 Plus", hint: "Higher quality" },
       { id: "qwen3.8-max", label: "Qwen 3.8 Max", hint: "Maximum capability" },
     ],

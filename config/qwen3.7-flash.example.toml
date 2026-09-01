@@ -4,7 +4,7 @@ default_provider = "openai_compatible"
 [provider]
 endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key_env = "ANNOTAGENT_API_KEY"
-model = "qwen3.7-flash"
+model = "qwen3.7-flash-2026-07-15"
 protocol = "chat_completions"
 request_timeout_seconds = 120
 max_output_tokens = 2048

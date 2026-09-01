@@ -1,5 +1,16 @@
 # AnnotAgent Acceptance Evidence
 
+## Pinned Qwen VLM Revision — 2026-09-02
+
+- Workspace execution settings, the checked-in DashScope example, the Server Provider preset and
+  the Web Provider catalog all name `qwen3.7-flash-2026-07-15` exactly.
+- Registry Model Profile `b9c5bbe8-e21a-5784-9c52-cade259b434f` advanced from revision 1
+  (`qwen3.7-flash`) to revision 2 (`qwen3.7-flash-2026-07-15`) without mutating historical
+  revision or Published Workflow snapshots.
+- No billable active probe or Sample Test was initiated as part of the rename.
+- Verification: 17 Server tests and 40 Web tests passed; the Web production build, strict Server
+  Clippy and Rustfmt also completed successfully.
+
 ## Provider Registry Dry Run Credential Hotfix — 2026-09-02
 
 - Root cause: `dry_run_workflow_samples_with_provider` forwarded the resolved credential only to
