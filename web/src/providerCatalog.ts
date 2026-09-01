@@ -20,7 +20,6 @@ export interface ProviderPreset {
   apiKeyEnv?: string;
   docsUrl?: string;
   models: ProviderModel[];
-  offline?: boolean;
   custom?: boolean;
   reasoningMode?: string;
 }
@@ -49,14 +48,6 @@ export interface CatalogSettings {
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: "mock",
-    label: "Mock · Offline test",
-    shortLabel: "Mock",
-    description: "Runs the deterministic demo locally. No account or API key required.",
-    models: [],
-    offline: true,
-  },
   {
     id: "dashscope",
     label: "Alibaba Cloud · Qwen",
@@ -140,7 +131,6 @@ function normalizedEndpoint(endpoint: string | undefined): string {
 }
 
 export function inferProviderPreset(settings: CatalogSettings): ProviderPreset {
-  if ((settings.default_provider ?? "mock") === "mock") return getProviderPreset("mock");
   return inferConfiguredProviderPreset(settings);
 }
 
@@ -153,9 +143,6 @@ export function inferConfiguredProviderPreset(settings: CatalogSettings): Provid
 
 export function applyProviderPreset(settings: CatalogSettings, id: string): CatalogSettings {
   const preset = getProviderPreset(id);
-  if (preset.offline) {
-    return { ...settings, default_provider: "mock" };
-  }
   if (preset.custom) {
     return { ...settings, default_provider: "openai_compatible" };
   }

@@ -1110,3 +1110,32 @@ Persistent workspace Provider credentials status: `PASS`.
    and hardware. No credential, weight, download, push or remote change occurred.
 
 Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha offline release status: `PASS`.
+
+## Product Mock removal — 2026-09-01
+
+1. Production `ServerState` migrates a legacy Mock default to `openai_compatible` and calls the
+   transactional Registry purge before serving requests. The purge removes fixture Providers,
+   Model Profiles, Project bindings, Mock global defaults, fixture probe records and Mock-backed
+   unpublished Drafts while preserving immutable Run snapshots.
+2. The Provider presets API returns only OpenAI-compatible live integrations. Provider creation and
+   mutation reject the Mock adapter, and the Web UI contains no Mock Provider, Advisor or Expert
+   Worker choice.
+3. Workflow suggestion defaults exclusively to `llm`. `advisor=mock` returns HTTP 400 in the
+   production binary, and a second boundary rejects any generated, saved or published Draft whose
+   executable model binding starts with `mock`.
+4. Controlled Label Pipeline generation no longer writes `mock_label`, `mock_class_id`,
+   `mock-classifier` or `mock-detector` fallbacks. Missing models stay unresolved until the Agent or
+   user binds a real Registry Model/Worker.
+5. Published runtime fails closed for missing classification, detection, Grounding and prompted
+   segmentation bindings. Legacy YOLO fixture nodes cannot execute as product Workflows; real
+   specialist inference uses the versioned HTTP Vision Worker path.
+6. `purging_mock_registry_removes_active_bindings_defaults_and_fixture_drafts` proves durable
+   cleanup. `no-mock-product.spec.ts` proves an empty production workspace exposes no fixture
+   Provider, all presets are live adapters, Mock Advisor requests are rejected and the Provider UI
+   offers exactly one live adapter type.
+7. Verification: `cargo test --workspace` passes 300 tests with one explicitly billable smoke
+   ignored; Vitest passes 40/40; TypeScript and production Vite build pass; the focused Chromium
+   regression passes; the restarted live workspace lists only configured Qwen and GLM Provider
+   profiles and contains no Mock-backed unpublished Draft.
+
+Product Mock removal status: `PASS`.

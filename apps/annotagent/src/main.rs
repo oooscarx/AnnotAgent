@@ -115,7 +115,7 @@ enum Command {
 struct RunArgs {
     #[arg(long)]
     project: PathBuf,
-    #[arg(long, default_value = "mock")]
+    #[arg(long, default_value = "openai_compatible")]
     provider: String,
     #[arg(long)]
     config: Option<PathBuf>,
@@ -657,7 +657,7 @@ fn doctor() -> Result<()> {
         if std::env::var_os(&settings.provider.api_key_env).is_some() {
             "set"
         } else {
-            "not set (mock mode remains available)"
+            "not set (live Provider runs require a configured credential)"
         }
     );
     println!("example project: {project_status}");

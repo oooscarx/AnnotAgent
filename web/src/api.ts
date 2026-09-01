@@ -94,7 +94,7 @@ export const api = {
   createProvider: (value: {
     display_name: string;
     preset_id?: string;
-    adapter: "open_ai_compatible" | "mock";
+    adapter: "open_ai_compatible";
     base_url: string;
     enabled?: boolean;
   }) =>
@@ -105,7 +105,7 @@ export const api = {
   updateProvider: (providerId: string, value: Partial<{
     display_name: string;
     preset_id: string | null;
-    adapter: "open_ai_compatible" | "mock";
+    adapter: "open_ai_compatible";
     base_url: string;
     enabled: boolean;
   }>) =>
@@ -328,7 +328,7 @@ export const api = {
     }),
   suggestWorkflow: (
     projectId: string,
-    advisor: "mock" | "llm" = "mock",
+    advisor: "llm" = "llm",
     target?: { task_id: string; label: string },
     constraints?: {
       require_review_gate?: boolean;

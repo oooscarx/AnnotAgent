@@ -89,7 +89,7 @@ const DEFAULT_PIPELINE_BUILDER_CONSTRAINTS: PipelineBuilderConstraints = {
   priority: "balanced",
   max_model_calls_per_image: 4,
   target_review_rate: 0.25,
-  allow_external_models: false,
+  allow_external_models: true,
   allow_human_review: true,
   maximum_agent_turns: 16,
   maximum_tool_calls: 48,
@@ -2193,7 +2193,7 @@ function InlineProviderSetup({
       const provider = await api.createProvider({
         display_name: displayName.trim(),
         preset_id: preset.id,
-        adapter: preset.adapter,
+        adapter: "open_ai_compatible",
         base_url: preset.base_url,
       });
       await api.saveProviderCredential(provider.id, {
@@ -2423,7 +2423,7 @@ function WorkflowsPage({
   const [showProposalComparison, setShowProposalComparison] = useState(true);
   const [compareLeft, setCompareLeft] = useState("");
   const [compareRight, setCompareRight] = useState("");
-  const [advisorKind, setAdvisorKind] = useState<"mock" | "llm">("mock");
+  const advisorKind = "llm" as const;
   const [registryProviders, setRegistryProviders] = useState<ProviderProfile[]>([]);
   const [compatibleModels, setCompatibleModels] = useState<
     Partial<Record<ModelBindingRole, RegistryModelProfile[]>>
@@ -2525,7 +2525,6 @@ function WorkflowsPage({
             ? current
             : preferred,
         );
-        setAdvisorKind(preferred ? "llm" : "mock");
       })
       .catch((error: Error) => onError(`Model Registry: ${error.message}`))
       .finally(() => setRegistryLoading(false));
@@ -2779,7 +2778,6 @@ function WorkflowsPage({
         setProjectModelBindings(bindings);
         if (role === "pipeline_builder") {
           setSelectedAgentModelId(modelProfileId);
-          setAdvisorKind(modelProfileId ? "llm" : "mock");
         }
       })
       .catch((error: Error) => onError(`Model choice: ${error.message}`))
@@ -3119,11 +3117,7 @@ function WorkflowsPage({
             </div>
           </details>
           <details className="advanced-settings"><summary>Agent limits and provider</summary><div className="workflow-advisor-fields">
-            <fieldset className="agent-execution-mode">
-              <legend>Execution mode</legend>
-              <label><input type="radio" name="advisor-mode" value="llm" checked={advisorKind === "llm"} disabled={!selectedAgentModelId} onChange={() => setAdvisorKind("llm")} />Use the selected Agent model</label>
-              <label><input type="radio" name="advisor-mode" value="mock" checked={advisorKind === "mock"} onChange={() => setAdvisorKind("mock")} />Scripted Mock · offline demonstration</label>
-            </fieldset>
+            <p className="field-note">AnnotAgent uses the selected live Agent model. Test fixtures are never eligible for generated Pipelines.</p>
             <label>Maximum model calls / image<input type="number" min="1" max="16" value={builderConstraints.max_model_calls_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_model_calls_per_image: event.target.value ? Number(event.target.value) : undefined }))} /></label>
             <label>Maximum Agent turns<input type="number" min="1" max="64" value={builderConstraints.maximum_agent_turns} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_turns: Number(event.target.value) }))} /></label>
             <label>Maximum Tool Calls<input type="number" min="1" max="128" value={builderConstraints.maximum_tool_calls} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_tool_calls: Number(event.target.value) }))} /></label>
@@ -3131,7 +3125,7 @@ function WorkflowsPage({
             <label>Maximum Agent cost<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
             <button onClick={suggest} disabled={busy || !activeProjectId}>Build complete Project automation</button>
           </div></details>
-          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || (advisorKind === "llm" && !selectedAgentModelId)}>{advisorRunning ? "Agent is working…" : advisorKind === "mock" ? "Ask AnnotAgent · offline" : "Ask AnnotAgent"}</button>
+          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || !selectedAgentModelId}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
         </section>
         <section className="workflow-command-card workflow-version-actions">
           <span className="eyebrow">Current Automation</span>
@@ -4071,7 +4065,6 @@ function LabelPipelineEditor({
       model_binding: pipelineModelBinding("classification.classify", catalog),
       parameters: {
         labels: [selected.target_label],
-        mock_label: selected.target_label,
       },
       validators: [],
       refiners: [],
@@ -4569,7 +4562,7 @@ export function pipelineNodeParameters(nodeType: string, label: string) {
       reject_when: [],
     };
   if (nodeType === "classification.classify" || nodeType === "capability.classify")
-    return { labels: [label], mock_label: label };
+    return { labels: [label] };
   if (nodeType === "vlm_detection.detect" || nodeType === "capability.detect")
     return {
       labels: [label],
@@ -4599,16 +4592,9 @@ function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
   const model = catalog?.model_registry.find((candidate) =>
     candidate.capabilities.includes(capability),
   );
+  if (!model) return undefined;
   return {
-    model_id:
-      model?.id ??
-      (capability === "classification"
-        ? "mock-classifier"
-        : capability === "prompted_segmentation"
-          ? "mock-prompted-segmenter"
-        : capability === "vision_language"
-          ? "default-vision"
-          : "mock-detector"),
+    model_id: model.id,
     capability,
     configuration: {},
   };
@@ -4818,10 +4804,9 @@ function ProviderRegistryPage({
   const [presets, setPresets] = useState<ProviderPresetProfile[]>([]);
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
   const [legacyImport, setLegacyImport] = useState<LegacyRegistryImportPreview>();
-  const [presetId, setPresetId] = useState("mock");
-  const [displayName, setDisplayName] = useState("Mock (offline)");
-  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1");
-  const [adapter, setAdapter] = useState<ProviderProfile["adapter"]>("mock");
+  const [presetId, setPresetId] = useState("dashscope");
+  const [displayName, setDisplayName] = useState("Alibaba DashScope");
+  const [baseUrl, setBaseUrl] = useState("https://dashscope.aliyuncs.com/compatible-mode/v1");
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
@@ -4848,7 +4833,6 @@ function ProviderRegistryPage({
     if (preset) {
       setDisplayName(preset.display_name);
       setBaseUrl(preset.base_url);
-      setAdapter(preset.adapter);
     }
   };
   const create = () => {
@@ -4857,12 +4841,12 @@ function ProviderRegistryPage({
       .createProvider({
         display_name: displayName,
         preset_id: presetId,
-        adapter,
+        adapter: "open_ai_compatible",
         base_url: baseUrl,
       })
       .then(() => {
         setAdding(false);
-        setNotice(adapter === "mock" ? "Offline Mock Provider is ready." : "Provider saved. Add a credential, then run a passive connection check.");
+        setNotice("Provider saved. Add a credential, then run a passive connection check.");
         return refresh();
       })
       .catch((error: Error) => onError(error.message))
@@ -4904,7 +4888,7 @@ function ProviderRegistryPage({
           <div className="form-grid">
             <label>Preset<select value={presetId} onChange={(event) => choosePreset(event.target.value)}>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.display_name}</option>)}</select></label>
             <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-            <label>Adapter<select value={adapter} onChange={(event) => setAdapter(event.target.value as ProviderProfile["adapter"])}><option value="open_ai_compatible">OpenAI compatible</option><option value="mock">Mock</option></select></label>
+            <label>Adapter<select value="open_ai_compatible" disabled><option value="open_ai_compatible">OpenAI compatible</option></select></label>
             <label>Base URL<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
           </div>
           <div className="button-row"><button className="primary" disabled={busy === "create" || !displayName.trim() || !baseUrl.trim()} onClick={create}>{busy === "create" ? "Saving…" : "Save Provider"}</button></div>
@@ -4924,7 +4908,7 @@ function ProviderRegistryPage({
           ))}
         </div>
       ) : (
-        <Empty title="No Providers configured" detail="Add Mock for offline work or connect an OpenAI-compatible API." />
+        <Empty title="No Providers configured" detail="Connect an OpenAI-compatible API before asking AnnotAgent to build a Pipeline." />
       )}
       {legacyImport && !legacyImport.already_applied && (
         <details className="legacy-registry-import">
@@ -4940,7 +4924,7 @@ function ProviderRegistryPage({
               <div><dt>Project bindings</dt><dd>{legacyImport.project_binding_count}</dd></div>
             </dl>
             <div className="legacy-registry-import-footer">
-              <small>The credential remains a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret Mock"} reference. No secret or Run history is moved.</small>
+              <small>The credential remains a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret configuration"} reference. No secret or Run history is moved.</small>
               <button disabled={Boolean(busy)} onClick={importLegacy}>
                 {busy === "legacy-import" ? "Importing…" : "Review and import"}
               </button>
@@ -5042,7 +5026,7 @@ function ProviderRegistryCard({
       </header>
       <dl className="registry-facts">
         <div><dt>Endpoint</dt><dd title={provider.base_url}>{provider.endpoint_summary}</dd></div>
-        <div><dt>Credential</dt><dd>{provider.adapter === "mock" ? "Not required" : provider.credential_configured ? `${provider.credential_source?.replaceAll("_", " ")} configured` : "Missing"}</dd></div>
+        <div><dt>Credential</dt><dd>{provider.credential_configured ? `${provider.credential_source?.replaceAll("_", " ")} configured` : "Missing"}</dd></div>
         <div><dt>Models</dt><dd>{provider.model_count}</dd></div>
         <div><dt>Last checked</dt><dd>{provider.health.checked_at ? new Date(provider.health.checked_at).toLocaleString() : "Never"}</dd></div>
       </dl>
@@ -5063,7 +5047,7 @@ function ProviderRegistryCard({
       </details>
       <details className="registry-card-section">
         <summary>{provider.credential_configured ? "Rotate or remove credential" : "Add credential"}</summary>
-        {provider.adapter === "mock" ? <p>Mock runs offline and does not need a credential.</p> : <>
+        <>
           <div className="credential-editor">
             <div className="credential-field">
               <label htmlFor={`${credentialFieldId}-storage`}>Storage</label>
@@ -5086,7 +5070,7 @@ function ProviderRegistryCard({
             </div>}
           </div>
           <div className="credential-actions"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
-        </>}
+        </>
       </details>
       <details className="registry-card-section">
         <summary>Billable model test</summary>
@@ -5585,7 +5569,7 @@ function ModelsPage({
         </Panel>
         <Panel title="Provider catalog" eyebrow="Curated compatible options">
           <div className="catalog-list">
-            {PROVIDER_PRESETS.filter((preset) => !preset.offline).map(
+            {PROVIDER_PRESETS.map(
               (preset) => (
                 <article key={preset.id}>
                   <span className="catalog-monogram">
@@ -7090,7 +7074,7 @@ function AgentSessionTrace({
         <Fact label="Current stage" value={stage} />
         <Fact
           label="Provider"
-          value={session.model_selection?.provider_display_name ?? "Scripted Mock"}
+          value={session.model_selection?.provider_display_name ?? "Not recorded"}
         />
         <Fact
           label="Agent model"
@@ -7358,7 +7342,7 @@ function ExpertModelSetupWizard({
 }) {
   const existingWorkers = Array.isArray(settings.detection_workers) ? settings.detection_workers : [];
   const [step, setStep] = useState(1);
-  const [method, setMethod] = useState<"preset" | "http" | "mock">("preset");
+  const [method, setMethod] = useState<"preset" | "http">("preset");
   const [preset, setPreset] = useState("sam");
   const [worker, setWorker] = useState<ExpertWorkerDraft>(() => expertWorkerPreset("sam", existingWorkers.length + 1));
   const [discovery, setDiscovery] = useState<DetectionWorkerTestResult>();
@@ -7501,14 +7485,13 @@ function ExpertModelSetupWizard({
     {step === 1 && <div className="wizard-step"><div className="choice-grid expert-methods" role="radiogroup" aria-label="Expert Model integration method">{([
       ["preset", "Use preset", "Start with a known capability contract"],
       ["http", "Generic HTTP Worker", "Connect any Vision Protocol v1 service"],
-      ["mock", "Use mock Worker", "Use the built-in offline test model"],
-    ] as const).map(([value, label, detail]) => <label className={method === value ? "selected" : ""} key={value}><input type="radio" name="expert-method" checked={method === value} onChange={() => { setMethod(value); if (value === "http") choosePreset("custom"); }} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>{method === "preset" && <label>Preset<select value={preset} onChange={(event) => choosePreset(event.target.value)}>{EXPERT_WORKER_PRESETS.map(([value, label, detail]) => <option key={value} value={value}>{label} — {detail}</option>)}</select></label>}{method === "mock" && <div className="wizard-summary"><strong>Built-in mock is already registered</strong><span>Use <code>mock-prompted-segmenter</code> for deterministic, offline Pipeline and Replay tests. It never claims to represent real SAM quality.</span></div>}</div>}
+    ] as const).map(([value, label, detail]) => <label className={method === value ? "selected" : ""} key={value}><input type="radio" name="expert-method" checked={method === value} onChange={() => { setMethod(value); if (value === "http") choosePreset("custom"); }} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>{method === "preset" && <label>Preset<select value={preset} onChange={(event) => choosePreset(event.target.value)}>{EXPERT_WORKER_PRESETS.map(([value, label, detail]) => <option key={value} value={value}>{label} — {detail}</option>)}</select></label>}</div>}
     {step === 2 && <div className="wizard-step"><div className="form-grid"><label>Endpoint<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setField("base_url", event.target.value)} /></label><label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setField("timeout_seconds", Number(event.target.value))} /></label><label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setField("authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_SAM_TOKEN" /></label><label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setField("allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label></div><div className="wizard-summary"><strong>Trust boundary</strong><span>Loopback is allowed by default. Remote endpoints require HTTPS and explicit permission. Authentication is a reference; no secret is written to Settings.</span></div></div>}
     {step === 3 && <div className="wizard-step"><div className={`expert-test-banner ${discovery?.passed ? "passed" : "failed"}`} role="status"><strong>{discovery?.passed ? "Discovery passed" : `Discovery stopped at ${discovery?.failed_stage ?? "an unknown stage"}`}</strong><span>{discovery?.error ?? discovery?.evidence?.detail ?? "The Worker returned all required protocol resources."}</span></div><div className="expert-check-grid"><Fact label="Health" value={discovery?.health?.status ?? "Not available"} /><Fact label="Protocol" value={discovery?.evidence?.protocol_compatible ? "Compatible" : "Not verified"} /><Fact label="Models" value={discovery?.models?.models.length ?? 0} /><Fact label="Contracts" value={discovery?.evidence?.contracts_validated ? "Valid" : "Not verified"} /></div>{discovery?.capabilities && <div className="tag-group">{discovery.capabilities.capabilities.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div>}<details className="advanced-settings"><summary>Raw discovery response</summary><pre>{JSON.stringify(discovery, null, 2)}</pre></details></div>}
     {step === 4 && <div className="wizard-step"><div className="form-grid"><label>Display name<input value={String(worker.display_name ?? "")} onChange={(event) => setField("display_name", event.target.value)} /></label><label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setField("model_id", event.target.value)} /></label><label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setVersion("architecture", event.target.value)} /></label><label>Version<input value={String(worker.version?.model_version ?? "")} onChange={(event) => setVersion("model_version", event.target.value)} /></label><label>Checkpoint SHA-256<input value={String(worker.version?.checkpoint_sha256 ?? "")} onChange={(event) => setVersion("checkpoint_sha256", event.target.value.trim())} placeholder="64 hexadecimal characters" /></label><label>Training dataset version<input value={String(worker.version?.training_dataset_version ?? "")} onChange={(event) => setVersion("training_dataset_version", event.target.value)} /></label><label>Label space<input value={Array.isArray(worker.label_space) ? worker.label_space.join(", ") : ""} onChange={(event) => setField("label_space", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="football, robot" /></label><label>Checkpoint license<input value={String(worker.license?.weight_license ?? "")} onChange={(event) => setLicense("weight_license", event.target.value)} /></label></div><div className="expert-test-banner missing"><strong>Missing weights until identity is complete</strong><span>A filename is not a checkpoint identity. SAM and specialist models remain unavailable without a version, SHA-256, and concrete weight license.</span></div></div>}
     {step === 5 && <div className="wizard-step"><div className="form-grid"><label>Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Choose a Project with images</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label>Sample image<select value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>{images.map((image) => <option key={image.index} value={image.index}>{image.name}</option>)}</select></label><label>Text query<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="football" /></label></div>{projectId && images.length > 0 && <div className="expert-sample-layout"><img src={`/api/projects/${projectId}/images/${imageIndex}/content`} alt="Selected Worker sample input" /><div><button className="primary" disabled={busy === "sample"} onClick={() => void runSample()}>{busy === "sample" ? "Running sample…" : "Run sample test"}</button><small>Prompted segmentation uses a visible centered sample box. Detection Workers use the selected image and query.</small></div></div>}{sample && <div className="expert-sample-result"><div className={`expert-test-banner ${sample.passed ? "passed" : "failed"}`} role="status"><strong>{sample.passed ? "Sample conversion passed" : "Sample conversion failed"}</strong><span>{sample.error ?? sample.evidence.detail}</span></div>{sample.input?.image_url && <img src={sample.input.image_url} alt="Worker sample result source" />}<div className="expert-check-grid"><Fact label="Artifacts" value={Array.isArray(sample.converted_artifacts) ? sample.converted_artifacts.length : 0} /><Fact label="Duration" value={`${sample.duration_ms} ms`} /><Fact label="Score semantics" value={sample.score_semantics?.replaceAll("_", " ") ?? "Unknown"} /><Fact label="Geometry" value={sample.geometry_semantics?.replaceAll("_", " ") ?? "Unknown"} /></div><details className="advanced-settings"><summary>Converted Artifact and coordinates</summary><pre>{JSON.stringify({ raw_output_summary: sample.raw_output_summary, converted_artifacts: sample.converted_artifacts, coordinates: sample.coordinates, warnings: sample.warnings }, null, 2)}</pre></details></div>}</div>}
     {step === 6 && <div className="wizard-step"><div className={`expert-test-banner ${canRegister ? "passed" : "missing"}`}><strong>{canRegister ? "Ready to register" : "Registration is blocked"}</strong><span>{canRegister ? "Health, protocol, contracts, model identity, weights, and sample conversion all have active evidence." : sample?.evidence.detail ?? "Run a successful selected-image sample after discovery and identity setup."}</span></div><div className="expert-checklist">{[["Health", readyEvidence?.health_passed], ["Protocol", readyEvidence?.protocol_compatible], ["Contracts", readyEvidence?.contracts_validated], ["Weights", readyEvidence?.weights_ready], ["Sample conversion", readyEvidence?.sample_conversion_passed]].map(([label, passed]) => <span key={String(label)} className={passed ? "complete" : "blocked"}><b>{passed ? "✓" : "—"}</b>{label}</span>)}</div></div>}
-    <div className="wizard-actions"><button disabled={Boolean(busy)} onClick={step === 1 ? onClose : () => setStep((value) => value - 1)}>{step === 1 ? "Cancel" : "Back"}</button>{step === 1 ? <button className="primary" onClick={() => method === "mock" ? onClose() : setStep(2)}>{method === "mock" ? "Use built-in mock" : "Continue"}</button> : step === 2 ? <button className="primary" disabled={busy === "discovery" || !String(worker.base_url ?? "").trim()} onClick={() => void discover()}>{busy === "discovery" ? "Discovering…" : "Save and discover"}</button> : step === 3 ? <button className="primary" onClick={() => setStep(4)}>Configure identity</button> : step === 4 ? <button className="primary" disabled={busy === "identity"} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving…" : "Save identity and test"}</button> : step === 5 ? <button className="primary" disabled={!sample?.passed} onClick={() => setStep(6)}>Review registration</button> : <button className="primary" disabled={!canRegister || busy === "register"} onClick={() => void register()}>{busy === "register" ? "Registering…" : "Register Expert Model"}</button>}</div>
+    <div className="wizard-actions"><button disabled={Boolean(busy)} onClick={step === 1 ? onClose : () => setStep((value) => value - 1)}>{step === 1 ? "Cancel" : "Back"}</button>{step === 1 ? <button className="primary" onClick={() => setStep(2)}>Continue</button> : step === 2 ? <button className="primary" disabled={busy === "discovery" || !String(worker.base_url ?? "").trim()} onClick={() => void discover()}>{busy === "discovery" ? "Discovering…" : "Save and discover"}</button> : step === 3 ? <button className="primary" onClick={() => setStep(4)}>Configure identity</button> : step === 4 ? <button className="primary" disabled={busy === "identity"} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving…" : "Save identity and test"}</button> : step === 5 ? <button className="primary" disabled={!sample?.passed} onClick={() => setStep(6)}>Review registration</button> : <button className="primary" disabled={!canRegister || busy === "register"} onClick={() => void register()}>{busy === "register" ? "Registering…" : "Register Expert Model"}</button>}</div>
   </div></div>;
 }
 
@@ -7852,9 +7835,26 @@ function CreateProject({
       }
       setProgress("Preparing the recommended Automation Draft…");
       try {
+        const [compatible, defaults] = await Promise.all([
+          api.compatibleModelProfiles({
+            input_modalities: ["text"],
+            capabilities: ["text_generation"],
+            tool_calls: true,
+            structured_output: true,
+          }),
+          api.agentModelBindings(),
+        ]);
+        const agentModel = compatible.models.find(
+          (model) => model.id === defaults.pipeline_builder,
+        ) ?? compatible.models[0];
+        if (!agentModel) {
+          throw new Error(
+            "Configure an Available text-generation Model Profile with Tool calls and Structured output before requesting a recommendation.",
+          );
+        }
         await api.suggestWorkflow(
           resolvedWorkspaceId,
-          "mock",
+          "llm",
           { task_id: resolvedTaskId, label: resolvedLabelId },
           {
             max_cost_per_image: maximumCost.trim() || undefined,
@@ -7862,6 +7862,8 @@ function CreateProject({
             minimum_accuracy: priority === "faster" ? 0.75 : priority === "accuracy" ? 0.92 : 0.85,
             require_review_gate: Number(targetReviewRate) > 0,
           },
+          DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
+          agentModel.id,
         );
       } catch (error) {
         warnings.push(`The Project was created, but its recommendation needs attention: ${(error as Error).message}`);
@@ -7966,7 +7968,7 @@ function CreateProject({
           <div className="inline-model-connection">
             <div><span className="eyebrow">Registry-first execution</span><strong>Bind in Automation</strong></div>
             <p>The wizard creates only the Project Schema and an editable Draft. Choose a reusable Model Profile on the Automation page, Dry Run it, then publish an immutable Workflow Version.</p>
-            <small>{offlineOnly ? "Offline only is recorded as a design constraint; choose a Mock or local Registry Model Profile." : "Provider credentials are configured once under Settings → Providers and are never copied into the Project."}</small>
+            <small>{offlineOnly ? "Offline only is recorded as a design constraint; connect a local Vision Worker before building the Pipeline." : "Provider credentials are configured once under Settings → Providers and are never copied into the Project."}</small>
           </div>
           <details className="advanced-settings"><summary>Generated Project definition</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
         </div>}

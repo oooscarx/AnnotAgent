@@ -118,7 +118,7 @@ impl PublishedWorkflowRuntime {
     ) -> Result<Self> {
         let mut pipeline_provider = None;
         let external_backend: Option<Arc<dyn VisionModelBackend>> = match provider_kind {
-            "mock" => None,
+            "mock" | "core" => None,
             "openai_compatible" => {
                 let provider: Arc<dyn VisionModelProvider> = Arc::new(
                     OpenAiCompatibleProvider::new_with_api_key(
@@ -136,7 +136,7 @@ impl PublishedWorkflowRuntime {
                     settings.provider.temperature,
                 )))
             }
-            other => bail!("unknown provider {other:?}; choose mock or openai_compatible"),
+            other => bail!("unknown provider {other:?}; choose openai_compatible"),
         };
         let mut profile_executions = BTreeMap::new();
         for profile in &workflow.snapshot.model_profiles {
@@ -248,7 +248,7 @@ impl PublishedWorkflowRuntime {
         let model_id = node
             .model_binding
             .clone()
-            .unwrap_or_else(|| "mock-open-vocabulary".to_owned());
+            .ok_or_else(|| anyhow!("Grounding requires a configured live Vision Worker"))?;
         let backend = self.grounding_backend(&model_id, capability)?;
         Ok(Arc::new(GroundingSkillRunner::new(
             backend,
@@ -262,11 +262,14 @@ impl PublishedWorkflowRuntime {
         model_id: &str,
         capability: annotagent_core::VisionCapability,
     ) -> Result<Arc<dyn annotagent_core::PipelineModelBackend>> {
-        if model_id == "mock-open-vocabulary" {
-            return Ok(Arc::new(MockGroundingBackend::new(
-                "workspace-mock-open-vocabulary",
-                capability,
-            )?));
+        if model_id.to_ascii_lowercase().starts_with("mock") {
+            if self.provider_name == "mock" {
+                return Ok(Arc::new(MockGroundingBackend::new(
+                    "workspace-mock-open-vocabulary",
+                    capability,
+                )?));
+            }
+            bail!("test-only Grounding fixtures cannot run in a product Workflow");
         }
         let worker = self
             .detection_workers
@@ -432,29 +435,29 @@ impl PublishedWorkflowRuntime {
                         Arc::new(BoundPromptedSegmentationRunner {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
+                            allow_test_fixtures: self.provider_name == "mock",
                         }),
                         true,
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
-                    if self.provider_name != "mock"
-                        && node.model_binding.as_deref() != Some("mock-detector")
-                    {
-                        bail!(
-                            "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
-                        );
+                    if self.provider_name == "mock" {
+                        executor.register_runner(
+                            node.node_type.clone(),
+                            Arc::new(YoloDetectionSkillRunner::new(
+                                Arc::new(MockYoloBackend::new("workspace-mock-detector")),
+                                node.model_binding
+                                    .clone()
+                                    .unwrap_or_else(|| "mock-detector".to_owned()),
+                                request.model_image.clone(),
+                            )?),
+                            true,
+                        )?;
+                        continue;
                     }
-                    executor.register_runner(
-                        node.node_type.clone(),
-                        Arc::new(YoloDetectionSkillRunner::new(
-                            Arc::new(MockYoloBackend::new("workspace-mock-detector")),
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| "mock-detector".to_owned()),
-                            request.model_image.clone(),
-                        )?),
-                        true,
-                    )?;
+                    bail!(
+                        "legacy YOLO fixture nodes cannot run in a product Workflow; use capability.detect with a configured HTTP Vision Worker"
+                    );
                 }
                 _ if !matches!(
                     node.kind,
@@ -1129,29 +1132,29 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         Arc::new(BoundPromptedSegmentationRunner {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
+                            allow_test_fixtures: self.provider_name == "mock",
                         }),
                         true,
                     )?;
                 }
                 YOLO_DETECTION_OPERATION => {
-                    if self.provider_name != "mock"
-                        && node.model_binding.as_deref() != Some("mock-detector")
-                    {
-                        bail!(
-                            "Published Label Pipeline detection requires a configured HTTP JSON detector binding"
-                        );
+                    if self.provider_name == "mock" {
+                        executor.register_runner(
+                            node.node_type.clone(),
+                            Arc::new(YoloDetectionSkillRunner::new(
+                                Arc::new(MockYoloBackend::new("workspace-mock-detector")),
+                                node.model_binding
+                                    .clone()
+                                    .unwrap_or_else(|| "mock-detector".to_owned()),
+                                request.model_image.clone(),
+                            )?),
+                            true,
+                        )?;
+                        continue;
                     }
-                    executor.register_runner(
-                        node.node_type.clone(),
-                        Arc::new(YoloDetectionSkillRunner::new(
-                            Arc::new(MockYoloBackend::new("workspace-mock-detector")),
-                            node.model_binding
-                                .clone()
-                                .unwrap_or_else(|| "mock-detector".to_owned()),
-                            request.model_image.clone(),
-                        )?),
-                        true,
-                    )?;
+                    bail!(
+                        "legacy YOLO fixture nodes cannot run in a product Workflow; use capability.detect with a configured HTTP Vision Worker"
+                    );
                 }
                 _ if !matches!(
                     node.kind,
@@ -1331,21 +1334,23 @@ impl DagNodeRunner for BoundClassificationRunner {
             context.node,
         );
         let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-            execution.pipeline_provider.as_ref().map_or_else(
-                || {
-                    Arc::new(MockClassificationBackend::new(format!(
-                        "registry-mock-classifier-{}",
-                        execution.model_name
-                    ))) as Arc<dyn annotagent_core::PipelineModelBackend>
-                },
-                |provider| {
-                    Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
-                        format!("registry-openai-classifier-{}", execution.model_name),
-                        provider.clone(),
-                        execution.model_name.clone(),
-                    )) as Arc<dyn annotagent_core::PipelineModelBackend>
-                },
-            );
+            if let Some(provider) = execution.pipeline_provider.as_ref() {
+                Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
+                    format!("registry-openai-classifier-{}", execution.model_name),
+                    provider.clone(),
+                    execution.model_name.clone(),
+                ))
+            } else if execution.provider_name == "mock" {
+                Arc::new(MockClassificationBackend::new(format!(
+                    "registry-mock-classifier-{}",
+                    execution.model_name
+                )))
+            } else {
+                return Err(DagNodeFailure::terminal(
+                    "classification_binding",
+                    "classification requires a configured live Provider Model Profile",
+                ));
+            };
         let runner = ClassificationSkillRunner::new(
             backend,
             execution.model_name.clone(),
@@ -1368,24 +1373,39 @@ struct BoundDetectionRunner {
 struct BoundPromptedSegmentationRunner {
     model_image: Option<annotagent_core::ModelImage>,
     detection_workers: Vec<DetectionWorkerSettings>,
+    allow_test_fixtures: bool,
 }
 
 #[async_trait]
 impl DagNodeRunner for BoundPromptedSegmentationRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
-        let model_id = context
-            .node
-            .model_binding
-            .as_deref()
-            .unwrap_or("mock-prompted-segmenter");
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if matches!(
-            model_id,
-            "mock-prompted-segmenter" | "mock-sam" | "mock-segmenter"
-        ) {
-            Arc::new(MockPromptedSegmentationBackend::new(
-                "workspace-mock-prompted-segmenter",
-            ))
-        } else {
+        let model_id = context.node.model_binding.as_deref().ok_or_else(|| {
+            DagNodeFailure::terminal(
+                "segmentation_binding",
+                "prompted segmentation requires a configured live Vision Worker",
+            )
+        })?;
+        if model_id.to_ascii_lowercase().starts_with("mock") {
+            if self.allow_test_fixtures {
+                return PromptedSegmentationRunner::new(
+                    Arc::new(MockPromptedSegmentationBackend::new(
+                        "workspace-mock-prompted-segmenter",
+                    )),
+                    model_id,
+                    self.model_image.clone(),
+                )
+                .map_err(|error| {
+                    DagNodeFailure::terminal("segmentation_binding", error.to_string())
+                })?
+                .run(context)
+                .await;
+            }
+            return Err(DagNodeFailure::terminal(
+                "segmentation_binding",
+                "test-only segmentation fixtures cannot run in a product Workflow",
+            ));
+        }
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = {
             let worker = self
                 .detection_workers
                 .iter()
@@ -1463,46 +1483,54 @@ impl DagNodeRunner for BoundDetectionRunner {
                 .model_binding
                 .clone()
                 .unwrap_or_else(|| execution.model_name.clone());
-            let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-                if context.node.model_profile_binding.is_some()
-                    || matches!(
-                        model_id.as_str(),
-                        "mock-object-detector" | "mock-detector" | "default-vision"
-                    )
-                {
-                    Arc::new(MockObjectDetectionBackend::new(format!(
-                        "registry-mock-detector-{}",
-                        execution.model_name
-                    )))
-                } else {
-                    let worker = self
-                        .detection_workers
-                        .iter()
-                        .find(|worker| worker.model_id == model_id)
-                        .ok_or_else(|| {
-                            DagNodeFailure::terminal(
-                                "detection_binding",
-                                format!("unknown Detection Worker model {model_id:?}"),
-                            )
-                        })?;
-                    if !worker.enabled {
-                        return Err(DagNodeFailure::terminal(
+            let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if model_id
+                .to_ascii_lowercase()
+                .starts_with("mock")
+                && execution.provider_name == "mock"
+            {
+                Arc::new(MockObjectDetectionBackend::new(format!(
+                    "registry-mock-detector-{}",
+                    execution.model_name
+                )))
+            } else if model_id.to_ascii_lowercase().starts_with("mock") {
+                return Err(DagNodeFailure::terminal(
+                    "detection_binding",
+                    "test-only detector fixtures cannot run in a product Workflow",
+                ));
+            } else if context.node.model_profile_binding.is_some() {
+                return Err(DagNodeFailure::terminal(
+                    "detection_binding",
+                    "the bound Provider Model must execute through a vision-language detection node",
+                ));
+            } else {
+                let worker = self
+                    .detection_workers
+                    .iter()
+                    .find(|worker| worker.model_id == model_id)
+                    .ok_or_else(|| {
+                        DagNodeFailure::terminal(
                             "detection_binding",
-                            format!("Detection Worker model {model_id:?} is disabled"),
-                        ));
-                    }
-                    Arc::new(
-                        HttpVisionDetectionBackend::new(
-                            worker.http_config().map_err(|error| {
-                                DagNodeFailure::terminal("detection_credential", error.to_string())
-                            })?,
-                            annotagent_core::VisionCapability::ObjectDetection,
+                            format!("unknown Detection Worker model {model_id:?}"),
                         )
-                        .map_err(|error| {
-                            DagNodeFailure::terminal("detection_binding", error.to_string())
+                    })?;
+                if !worker.enabled {
+                    return Err(DagNodeFailure::terminal(
+                        "detection_binding",
+                        format!("Detection Worker model {model_id:?} is disabled"),
+                    ));
+                }
+                Arc::new(
+                    HttpVisionDetectionBackend::new(
+                        worker.http_config().map_err(|error| {
+                            DagNodeFailure::terminal("detection_credential", error.to_string())
                         })?,
+                        annotagent_core::VisionCapability::ObjectDetection,
                     )
-                };
+                    .map_err(|error| {
+                        DagNodeFailure::terminal("detection_binding", error.to_string())
+                    })?,
+                )
+            };
             if context.node.node_type == VLM_DETECTION_OPERATION {
                 let runner =
                     VlmDetectionSkillRunner::new(backend, model_id, self.model_image.clone())

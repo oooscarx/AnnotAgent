@@ -63,7 +63,7 @@ use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_
 use annotagent_provider::{
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
     MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
-    OpenAiCompatibleProvider, OpenAiProtocol,
+    OpenAiCompatibleProvider, OpenAiProtocol, OpenAiVisionBackend,
 };
 use annotagent_runtime::{
     AgentLoopConfig, AgentRuntime, DagCheckpoint, DagNodeFailure, DagNodeStatus, DagNodeUsage,
@@ -708,7 +708,9 @@ fn default_provider_kind() -> String {
 
 const PIPELINE_BUILDER_SYSTEM_PROMPT: &str = "You are AnnotAgent's constrained Pipeline Builder. \
 Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
-and inspected evidence. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
+and inspected evidence. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
+fixture backend, or test-only fallback. If a real binding is unavailable, leave it explicitly unresolved \
+and explain the required Provider or Vision Worker setup. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
 uncalibrated CoarseHypothesis even when confidence is high. Provider or Worker failure is infrastructure \
 evidence, never a reason to add prompted segmentation. NoCandidate has no box or point prompt, so do not \
 add prompted segmentation; consider Tile, zoom/crop search, an available open-vocabulary or specialist \
@@ -2232,11 +2234,25 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         VisionCapability::KeypointDetection,
     ];
     let mut models = ModelRegistry::new();
-    models.register_backend(Arc::new(MockVisionBackend::new(
-        "workspace-provider-adapter",
-        capabilities,
-        Vec::new(),
-    )))?;
+    if settings.default_provider == "mock" {
+        models.register_backend(Arc::new(MockVisionBackend::new(
+            "workspace-provider-adapter",
+            capabilities,
+            Vec::new(),
+        )))?;
+    } else {
+        let provider: Arc<dyn VisionModelProvider> = Arc::new(
+            OpenAiCompatibleProvider::new(settings.provider.clone())
+                .map_err(|error| anyhow!(error))?,
+        );
+        models.register_backend(Arc::new(OpenAiVisionBackend::new(
+            "workspace-provider-adapter",
+            &settings.provider.model,
+            provider,
+            settings.provider.max_output_tokens,
+            settings.provider.temperature,
+        )))?;
+    }
     models.register_model(VisionModelDescriptor {
         id: "default-vision".to_owned(),
         display_name: "Workspace default vision model".to_owned(),
@@ -2276,38 +2292,40 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         ]),
         ..VisionModelDescriptor::default()
     })?;
-    models.register_model(VisionModelDescriptor {
-        id: "mock-open-vocabulary".to_owned(),
-        display_name: "Offline mock open-vocabulary grounding".to_owned(),
-        backend_id: "workspace-provider-adapter".to_owned(),
-        capabilities: vec![
-            VisionCapability::OpenVocabularyDetection,
-            VisionCapability::PhraseGrounding,
-        ],
-        input_types: vec![VisionInputType::Image, VisionInputType::Text],
-        output_types: vec![ArtifactKind::DetectionSet],
-        model: "mock-open-vocabulary".to_owned(),
-        model_version: "1".to_owned(),
-        input_contract: ModelInputContract {
+    if settings.default_provider == "mock" {
+        models.register_model(VisionModelDescriptor {
+            id: "mock-open-vocabulary".to_owned(),
+            display_name: "Offline mock open-vocabulary grounding".to_owned(),
+            backend_id: "workspace-provider-adapter".to_owned(),
+            capabilities: vec![
+                VisionCapability::OpenVocabularyDetection,
+                VisionCapability::PhraseGrounding,
+            ],
             input_types: vec![VisionInputType::Image, VisionInputType::Text],
-            supports_multiple_queries: true,
-            supports_visual_prompt: false,
-            max_queries: Some(100),
-        },
-        output_contract: ModelOutputContract {
             output_types: vec![ArtifactKind::DetectionSet],
-            normalized_coordinates: true,
-            allows_empty: true,
-            label_space: Vec::new(),
-        },
-        score_semantics: ScoreSemantics::NotProvided,
-        health: VisionModelHealth {
-            status: VisionModelHealthStatus::Healthy,
-            detail: Some("offline deterministic Grounding fixture available".to_owned()),
-            checked_at: Some(chrono::Utc::now()),
-        },
-        ..VisionModelDescriptor::default()
-    })?;
+            model: "mock-open-vocabulary".to_owned(),
+            model_version: "1".to_owned(),
+            input_contract: ModelInputContract {
+                input_types: vec![VisionInputType::Image, VisionInputType::Text],
+                supports_multiple_queries: true,
+                supports_visual_prompt: false,
+                max_queries: Some(100),
+            },
+            output_contract: ModelOutputContract {
+                output_types: vec![ArtifactKind::DetectionSet],
+                normalized_coordinates: true,
+                allows_empty: true,
+                label_space: Vec::new(),
+            },
+            score_semantics: ScoreSemantics::NotProvided,
+            health: VisionModelHealth {
+                status: VisionModelHealthStatus::Healthy,
+                detail: Some("offline deterministic Grounding fixture available".to_owned()),
+                checked_at: Some(chrono::Utc::now()),
+            },
+            ..VisionModelDescriptor::default()
+        })?;
+    }
     for worker in &settings.detection_workers {
         let authorization = worker.authorization_header().ok().flatten();
         models.register_backend(Arc::new(HttpJsonVisionBackend::new(
@@ -2325,48 +2343,50 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
         )?))?;
         models.register_expert_manifest(worker.expert_manifest()?)?;
     }
-    for (id, display_name, capability, output_type) in [
-        (
-            "mock-classifier",
-            "Offline mock classifier",
-            VisionCapability::Classification,
-            ArtifactKind::ClassificationSet,
-        ),
-        (
-            "mock-detector",
-            "Offline mock detector",
-            VisionCapability::ObjectDetection,
-            ArtifactKind::DetectionSet,
-        ),
-        (
-            "mock-object-detector",
-            "Offline mock trained detector",
-            VisionCapability::ObjectDetection,
-            ArtifactKind::DetectionSet,
-        ),
-        (
-            "mock-prompted-segmenter",
-            "Offline mock prompted segmenter",
-            VisionCapability::PromptedSegmentation,
-            ArtifactKind::MaskSet,
-        ),
-    ] {
-        models.register_model(VisionModelDescriptor {
-            id: id.to_owned(),
-            display_name: display_name.to_owned(),
-            backend_id: "workspace-provider-adapter".to_owned(),
-            capabilities: vec![capability],
-            input_types: vec![VisionInputType::Image],
-            output_types: vec![output_type],
-            model: id.to_owned(),
-            model_version: "1".to_owned(),
-            health: VisionModelHealth {
-                status: VisionModelHealthStatus::Healthy,
-                detail: Some("offline deterministic fixture available".to_owned()),
-                checked_at: Some(chrono::Utc::now()),
-            },
-            ..VisionModelDescriptor::default()
-        })?;
+    if settings.default_provider == "mock" {
+        for (id, display_name, capability, output_type) in [
+            (
+                "mock-classifier",
+                "Offline mock classifier",
+                VisionCapability::Classification,
+                ArtifactKind::ClassificationSet,
+            ),
+            (
+                "mock-detector",
+                "Offline mock detector",
+                VisionCapability::ObjectDetection,
+                ArtifactKind::DetectionSet,
+            ),
+            (
+                "mock-object-detector",
+                "Offline mock trained detector",
+                VisionCapability::ObjectDetection,
+                ArtifactKind::DetectionSet,
+            ),
+            (
+                "mock-prompted-segmenter",
+                "Offline mock prompted segmenter",
+                VisionCapability::PromptedSegmentation,
+                ArtifactKind::MaskSet,
+            ),
+        ] {
+            models.register_model(VisionModelDescriptor {
+                id: id.to_owned(),
+                display_name: display_name.to_owned(),
+                backend_id: "workspace-provider-adapter".to_owned(),
+                capabilities: vec![capability],
+                input_types: vec![VisionInputType::Image],
+                output_types: vec![output_type],
+                model: id.to_owned(),
+                model_version: "1".to_owned(),
+                health: VisionModelHealth {
+                    status: VisionModelHealthStatus::Healthy,
+                    detail: Some("offline deterministic fixture available".to_owned()),
+                    checked_at: Some(chrono::Utc::now()),
+                },
+                ..VisionModelDescriptor::default()
+            })?;
+        }
     }
 
     let mut nodes = NodeRegistry::new();
@@ -3285,6 +3305,16 @@ fn controlled_label_composition(
         TaskKind::Classification => {
             let classifier_id = format!("{target_task_id}.{target_label}.classifier");
             let gate_id = format!("{target_task_id}.{target_label}.confidence");
+            let classifier_binding = preferred_model_for(
+                models,
+                constraints.preferred_model_id.as_deref(),
+                &[VisionCapability::Classification],
+            )?
+            .map(|(model_id, capability)| PipelineModelBinding {
+                model_id,
+                capability,
+                configuration: BTreeMap::new(),
+            });
             let classifier = PipelineStep {
                 id: classifier_id.clone(),
                 node_type: annotagent_skill_classification::CLASSIFICATION_OPERATION.to_owned(),
@@ -3294,20 +3324,10 @@ fn controlled_label_composition(
                     "classifications".to_owned(),
                     ArtifactKind::ClassificationSet,
                 )]),
-                model_binding: Some(PipelineModelBinding {
-                    model_id: preferred_model_for(
-                        models,
-                        constraints.preferred_model_id.as_deref(),
-                        &[VisionCapability::Classification],
-                    )?
-                    .map_or_else(|| "mock-classifier".to_owned(), |(model, _)| model),
-                    capability: VisionCapability::Classification,
-                    configuration: BTreeMap::new(),
-                }),
+                model_binding: classifier_binding,
                 skill_binding: None,
                 parameters: BTreeMap::from([
                     ("labels".to_owned(), json!(task.labels)),
-                    ("mock_label".to_owned(), json!(target_label)),
                     ("target_label".to_owned(), json!(target_label)),
                 ]),
                 validators: task.validators.clone(),
@@ -3350,74 +3370,81 @@ fn controlled_label_composition(
                     VisionCapability::OpenVocabularyDetection,
                 ],
             )?;
-            let (model_id, capability, node_type, kind, parameters) =
-                if let Some((model_id, capability)) = preferred {
-                    let (node_type, kind, parameters) = match capability {
-                        VisionCapability::VisionLanguage => (
-                            annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION.to_owned(),
-                            WorkflowNodeKind::VisionLanguageModel,
-                            BTreeMap::from([
-                                ("labels".to_owned(), json!([target_label])),
-                                (
-                                    "target_description".to_owned(),
-                                    json!(format!("the {target_label} object itself")),
-                                ),
-                            ]),
-                        ),
-                        VisionCapability::OpenVocabularyDetection => (
-                            annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION
-                                .to_owned(),
-                            WorkflowNodeKind::VisionModel,
-                            BTreeMap::from([(
-                                "queries".to_owned(),
-                                json!([{
-                                    "id": target_label,
-                                    "text": target_label.replace(['_', '-'], " "),
-                                    "target_label": target_label,
-                                }]),
-                            )]),
-                        ),
-                        VisionCapability::ObjectDetection => (
-                            annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION
-                                .to_owned(),
-                            WorkflowNodeKind::VisionModel,
-                            BTreeMap::from([
-                                ("target_labels".to_owned(), json!([target_label])),
-                                (
-                                    "class_mapping".to_owned(),
-                                    json!(BTreeMap::from([(
-                                        target_label.to_owned(),
-                                        target_label.to_owned(),
-                                    )])),
-                                ),
-                            ]),
-                        ),
-                        _ => unreachable!("preferred_model_for returns an allowed capability"),
-                    };
-                    (model_id, capability, node_type, kind, parameters)
-                } else {
-                    (
-                        "mock-detector".to_owned(),
-                        VisionCapability::ObjectDetection,
-                        annotagent_skill_yolo::YOLO_DETECTION_OPERATION.to_owned(),
+            let (model_binding, node_type, kind, parameters) = if let Some((model_id, capability)) =
+                preferred
+            {
+                let (node_type, kind, parameters) = match capability {
+                    VisionCapability::VisionLanguage => (
+                        annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION.to_owned(),
+                        WorkflowNodeKind::VisionLanguageModel,
+                        BTreeMap::from([
+                            ("labels".to_owned(), json!([target_label])),
+                            (
+                                "target_description".to_owned(),
+                                json!(format!("the {target_label} object itself")),
+                            ),
+                        ]),
+                    ),
+                    VisionCapability::OpenVocabularyDetection => (
+                        annotagent_skill_open_vocabulary::OPEN_VOCABULARY_DETECTION_OPERATION
+                            .to_owned(),
+                        WorkflowNodeKind::VisionModel,
+                        BTreeMap::from([(
+                            "queries".to_owned(),
+                            json!([{
+                                "id": target_label,
+                                "text": target_label.replace(['_', '-'], " "),
+                                "target_label": target_label,
+                            }]),
+                        )]),
+                    ),
+                    VisionCapability::ObjectDetection => (
+                        annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION.to_owned(),
                         WorkflowNodeKind::VisionModel,
                         BTreeMap::from([
-                            ("mock_label".to_owned(), json!(target_label)),
-                            ("mock_class_id".to_owned(), json!(target_label)),
+                            ("target_labels".to_owned(), json!([target_label])),
+                            (
+                                "class_mapping".to_owned(),
+                                json!(BTreeMap::from([(
+                                    target_label.to_owned(),
+                                    target_label.to_owned(),
+                                )])),
+                            ),
                         ]),
-                    )
+                    ),
+                    _ => unreachable!("preferred_model_for returns an allowed capability"),
                 };
+                (
+                    Some(PipelineModelBinding {
+                        model_id,
+                        capability,
+                        configuration: BTreeMap::new(),
+                    }),
+                    node_type,
+                    kind,
+                    parameters,
+                )
+            } else {
+                (
+                    None,
+                    annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION.to_owned(),
+                    WorkflowNodeKind::VisionLanguageModel,
+                    BTreeMap::from([
+                        ("labels".to_owned(), json!([target_label])),
+                        (
+                            "target_description".to_owned(),
+                            json!(format!("the {target_label} object itself")),
+                        ),
+                    ]),
+                )
+            };
             let detector = PipelineStep {
                 id: detector_id.clone(),
                 node_type,
                 kind,
                 inputs: BTreeMap::from([("image".to_owned(), PipelineSource::Image)]),
                 outputs: BTreeMap::from([("detections".to_owned(), ArtifactKind::DetectionSet)]),
-                model_binding: Some(PipelineModelBinding {
-                    model_id,
-                    capability,
-                    configuration: BTreeMap::new(),
-                }),
+                model_binding,
                 skill_binding: None,
                 parameters,
                 validators: Vec::new(),
@@ -3503,12 +3530,34 @@ fn preferred_model_for(
     allowed_capabilities: &[VisionCapability],
 ) -> Result<Option<(String, VisionCapability)>> {
     let Some(model_id) = preferred_model_id else {
+        for capability in allowed_capabilities {
+            if let Some(model) = models
+                .models()
+                .into_iter()
+                .filter(|model| {
+                    model.capabilities.contains(capability)
+                        && (model.status == ModelAvailabilityStatus::Available
+                            || model.health.status == VisionModelHealthStatus::Healthy)
+                })
+                .min_by_key(|model| model.capabilities.len())
+            {
+                return Ok(Some((model.id, *capability)));
+            }
+        }
         return Ok(None);
     };
     let (model, _) = models.resolve(model_id).map_err(|error| anyhow!(error))?;
-    if model.status != ModelAvailabilityStatus::Available
-        && model.health.status != VisionModelHealthStatus::Healthy
-    {
+    if matches!(
+        model.status,
+        ModelAvailabilityStatus::Unreachable
+            | ModelAvailabilityStatus::Misconfigured
+            | ModelAvailabilityStatus::IncompatibleProtocol
+            | ModelAvailabilityStatus::MissingWeights
+            | ModelAvailabilityStatus::Disabled
+    ) || matches!(
+        model.health.status,
+        VisionModelHealthStatus::Degraded | VisionModelHealthStatus::Unavailable
+    ) {
         bail!(
             "preferred Model {model_id:?} is not ready: status={:?}, health={:?}",
             model.status,
@@ -6590,6 +6639,17 @@ impl LocalApplication {
                 })?;
             let mut draft =
                 template.instantiate(project_id, project.project.enabled_skill_versions(), now);
+            if settings.default_provider != "mock" {
+                for node in &mut draft.nodes {
+                    if node
+                        .model_binding
+                        .as_deref()
+                        .is_some_and(|binding| binding.to_ascii_lowercase().starts_with("mock"))
+                    {
+                        node.model_binding = None;
+                    }
+                }
+            }
             let (nodes, _) = workflow_catalog(settings)?;
             apply_project_capability_bindings(&mut draft, &project, &nodes)?;
             draft

@@ -12,7 +12,7 @@ use annotagent_application::{
 use annotagent_core::{
     AgentSessionStatus, BindingMutationActor, InputModality, ModelBindingId, ModelBindingMatch,
     ModelBindingRole, ModelCapability, ModelProfileId, ModelProfileStatus,
-    PipelineBuilderConstraints, ProjectId, ProjectModelBinding, ProjectSchema, ProviderAdapterKind,
+    PipelineBuilderConstraints, ProjectId, ProjectModelBinding, ProjectSchema,
     ProviderHealthStatus, ProviderId, RunEvent, RunEventPayload, RunStatus,
 };
 use annotagent_provider::HttpVisionWorkerClient;
@@ -141,7 +141,9 @@ impl TuiState {
         };
         let mut events = self.application.subscribe();
         while events.try_recv().is_ok() {}
-        let started = self.application.start_run_path(project, "mock", None)?;
+        let started = self
+            .application
+            .start_run_path(project, "openai_compatible", None)?;
         self.active = Some(ActiveRun {
             run_id: started.run_id,
             events,
@@ -599,8 +601,7 @@ impl TuiState {
                             provider.health.status,
                             ProviderHealthStatus::Available | ProviderHealthStatus::Configured
                         )
-                        && (provider.credential_ref.is_some()
-                            || provider.adapter == ProviderAdapterKind::Mock)
+                        && provider.credential_ref.is_some()
                     {
                         count += 1;
                         self.push(format!(

@@ -4,17 +4,21 @@ mod batch;
 
 pub use batch::BatchClaimResult;
 
-use std::{collections::BTreeMap, path::Path, sync::Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::Mutex,
+};
 
 use annotagent_core::{
     AgentSession, Annotation, AnnotationRevision, AnnotationRevisionId, AnnotationValue,
     ArtifactId, ArtifactValidationState, BindingMutationActor, CorrectionRecord,
     GlobalModelDefaults, ImageId, LabelId, ModelBindingId, ModelBindingMatch, ModelMessage,
-    ModelProfile, ModelProfileId, ProjectId, ProjectModelBinding, ProviderId, ProviderProfile,
-    PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor, RunEvent,
-    RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult, UsageRecord,
-    ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft, WorkflowDraftStatus,
-    WorkflowDryRunReport, WorkflowSnapshot,
+    ModelProfile, ModelProfileId, ProjectId, ProjectModelBinding, ProviderAdapterKind, ProviderId,
+    ProviderProfile, PublishedWorkflowVersion, RelationEndpoint, ReviewStatus, RevisionActor,
+    RunEvent, RunEventPayload, RunId, RunStatus, TaskId, TaskRunStatus, ToolCallId, ToolResult,
+    UsageRecord, ValidationIssue, VisionArtifact, VisionArtifactValue, WorkflowDraft,
+    WorkflowDraftStatus, WorkflowDryRunReport, WorkflowSnapshot,
 };
 use annotagent_runtime::{RunRecord, RuntimeStore};
 use async_trait::async_trait;
@@ -653,6 +657,105 @@ impl SqliteStore {
                 return Err(StorageError::ProviderNotFound(provider_id));
             }
             Ok(())
+        })
+    }
+
+    /// Removes product-visible Provider Registry fixtures while preserving immutable Run history.
+    /// Historical Run snapshots remain self-contained audit records, but fixture-backed Drafts and
+    /// active Registry bindings must not survive into live authoring.
+    pub fn purge_provider_adapter(
+        &self,
+        adapter: ProviderAdapterKind,
+    ) -> Result<(usize, usize, usize), StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let adapter = enum_string(adapter)?;
+            let provider_ids = transaction
+                .prepare("SELECT id FROM provider_profiles WHERE adapter = ?1")?
+                .query_map([adapter], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            if provider_ids.is_empty() {
+                transaction.commit()?;
+                return Ok((0, 0, 0));
+            }
+
+            let mut model_ids = BTreeSet::new();
+            for provider_id in &provider_ids {
+                let ids = transaction
+                    .prepare("SELECT DISTINCT id FROM model_profiles WHERE provider_id = ?1")?
+                    .query_map([provider_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                model_ids.extend(ids);
+            }
+
+            let mut removed_bindings = 0;
+            for model_id in &model_ids {
+                removed_bindings += transaction.execute(
+                    "DELETE FROM project_model_bindings WHERE model_profile_id = ?1",
+                    [model_id],
+                )?;
+                transaction.execute(
+                    "DELETE FROM provider_probe_usage WHERE model_profile_id = ?1",
+                    [model_id],
+                )?;
+            }
+
+            if let Some(defaults_json) = transaction
+                .query_row(
+                    "SELECT defaults_json FROM global_model_defaults WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                let mut defaults: GlobalModelDefaults = serde_json::from_str(&defaults_json)?;
+                let is_fixture = |id: Option<ModelProfileId>| {
+                    id.is_some_and(|id| model_ids.contains(&id.to_string()))
+                };
+                if is_fixture(defaults.pipeline_builder) {
+                    defaults.pipeline_builder = None;
+                }
+                if is_fixture(defaults.vision_language) {
+                    defaults.vision_language = None;
+                }
+                if is_fixture(defaults.text_generation) {
+                    defaults.text_generation = None;
+                }
+                transaction.execute(
+                    "UPDATE global_model_defaults SET defaults_json = ?1, updated_at = ?2
+                     WHERE singleton = 1",
+                    params![serde_json::to_string(&defaults)?, Utc::now().to_rfc3339()],
+                )?;
+            }
+
+            let fixture_draft_ids = transaction
+                .prepare("SELECT id FROM workflow_drafts WHERE lower(draft_json) LIKE '%mock%'")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for draft_id in &fixture_draft_ids {
+                transaction.execute(
+                    "DELETE FROM workflow_sample_tests WHERE draft_id = ?1",
+                    [draft_id],
+                )?;
+                transaction.execute("DELETE FROM workflow_drafts WHERE id = ?1", [draft_id])?;
+            }
+
+            for provider_id in &provider_ids {
+                transaction.execute(
+                    "DELETE FROM provider_probe_usage WHERE provider_id = ?1",
+                    [provider_id],
+                )?;
+                transaction.execute(
+                    "DELETE FROM model_profiles WHERE provider_id = ?1",
+                    [provider_id],
+                )?;
+                transaction
+                    .execute("DELETE FROM provider_profiles WHERE id = ?1", [provider_id])?;
+            }
+            let removed_models = model_ids.len();
+            let removed_providers = provider_ids.len();
+            transaction.commit()?;
+            Ok((removed_providers, removed_models, removed_bindings))
         })
     }
 
@@ -3414,6 +3517,136 @@ mod tests {
             store.get_provider_profile(id),
             Err(StorageError::ProviderNotFound(missing)) if missing == id
         ));
+    }
+
+    #[test]
+    fn purging_mock_registry_removes_active_bindings_defaults_and_fixture_drafts() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let now = Utc::now();
+        let provider_id = ProviderId::new();
+        let model_id = ModelProfileId::new();
+        store
+            .save_provider_profile(&ProviderProfile {
+                id: provider_id,
+                display_name: "Test fixture".to_owned(),
+                preset_id: Some("mock".to_owned()),
+                adapter: ProviderAdapterKind::Mock,
+                base_url: url::Url::parse("http://127.0.0.1").expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: None,
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("provider");
+        store
+            .save_model_profile(&ModelProfile {
+                id: model_id,
+                revision: 1,
+                provider_id,
+                display_name: "Fixture detector".to_owned(),
+                remote_model_id: "mock-detector".to_owned(),
+                input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+                protocol_features: ProtocolFeatures::default(),
+                task_capabilities: BTreeSet::from([
+                    ModelCapability::ObjectDetection,
+                    ModelCapability::VisionLanguage,
+                ]),
+                capability_source: CapabilityDeclarationSource::Preset,
+                limits: ModelLimits::default(),
+                generation_defaults: GenerationDefaults::default(),
+                pricing: ModelPricing::default(),
+                status: ModelProfileStatus::Available,
+                enabled: true,
+                locked: true,
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("model");
+        let project_id = ProjectId::new();
+        store
+            .save_project_model_binding(
+                &ProjectModelBinding {
+                    id: ModelBindingId::new(),
+                    project_id,
+                    capability: ModelCapability::ObjectDetection,
+                    role: ModelBindingRole::Detection,
+                    match_kind: ModelBindingMatch::Role,
+                    model_profile_id: model_id,
+                    locked: true,
+                    created_at: now,
+                },
+                BindingMutationActor::User,
+            )
+            .expect("binding");
+        store
+            .save_global_model_defaults(&GlobalModelDefaults {
+                vision_language: Some(model_id),
+                text_generation: None,
+                pipeline_builder: None,
+            })
+            .expect("defaults");
+        let fixture_draft = WorkflowDraft {
+            schema_version: annotagent_core::WORKFLOW_SCHEMA_VERSION,
+            id: "fixture-draft".to_owned(),
+            project_id: "project".to_owned(),
+            name: "Fixture Draft".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![WorkflowDraftNode {
+                id: "detector".to_owned(),
+                node_type: "capability.detect".to_owned(),
+                kind: WorkflowNodeKind::VisionModel,
+                model_binding: Some("mock-detector".to_owned()),
+                ..WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        store
+            .save_workflow_draft(&fixture_draft)
+            .expect("fixture Draft");
+
+        let removed = store
+            .purge_provider_adapter(ProviderAdapterKind::Mock)
+            .expect("purge");
+        assert_eq!(removed, (1, 1, 1));
+        assert!(
+            store
+                .list_provider_profiles()
+                .expect("providers")
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_model_profiles(None, false)
+                .expect("models")
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_project_model_bindings(project_id)
+                .expect("bindings")
+                .is_empty()
+        );
+        assert!(store.list_workflow_drafts(None).expect("Drafts").is_empty());
+        assert_eq!(
+            store.get_global_model_defaults().expect("defaults"),
+            GlobalModelDefaults::default()
+        );
     }
 
     #[test]

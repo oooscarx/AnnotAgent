@@ -145,14 +145,25 @@ impl ServerState {
         default_write_reference: CredentialReference,
     ) -> anyhow::Result<Self> {
         let settings_path = application.workspace().join(".annotagent/settings.toml");
-        let settings_persisted = settings_path.is_file();
-        let settings = if settings_persisted {
+        #[allow(unused_mut)]
+        let mut settings_persisted = settings_path.is_file();
+        #[allow(unused_mut)]
+        let mut settings = if settings_persisted {
             annotagent_application::load_settings(Some(&settings_path))?
         } else {
             annotagent_application::load_settings(None)?
         };
+        #[cfg(not(test))]
+        if settings.default_provider == "mock" {
+            "openai_compatible".clone_into(&mut settings.default_provider);
+            persist_settings(&settings_path, &settings)?;
+            settings_persisted = true;
+        }
         validate_settings(&settings)?;
-        ensure_builtin_mock_registry(application.as_ref())?;
+        #[cfg(not(test))]
+        purge_builtin_mock_registry(application.as_ref())?;
+        #[cfg(test)]
+        ensure_test_mock_registry(application.as_ref())?;
         credential_reference.validate()?;
         default_write_reference.validate()?;
         let (api_key, api_key_persisted, credential_store_error) =
@@ -181,22 +192,28 @@ impl ServerState {
     }
 }
 
-fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Result<()> {
+#[cfg(not(test))]
+fn purge_builtin_mock_registry(application: &LocalApplication) -> anyhow::Result<()> {
+    application
+        .store()
+        .purge_provider_adapter(ProviderAdapterKind::Mock)?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn ensure_test_mock_registry(application: &LocalApplication) -> anyhow::Result<()> {
     let store = application.store();
     let now = Utc::now();
     let provider = store
         .list_provider_profiles()?
         .into_iter()
-        .find(|profile| {
-            profile.adapter == ProviderAdapterKind::Mock
-                && profile.preset_id.as_deref() == Some("mock")
-        })
+        .find(|profile| profile.adapter == ProviderAdapterKind::Mock)
         .unwrap_or_else(|| ProviderProfile {
             id: ProviderId::new(),
             display_name: "Mock (offline)".to_owned(),
             preset_id: Some("mock".to_owned()),
             adapter: ProviderAdapterKind::Mock,
-            base_url: "http://127.0.0.1".parse().expect("static Mock URL"),
+            base_url: "http://127.0.0.1".parse().expect("static test URL"),
             organization: None,
             workspace: None,
             credential_ref: None,
@@ -205,7 +222,7 @@ fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Resul
             enabled: true,
             health: ProviderHealthSnapshot {
                 status: ProviderHealthStatus::Available,
-                safe_message: Some("Built-in deterministic offline Provider".to_owned()),
+                safe_message: Some("test fixture".to_owned()),
                 checked_at: Some(now),
             },
             created_at: now,
@@ -218,15 +235,15 @@ fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Resul
     {
         store.save_provider_profile(&provider)?;
     }
-    let existing_models = store.list_model_profiles(Some(provider.id), false)?;
-    let ensure_model = |remote_model_id: &str,
-                        display_name: &str,
-                        capabilities: BTreeSet<ModelCapability>,
-                        tool_calls: bool|
+    let existing = store.list_model_profiles(Some(provider.id), false)?;
+    let ensure = |remote_model_id: &str,
+                  display_name: &str,
+                  capabilities: BTreeSet<ModelCapability>,
+                  tool_calls: bool|
      -> anyhow::Result<ModelProfile> {
-        if let Some(model) = existing_models
+        if let Some(model) = existing
             .iter()
-            .find(|profile| profile.remote_model_id == remote_model_id)
+            .find(|model| model.remote_model_id == remote_model_id)
         {
             return Ok(model.clone());
         }
@@ -258,25 +275,25 @@ fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Resul
         store.save_model_profile(&model)?;
         Ok(model)
     };
-    let vision_model = ensure_model(
+    let vision = ensure(
         "mock-vision",
         "Mock Vision Language (offline)",
         BTreeSet::from([ModelCapability::VisionLanguage]),
         true,
     )?;
-    ensure_model(
+    ensure(
         "mock-classifier",
         "Mock Classifier (offline)",
         BTreeSet::from([ModelCapability::ImageClassification]),
         false,
     )?;
-    ensure_model(
+    ensure(
         "mock-detector",
         "Mock Detector (offline)",
         BTreeSet::from([ModelCapability::ObjectDetection]),
         false,
     )?;
-    ensure_model(
+    ensure(
         "mock-grounding",
         "Mock Open Vocabulary (offline)",
         BTreeSet::from([
@@ -285,7 +302,7 @@ fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Resul
         ]),
         false,
     )?;
-    ensure_model(
+    ensure(
         "mock-segmenter",
         "Mock Segmenter (offline)",
         BTreeSet::from([
@@ -297,7 +314,7 @@ fn ensure_builtin_mock_registry(application: &LocalApplication) -> anyhow::Resul
     )?;
     let mut defaults = store.get_global_model_defaults()?;
     if defaults.vision_language.is_none() {
-        defaults.vision_language = Some(vision_model.id);
+        defaults.vision_language = Some(vision.id);
         store.save_global_model_defaults(&defaults)?;
     }
     Ok(())
@@ -715,14 +732,6 @@ struct ProviderPresetDto {
 async fn list_provider_presets() -> Json<Value> {
     let presets = [
         ProviderPresetDto {
-            id: "mock",
-            display_name: "Mock (offline)",
-            adapter: ProviderAdapterKind::Mock,
-            base_url: "http://127.0.0.1",
-            description: "Deterministic offline Provider for tests and demos.",
-            suggested_models: &["mock-vision", "mock-text"],
-        },
-        ProviderPresetDto {
             id: "dashscope",
             display_name: "Alibaba DashScope",
             adapter: ProviderAdapterKind::OpenAiCompatible,
@@ -931,6 +940,12 @@ async fn create_provider_profile(
     State(state): State<ServerState>,
     Json(input): Json<CreateProviderProfileRequest>,
 ) -> ApiResult<Json<ProviderProfileDto>> {
+    #[cfg(not(test))]
+    if input.adapter == ProviderAdapterKind::Mock {
+        return Err(ApiError::bad_request(
+            "Mock Providers are test-only and cannot be added to a product workspace",
+        ));
+    }
     let now = Utc::now();
     let profile = ProviderProfile {
         id: ProviderId::new(),
@@ -1000,6 +1015,12 @@ async fn update_provider_profile(
     AxumPath(provider_id): AxumPath<String>,
     Json(input): Json<UpdateProviderProfileRequest>,
 ) -> ApiResult<Json<ProviderProfileDto>> {
+    #[cfg(not(test))]
+    if input.adapter == Some(ProviderAdapterKind::Mock) {
+        return Err(ApiError::bad_request(
+            "Mock Providers are test-only and cannot be added to a product workspace",
+        ));
+    }
     let provider_id = parse_provider_id(&provider_id)?;
     let store = state.application.store();
     let mut profile = store
@@ -2755,7 +2776,11 @@ struct SuggestWorkflowRequest {
 }
 
 fn default_workflow_advisor() -> String {
-    "mock".to_owned()
+    if cfg!(test) {
+        "mock".to_owned()
+    } else {
+        "llm".to_owned()
+    }
 }
 
 async fn suggest_workflow(
@@ -2767,7 +2792,6 @@ async fn suggest_workflow(
     if workflow_constraints.preferred_model_id.is_none()
         && settings.default_provider != "mock"
         && request.builder_constraints.allow_external_models
-        && state.api_key.read().await.is_some()
     {
         workflow_constraints.preferred_model_id = Some("default-vision".to_owned());
     }
@@ -2781,6 +2805,7 @@ async fn suggest_workflow(
         .as_deref()
         .zip(request.target_label.as_deref());
     let (suggestion, agent_report) = match request.advisor.as_str() {
+        #[cfg(test)]
         "mock" | "agent" => {
             let report = state
                 .application
@@ -2854,10 +2879,16 @@ async fn suggest_workflow(
         }
         other => {
             return Err(ApiError::bad_request(format!(
-                "unknown Workflow Advisor {other:?}; choose mock or llm"
+                "unknown Workflow Advisor {other:?}; choose llm"
             )));
         }
     };
+    #[cfg(not(test))]
+    if workflow_draft_uses_mock(&suggestion.draft) {
+        return Err(ApiError::bad_request(
+            "Pipeline Builder returned a test-only Mock binding; configure and bind a real Registry Model or Vision Worker",
+        ));
+    }
     let mut value = serde_json::to_value(suggestion).map_err(ApiError::internal)?;
     if let (Some(report), Some(object)) = (agent_report, value.as_object_mut()) {
         object.insert("agent_session".to_owned(), json!(report.session));
@@ -2871,6 +2902,30 @@ async fn suggest_workflow(
     Ok((StatusCode::CREATED, Json(value)))
 }
 
+#[cfg(not(test))]
+fn workflow_draft_uses_mock(draft: &WorkflowDraft) -> bool {
+    let is_mock = |value: &str| value.to_ascii_lowercase().starts_with("mock");
+    draft
+        .nodes
+        .iter()
+        .filter_map(|node| node.model_binding.as_deref())
+        .any(is_mock)
+        || draft.label_pipeline.as_ref().is_some_and(|composition| {
+            composition
+                .shared_stages
+                .iter()
+                .flat_map(|stage| &stage.steps)
+                .chain(
+                    composition
+                        .label_pipelines
+                        .iter()
+                        .flat_map(|pipeline| &pipeline.steps),
+                )
+                .filter_map(|step| step.model_binding.as_ref())
+                .any(|binding| is_mock(&binding.model_id))
+        })
+}
+
 async fn save_workflow_draft(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
@@ -2879,6 +2934,12 @@ async fn save_workflow_draft(
     if draft.id != draft_id {
         return Err(ApiError::bad_request(
             "draft id in the path must match the request body",
+        ));
+    }
+    #[cfg(not(test))]
+    if workflow_draft_uses_mock(&draft) {
+        return Err(ApiError::bad_request(
+            "Mock bindings are test-only; select a real Registry Model or Vision Worker",
         ));
     }
     draft = state
@@ -2971,6 +3032,12 @@ async fn publish_workflow(
         .application
         .resolved_workflow_draft_model_profiles(&draft_id)
         .map_err(ApiError::bad_request)?;
+    #[cfg(not(test))]
+    if workflow_draft_uses_mock(&draft) {
+        return Err(ApiError::bad_request(
+            "Mock bindings are test-only; clone the Draft and bind a real Registry Model or Vision Worker",
+        ));
+    }
     reject_unresolved_registry_model_nodes(&draft)?;
     let version = state
         .application
@@ -4061,7 +4128,7 @@ async fn resolve_runtime_model_profiles(
                 "Workflow has model nodes but no frozen Model Profile; bind a Registry Model Profile, Dry Run, and publish a new Workflow Version",
             ));
         }
-        return Ok(("mock".to_owned(), None));
+        return Ok(("core".to_owned(), None));
     };
     if model_profiles.iter().any(|profile| {
         profile.provider_id != first.provider_id
@@ -4077,7 +4144,18 @@ async fn resolve_runtime_model_profiles(
         .get_provider_profile(first.provider_id)
         .map_err(ApiError::bad_request)?;
     let provider_kind = match first.provider_adapter {
-        ProviderAdapterKind::Mock => "mock",
+        ProviderAdapterKind::Mock => {
+            #[cfg(test)]
+            {
+                "mock"
+            }
+            #[cfg(not(test))]
+            {
+            return Err(ApiError::bad_request(
+                "Published Workflow references a test-only Mock Model Profile; clone it and bind a live Provider Model or Vision Worker",
+            ));
+            }
+        }
         ProviderAdapterKind::OpenAiCompatible => "openai_compatible",
     }
     .to_owned();

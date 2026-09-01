@@ -684,7 +684,10 @@ impl VisionModelBackend for OpenAiVisionBackend {
     }
 
     fn capabilities(&self) -> Vec<VisionCapability> {
-        vec![VisionCapability::VisionLanguage]
+        vec![
+            VisionCapability::VisionLanguage,
+            VisionCapability::Classification,
+        ]
     }
 
     async fn infer(

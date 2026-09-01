@@ -518,3 +518,25 @@ Registry-only execution admission status: `PASS`.
   31-scenario Chromium suite and the focused five-scenario Registry suite pass.
 
 Persistent non-Keychain Provider credentials status: `PASS`.
+
+## Product Mock removal — 2026-09-01
+
+- Product startup no longer bootstraps a Mock Provider or any Mock classifier, detector, grounding,
+  or segmenter profile. Existing fixture Providers, their active Project bindings/global defaults,
+  and Mock-backed unpublished Drafts are removed transactionally; immutable Run history remains.
+- Settings → Providers, the Provider catalog, Expert Vision onboarding and Pipeline Builder no
+  longer expose Mock choices. New Project recommendations and Workflow recommendations require an
+  Available live text-generation Model Profile.
+- The Pipeline Builder system contract forbids Mock, fixture and test-only fallbacks. The HTTP
+  boundary rejects `advisor=mock`, rejects returned/saved/published Drafts containing Mock model
+  bindings, and reports unresolved real bindings instead of substituting a fixture.
+- Production runtime no longer converts missing classifier, detector, Grounding or prompted
+  segmentation bindings into fake outputs. Missing real Provider/Worker configuration now fails
+  closed with an actionable binding error.
+- Internal deterministic test doubles remain reachable only through explicit test/demo paths;
+  production Server startup cannot register or select them.
+- Verification passes all 300 Rust tests (one explicit billable smoke ignored), all 40 Web unit
+  tests, Web typecheck/build, the focused Chromium product-boundary regression, and live workspace
+  API/SQLite inspection with zero Mock Provider, Model Profile or unpublished Draft entries.
+
+Product Mock removal status: `PASS`.
