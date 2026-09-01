@@ -5,12 +5,12 @@
 - On Run `1f40eaed-2b3b-479b-866c-82a55ce4cf31`, clicking the visible ball bbox previously focused
   `.run-artifact-canvas`; computed style showed a 2 px primary-blue outline around the whole result
   viewer even though the bbox stroke itself was only 2.6 px.
-- The result viewer is now a labelled, non-focusable region. Its interactive controls and SVG bbox
-  marks remain in the tab order, and scoped SVG focus styling does not invoke the global component
-  outline.
+- The result viewer is now a labelled, non-focusable region. The semantic result-list buttons remain
+  in the tab order, while the duplicate visual SVG overlay and its bbox groups are explicitly
+  `focusable=false` and cannot invoke browser-native SVG focus painting.
 - Browser verification after the follow-up shows no blue preview frame after clicking the same
-  bbox. Computed style records a 1.25 px non-scaling orange stroke, 7% matching fill and no filter;
-  clicking does not increase its stroke width.
+  bbox. Computed style records `tabIndex=-1`, a 1.25 px non-scaling orange stroke, transparent fill
+  and no filter; clicking leaves focus on the page heading and does not change the bbox appearance.
 - Verification: 41 Web tests passed; production Web build, TypeScript and `git diff --check`
   completed successfully.
 

@@ -6,10 +6,11 @@ Last updated: 2026-09-02 CST
 
 - Removed the focusable wrapper around the Run result annotation viewer. Clicking a small bbox no
   longer applies the global blue focus outline to the entire preview component.
-- The viewer remains keyboard-accessible through its real buttons and focusable SVG marks; arrow
-  navigation still works while the Zoom slider retains its native arrow-key behavior.
+- The viewer remains keyboard-accessible through its semantic result-list buttons; arrow navigation
+  still works there while the Zoom slider retains its native arrow-key behavior. The duplicate
+  visual SVG overlay is explicitly non-focusable.
 - Selected geometry now keeps its Label color with the same 1.25 px stroke before and after click,
-  a lighter 7% matching fill, and no drop shadow that can visually enlarge very small boxes.
+  transparent fill, and no drop shadow that can visually enlarge very small boxes.
 - The reported persisted Run was reproduced before the fix and visually verified after it. Web
   tests pass 41/41, and the production Web build, TypeScript and `git diff --check` pass.
 
