@@ -2454,6 +2454,137 @@ export:
         models
     }
 
+    /// Milestone-0 regression fixture for the production RoboCup failure mode.
+    ///
+    /// The coarse VLM proposal carries a high semantic score and passes through a domain
+    /// validator before a generic confidence gate. The current validator mistakes the presence
+    /// of any Validator for a safe Commit path, even though no geometry evidence or mandatory
+    /// review exists. Milestone 2 changes this fixture to require a geometry-safety error.
+    #[test]
+    fn baseline_reproduces_unsafe_vlm_semantic_score_auto_commit() {
+        let port = |id: &str, artifact_type| NodePort {
+            id: id.to_owned(),
+            artifact_type,
+            required: true,
+            multiple: false,
+        };
+
+        let mut image = node("image", WorkflowNodeKind::ImageInput);
+        image.node_type = "core.image_input".to_owned();
+        image.outputs = vec![port("image", ArtifactKind::Image)];
+
+        let mut detector = node("detector", WorkflowNodeKind::VisionLanguageModel);
+        detector.node_type = "vlm_detection.detect".to_owned();
+        detector.inputs = vec![port("image", ArtifactKind::Image)];
+        detector.outputs = vec![port("detections", ArtifactKind::DetectionSet)];
+        detector.model_profile_binding = Some(crate::WorkflowModelBinding {
+            model_profile_id: crate::ModelProfileId::new(),
+            locked: true,
+        });
+        detector.parameters = BTreeMap::from([
+            ("labels".to_owned(), serde_json::json!(["ball"])),
+            (
+                "fixture_score_semantics".to_owned(),
+                serde_json::json!("semantic_confidence"),
+            ),
+            (
+                "fixture_geometry_semantics".to_owned(),
+                serde_json::json!("coarse_hypothesis"),
+            ),
+            ("fixture_semantic_score".to_owned(), serde_json::json!(0.99)),
+            (
+                "fixture_predicted_bbox".to_owned(),
+                serde_json::json!([0.40, 0.40, 0.30, 0.30]),
+            ),
+            (
+                "fixture_human_bbox".to_owned(),
+                serde_json::json!([0.48, 0.48, 0.10, 0.10]),
+            ),
+        ]);
+
+        let mut select = node("select_ball", WorkflowNodeKind::Transform);
+        select.node_type = "core.select_and_map".to_owned();
+        select.inputs = vec![port("detections", ArtifactKind::DetectionSet)];
+        select.outputs = vec![port("detections", ArtifactKind::DetectionSet)];
+
+        let mut validator = node("robocup_validator", WorkflowNodeKind::Validator);
+        validator.node_type = "static_validator".to_owned();
+        validator.inputs = vec![port("detections", ArtifactKind::DetectionSet)];
+        validator.outputs = vec![port("detections", ArtifactKind::DetectionSet)];
+
+        let mut gate = node("semantic_gate", WorkflowNodeKind::Gate);
+        gate.node_type = "core.confidence_gate".to_owned();
+        gate.inputs = vec![port("detections", ArtifactKind::DetectionSet)];
+        gate.outputs = vec![port("detections", ArtifactKind::DetectionSet)];
+        gate.parameters
+            .insert("threshold".to_owned(), serde_json::json!(0.92));
+
+        let mut commit = node("commit", WorkflowNodeKind::Commit);
+        commit.node_type = "commit".to_owned();
+        commit.inputs = vec![port("detections", ArtifactKind::DetectionSet)];
+
+        let mut workflow = draft(
+            vec![image, detector, select, validator, gate, commit],
+            vec![
+                edge("image", "image", "detector", "image", None),
+                edge("detector", "detections", "select_ball", "detections", None),
+                edge(
+                    "select_ball",
+                    "detections",
+                    "robocup_validator",
+                    "detections",
+                    None,
+                ),
+                edge(
+                    "robocup_validator",
+                    "detections",
+                    "semantic_gate",
+                    "detections",
+                    None,
+                ),
+                edge(
+                    "semantic_gate",
+                    "detections",
+                    "commit",
+                    "detections",
+                    Some("pass"),
+                ),
+            ],
+        );
+        workflow.allow_unvalidated_commit = false;
+
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &workflow,
+            &catalog(&[
+                ("core.image_input", Vec::new()),
+                (
+                    "vlm_detection.detect",
+                    vec![VisionCapability::VisionLanguage],
+                ),
+                ("core.select_and_map", Vec::new()),
+                ("static_validator", Vec::new()),
+                ("core.confidence_gate", Vec::new()),
+                ("commit", Vec::new()),
+            ]),
+            &ModelRegistry::new(),
+            &ValidationCatalog::default(),
+            &BTreeSet::new(),
+            true,
+        );
+
+        assert!(
+            report.valid,
+            "baseline should reproduce the old unsafe acceptance: {:#?}",
+            report.issues
+        );
+        assert!(!report.issues.iter().any(|issue| {
+            matches!(
+                issue.code.as_str(),
+                "semantic_score_used_as_geometry_evidence" | "uncalibrated_geometry_auto_commit"
+            )
+        }));
+    }
+
     #[test]
     fn advisor_suggests_open_vocabulary_crop_verification_for_cold_start() {
         let project = detection_project();
