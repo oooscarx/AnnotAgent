@@ -31,3 +31,16 @@ Phase transitions are centralized and reject regression back into catalog loadin
 serialization now carries phase counters, model turns, Draft identity, unresolved binding summaries,
 cache/duplicate counters, and the next action while remaining backward compatible with historical
 session JSON through Serde defaults.
+
+## Milestone 2 compact context and observation reuse
+
+The registered Builder tool surface now includes one revisioned `get_pipeline_builder_context`
+snapshot plus bounded Node, Model, and contract batch inspection. The snapshot includes the Project
+and target Label, enabled Skills, typed Node summaries, credential-safe available Model summaries,
+existing Drafts, templates, a capability matrix, and explicit unavailable capabilities.
+
+Read-only observations are keyed by tool name, canonical JSON arguments, context revision, and Draft
+revision. The first duplicate returns an observation reference; later duplicates return
+`repeated_inspection_blocked`. The production-loop regression now proves that its 48 attempted reads
+perform only two full underlying resource reads, with two cache hits and 47 duplicate requests
+recorded for diagnosis. Mutation, validation, and Dry Run operations are never cached.

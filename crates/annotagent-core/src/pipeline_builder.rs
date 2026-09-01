@@ -737,6 +737,111 @@ pub struct AvailableAgentActions {
     pub required_next_actions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectBuildSummary {
+    pub project_id: String,
+    pub display_name: String,
+    pub image_count: usize,
+    pub task_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelBuildSummary {
+    pub task_id: String,
+    pub label: String,
+    pub annotation_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillSummary {
+    pub id: String,
+    pub resource_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeSummary {
+    pub id: String,
+    pub display_name: String,
+    pub input_artifacts: Vec<String>,
+    pub output_artifacts: Vec<String>,
+    pub required_model_capability: Option<String>,
+    pub required_protocol_features: Vec<String>,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCompatibilitySummary {
+    pub model_profile_id: String,
+    pub display_name: String,
+    pub modalities: Vec<String>,
+    pub task_capabilities: Vec<String>,
+    pub protocol_features: Vec<String>,
+    pub health: String,
+    pub credential_configured: bool,
+    pub compatible_node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftSummary {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub node_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineTemplateSummary {
+    pub id: String,
+    pub name: String,
+    pub node_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRequirement {
+    pub node_id: String,
+    pub capability: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CapabilityMatrix {
+    pub node_to_model_profiles: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineBuilderContextSnapshot {
+    pub project: ProjectBuildSummary,
+    pub target_labels: Vec<LabelBuildSummary>,
+    pub enabled_skills: Vec<SkillSummary>,
+    pub node_catalog: Vec<NodeSummary>,
+    pub model_profiles: Vec<ModelCompatibilitySummary>,
+    pub existing_drafts: Vec<DraftSummary>,
+    pub templates: Vec<PipelineTemplateSummary>,
+    pub capability_matrix: CapabilityMatrix,
+    pub unavailable_capabilities: Vec<CapabilityRequirement>,
+    pub context_revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationRef {
+    pub id: String,
+    pub tool_name: String,
+    pub original_call_id: String,
+    pub context_revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BuilderContextDigest {
+    pub context_revision: String,
+    pub project_summary: String,
+    pub capability_summary: String,
+    pub model_summary: String,
+    pub draft_summary: Option<String>,
+    pub validation_summary: Option<String>,
+    pub dry_run_summary: Option<String>,
+    pub observation_refs: Vec<ObservationRef>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineBuilderStatus {
@@ -789,6 +894,11 @@ impl AgentToolResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineBuilderTool {
+    GetPipelineBuilderContext,
+    ResolvePipelineFeasibility,
+    InspectNodesBatch,
+    InspectModelsBatch,
+    InspectContractsBatch,
     InspectProject,
     InspectLabelSchema,
     InspectLabel,
@@ -843,7 +953,12 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 56] = [
+        Self::GetPipelineBuilderContext,
+        Self::ResolvePipelineFeasibility,
+        Self::InspectNodesBatch,
+        Self::InspectModelsBatch,
+        Self::InspectContractsBatch,
         Self::InspectProject,
         Self::InspectLabelSchema,
         Self::InspectLabel,
@@ -900,6 +1015,11 @@ impl PipelineBuilderTool {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::GetPipelineBuilderContext => "get_pipeline_builder_context",
+            Self::ResolvePipelineFeasibility => "resolve_pipeline_feasibility",
+            Self::InspectNodesBatch => "inspect_nodes_batch",
+            Self::InspectModelsBatch => "inspect_models_batch",
+            Self::InspectContractsBatch => "inspect_contracts_batch",
             Self::InspectProject => "inspect_project",
             Self::InspectLabelSchema => "inspect_label_schema",
             Self::InspectLabel => "inspect_label",
@@ -975,16 +1095,41 @@ impl PipelineBuilderTool {
     }
 
     #[must_use]
+    pub const fn cacheable_observation(self) -> bool {
+        matches!(
+            self,
+            Self::GetPipelineBuilderContext
+                | Self::ResolvePipelineFeasibility
+                | Self::InspectNodesBatch
+                | Self::InspectModelsBatch
+                | Self::InspectContractsBatch
+                | Self::InspectNodeDefinition
+                | Self::ListCompatibleModels
+                | Self::InspectModelProfile
+                | Self::InspectModelContracts
+                | Self::InspectLabelSpace
+                | Self::InspectScoreSemantics
+                | Self::InspectGeometrySemantics
+                | Self::FindArtifactConversionPath
+        )
+    }
+
+    #[must_use]
     pub const fn permission(self) -> PipelineBuilderPermission {
         match self {
-            Self::InspectProject
+            Self::GetPipelineBuilderContext
+            | Self::InspectProject
             | Self::InspectLabelSchema
             | Self::InspectLabel
             | Self::SampleDataset
             | Self::InspectSampleImage
             | Self::InspectExistingPipeline
             | Self::InspectExistingAutomations => PipelineBuilderPermission::ReadProject,
-            Self::ListEnabledSkills
+            Self::ResolvePipelineFeasibility
+            | Self::InspectNodesBatch
+            | Self::InspectModelsBatch
+            | Self::InspectContractsBatch
+            | Self::ListEnabledSkills
             | Self::LoadSkillResource
             | Self::ListNodeDefinitions
             | Self::InspectNodeDefinition
@@ -2240,7 +2385,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 51);
+        assert_eq!(tools.len(), 56);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",

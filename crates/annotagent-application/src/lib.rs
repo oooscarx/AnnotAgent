@@ -801,6 +801,31 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
     };
     vec![
         read(
+            PipelineBuilderTool::GetPipelineBuilderContext,
+            "Load one compact, revisioned Project, Label, Skill, Node, Model, Draft, template, and capability snapshot. Always use this before requesting details.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ResolvePipelineFeasibility,
+            "Run the deterministic Rust feasibility resolver against the current context snapshot.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectNodesBatch,
+            "Inspect only the specific Node Definitions whose omitted details would change the Draft. At most eight IDs.",
+            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":node_definition_ids.clone()}}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelsBatch,
+            "Inspect only the specific Model Profiles whose omitted details would change a binding. At most eight IDs.",
+            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectContractsBatch,
+            "Inspect input, output, prompt, score, geometry, and Label Space contracts for at most eight exact expert model IDs.",
+            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}),
+        ),
+        read(
             PipelineBuilderTool::InspectProject,
             "Read a bounded Project summary without file paths or image bytes.",
             no_arguments(),
@@ -1221,6 +1246,100 @@ fn required_usize_argument(arguments: &serde_json::Value, name: &str) -> Result<
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| anyhow!("Tool argument {name:?} must be a non-negative integer"))
+}
+
+fn required_string_array_argument(
+    arguments: &serde_json::Value,
+    name: &str,
+    maximum: usize,
+) -> Result<Vec<String>> {
+    let values = arguments
+        .get(name)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("Tool argument {name:?} must be an array"))?;
+    if values.is_empty() || values.len() > maximum {
+        bail!("Tool argument {name:?} must contain from 1 to {maximum} values");
+    }
+    let values = values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| anyhow!("Tool argument {name:?} must contain non-empty strings"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if values.iter().collect::<BTreeSet<_>>().len() != values.len() {
+        bail!("Tool argument {name:?} must not contain duplicates");
+    }
+    Ok(values)
+}
+
+fn serialized_enum_name<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn enabled_protocol_features(features: &annotagent_core::ProtocolFeatures) -> Vec<String> {
+    [
+        ("tool_calls", features.tool_calls),
+        ("parallel_tool_calls", features.parallel_tool_calls),
+        ("structured_output", features.structured_output),
+        ("json_schema", features.json_schema),
+        ("usage_reporting", features.usage_reporting),
+        ("streaming", features.streaming),
+        ("reasoning_controls", features.reasoning_controls),
+    ]
+    .into_iter()
+    .filter(|(_, enabled)| *enabled)
+    .map(|(name, _)| name.to_owned())
+    .collect()
+}
+
+fn stable_json_revision<T: serde::Serialize>(value: &T) -> Result<String> {
+    fn hash(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf29ce484222325_u64, |current, byte| {
+            (current ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
+    }
+    let encoded = serde_json::to_vec(value)?;
+    Ok(format!("ctx-{:016x}", hash(&encoded)))
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut entries = object.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            format!(
+                "{{{}}}",
+                entries
+                    .into_iter()
+                    .map(|(key, value)| format!("{key:?}:{}", canonical_json(value)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        serde_json::Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => value.to_string(),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedBuilderObservation {
+    result: annotagent_core::AgentToolResult,
+    original_call_id: String,
+    duplicate_count: u32,
 }
 
 fn pipeline_builder_tool_error_code(message: &str) -> &'static str {
@@ -6605,6 +6724,197 @@ impl LocalApplication {
         })
     }
 
+    fn pipeline_builder_context_snapshot(
+        &self,
+        input: &WorkflowAdvisorInput,
+    ) -> Result<annotagent_core::PipelineBuilderContextSnapshot> {
+        let available_model = |model: &ModelProfile| {
+            let provider = input
+                .provider_profiles
+                .iter()
+                .find(|provider| provider.id == model.provider_id);
+            model.enabled
+                && model.status == ModelProfileStatus::Available
+                && provider.is_some_and(|provider| {
+                    provider.enabled
+                        && provider.credential_configured
+                        && matches!(
+                            provider.health_status,
+                            ProviderHealthStatus::Available | ProviderHealthStatus::Configured
+                        )
+                })
+        };
+        let compatible = |node: &NodeDefinition, model: &ModelProfile| {
+            available_model(model)
+                && node
+                    .required_model_capability
+                    .is_some_and(|capability| model.task_capabilities.contains(&capability))
+        };
+        let node_catalog = input
+            .node_catalog
+            .iter()
+            .map(|node| annotagent_core::NodeSummary {
+                id: node.id.clone(),
+                display_name: node.display_name.clone(),
+                input_artifacts: node
+                    .input_ports
+                    .iter()
+                    .map(|port| serialized_enum_name(&port.artifact_type))
+                    .collect(),
+                output_artifacts: node
+                    .output_ports
+                    .iter()
+                    .map(|port| serialized_enum_name(&port.artifact_type))
+                    .collect(),
+                required_model_capability: node
+                    .required_model_capability
+                    .map(|capability| serialized_enum_name(&capability)),
+                required_protocol_features: Vec::new(),
+                available: node.required_model_capability.is_none()
+                    || input
+                        .model_profiles
+                        .iter()
+                        .any(|model| compatible(node, model)),
+            })
+            .collect::<Vec<_>>();
+        let model_profiles = input
+            .model_profiles
+            .iter()
+            .map(|model| {
+                let provider = input
+                    .provider_profiles
+                    .iter()
+                    .find(|provider| provider.id == model.provider_id);
+                annotagent_core::ModelCompatibilitySummary {
+                    model_profile_id: model.id.to_string(),
+                    display_name: model.display_name.clone(),
+                    modalities: model
+                        .input_modalities
+                        .iter()
+                        .map(serialized_enum_name)
+                        .collect(),
+                    task_capabilities: model
+                        .task_capabilities
+                        .iter()
+                        .map(serialized_enum_name)
+                        .collect(),
+                    protocol_features: enabled_protocol_features(&model.protocol_features),
+                    health: serialized_enum_name(&model.status),
+                    credential_configured: provider
+                        .is_some_and(|provider| provider.credential_configured),
+                    compatible_node_ids: input
+                        .node_catalog
+                        .iter()
+                        .filter(|node| compatible(node, model))
+                        .map(|node| node.id.clone())
+                        .collect(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let capability_matrix = annotagent_core::CapabilityMatrix {
+            node_to_model_profiles: input
+                .node_catalog
+                .iter()
+                .filter(|node| node.required_model_capability.is_some())
+                .map(|node| {
+                    (
+                        node.id.clone(),
+                        input
+                            .model_profiles
+                            .iter()
+                            .filter(|model| compatible(node, model))
+                            .map(|model| model.id.to_string())
+                            .collect(),
+                    )
+                })
+                .collect(),
+        };
+        let unavailable_capabilities = input
+            .node_catalog
+            .iter()
+            .filter_map(|node| {
+                let capability = node.required_model_capability?;
+                (!input.model_profiles.iter().any(|model| compatible(node, model))).then(|| {
+                    annotagent_core::CapabilityRequirement {
+                        node_id: node.id.clone(),
+                        capability: serialized_enum_name(&capability),
+                        reason: "No available, credential-configured Model Profile satisfies this Node Definition"
+                            .to_owned(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let existing_drafts = self
+            .store
+            .list_workflow_drafts(Some(&input.project_id))?
+            .into_iter()
+            .map(|draft| annotagent_core::DraftSummary {
+                id: draft.id,
+                name: draft.name,
+                status: serialized_enum_name(&draft.status),
+                node_count: draft.nodes.len(),
+            })
+            .collect::<Vec<_>>();
+        let target_labels = input
+            .project_schema
+            .tasks
+            .iter()
+            .filter(|task| {
+                input
+                    .target_task_id
+                    .as_ref()
+                    .is_none_or(|target| target == &task.id)
+            })
+            .flat_map(|task| {
+                task.labels.iter().filter_map(|label| {
+                    input
+                        .target_label
+                        .as_ref()
+                        .is_none_or(|target| target.as_str() == label)
+                        .then(|| annotagent_core::LabelBuildSummary {
+                            task_id: task.id.to_string(),
+                            label: label.to_string(),
+                            annotation_kind: serialized_enum_name(&task.kind),
+                        })
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut snapshot = annotagent_core::PipelineBuilderContextSnapshot {
+            project: annotagent_core::ProjectBuildSummary {
+                project_id: input.project_id.clone(),
+                display_name: input.project_schema.project.name.clone(),
+                image_count: input.data_profile.image_count,
+                task_count: input.project_schema.tasks.len(),
+            },
+            target_labels,
+            enabled_skills: input
+                .enabled_skills
+                .iter()
+                .map(|id| annotagent_core::SkillSummary {
+                    id: id.clone(),
+                    resource_ids: input.resource_ids.clone(),
+                })
+                .collect(),
+            node_catalog,
+            model_profiles,
+            existing_drafts,
+            templates: input
+                .workflow_templates
+                .iter()
+                .map(|template| annotagent_core::PipelineTemplateSummary {
+                    id: template.id.clone(),
+                    name: template.name.clone(),
+                    node_count: template.nodes.len(),
+                })
+                .collect(),
+            capability_matrix,
+            unavailable_capabilities,
+            context_revision: String::new(),
+        };
+        snapshot.context_revision = stable_json_revision(&snapshot)?;
+        Ok(snapshot)
+    }
+
     pub fn create_workflow_draft(
         &self,
         project_id: &str,
@@ -7514,6 +7824,8 @@ impl LocalApplication {
             },
         ];
         let tools = pipeline_builder_live_tools(&input);
+        let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
+        let context_revision = context_snapshot.context_revision.clone();
         let (nodes, models) = workflow_catalog(settings)?;
         let enabled_skills = safe_suggestion
             .draft
@@ -7541,6 +7853,7 @@ impl LocalApplication {
             .cloned();
         let mut loaded_resources = BTreeSet::new();
         let mut failed_tool_attempts = BTreeMap::<String, u32>::new();
+        let mut observation_cache = BTreeMap::<String, CachedBuilderObservation>::new();
         let mut provider_turns = 0_u32;
         let mut consecutive_no_tool_responses = 0_u32;
 
@@ -7719,8 +8032,153 @@ impl LocalApplication {
                     break;
                 }
                 let resolved = PipelineBuilderToolRegistry.resolve(&call.name);
-                let outcome: Result<annotagent_core::AgentToolResult> = async {
+                let draft_revision = current
+                    .as_ref()
+                    .map(|suggestion| suggestion.draft.updated_at.to_rfc3339())
+                    .unwrap_or_else(|| "no-draft".to_owned());
+                let cache_key = resolved
+                    .as_ref()
+                    .ok()
+                    .filter(|tool| tool.cacheable_observation())
+                    .map(|_| {
+                        format!(
+                            "{}:{}:{}:{}",
+                            call.name,
+                            canonical_json(&call.arguments),
+                            context_revision,
+                            draft_revision
+                        )
+                    });
+                let mut cache_blocked = false;
+                let cached_result = cache_key.as_ref().and_then(|key| {
+                    observation_cache.get_mut(key).map(|cached| {
+                        cached.duplicate_count = cached.duplicate_count.saturating_add(1);
+                        session.duplicate_tool_calls =
+                            session.duplicate_tool_calls.saturating_add(1);
+                        let maximum = session
+                            .builder_budget
+                            .as_ref()
+                            .map_or(1, |budget| budget.max_duplicate_calls);
+                        if cached.duplicate_count <= maximum {
+                            session.cache_hits = session.cache_hits.saturating_add(1);
+                            annotagent_core::AgentToolResult::summary(
+                                "Reused an unchanged Pipeline Builder observation",
+                                json!({
+                                    "status": "reused",
+                                    "observation_ref": cached.original_call_id,
+                                    "context_revision": context_revision,
+                                    "summary": cached.result.display_summary,
+                                }),
+                            )
+                        } else {
+                            cache_blocked = true;
+                            annotagent_core::AgentToolResult::summary(
+                                "Repeated inspection blocked",
+                                json!({
+                                    "status": "repeated_inspection_blocked",
+                                    "observation_ref": cached.original_call_id,
+                                    "context_revision": context_revision,
+                                    "next_action": "Use the existing observation and advance the Draft",
+                                }),
+                            )
+                        }
+                    })
+                });
+                let used_cache = cached_result.is_some();
+                let outcome: Result<annotagent_core::AgentToolResult> = if let Some(result) =
+                    cached_result
+                {
+                    Ok(result)
+                } else {
+                    async {
                     match resolved {
+                    Ok(PipelineBuilderTool::GetPipelineBuilderContext) => {
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Loaded compact Pipeline Builder context",
+                            serde_json::to_value(&context_snapshot)?,
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ResolvePipelineFeasibility) => {
+                        let runnable_nodes = context_snapshot
+                            .capability_matrix
+                            .node_to_model_profiles
+                            .iter()
+                            .filter(|(_, models)| !models.is_empty())
+                            .map(|(node, _)| node.clone())
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Resolved Pipeline feasibility from the context snapshot",
+                            json!({
+                                "context_revision": context_revision,
+                                "runnable_node_ids": runnable_nodes,
+                                "unavailable_capabilities": context_snapshot.unavailable_capabilities,
+                                "candidate_template_ids": context_snapshot.templates.iter().map(|template| template.id.clone()).collect::<Vec<_>>(),
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectNodesBatch) => {
+                        let ids = required_string_array_argument(&call.arguments, "ids", 8)?;
+                        let nodes = ids
+                            .iter()
+                            .map(|id| {
+                                input
+                                    .node_catalog
+                                    .iter()
+                                    .find(|node| node.id == *id)
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("unknown Node Definition {id:?}"))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected {} Node Definitions", nodes.len()),
+                            json!({"context_revision": context_revision, "nodes": nodes}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModelsBatch) => {
+                        let ids = required_string_array_argument(&call.arguments, "ids", 8)?;
+                        let models = ids
+                            .iter()
+                            .map(|id| {
+                                input
+                                    .model_profiles
+                                    .iter()
+                                    .find(|model| model.id.to_string() == *id)
+                                    .cloned()
+                                    .ok_or_else(|| anyhow!("unknown Model Profile {id:?}"))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected {} Model Profiles", models.len()),
+                            json!({"context_revision": context_revision, "models": models}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectContractsBatch) => {
+                        let ids = required_string_array_argument(&call.arguments, "ids", 8)?;
+                        let models = ids
+                            .iter()
+                            .map(|id| {
+                                input
+                                    .expert_models
+                                    .iter()
+                                    .find(|model| model.model_id == *id)
+                                    .map(|model| json!({
+                                        "model_id": model.model_id,
+                                        "input_contracts": model.input_contracts,
+                                        "output_contracts": model.output_contracts,
+                                        "prompt_contracts": model.prompt_contracts,
+                                        "label_space": model.label_space,
+                                        "score_semantics": model.score_semantics,
+                                        "geometry_semantics": model.geometry_semantics,
+                                        "availability": model.availability,
+                                    }))
+                                    .ok_or_else(|| anyhow!("unknown expert model {id:?}"))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected {} expert model contracts", models.len()),
+                            json!({"context_revision": context_revision, "models": models}),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::InspectProject) => {
                         inspected_project = true;
                         Ok(annotagent_core::AgentToolResult::summary(
@@ -9394,9 +9852,10 @@ impl LocalApplication {
                         Err(error) => Err(anyhow!(error)),
                     }
                 }
-                .await;
+                .await
+                };
 
-                let (result, success, failed_attempts) = match outcome {
+                let (result, mut success, failed_attempts) = match outcome {
                     Ok(result) => {
                         let prefix = format!("{}:", call.name);
                         failed_tool_attempts.retain(|key, _| !key.starts_with(&prefix));
@@ -9429,6 +9888,21 @@ impl LocalApplication {
                         )
                     }
                 };
+                if cache_blocked {
+                    success = false;
+                }
+                if success && !used_cache {
+                    if let Some(key) = cache_key {
+                        observation_cache.insert(
+                            key,
+                            CachedBuilderObservation {
+                                result: result.clone(),
+                                original_call_id: call.id.to_string(),
+                                duplicate_count: 0,
+                            },
+                        );
+                    }
+                }
                 let model_payload = result.model_payload.clone();
                 if session
                     .record_tool(
@@ -12870,7 +13344,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 51);
+        assert_eq!(names.len(), 56);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -15610,6 +16084,31 @@ export:
         assert_eq!(report.session.usage.tool_calls, 48);
         assert_eq!(report.session.model_calls.len(), 7);
         assert_eq!(report.session.usage.input_tokens, 95_326);
+        assert_eq!(report.session.cache_hits, 2);
+        assert_eq!(report.session.duplicate_tool_calls, 47);
+        assert_eq!(
+            report
+                .session
+                .steps
+                .iter()
+                .filter(|step| {
+                    step.result["model_payload"].get("id").is_some()
+                        || step.result["model_payload"].get("display_name").is_some()
+                })
+                .count(),
+            2,
+            "each repeated Node and Model resource is read in full only once"
+        );
+        assert!(
+            report
+                .session
+                .steps
+                .iter()
+                .any(|step| { step.result["model_payload"]["status"] == json!("reused") })
+        );
+        assert!(report.session.steps.iter().any(|step| {
+            step.result["model_payload"]["status"] == json!("repeated_inspection_blocked")
+        }));
         assert!(report.suggestion.is_none());
         assert!(
             application
