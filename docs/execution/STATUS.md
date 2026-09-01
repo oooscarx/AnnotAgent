@@ -8,8 +8,8 @@ Last updated: 2026-09-02 CST
   longer applies the global blue focus outline to the entire preview component.
 - The viewer remains keyboard-accessible through its real buttons and focusable SVG marks; arrow
   navigation still works while the Zoom slider retains its native arrow-key behavior.
-- Selected geometry now keeps its Label color with a subtle 2.2 px stroke and matching translucent
-  fill instead of introducing a blue selection fill.
+- Selected geometry now keeps its Label color with the same 1.25 px stroke before and after click,
+  a lighter 7% matching fill, and no drop shadow that can visually enlarge very small boxes.
 - The reported persisted Run was reproduced before the fix and visually verified after it. Web
   tests pass 41/41, and the production Web build, TypeScript and `git diff --check` pass.
 

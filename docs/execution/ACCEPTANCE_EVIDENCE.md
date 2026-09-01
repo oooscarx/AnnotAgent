@@ -8,8 +8,9 @@
 - The result viewer is now a labelled, non-focusable region. Its interactive controls and SVG bbox
   marks remain in the tab order, and scoped SVG focus styling does not invoke the global component
   outline.
-- Browser verification after the fix shows no blue preview frame after clicking the same bbox. The
-  selected mark retains its annotation color, a 2.2 px non-scaling stroke and a 9% matching fill.
+- Browser verification after the follow-up shows no blue preview frame after clicking the same
+  bbox. Computed style records a 1.25 px non-scaling orange stroke, 7% matching fill and no filter;
+  clicking does not increase its stroke width.
 - Verification: 41 Web tests passed; production Web build, TypeScript and `git diff --check`
   completed successfully.
 
