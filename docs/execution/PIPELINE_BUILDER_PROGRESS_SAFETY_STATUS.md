@@ -93,3 +93,30 @@ saved state is no longer mislabeled as an Agent retry.
 Retry creates a fresh Agent Session with reset budgets and duplicate/cache counters while retaining
 the exact persisted editable Draft and unresolved requirements. A regression fixture retries the
 four-call no-detector outcome in three calls and verifies that the Draft ID remains unchanged.
+
+## Milestone 6 release validation
+
+The complete product path now exercises Pipeline Builder through a deterministic local
+OpenAI-compatible HTTP fixture rather than the removed product Mock Advisor. It covers Profile
+creation and probing, Builder selection, phase-specific tool calls, editable Draft Diff/Undo,
+Classification Dry Run, immutable publication, VLM Detection, Core Crop lineage, Run, Review,
+Replay and recovery navigation. The fixture supplies protocol-shaped outputs only and is not used
+as external-model accuracy evidence.
+
+Release testing found and closed three integration gaps:
+
+- legacy per-tool inspection now crosses `FeasibilityAnalysis → Drafting → Validating` before
+  validating a created Draft, while the compact context path retains its stricter phase sequence;
+- Registry Model Profile bindings are validated by Application and normalized to the compatible
+  Runtime model identity only for execution snapshots, without weakening Profile availability,
+  capability, modality or protocol checks;
+- the VLM Detect + Crop template connects its CropSet preview to Commit, so static validation no
+  longer reports a dangling node and the crop retains its detection parent reference.
+
+The final gate passes `scripts/acceptance.sh`, strict all-target/all-feature Clippy, Rustfmt,
+304 Rust tests plus doc tests, all-feature build, 40 Web tests, TypeScript, production Web build,
+doctor, four offline demos and all 35 Chromium scenarios. One explicitly billable Provider smoke
+remains ignored unless the operator opts in with a separately configured legal credential.
+
+Offline Pipeline Builder Progress-Safety release status: `PASS`. External Provider behavior and
+quality remain `LIVE-CONDITIONAL`; no conversation credential, push or remote mutation was used.

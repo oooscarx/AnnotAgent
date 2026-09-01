@@ -9,7 +9,6 @@ const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
 const agentDiffProjectId = `guided-agent-diff-${stamp}`;
-const robocupAgentProjectId = `guided-robocup-agent-${stamp}`;
 const cropProjectId = `guided-crop-${stamp}`;
 const mixedProjectId = `guided-mixed-${stamp}`;
 const mixedRunId = "00000000-0000-4000-8000-000000000091";
@@ -19,6 +18,61 @@ let runId = "";
 let reviewId = "";
 let reviewImageId = "";
 let cropRunId = "";
+
+async function ensurePipelineBuilderFixture(request: APIRequestContext) {
+  const providersResponse = await request.get("/api/providers");
+  expect(providersResponse.ok()).toBeTruthy();
+  const providers = (await providersResponse.json()).providers as { id: string; display_name: string }[];
+  let provider = providers.find((candidate) => candidate.display_name === "Guided E2E Provider fixture");
+  if (!provider) {
+    const created = await request.post("/api/providers", {
+      data: {
+        display_name: "Guided E2E Provider fixture",
+        adapter: "open_ai_compatible",
+        base_url: "http://127.0.0.1:8796/openai/v1",
+      },
+    });
+    expect(created.status()).toBe(200);
+    provider = await created.json();
+    const credential = await request.post(`/api/providers/${provider!.id}/credential`, {
+      data: { source: "workspace_file", secret: "guided-e2e-protocol-fixture" },
+    });
+    expect(credential.ok()).toBeTruthy();
+  }
+
+  const modelsResponse = await request.get(`/api/model-profiles?provider_id=${provider!.id}`);
+  expect(modelsResponse.ok()).toBeTruthy();
+  const models = (await modelsResponse.json()).models as { id: string; display_name: string; status: string }[];
+  let model = models.find((candidate) => candidate.display_name === "Guided E2E Pipeline Builder fixture");
+  if (!model) {
+    const created = await request.post("/api/model-profiles", {
+      data: {
+        provider_id: provider!.id,
+        display_name: "Guided E2E Pipeline Builder fixture",
+        remote_model_id: "e2e-pipeline-builder",
+        input_modalities: ["text", "image"],
+        task_capabilities: ["text_generation", "vision_language", "image_classification"],
+        protocol_features: { tool_calls: true, structured_output: true },
+      },
+    });
+    expect(created.ok()).toBeTruthy();
+    model = await created.json();
+  }
+  if (model!.status !== "available") {
+    const probe = await request.post(`/api/providers/${provider!.id}/active-probe`, {
+      data: { model_profile_id: model!.id, confirmed_billable: true },
+    });
+    expect(probe.ok()).toBeTruthy();
+  }
+  const defaultsResponse = await request.get("/api/agent-model-bindings");
+  expect(defaultsResponse.ok()).toBeTruthy();
+  const defaults = await defaultsResponse.json();
+  const saved = await request.put("/api/agent-model-bindings", {
+    data: { ...defaults, pipeline_builder: model!.id },
+  });
+  expect(saved.ok()).toBeTruthy();
+  return model!.id;
+}
 
 async function dashboard(request: APIRequestContext) {
   const response = await request.get("/api/projects");
@@ -48,6 +102,7 @@ async function findCropRun(request: APIRequestContext, targetProjectId: string) 
 }
 
 async function createCropRun(request: APIRequestContext, page: Page, imageSource: string) {
+  const modelProfileId = await ensurePipelineBuilderFixture(request);
   const created = await request.post("/api/projects", {
     data: {
       id: cropProjectId,
@@ -78,25 +133,39 @@ export:
     data: { source: imageSource },
   });
   expect(imported.ok()).toBeTruthy();
+  const bound = await request.put(`/api/projects/${cropProjectId}/model-bindings`, {
+    data: {
+      bindings: [{
+        capability: "vision_language",
+        role: "primary_inference",
+        match_kind: "capability",
+        model_profile_id: modelProfileId,
+        locked: false,
+      }],
+    },
+  });
+  expect(bound.ok()).toBeTruthy();
 
   const suggested = await request.post("/api/workflow-drafts/suggest", {
     data: {
       project_id: cropProjectId,
       target_task_id: "ball-objects",
       target_label: "ball",
-      advisor: "mock",
+      advisor: "llm",
       constraints: { require_review_gate: true },
+      builder_constraints: { allow_external_models: true },
     },
   });
-  expect(suggested.status()).toBe(201);
-  const suggestion = await suggested.json();
+  const suggestionBody = await suggested.text();
+  expect(suggested.status(), suggestionBody).toBe(201);
+  const suggestion = JSON.parse(suggestionBody);
   await page.goto(`/projects/${cropProjectId}/build/pipeline`);
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
   await page.getByText("Edit automation", { exact: true }).click();
   const autosaved = page.waitForResponse((response) =>
     response.request().method() === "PATCH" && response.url().includes(`/api/workflow-drafts/${suggestion.draft.id}`),
   );
-  await page.getByRole("button", { name: "Add detection + crop" }).click();
+  await page.getByRole("button", { name: "Use VLM detection + crop" }).click();
   const saved = await autosaved;
   expect(saved.ok()).toBeTruthy();
   const draft = await saved.json();
@@ -146,6 +215,7 @@ test("empty workspace stays generic and contains no RoboCup product content", as
 });
 
 test("create and open a generic Project", async ({ page, request }, testInfo) => {
+  const modelProfileId = await ensurePipelineBuilderFixture(request);
   const imageSource = String(testInfo.config.metadata.e2eImport);
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
@@ -197,12 +267,26 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
     const state = await dashboard(request);
     return state.projects.some((project: { id: string }) => project.id === projectId);
   }).toBeTruthy();
+  const bound = await request.put(`/api/projects/${projectId}/model-bindings`, {
+    data: {
+      bindings: [{
+        capability: "image_classification",
+        role: "classification",
+        match_kind: "capability",
+        model_profile_id: modelProfileId,
+        locked: false,
+      }],
+    },
+  });
+  expect(bound.ok()).toBeTruthy();
   await page.goto(`/projects/${projectId}`);
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
   await expect(page.locator(".guidance-hero h2")).toBeVisible();
   await expect(page.locator(".guidance-actions .primary")).toHaveCount(1);
-  await expect(page.locator(".guidance-actions .primary")).toHaveText(/Test on samples|Activate automation/);
+  await expect(page.locator(".guidance-actions .primary")).toHaveText(
+    /Choose automation|Test on samples|Review test results|Activate automation/,
+  );
   const guidanceActionLayout = await page.locator(".guidance-actions button").evaluateAll((buttons) =>
     buttons.map((button) => {
       const bounds = button.getBoundingClientRect();
@@ -284,7 +368,6 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
   for (const [name, path] of [
     ["Labels", "labels"],
     ["Automation", "pipeline"],
-    ["Test & Activate", "test"],
   ] as const) {
     await page.getByLabel("Build steps").getByRole("button").filter({ hasText: name }).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/${path}$`));
@@ -302,11 +385,19 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
     if (path === "pipeline")
       await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
   }
+  const testStep = page.getByLabel("Build steps").getByRole("button").filter({ hasText: "Test & Activate" });
+  await expect(testStep).toHaveAttribute(
+    "title",
+    /Complete the earlier Build step first|Not run|Passed|Results need attention/,
+  );
 });
 
 test("Automation Recipe previews Advisor changes and autosaves Drawer edits", async ({ page }) => {
   await page.goto(`/projects/${projectId}/build/pipeline`);
   await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
+  if (await page.getByText("Shared Stages", { exact: true }).count() === 0) {
+    await page.getByRole("button", { name: "From Template" }).click();
+  }
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
   await expect(page.getByText(/Runs once per image/).first()).toBeVisible();
   await expect(page.locator(".pipeline-step-card > code")).toHaveCount(0);
@@ -318,9 +409,12 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await expect(page.getByText("Why", { exact: true })).toBeVisible();
   const agentTrace = page.getByLabel("pipeline_builder Agent trace");
   await expect(agentTrace).toContainText("Ready for your review");
+  await expect(agentTrace).toContainText("Draft ready for human review");
+  await expect(agentTrace).toContainText(/remaining · \d+ reserved/);
+  await expect(agentTrace.getByRole("button", { name: "Review Draft" })).toBeVisible();
   await agentTrace.getByText(/Tool actions/).click();
-  await expect(agentTrace).toContainText("validate_pipeline");
-  await expect(agentTrace).toContainText("dry_run_pipeline");
+  await expect(agentTrace).toContainText("validate pipeline");
+  await expect(agentTrace).toContainText("dry run pipeline");
   await page.getByRole("button", { name: "Reject proposal" }).click();
   await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeHidden();
 
@@ -341,6 +435,72 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await page.getByText("View technical graph", { exact: true }).click();
   await expect(page.getByLabel("Technical graph JSON")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
+});
+
+test("Pipeline Builder setup outcome restores its Draft and exposes recovery navigation", async ({ page, request }) => {
+  const draftsResponse = await request.get(`/api/workflow-drafts?project_id=${projectId}`);
+  expect(draftsResponse.ok()).toBeTruthy();
+  const drafts = (await draftsResponse.json()).drafts;
+  const blockedDraft = drafts[0];
+  expect(blockedDraft?.id).toBeTruthy();
+  const sessionId = randomUUID();
+  await page.route(`**/api/projects/${projectId}/agent-sessions`, async (route) => {
+    await route.fulfill({
+      json: {
+        sessions: [{
+          id: sessionId,
+          project_id: projectId,
+          kind: "pipeline_builder",
+          status: "waiting_for_human",
+          phase: "waiting_for_human",
+          outcome: "provider_setup_required",
+          builder_stop_reason: "setup_required",
+          budget: { max_steps: 48, max_tool_calls: 48, max_cost: "1" },
+          builder_budget: {
+            max_model_turns: 16,
+            max_total_tool_calls: 48,
+            max_discovery_tool_calls: 10,
+            max_draft_tool_calls: 10,
+            max_validation_tool_calls: 10,
+            max_dry_run_tool_calls: 10,
+            reserved_finalization_calls: 6,
+            max_parallel_tools_per_turn: 4,
+            max_duplicate_calls: 1,
+          },
+          model_turns: 2,
+          phase_tool_calls: 0,
+          duplicate_tool_calls: 1,
+          cache_hits: 1,
+          draft_id: blockedDraft.id,
+          unresolved_bindings: ["An image-capable structured VLM or detector is required"],
+          next_action: "Configure a compatible image model, then retry from this Draft",
+          total_tool_calls: 4,
+          remaining_tool_calls: 44,
+          reserved_finalization_calls: 6,
+          model_calls: [],
+          usage: { steps: 4, tool_calls: 4, input_tokens: 800, output_tokens: 80, cost: "0.002" },
+          steps: [],
+          stop_reason: "SetupRequired",
+          pending_human_action: "configure_model_binding",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }],
+      },
+    });
+  });
+
+  await page.goto(`/projects/${projectId}/build/pipeline`);
+  const trace = page.getByLabel("pipeline_builder Agent trace");
+  await expect(trace).toContainText("Provider setup required");
+  await expect(trace).toContainText("44 remaining · 6 reserved");
+  await expect(trace.getByRole("button", { name: "Open blocked Draft" })).toBeVisible();
+  await expect(trace.getByRole("button", { name: "Retry from current Draft" })).toBeVisible();
+  await trace.getByRole("button", { name: "Configure Provider" }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+
+  await page.goto(`/projects/${projectId}/build/pipeline`);
+  await page.getByLabel("pipeline_builder Agent trace").getByRole("button", { name: "Configure Model" }).click();
+  await expect(page).toHaveURL(/\/settings\/models$/);
 });
 
 test("Pipeline Builder applies a structured Draft Diff and restores it with Undo", async ({ page, request }, testInfo) => {
@@ -374,29 +534,15 @@ export:
     data: { source: String(testInfo.config.metadata.e2eImport) },
   });
   expect(imported.ok()).toBeTruthy();
-  const baseResponse = await request.post("/api/workflow-drafts/suggest", {
+  const baseResponse = await request.post("/api/workflow-drafts", {
     data: {
       project_id: agentDiffProjectId,
-      target_task_id: "components",
-      target_label: "component",
-      advisor: "mock",
-      constraints: { require_review_gate: true },
-      builder_constraints: {
-        priority: "balanced",
-        max_model_calls_per_image: 4,
-        target_review_rate: 1,
-        allow_external_models: false,
-        allow_human_review: true,
-        maximum_agent_turns: 16,
-        maximum_tool_calls: 48,
-        maximum_dry_runs: 3,
-        maximum_agent_cost: "1",
-      },
+      from_template: false,
     },
   });
   expect(baseResponse.status()).toBe(201);
-  const base = (await baseResponse.json()).draft;
-  expect(base.nodes.some((node: { node_type: string }) => node.node_type === "core.crop")).toBeFalsy();
+  const base = await baseResponse.json();
+  expect(base.nodes).toHaveLength(0);
 
   await page.goto(`/projects/${agentDiffProjectId}/build/pipeline`);
   const proposalResponse = page.waitForResponse((response) =>
@@ -405,10 +551,9 @@ export:
   await page.getByRole("button", { name: "Ask AnnotAgent" }).click();
   const proposal = await (await proposalResponse).json();
   const toolNames = proposal.agent_session.steps.map((step: { tool_name: string }) => step.tool_name);
-  expect(toolNames.filter((name: string) => name === "validate_pipeline")).toHaveLength(3);
-  expect(toolNames.filter((name: string) => name === "dry_run_pipeline")).toHaveLength(2);
-  expect(toolNames.indexOf("disconnect_pipeline_nodes")).toBeLessThan(toolNames.indexOf("connect_pipeline_nodes"));
-  expect(toolNames).toContain("add_pipeline_node");
+  expect(toolNames.filter((name: string) => name === "validate_pipeline")).toHaveLength(1);
+  expect(toolNames.filter((name: string) => name === "dry_run_pipeline")).toHaveLength(1);
+  expect(toolNames).toContain("create_draft_from_template");
   expect(proposal.agent_session.status).toBe("waiting_for_human");
   const diff = page.getByLabel("Draft Diff");
   await expect(diff).toBeVisible({ timeout: 30_000 });
@@ -419,124 +564,15 @@ export:
   await expect.poll(async () => {
     const response = await request.get(`/api/workflow-drafts?project_id=${agentDiffProjectId}`);
     const current = (await response.json()).drafts.find((draft: { id: string }) => draft.id === base.id);
-    return current.nodes.some((node: { node_type: string }) => node.node_type === "core.crop");
+    return current.nodes.length;
   }).toBeTruthy();
 
   await page.getByRole("button", { name: "Undo Agent changes" }).click();
   await expect.poll(async () => {
     const response = await request.get(`/api/workflow-drafts?project_id=${agentDiffProjectId}`);
     const current = (await response.json()).drafts.find((draft: { id: string }) => draft.id === base.id);
-    return current.nodes.some((node: { node_type: string }) => node.node_type === "core.crop");
-  }).toBeFalsy();
-});
-
-test("RoboCup Agent loads Domain advice, avoids unavailable Labs, and restores bounded stops", async ({ page, request }, testInfo) => {
-  const created = await request.post("/api/projects", {
-    data: {
-      id: robocupAgentProjectId,
-      yaml: `version: 1
-project:
-  name: Lean RoboCup Agent ${stamp}
-  skill: robocup
-  skill_version: "1"
-  language: en
-dataset:
-  root: images
-runtime:
-  max_parallel_images: 1
-tasks:
-  - id: objects
-    display_name: Football
-    kind: bounding_box
-    labels: [ball]
-    required: true
-    validators: [ball_hard_negative, robocup_ball_field_relation]
-review:
-  auto_accept_confidence: 0.92
-  force_review_below: 0.72
-export:
-  formats: [native, coco, yolo]
-`,
-    },
-  });
-  expect(created.status()).toBe(201);
-  const imported = await request.post(`/api/projects/${robocupAgentProjectId}/import`, {
-    data: { source: String(testInfo.config.metadata.e2eImport) },
-  });
-  expect(imported.ok()).toBeTruthy();
-
-  const advised = await request.post("/api/workflow-drafts/suggest", {
-    data: {
-      project_id: robocupAgentProjectId,
-      target_task_id: "objects",
-      target_label: "ball",
-      advisor: "mock",
-      constraints: { require_review_gate: true },
-      builder_constraints: {
-        priority: "balanced",
-        target_review_rate: 1,
-        allow_external_models: false,
-        allow_human_review: true,
-        maximum_agent_turns: 16,
-        maximum_tool_calls: 48,
-        maximum_dry_runs: 3,
-        maximum_agent_cost: "1",
-      },
-    },
-  });
-  expect(advised.status()).toBe(201);
-  const suggestion = await advised.json();
-  const tools = suggestion.agent_session.steps.map((step: { tool_name: string }) => step.tool_name);
-  expect(tools).toContain("load_skill_resource");
-  expect(tools.indexOf("load_skill_resource")).toBeLessThan(tools.indexOf("create_draft_from_template"));
-  expect(suggestion.agent_session.status).toBe("waiting_for_human");
-  expect(suggestion.draft.nodes.filter((node: { model_binding?: string }) => node.model_binding)).toHaveLength(1);
-  expect(suggestion.draft.nodes.some((node: { node_type: string }) => /sam|recovery|crop/i.test(node.node_type))).toBeFalsy();
-
-  const registry = await (await request.get("/api/models")).json();
-  const unavailableModelIds = new Set(
-    registry.models
-      .filter((model: { availability_group: string }) => ["configured_unavailable", "labs", "disabled"].includes(model.availability_group))
-      .map((model: { id: string }) => model.id),
-  );
-  expect(unavailableModelIds.size).toBeGreaterThan(0);
-  expect(suggestion.draft.nodes.some((node: { model_binding?: string }) =>
-    node.model_binding ? unavailableModelIds.has(node.model_binding) : false,
-  )).toBeFalsy();
-
-  const cancelled = await request.post(`/api/agent-sessions/${suggestion.agent_session.id}/cancel`);
-  expect(cancelled.ok()).toBeTruthy();
-  expect((await cancelled.json()).session.status).toBe("cancelled");
-
-  const budgetLimited = await request.post("/api/workflow-drafts/suggest", {
-    data: {
-      project_id: robocupAgentProjectId,
-      target_task_id: "objects",
-      target_label: "ball",
-      advisor: "mock",
-      constraints: { require_review_gate: true },
-      builder_constraints: {
-        priority: "balanced",
-        target_review_rate: 1,
-        allow_external_models: false,
-        allow_human_review: true,
-        maximum_agent_turns: 16,
-        maximum_tool_calls: 1,
-        maximum_dry_runs: 3,
-        maximum_agent_cost: "1",
-      },
-    },
-  });
-  expect(budgetLimited.status()).toBe(400);
-  const sessions = await (await request.get(`/api/projects/${robocupAgentProjectId}/agent-sessions`)).json();
-  expect(sessions.sessions[0].status).toBe("budget_exceeded");
-  expect(sessions.sessions.some((session: { status: string }) => session.status === "cancelled")).toBeTruthy();
-
-  await page.goto(`/projects/${robocupAgentProjectId}`);
-  await expect(page.getByRole("heading", { name: `Lean RoboCup Agent ${stamp}` })).toBeVisible();
-  await expect(page.getByLabel("pipeline_builder Agent trace").first()).toContainText("Stopped at budget");
-  await page.reload();
-  await expect(page.getByLabel("pipeline_builder Agent trace").first()).toContainText("Stopped at budget");
+    return current.nodes.length;
+  }).toBe(0);
 });
 
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {
@@ -1366,7 +1402,7 @@ test("reduced motion and server-state error recovery are explicit", async ({ pag
   let failReadiness = true;
   await page.route(`**/api/projects/${projectId}/export-readiness`, async (route) => {
     if (failReadiness)
-      await route.fulfill({ status: 503, json: { error: "Export readiness is temporarily unavailable." } });
+      await route.fulfill({ status: 503, json: { error: "&#x45;xport readiness is temporarily unavailable.\\" } });
     else
       await route.continue();
   });
@@ -1375,7 +1411,9 @@ test("reduced motion and server-state error recovery are explicit", async ({ pag
   await expect(alert.getByText("AnnotAgent couldn’t complete that action.")).toBeVisible();
   await expect(alert).toContainText("Saved workspace data remains on the server");
   failReadiness = false;
-  await alert.getByRole("button", { name: "Retry from latest state" }).click();
+  await expect(alert).not.toContainText("&#x45;");
+  await expect(alert).not.toContainText(/\\\s*$/);
+  await alert.getByRole("button", { name: "Reload latest state" }).click();
   await expect(page.getByRole("heading", { name: "Your dataset is ready" })).toBeVisible();
 
   await page.unroute(`**/api/projects/${projectId}/export-readiness`);

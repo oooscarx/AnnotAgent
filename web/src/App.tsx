@@ -3168,7 +3168,7 @@ function WorkflowsPage({
             <label>Maximum Agent cost<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
             <button onClick={suggest} disabled={busy || !activeProjectId}>Build complete Project automation</button>
           </div></details>
-          <button className="primary" onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || !selectedAgentModelId}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
+          <button className={activeAgentSession?.draft_id ? undefined : "primary"} onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || !selectedAgentModelId}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
         </section>
         <section className="workflow-command-card workflow-version-actions">
           <span className="eyebrow">Current Automation</span>
@@ -4243,6 +4243,18 @@ function LabelPipelineEditor({
       review_gate: { required: false, allow_manual_override: false },
       resources: {},
     };
+    const commitWithCrop: PipelineStep = {
+      ...commit,
+      inputs: {
+        ...commit.inputs,
+        preview_crops: {
+          source: "step",
+          step_id: crop.id,
+          port: "crops",
+          artifact_type: "crop_set",
+        },
+      },
+    };
     replaceComposition({
       ...composition,
       shared_stages: composition.shared_stages.map((stage) => ({
@@ -4267,7 +4279,7 @@ function LabelPipelineEditor({
                 ),
                 crop,
                 gate,
-                commit,
+                commitWithCrop,
               ],
             }
           : pipeline,

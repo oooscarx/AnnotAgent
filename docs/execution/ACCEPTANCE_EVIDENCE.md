@@ -1139,3 +1139,51 @@ Expert Vision SDK + Evidence-Driven Pipeline Builder Alpha offline release statu
    profiles and contains no Mock-backed unpublished Draft.
 
 Product Mock removal status: `PASS`.
+
+## Pipeline Builder Progress-Safety M6 — 2026-09-01
+
+1. `pipeline_builder_baseline_reproduces_repeated_inspection_budget_exhaustion` captures the old
+   failure deterministically: 48 successful read-only calls, 95,326 input tokens, no Draft and the
+   generic `step or tool-call budget exhausted` outcome.
+2. Persisted `PipelineBuilderPhase`, `PipelineBuilderBudget`, `PipelineBuilderOutcome`, typed stop
+   reason, phase counters and finalization reserve reject phase regression and keep six calls
+   available for a recoverable outcome.
+3. `get_pipeline_builder_context` returns one revisioned credential-safe snapshot. Canonical
+   observation keys include Tool, arguments, context revision and Draft revision; the regression
+   performs only two underlying resource reads, records cache reuse and blocks repeated inspection.
+4. Deterministic feasibility returns Runnable, degraded, blocked or unsupported. Missing Detection
+   capability persists a typed blocked Draft in four calls; static validation blocks Dry Run and
+   Publish until the unresolved Model requirement is fixed.
+5. The original inspection fixture now finishes in eight calls and two model turns with
+   `ProviderSetupRequired`, one editable blocked Draft and 27,236 input tokens—a 71.4% reduction.
+6. Retry creates a new Agent Session and resets budgets/cache counters while preserving the exact
+   Draft ID and unresolved requirements; the recovery fixture reaches the same blocked Draft in
+   three calls.
+7. `model_profile_satisfies_node_contract` accepts a Qwen-style VLM for structured VLM Detection
+   only when image and structured-response requirements are met. It remains incompatible with
+   native Object Detection unless that separate capability is declared.
+8. The live Builder prompt exposes only phase-valid actions and a compact context digest. Broad
+   catalog inspection disappears near the finalization reserve, and creation tools disappear after
+   Drafting so a model cannot restart the Draft loop during validation.
+9. HTTP/API serialization and the GUI expose phase, outcome, budget, reserve, duplicate/cache
+   counts, Draft identity, unresolved bindings and next action. Recovery links open the Draft,
+   Provider or Model settings, and retry from persisted state.
+10. The deterministic local OpenAI-compatible browser fixture exercises real HTTP Provider,
+    Profile probe, Builder tool protocol, Classification, Qwen-coordinate VLM Detection and typed
+    subject/parent references. It is explicitly a protocol fixture, not model-quality evidence.
+11. Browser coverage proves structured Draft Diff/Undo, blocked-Draft recovery navigation, Sample
+    Test, immutable publication, Run, Review, Replay, VLM Detection → Filter → Core Crop, Provider
+    coexistence and responsive one-primary-action behavior. All 35 Chromium scenarios pass.
+12. Release commands pass: `scripts/acceptance.sh`, Rustfmt, strict workspace/all-target/all-feature
+    Clippy, 304 Rust tests plus doc tests, all-feature build, Web typecheck, 40 Vitest tests,
+    production build, doctor and four offline demos. `git diff --check` is clean.
+13. The opt-in `real_openai_compatible_pipeline_builder_smoke_when_explicitly_enabled` remains
+    ignored because no separately authorized legal credential was provided for this release run.
+    External Provider behavior is therefore `LIVE-CONDITIONAL`; no conversation credential was
+    read, stored or sent.
+14. Milestone commits are `3b3dd63` (baseline), `6a89d40` (phases/budgets), `f19b01e`
+    (context/cache), `eae15e8` (feasibility/blocked Draft), `87597d7` (VLM Detection semantics), and
+    `1563fa6` (prompt/API/UI/retry). M6 release validation is recorded by the following local commit.
+
+Pipeline Builder Progress-Safety offline release status: `PASS`. No push or remote mutation was
+performed.

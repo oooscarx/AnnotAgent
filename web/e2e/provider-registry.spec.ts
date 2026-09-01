@@ -4,12 +4,23 @@ test.describe.configure({ mode: "serial" });
 
 const projectId = `registry-project-${Date.now()}`;
 
-test("Provider Registry configures an offline Provider, Model Profile, and confirmed usage", async ({ page }) => {
+test("Provider Registry configures an OpenAI-compatible fixture, Model Profile, and confirmed usage", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "Providers", exact: true })).toBeVisible();
 
-  const provider = page.locator(".registry-provider-card").filter({ hasText: "Mock (offline)" });
-  await expect(provider).toContainText("Not required");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const providerEditor = page.locator(".panel").filter({
+    has: page.getByRole("heading", { name: "New Provider", exact: true }),
+  });
+  await providerEditor.getByLabel("Display name", { exact: true }).fill("E2E OpenAI fixture");
+  await providerEditor.getByLabel("Base URL", { exact: true }).fill("http://127.0.0.1:8796/openai/v1");
+  await providerEditor.getByRole("button", { name: "Save Provider" }).click();
+  const provider = page.locator(".registry-provider-card").filter({ hasText: "E2E OpenAI fixture" });
+  await expect(provider).toBeVisible();
+  await provider.getByText("Add credential", { exact: true }).click();
+  await provider.getByLabel("API key", { exact: true }).fill("e2e-contract-fixture-credential");
+  await provider.getByRole("button", { name: "Save credential" }).click();
+  await expect(provider).toContainText("workspace file configured");
   await provider.getByRole("button", { name: "Check connection" }).click();
   await expect(provider.getByText("Available", { exact: true })).toBeVisible();
   await expect(provider).toContainText("without a generation request");
@@ -30,14 +41,16 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
   expect(await modelEditor.locator(".registry-check-group .checkbox-line").evaluateAll((choices) =>
     choices.every((choice) => choice.scrollWidth <= choice.clientWidth),
   )).toBeTruthy();
-  await page.getByLabel("Display name", { exact: true }).fill("Mock Pipeline Builder");
-  await page.getByLabel("Remote model ID", { exact: true }).fill("mock-builder");
-  await page.getByLabel("image", { exact: true }).check();
-  await page.getByLabel("Tool calls", { exact: true }).check();
-  await page.getByLabel("Structured output", { exact: true }).check();
-  await page.getByLabel("Image classification", { exact: true }).check();
-  await page.getByRole("button", { name: "Save Model Profile" }).click();
-  const model = page.locator(".registry-model-card").filter({ hasText: "Mock Pipeline Builder" });
+  await modelEditor.getByLabel("Display name", { exact: true }).fill("E2E Pipeline Builder");
+  await modelEditor.getByLabel("Remote model ID", { exact: true }).fill("e2e-pipeline-builder");
+  await modelEditor.getByLabel("image", { exact: true }).check();
+  await modelEditor.getByLabel("Tool calls", { exact: true }).check();
+  await modelEditor.getByLabel("Structured output", { exact: true }).check();
+  await modelEditor.getByLabel("Image classification", { exact: true }).check();
+  await modelEditor.getByRole("button", { name: "Save Model Profile" }).click();
+  const model = page.locator(".registry-model-card").filter({
+    has: page.getByText("E2E Pipeline Builder", { exact: true }),
+  });
   await expect(model.getByText("Unverified", { exact: true })).toBeVisible();
   await expect(model).toContainText("revision 1");
   const tagGroups = page.locator(".tag-group:visible");
@@ -62,7 +75,7 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
     exact: true,
   });
   await defaultBuilder.selectOption({
-    label: "Mock Pipeline Builder via Mock (offline)",
+    label: "E2E Pipeline Builder via E2E OpenAI fixture",
   });
   const selectedDefault = await defaultBuilder.inputValue();
   await page.reload();
@@ -71,8 +84,10 @@ test("Provider Registry configures an offline Provider, Model Profile, and confi
   ).toHaveValue(selectedDefault);
 
   await page.getByRole("button", { name: "Usage", exact: true }).click();
-  await expect(page.getByText("Mock Pipeline Builder", { exact: true })).toBeVisible();
-  await expect(page.getByText("2 tokens", { exact: true })).toBeVisible();
+  const usageRecord = page.locator(".registry-usage-list article").filter({
+    has: page.getByText("E2E Pipeline Builder", { exact: true }),
+  });
+  await expect(usageRecord).toContainText("2 tokens");
   await expect(page.getByText("explicitly confirmed", { exact: true })).toBeVisible();
 });
 
@@ -80,7 +95,7 @@ test("Project reuses a compatible Model Profile and restores the locked choice",
   const modelResponse = await request.get("/api/model-profiles");
   expect(modelResponse.ok()).toBeTruthy();
   const profiles = (await modelResponse.json()).models as { id: string; display_name: string }[];
-  const model = profiles.find((candidate) => candidate.display_name === "Mock Pipeline Builder");
+  const model = profiles.find((candidate) => candidate.display_name === "E2E Pipeline Builder");
   expect(model).toBeTruthy();
   const created = await request.post("/api/projects", {
     data: {
@@ -116,7 +131,6 @@ export:
   await expect(
     page.getByRole("heading", { name: "How AnnotAgent will label your data" }),
   ).toBeVisible();
-  await expect(page.getByText("Provider setup required", { exact: true })).toBeVisible();
   await page.getByText("Project model choices", { exact: true }).click();
   const classification = page.getByLabel("Classification", { exact: true });
   const saved = page.waitForResponse((response) =>
@@ -188,7 +202,7 @@ test("Provider lifecycle is reference-safe and persistent credentials stay write
     display_name: string;
     enabled: boolean;
   }[];
-  const mock = providers.find((provider) => provider.display_name === "Mock (offline)");
+  const fixture = providers.find((provider) => provider.display_name === "E2E OpenAI fixture");
   let remote = providers.find((provider) => provider.display_name === "Remote lifecycle fixture");
   if (!remote) {
     const created = await request.post("/api/providers", {
@@ -202,14 +216,14 @@ test("Provider lifecycle is reference-safe and persistent credentials stay write
     expect(created.ok()).toBeTruthy();
     remote = await created.json();
   }
-  expect(mock).toBeTruthy();
+  expect(fixture).toBeTruthy();
   expect(remote).toBeTruthy();
 
-  const blockedDelete = await request.delete(`/api/providers/${mock!.id}`);
+  const blockedDelete = await request.delete(`/api/providers/${fixture!.id}`);
   expect(blockedDelete.status()).toBe(409);
   expect((await blockedDelete.json()).code).toBe("provider_in_use");
 
-  const disabled = await request.patch(`/api/providers/${mock!.id}`, {
+  const disabled = await request.patch(`/api/providers/${fixture!.id}`, {
     data: { enabled: false },
   });
   expect(disabled.ok()).toBeTruthy();
@@ -219,21 +233,21 @@ test("Provider lifecycle is reference-safe and persistent credentials stay write
   );
   expect(incompatible.ok()).toBeTruthy();
   expect((await incompatible.json()).models).not.toContainEqual(
-    expect.objectContaining({ provider_id: mock!.id }),
+    expect.objectContaining({ provider_id: fixture!.id }),
   );
 
-  const enabled = await request.patch(`/api/providers/${mock!.id}`, {
+  const enabled = await request.patch(`/api/providers/${fixture!.id}`, {
     data: { enabled: true },
   });
   expect(enabled.ok()).toBeTruthy();
-  const checked = await request.post(`/api/providers/${mock!.id}/check`);
+  const checked = await request.post(`/api/providers/${fixture!.id}/check`);
   expect(checked.ok()).toBeTruthy();
   const compatible = await request.get(
     "/api/model-profiles/compatible?input_modalities=image&capabilities=image_classification&allow_unverified=true",
   );
   expect(compatible.ok()).toBeTruthy();
   expect((await compatible.json()).models).toContainEqual(
-    expect.objectContaining({ provider_id: mock!.id }),
+    expect.objectContaining({ provider_id: fixture!.id }),
   );
 
   const rotatedSecret = "e2e-persistent-workspace-credential";

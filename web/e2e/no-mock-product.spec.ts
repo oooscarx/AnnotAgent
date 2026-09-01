@@ -7,7 +7,14 @@ test("product workspace exposes only live Provider and Advisor paths", async ({
   const providers = await request.get("/api/providers");
   expect(providers.ok()).toBeTruthy();
   const providerPayload = await providers.json();
-  expect(providerPayload.providers).toEqual([]);
+  expect(
+    providerPayload.providers.every(
+      (provider: { adapter: string; display_name: string; preset_id?: string }) =>
+        provider.adapter === "open_ai_compatible" &&
+        provider.preset_id !== "mock" &&
+        !provider.display_name.toLowerCase().includes("mock"),
+    ),
+  ).toBeTruthy();
 
   const presets = await request.get("/api/provider-presets");
   expect(presets.ok()).toBeTruthy();

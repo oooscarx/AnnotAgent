@@ -1200,6 +1200,12 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::SubmitDraftForHumanApproval
                     | PipelineBuilderTool::FinishAgentSession
             );
+            let creates_draft = matches!(
+                tool,
+                PipelineBuilderTool::CreatePipelineDraft
+                    | PipelineBuilderTool::CreateDraftFromTemplate
+                    | PipelineBuilderTool::CreateBlockedDraft
+            );
             if remaining <= reserve {
                 return finalization;
             }
@@ -1235,7 +1241,7 @@ fn pipeline_builder_visible_tools(
                         )
                 }
                 Phase::Validating => {
-                    tool.mutates_draft()
+                    (tool.mutates_draft() && !creates_draft)
                         || matches!(
                             tool,
                             PipelineBuilderTool::ValidatePipeline
@@ -1245,7 +1251,7 @@ fn pipeline_builder_visible_tools(
                         )
                 }
                 Phase::DryRunning => {
-                    tool.mutates_draft()
+                    (tool.mutates_draft() && !creates_draft)
                         || matches!(
                             tool,
                             PipelineBuilderTool::DryRunPipeline
@@ -1261,7 +1267,7 @@ fn pipeline_builder_visible_tools(
                         )
                 }
                 Phase::Revising => {
-                    tool.mutates_draft()
+                    (tool.mutates_draft() && !creates_draft)
                         || matches!(
                             tool,
                             PipelineBuilderTool::ValidatePipeline
@@ -1446,9 +1452,11 @@ fn enabled_protocol_features(features: &annotagent_core::ProtocolFeatures) -> Ve
 
 fn stable_json_revision<T: serde::Serialize>(value: &T) -> Result<String> {
     fn hash(bytes: &[u8]) -> u64 {
-        bytes.iter().fold(0xcbf29ce484222325_u64, |current, byte| {
-            (current ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-        })
+        bytes
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |current, byte| {
+                (current ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+            })
     }
     let encoded = serde_json::to_vec(value)?;
     Ok(format!("ctx-{:016x}", hash(&encoded)))
@@ -1458,7 +1466,7 @@ fn canonical_json(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Object(object) => {
             let mut entries = object.iter().collect::<Vec<_>>();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(key, _)| *key);
             format!(
                 "{{{}}}",
                 entries
@@ -3014,6 +3022,83 @@ fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)
     }
     register_public_annotation_catalog(&mut nodes)?;
     Ok((nodes, models))
+}
+
+fn normalize_profile_compatibility_bindings(
+    draft: &mut WorkflowDraft,
+    models: &ModelRegistry,
+) -> Result<()> {
+    let available = models.models();
+    for node in &mut draft.nodes {
+        if node.model_profile_binding.is_none()
+            || node
+                .model_binding
+                .as_deref()
+                .is_some_and(|model_id| models.resolve(model_id).is_ok())
+        {
+            continue;
+        }
+        let Some((capability, _)) = registry_requirement_for_node(node) else {
+            continue;
+        };
+        let runtime_capability = match capability {
+            ModelCapability::TextGeneration | ModelCapability::VisionLanguage => {
+                VisionCapability::VisionLanguage
+            }
+            ModelCapability::ImageClassification => VisionCapability::Classification,
+            ModelCapability::ObjectDetection => VisionCapability::ObjectDetection,
+            ModelCapability::OpenVocabularyDetection => VisionCapability::OpenVocabularyDetection,
+            ModelCapability::PhraseGrounding => VisionCapability::PhraseGrounding,
+            ModelCapability::SemanticSegmentation => VisionCapability::SemanticSegmentation,
+            ModelCapability::PromptedSegmentation => VisionCapability::PromptedSegmentation,
+            ModelCapability::InstanceSegmentation => VisionCapability::InstanceSegmentation,
+            ModelCapability::KeypointDetection => VisionCapability::KeypointDetection,
+        };
+        let compatibility_model = available
+            .iter()
+            .find(|model| model.capabilities.contains(&runtime_capability))
+            .ok_or_else(|| {
+                anyhow!(
+                    "no Runtime compatibility model is registered for Profile-bound node {:?} with capability {:?}",
+                    node.id,
+                    capability
+                )
+        })?;
+        node.model_binding = Some(compatibility_model.id.clone());
+    }
+    if let Some(composition) = draft.label_pipeline.as_mut() {
+        let normalize_step = |step: &mut PipelineStep| -> Result<()> {
+            let Some(binding) = step.model_binding.as_mut() else {
+                return Ok(());
+            };
+            if models.resolve(&binding.model_id).is_ok() {
+                return Ok(());
+            }
+            let compatibility_model = available
+                .iter()
+                .find(|model| model.capabilities.contains(&binding.capability))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no Runtime compatibility model is registered for Label Pipeline step {:?} with capability {:?}",
+                        step.id,
+                        binding.capability
+                    )
+                })?;
+            binding.model_id.clone_from(&compatibility_model.id);
+            Ok(())
+        };
+        for stage in &mut composition.shared_stages {
+            for step in &mut stage.steps {
+                normalize_step(step)?;
+            }
+        }
+        for pipeline in &mut composition.label_pipelines {
+            for step in &mut pipeline.steps {
+                normalize_step(step)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn catalog_port(
@@ -7190,17 +7275,19 @@ impl LocalApplication {
                     .is_none_or(|target| target == &task.id)
             })
             .flat_map(|task| {
-                task.labels.iter().filter_map(|label| {
-                    input
-                        .target_label
-                        .as_ref()
-                        .is_none_or(|target| target.as_str() == label)
-                        .then(|| annotagent_core::LabelBuildSummary {
-                            task_id: task.id.to_string(),
-                            label: label.to_string(),
-                            annotation_kind: serialized_enum_name(&task.kind),
-                        })
-                })
+                task.labels
+                    .iter()
+                    .filter(|label| {
+                        input
+                            .target_label
+                            .as_ref()
+                            .is_none_or(|target| target.as_str() == label.as_str())
+                    })
+                    .map(|label| annotagent_core::LabelBuildSummary {
+                        task_id: task.id.to_string(),
+                        label: label.clone(),
+                        annotation_kind: serialized_enum_name(&task.kind),
+                    })
             })
             .collect::<Vec<_>>();
         let mut snapshot = annotagent_core::PipelineBuilderContextSnapshot {
@@ -7240,7 +7327,6 @@ impl LocalApplication {
     }
 
     fn resolve_pipeline_feasibility(
-        &self,
         input: &WorkflowAdvisorInput,
         snapshot: &annotagent_core::PipelineBuilderContextSnapshot,
     ) -> annotagent_core::BuildFeasibility {
@@ -8376,7 +8462,7 @@ impl LocalApplication {
         let tools = pipeline_builder_live_tools(&input);
         let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
         let context_revision = context_snapshot.context_revision.clone();
-        let feasibility = self.resolve_pipeline_feasibility(&input, &context_snapshot);
+        let feasibility = Self::resolve_pipeline_feasibility(&input, &context_snapshot);
         let forced_progress_deadline = match &feasibility {
             annotagent_core::BuildFeasibility::BlockedByBindings { .. }
             | annotagent_core::BuildFeasibility::Unsupported { .. } => 6,
@@ -8449,27 +8535,29 @@ impl LocalApplication {
                         true,
                     )
                     .map_err(anyhow::Error::msg)?;
-                match &feasibility {
-                    annotagent_core::BuildFeasibility::Unsupported { reasons, .. } => {
-                        session.complete_builder(
-                            annotagent_core::PipelineBuilderOutcome::UnsupportedRequest,
-                            annotagent_core::BuilderStopReason::UnsupportedRequest,
-                            reasons.join("; "),
-                        );
-                    }
-                    _ => {
-                        session
-                            .transition_builder_phase(
-                                annotagent_core::PipelineBuilderPhase::Drafting,
-                                "Persist deterministic recovery Draft",
-                            )
-                            .map_err(anyhow::Error::msg)?;
-                        let (created, outcome) =
-                            materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
-                        self.store.save_workflow_draft(&created.draft)?;
-                        session.set_builder_draft(created.draft.id.clone());
-                        session.unresolved_bindings = created.unresolved_model_bindings.clone();
-                        session.record_tool(
+                if let annotagent_core::BuildFeasibility::Unsupported { reasons, .. } = &feasibility
+                {
+                    session.complete_builder(
+                        annotagent_core::PipelineBuilderOutcome::UnsupportedRequest,
+                        annotagent_core::BuilderStopReason::UnsupportedRequest,
+                        reasons.join("; "),
+                    );
+                } else {
+                    session
+                        .transition_builder_phase(
+                            annotagent_core::PipelineBuilderPhase::Drafting,
+                            "Persist deterministic recovery Draft",
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                    let (created, outcome) =
+                        materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
+                    self.store.save_workflow_draft(&created.draft)?;
+                    session.set_builder_draft(created.draft.id.clone());
+                    session
+                        .unresolved_bindings
+                        .clone_from(&created.unresolved_model_bindings);
+                    session
+                        .record_tool(
                             if outcome
                                 == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
                             {
@@ -8493,27 +8581,27 @@ impl LocalApplication {
                                 }),
                             ))?,
                             true,
-                        ).map_err(anyhow::Error::msg)?;
-                        current = Some(created);
-                        session
-                            .transition_builder_phase(
-                                annotagent_core::PipelineBuilderPhase::Finalizing,
-                                "Present the saved Draft and next action",
-                            )
-                            .map_err(anyhow::Error::msg)?;
-                        let next_action = if outcome
-                            == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
-                        {
-                            "Configure a compatible image model, then retry from this Draft"
-                        } else {
-                            "Open and review the saved editable Draft"
-                        };
-                        session.complete_builder(
-                            outcome,
-                            annotagent_core::BuilderStopReason::DiscoveryLimitReached,
-                            next_action,
-                        );
-                    }
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                    current = Some(created);
+                    session
+                        .transition_builder_phase(
+                            annotagent_core::PipelineBuilderPhase::Finalizing,
+                            "Present the saved Draft and next action",
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                    let next_action = if outcome
+                        == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
+                    {
+                        "Configure a compatible image model, then retry from this Draft"
+                    } else {
+                        "Open and review the saved editable Draft"
+                    };
+                    session.complete_builder(
+                        outcome,
+                        annotagent_core::BuilderStopReason::DiscoveryLimitReached,
+                        next_action,
+                    );
                 }
                 self.store.save_agent_session(&session)?;
                 break;
@@ -8790,10 +8878,10 @@ impl LocalApplication {
                     break;
                 }
                 let resolved = PipelineBuilderToolRegistry.resolve(&call.name);
-                let draft_revision = current
-                    .as_ref()
-                    .map(|suggestion| suggestion.draft.updated_at.to_rfc3339())
-                    .unwrap_or_else(|| "no-draft".to_owned());
+                let draft_revision = current.as_ref().map_or_else(
+                    || "no-draft".to_owned(),
+                    |suggestion| suggestion.draft.updated_at.to_rfc3339(),
+                );
                 let cache_key = resolved
                     .as_ref()
                     .ok()
@@ -8953,9 +9041,12 @@ impl LocalApplication {
                     }
                     Ok(PipelineBuilderTool::SetUnresolvedBinding) => {
                         let node_id = required_string_argument(&call.arguments, "node_id")?;
-                        let requirements = match &feasibility {
-                            annotagent_core::BuildFeasibility::BlockedByBindings { requirements, .. } => requirements,
-                            _ => bail!("the current feasibility result has no unresolved binding requirement"),
+                        let annotagent_core::BuildFeasibility::BlockedByBindings {
+                            requirements,
+                            ..
+                        } = &feasibility
+                        else {
+                            bail!("the current feasibility result has no unresolved binding requirement");
                         };
                         let suggestion = current
                             .as_mut()
@@ -10821,13 +10912,23 @@ impl LocalApplication {
                                     )
                                     .map_err(anyhow::Error::msg)?;
                             }
+                            if session.phase
+                                == Some(annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis)
+                            {
+                                session
+                                    .transition_builder_phase(
+                                        annotagent_core::PipelineBuilderPhase::Drafting,
+                                        "Persist the editable Draft",
+                                    )
+                                    .map_err(anyhow::Error::msg)?;
+                            }
                             if let Some(suggestion) = current.as_ref() {
                                 session.set_builder_draft(suggestion.draft.id.clone());
                             }
                             session
                                 .transition_builder_phase(
-                                    annotagent_core::PipelineBuilderPhase::Drafting,
-                                    "Complete and validate the editable Draft",
+                                    annotagent_core::PipelineBuilderPhase::Validating,
+                                    "Validate the persisted editable Draft",
                                 )
                                 .map_err(anyhow::Error::msg)?;
                         }
@@ -11123,6 +11224,67 @@ impl LocalApplication {
             &enabled_skills,
             require_publish_ready,
         );
+        let model_profiles = self.store.list_model_profiles(None, false)?;
+        let providers = self
+            .store
+            .list_provider_profiles()?
+            .into_iter()
+            .map(|provider| (provider.id, provider))
+            .collect::<BTreeMap<_, _>>();
+        let definitions = nodes.definitions();
+        for node in &draft.nodes {
+            let Some(binding) = node.model_profile_binding.as_ref() else {
+                continue;
+            };
+            let path = format!("nodes.{}.model_profile_binding", node.id);
+            let Some(model) = model_profiles
+                .iter()
+                .find(|model| model.id == binding.model_profile_id)
+            else {
+                report.issues.push(WorkflowValidationIssue {
+                    code: "unknown_model_profile".to_owned(),
+                    path,
+                    message: format!(
+                        "Model Profile {} is not registered",
+                        binding.model_profile_id
+                    ),
+                    blocking: true,
+                });
+                continue;
+            };
+            let provider_ready = providers
+                .get(&model.provider_id)
+                .is_some_and(|provider| provider.enabled);
+            if !model.enabled || model.status != ModelProfileStatus::Available || !provider_ready {
+                report.issues.push(WorkflowValidationIssue {
+                    code: "model_profile_unavailable".to_owned(),
+                    path,
+                    message: format!(
+                        "Model Profile {}@{} or its Provider is not Available",
+                        model.display_name, model.revision
+                    ),
+                    blocking: true,
+                });
+                continue;
+            }
+            let Some(definition) = definitions
+                .iter()
+                .find(|definition| definition.id == node.node_type)
+            else {
+                continue;
+            };
+            if !annotagent_core::model_profile_satisfies_node_contract(definition, model) {
+                report.issues.push(WorkflowValidationIssue {
+                    code: "incompatible_model_profile".to_owned(),
+                    path,
+                    message: format!(
+                        "Model Profile {}@{} does not satisfy the node capability, modality, and protocol contract",
+                        model.display_name, model.revision
+                    ),
+                    blocking: true,
+                });
+            }
+        }
         if draft.label_pipeline.is_some() {
             let grammar = PipelineGrammarValidator.validate(
                 draft,
@@ -11435,6 +11597,7 @@ impl LocalApplication {
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let (_, models) = workflow_catalog(settings)?;
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
+        normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot =
             WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions())
                 .with_model_profiles(model_profiles);
@@ -12043,6 +12206,7 @@ impl LocalApplication {
         }
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
         let (_, models) = workflow_catalog(settings)?;
+        normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
             .with_model_profiles(model_profiles);
         let serialized = snapshot.content_hash_material()?;
@@ -14483,6 +14647,25 @@ export:
                 "Persist Draft",
             )
             .expect("draft phase");
+        let drafting_tools = pipeline_builder_visible_tools(&tools, &session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(drafting_tools.contains(PipelineBuilderTool::CreateDraftFromTemplate.as_str()));
+        session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::Validating,
+                "Validate persisted Draft",
+            )
+            .expect("validation phase");
+        let validation_tools = pipeline_builder_visible_tools(&tools, &session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(validation_tools.contains(PipelineBuilderTool::ValidatePipeline.as_str()));
+        assert!(!validation_tools.contains(PipelineBuilderTool::CreatePipelineDraft.as_str()));
+        assert!(!validation_tools.contains(PipelineBuilderTool::CreateDraftFromTemplate.as_str()));
+        assert!(!validation_tools.contains(PipelineBuilderTool::CreateBlockedDraft.as_str()));
         for index in 0..5 {
             session
                 .record_tool("bounded_test", json!({"index": index}), json!({}), true)

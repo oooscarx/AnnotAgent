@@ -2,6 +2,26 @@
 
 Last updated: 2026-09-01 CST
 
+## Pipeline Builder Progress-Safety M6 — 2026-09-01
+
+- Replaced the open-ended inspection loop with persisted Builder phases, phase budgets, a protected
+  finalization reserve, compact context snapshots, deterministic feasibility, observation caching
+  and duplicate suppression. Budget exhaustion now preserves a runnable or blocked editable Draft
+  with a typed outcome and concrete next action.
+- A missing model produces `ProviderSetupRequired` in four Tool Calls; retry starts with fresh
+  budgets while retaining the same Draft. The reproduced 48-call loop now stops after eight calls
+  and reduces fixture input tokens from 95,326 to 27,236 (71.4%).
+- Structured VLM Detection now requires image input plus structured output or Tool Calls and no
+  longer masquerades as native Object Detection. Qwen-style VLM compatibility, Classification,
+  VLM Detection + Crop, parent lineage, Draft Diff/Undo and immutable publication are covered.
+- The GUI restores persisted Agent progress, phase/budget counters, typed outcomes and setup/retry
+  actions. It keeps one primary action and decodes Server errors without HTML entity artifacts.
+- `scripts/acceptance.sh` passes 304 Rust tests, strict Clippy/Rustfmt, all-feature build, Web
+  typecheck/40 tests/build, doctor and four offline demos. All 35 Chromium journeys pass through a
+  deterministic local OpenAI-compatible protocol fixture.
+- Offline status is `PASS`; the billable external Provider smoke is `LIVE-CONDITIONAL`. No
+  conversation credential, push or remote mutation was used.
+
 ## Expert Vision SDK M8 — 2026-09-01
 
 - Closed the offline Expert Vision release matrix: capability-bound RoboCup Ball, specialist-first

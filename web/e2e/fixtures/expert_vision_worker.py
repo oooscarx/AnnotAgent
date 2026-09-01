@@ -205,6 +205,168 @@ def detection_response(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def openai_completion(request: dict[str, Any]) -> dict[str, Any]:
+    """Return a deterministic, protocol-realistic Pipeline Builder turn.
+
+    The server exposes only the tools valid for the current Builder phase. Choosing the first
+    progress-making operation from that phase lets browser tests exercise the real HTTP provider,
+    Agent loop, persistence, and UI without presenting this fixture as model-quality evidence.
+    """
+    tools = {
+        item.get("function", {}).get("name"): item
+        for item in request.get("tools", [])
+        if item.get("function", {}).get("name")
+    }
+    called_tools = {
+        call.get("function", {}).get("name")
+        for message in request.get("messages", [])
+        for call in message.get("tool_calls", [])
+        if call.get("function", {}).get("name")
+    }
+
+    def message_text(message: dict[str, Any]) -> str | None:
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return None
+
+    for message in reversed(request.get("messages", [])):
+        content = message_text(message)
+        if message.get("role") != "user" or content is None:
+            continue
+        try:
+            prompt = json.loads(content)
+        except json.JSONDecodeError:
+            break
+        if prompt.get("task") == "visual_object_grounding":
+            labels = prompt.get("target_label_ids", ["football"])
+            coordinate_format = prompt.get("parameters", {}).get(
+                "coordinate_format", "normalized_xywh"
+            )
+            bbox = [350, 350, 550, 550] if coordinate_format == "qwen_0_1000_xyxy" else [0.35, 0.35, 0.2, 0.2]
+            return {
+                "id": f"chatcmpl-{uuid.uuid4()}",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps({
+                            "detections": [{
+                                "label": labels[0],
+                                "bbox": bbox,
+                                "confidence": 0.9,
+                            }]
+                        }),
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 8, "total_tokens": 48},
+            }
+        break
+    preferences: list[tuple[str, dict[str, Any]]] = [
+        ("get_pipeline_builder_context", {}),
+        ("load_skill_resource", {}),
+        ("resolve_pipeline_feasibility", {}),
+        ("create_draft_from_template", {"template_id": "safe_default"}),
+        ("create_blocked_draft", {}),
+        ("validate_pipeline", {}),
+        ("dry_run_pipeline", {"image_indices": [0]}),
+        ("inspect_dry_run_summary", {}),
+        ("submit_draft_for_human_approval", {}),
+        ("finish_with_setup_requirements", {}),
+        ("submit_detections", {
+            "detections": [{"label": "football", "bbox": [0.35, 0.35, 0.2, 0.2], "confidence": 0.9}],
+        }),
+        ("submit_classifications", {
+            "classifications": [{
+                "subject_artifact_id": "image",
+                "subject_item_id": None,
+                "label": "day",
+                "confidence": 0.9,
+                "scores": {"day": 0.9},
+            }],
+        }),
+    ]
+    for name, arguments in preferences:
+        if name in tools and name not in called_tools:
+            if name == "load_skill_resource":
+                properties = tools[name]["function"]["parameters"]["properties"]
+                skill_ids = properties["skill_id"].get("enum", [])
+                resource_names = properties["resource_name"].get("enum", [])
+                if not skill_ids or not resource_names:
+                    continue
+                arguments = {
+                    "skill_id": skill_ids[0],
+                    "resource_name": resource_names[0],
+                }
+            elif name == "submit_classifications":
+                classification_schema = (
+                    tools[name]["function"]["parameters"]["properties"]
+                    ["classifications"]
+                )
+                item_properties = classification_schema["items"]["properties"]
+                subject_ids = item_properties["subject_artifact_id"].get("enum", [])
+                labels = item_properties["label"].get("enum", [])
+                if not subject_ids or not labels:
+                    continue
+                requested_subjects: list[dict[str, Any]] = []
+                for message in reversed(request.get("messages", [])):
+                    content = message_text(message)
+                    if message.get("role") != "user" or content is None:
+                        continue
+                    try:
+                        requested_subjects = json.loads(content).get("subjects", [])
+                    except (json.JSONDecodeError, AttributeError):
+                        requested_subjects = []
+                    break
+                if not requested_subjects:
+                    requested_subjects = [
+                        {"artifact_id": subject_id, "item_id": None}
+                        for subject_id in subject_ids
+                    ]
+                arguments = {
+                    "classifications": [
+                        {
+                            "subject_artifact_id": subject["artifact_id"],
+                            "subject_item_id": subject.get("item_id"),
+                            "label": labels[0],
+                            "confidence": 0.9,
+                            "scores": {labels[0]: 0.9},
+                        }
+                        for subject in requested_subjects
+                    ]
+                }
+            return {
+                "id": f"chatcmpl-{uuid.uuid4()}",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": f"call-{uuid.uuid4()}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)},
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 8, "total_tokens": 48},
+            }
+    return {
+        "id": f"chatcmpl-{uuid.uuid4()}",
+        "object": "chat.completion",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -220,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
             self.send_json(200, {"status": "healthy", "detail": "deterministic contract fixture", "checked_at": checked_at()})
+        elif self.path == "/openai/v1/models":
+            self.send_json(200, {"object": "list", "data": [{"id": "e2e-pipeline-builder", "object": "model"}]})
         elif self.path == "/v1/capabilities":
             self.send_json(200, {
                 "protocol_version": 1,
@@ -247,6 +411,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/openai/v1/chat/completions":
+            length = int(self.headers.get("Content-Length", "0"))
+            request = json.loads(self.rfile.read(length))
+            self.send_json(200, openai_completion(request))
+            return
         if self.path != "/v1/infer":
             self.send_json(404, {"error": "not_found"})
             return

@@ -1753,6 +1753,13 @@ impl WorkflowStaticValidator {
             if descriptor.required_capabilities.is_empty() {
                 continue;
             }
+            // Registry Model Profiles are validated by the Application layer against the public
+            // Node Definition, Provider state, modality, and protocol contract. `model_binding`
+            // remains a compatibility field for legacy Runtime registries and must not make an
+            // otherwise valid frozen Profile look like an unknown legacy model.
+            if node.model_profile_binding.is_some() {
+                continue;
+            }
             let Some(model_id) = node.model_binding.as_deref() else {
                 issues.push(issue(
                     "unresolved_model_binding",

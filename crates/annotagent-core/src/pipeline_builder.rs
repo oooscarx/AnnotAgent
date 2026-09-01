@@ -525,9 +525,10 @@ impl PipelineBuilderConstraints {
 
 /// Durable execution phase for the constrained Pipeline Builder. The phase is persisted on the
 /// Agent Session so a UI or retry can distinguish discovery from draft work and finalization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineBuilderPhase {
+    #[default]
     ContextLoading,
     FeasibilityAnalysis,
     Drafting,
@@ -541,12 +542,6 @@ pub enum PipelineBuilderPhase {
     Failed,
 }
 
-impl Default for PipelineBuilderPhase {
-    fn default() -> Self {
-        Self::ContextLoading
-    }
-}
-
 impl PipelineBuilderPhase {
     #[must_use]
     pub fn can_transition_to(self, next: Self) -> bool {
@@ -558,7 +553,7 @@ impl PipelineBuilderPhase {
             (Self::ContextLoading, Self::FeasibilityAnalysis)
                 | (Self::FeasibilityAnalysis, Self::Drafting | Self::Completed)
                 | (
-                    Self::Drafting,
+                    Self::Drafting | Self::Revising,
                     Self::Validating | Self::Finalizing | Self::Failed
                 )
                 | (
@@ -568,10 +563,6 @@ impl PipelineBuilderPhase {
                 | (
                     Self::DryRunning,
                     Self::Revising | Self::Finalizing | Self::Failed
-                )
-                | (
-                    Self::Revising,
-                    Self::Validating | Self::Finalizing | Self::Failed
                 )
                 | (
                     Self::Finalizing,
@@ -1463,8 +1454,8 @@ impl PipelineBuilderSession {
 pub struct PipelineDraftTools;
 
 /// Checks the semantic contract between a public Node Definition and a Provider Model Profile.
-/// A VLM that emits a DetectionSet is not a native detector: it requires image input plus a
-/// structured response channel, while native detection still requires ObjectDetection.
+/// A VLM that emits a `DetectionSet` is not a native detector: it requires image input plus a
+/// structured response channel, while native detection still requires `ObjectDetection`.
 #[must_use]
 pub fn model_profile_satisfies_node_contract(
     definition: &crate::NodeDefinition,
@@ -1876,7 +1867,9 @@ fn validate_node_binding(
             "node requires a Skill that is not enabled for the Project".to_owned(),
         ));
     }
-    if let Some(model_id) = &node.model_binding {
+    if node.model_profile_binding.is_none()
+        && let Some(model_id) = &node.model_binding
+    {
         let model = model_registry
             .models()
             .into_iter()
@@ -2064,7 +2057,7 @@ impl PipelineGrammarValidator {
         let model_calls = draft
             .nodes
             .iter()
-            .filter(|node| node.model_binding.is_some())
+            .filter(|node| node.model_binding.is_some() || node.model_profile_binding.is_some())
             .count() as u32;
         if constraints
             .max_model_calls_per_image
