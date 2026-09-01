@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-02 CST
 
+## Full Dataset Run Entry Hotfix — 2026-09-02
+
+- Test & Activate now exposes `Start full Run` beside the activated immutable Version, and Project
+  Overview exposes the same action whenever no Batch or image Run is active.
+- Starting a full Run submits a Dataset Batch with the exact Published Workflow `workflow_id` and
+  `version`, then opens the Project-filtered Runs page for durable progress and controls.
+- Project Guidance now counts terminal work only when its frozen Workflow snapshot matches the
+  current Published Workflow Version. Completed Runs from older Versions no longer skip the user
+  past `Ready to Run` or hide the launch action.
+- The Application suite passes 53 tests (one opt-in billable smoke ignored), along with 17 Server
+  tests and 41 Web tests; production Web build, focused strict Clippy, Rustfmt and TypeScript
+  checks also pass.
+
 ## Persistent Sample Test Recovery Hotfix — 2026-09-02
 
 - Added a read API for the latest SQLite-backed Sample Test associated with each editable Draft.

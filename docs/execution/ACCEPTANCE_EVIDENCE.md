@@ -1,5 +1,20 @@
 # AnnotAgent Acceptance Evidence
 
+## Full Dataset Run Entry Hotfix — 2026-09-02
+
+- Activated Sample Test evidence includes a visible `Start full Run` action. Project Overview also
+  renders it in the empty Active Run card, without requiring the user to discover an Advanced
+  control or infer that Guidance is clickable.
+- Both entry points call `POST /api/projects/{project_id}/batches` without a sample limit and send
+  only the exact immutable Published Workflow identity. Success navigates to the Project-filtered
+  Runs page; no billable Run is started by automated verification.
+- Regression `project_guidance_uses_persisted_sample_test_and_published_state` persists a terminal
+  Run from an older Workflow and proves Guidance remains `ReadyToRun`, then persists a matching
+  frozen Version and proves Guidance advances to `ReadyToExport`.
+- Verification: 53 Application tests (one opt-in billable smoke ignored), 17 Server tests and 41
+  Web tests passed; the production Web build, focused strict Clippy, TypeScript, Rustfmt and
+  `git diff --check` completed successfully.
+
 ## Persistent Sample Test Recovery Hotfix — 2026-09-02
 
 - `GET /api/workflow-drafts/{draft_id}/sample-test` returns the persisted report and whether it is

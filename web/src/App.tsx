@@ -535,6 +535,9 @@ export function App() {
             onNavigate={(step) =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
+            onOpenRuns={() =>
+              navigate(`/runs?project_id=${encodeURIComponent(route.projectId)}`)
+            }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
             onRefresh={refresh}
@@ -679,6 +682,7 @@ function BuildWorkspace({
   project,
   step,
   onNavigate,
+  onOpenRuns,
   onOpenProjects,
   onOpenProject,
   onRefresh,
@@ -687,6 +691,7 @@ function BuildWorkspace({
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
   onNavigate: (step: BuildStep) => void;
+  onOpenRuns: () => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
   onRefresh: () => Promise<void>;
@@ -712,7 +717,7 @@ function BuildWorkspace({
       ) : step === "labels" ? (
         <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
       ) : (
-        <BuildTestPublish project={project} onNavigate={onNavigate} onRefresh={onRefresh} onError={onError} />
+        <BuildTestPublish project={project} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
       )}
       {project && summary && allowed && <BuildFooter
         previous={previousStep}
@@ -974,11 +979,13 @@ function BuildLabels({
 function BuildTestPublish({
   project,
   onNavigate,
+  onOpenRuns,
   onRefresh,
   onError,
 }: {
   project: ProjectSummary;
   onNavigate: (step: BuildStep) => void;
+  onOpenRuns: () => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
 }) {
@@ -992,6 +999,7 @@ function BuildTestPublish({
   const [images, setImages] = useState<ImageItem[]>([]);
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
+  const [startingRun, setStartingRun] = useState(false);
   const load = () => api.workflowDrafts(project.id).then((value) => {
     setDrafts(value.drafts);
     const visible = value.drafts.filter((draft) => draft.status !== "archived");
@@ -1066,6 +1074,27 @@ function BuildTestPublish({
   const fullRun = summary?.estimated_full_run;
   const currentDraft = drafts.find((draft) => draft.id === draftId);
   const isActivated = currentDraft?.status === "published";
+  const publishedWorkflowVersion = project.available_workflow_versions.find(
+    (workflow) => workflow.source === `published draft ${draftId}` && workflow.status === "published",
+  );
+  const publishedWorkflow = activated ?? (publishedWorkflowVersion
+    ? {
+        workflow_id: publishedWorkflowVersion.workflow_id,
+        version: Number(publishedWorkflowVersion.version),
+      }
+    : undefined);
+  const startFullRun = () => {
+    if (!publishedWorkflow || project.active_batch || project.active_run) return;
+    setStartingRun(true);
+    void api
+      .startBatch(project.id, undefined, publishedWorkflow)
+      .then(async () => {
+        await onRefresh();
+        onOpenRuns();
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setStartingRun(false));
+  };
   const draftControls = <>
     <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setRestoredAt(undefined); setStaleReport(false); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name}{draft.status === "published" ? " · Activated" : ""}</option>)}</select>
     <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
@@ -1104,12 +1133,12 @@ function BuildTestPublish({
               <span>${summary.usage.estimated_cost} sample cost</span>
               {restoredAt && <span title={new Date(restoredAt).toLocaleString()}>Restored saved Sample Test</span>}
             </div>
-            {isActivated ? <div className="activation-success" role="status"><strong>Automation activated</strong><span>This saved Sample Test belongs to the immutable active Version.</span></div> : <>
+            {isActivated ? <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>This saved Sample Test belongs to the immutable active Version.</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div> : <>
               <div className="button-row">
                 {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline")}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
                 {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
               </div>
-              {activated && <div className="activation-success" role="status"><strong>Automation activated</strong><span>Immutable Version v{activated.version} is ready for the full Dataset Run.</span></div>}
+              {activated && <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>Immutable Version v{activated.version} is ready for the full Dataset Run.</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div>}
             </>}
           </section>
           {fullRun && <section className="full-run-estimate" aria-label="Full Run Estimate">
@@ -1565,7 +1594,10 @@ function ProjectPage({
           version: Number(selectedPublishedWorkflow.version),
         },
       )
-      .then(refreshWorkspace)
+      .then(async () => {
+        await refreshWorkspace();
+        onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`);
+      })
       .catch((error: Error) => onError(error.message))
       .finally(() => setStarting(false));
   };
@@ -1731,7 +1763,7 @@ function ProjectPage({
           </li>)}
         </ol>
       </section>
-      {(project.active_batch || project.active_run || project.last_run) && <div className="run-state-grid" id="project-active-run">
+      {(project.active_batch || project.active_run || project.last_run || selectedPublishedWorkflow) && <div className="run-state-grid" id="project-active-run">
         <Panel title="Active Run" eyebrow="Server-owned state">
           {project.active_batch ? (
             <>
@@ -1764,10 +1796,13 @@ function ProjectPage({
               </div>
             </>
           ) : (
-            <Empty
-              title="No active Run"
-              detail="Start is available because the backend has no Pending, Running, or Paused Run for this Project."
-            />
+            <div className="empty-run-state">
+              <Empty
+                title="No active Run"
+                detail="Run every image with the selected immutable Workflow Version."
+              />
+              {selectedPublishedWorkflow && <button className="primary" disabled={starting} onClick={startBatch}>{starting ? "Starting…" : "Start full Run"}</button>}
+            </div>
           )}
         </Panel>
         <Panel title="Last Run" eyebrow="Terminal history">

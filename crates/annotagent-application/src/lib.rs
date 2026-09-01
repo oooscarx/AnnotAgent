@@ -6121,7 +6121,9 @@ impl LocalApplication {
             matches!(
                 run.status,
                 RunStatus::Completed | RunStatus::CompletedWithReview | RunStatus::Partial
-            )
+            ) && published
+                .as_ref()
+                .is_none_or(|workflow| run_uses_published_workflow(run, workflow))
         });
         let has_labels = !summary.annotation_schema.is_empty()
             && summary
@@ -13587,6 +13589,21 @@ fn history_run_duration_ms(run: &HistoryRun) -> u64 {
         .unwrap_or_default()
 }
 
+fn run_uses_published_workflow(run: &HistoryRun, workflow: &PublishedWorkflowVersion) -> bool {
+    run.workflow_snapshot_json
+        .as_deref()
+        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(snapshot).ok())
+        .and_then(|snapshot| snapshot.get("selected_workflow").cloned())
+        .is_some_and(|selected| {
+            selected
+                .get("workflow_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(workflow.workflow_id.as_str())
+                && selected.get("version").and_then(serde_json::Value::as_u64)
+                    == Some(u64::from(workflow.version))
+        })
+}
+
 fn history_usage_summary(history: &annotagent_storage::HistoryDocument) -> UsageSummary {
     let mut totals = annotagent_core::UsageTotals::default();
     for record in &history.usage {
@@ -19527,15 +19544,77 @@ export:
                 .stage,
             ProjectStage::ReadyToActivate
         );
-        restarted
+        let published = restarted
             .publish_workflow(&draft_id, &settings)
             .expect("activate Automation");
+        let project_path = restarted.project_path("guided").expect("Project path");
+        let project_id = stable_project_id(project_path.parent().expect("Project root"));
+        let project_schema_json = std::fs::read_to_string(&project_path).expect("Project YAML");
+        let old_run_id = RunId::new();
+        restarted
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: old_run_id,
+                project_id,
+                project_name: "Guided".to_owned(),
+                skill_id: "old-skill".to_owned(),
+                provider: "old-provider".to_owned(),
+                model: "old-model".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json: project_schema_json.clone(),
+                workflow_snapshot_json: Some(
+                    json!({"selected_workflow": {"workflow_id": "older-workflow", "version": 1}})
+                        .to_string(),
+                ),
+            })
+            .await
+            .expect("old Run");
+        restarted
+            .store
+            .set_run_status(old_run_id, RunStatus::Completed, None)
+            .await
+            .expect("complete old Run");
         let summary = restarted
             .project_workspace_summary("guided", &settings, true)
             .expect("workspace summary");
         assert_eq!(summary.guidance.stage, ProjectStage::ReadyToRun);
         assert_eq!(summary.readiness.readiness, ProjectReadiness::Ready);
         assert_eq!(summary.guidance.primary_action.label, "Run dataset");
+
+        let current_run_id = RunId::new();
+        restarted
+            .store
+            .create_run(&annotagent_runtime::RunRecord {
+                id: current_run_id,
+                project_id,
+                project_name: "Guided".to_owned(),
+                skill_id: "current-skill".to_owned(),
+                provider: "current-provider".to_owned(),
+                model: "current-model".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json,
+                workflow_snapshot_json: Some(
+                    json!({"selected_workflow": {
+                        "workflow_id": published.workflow_id,
+                        "version": published.version
+                    }})
+                    .to_string(),
+                ),
+            })
+            .await
+            .expect("current Run");
+        restarted
+            .store
+            .set_run_status(current_run_id, RunStatus::Completed, None)
+            .await
+            .expect("complete current Run");
+        assert_eq!(
+            restarted
+                .project_guidance("guided", &settings, true)
+                .expect("completed guidance")
+                .stage,
+            ProjectStage::ReadyToExport
+        );
     }
 
     #[test]
