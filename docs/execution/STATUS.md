@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-02 CST
 
+## Persistent Sample Test Recovery Hotfix — 2026-09-02
+
+- Added a read API for the latest SQLite-backed Sample Test associated with each editable Draft.
+- Test & Activate now restores the saved report after refresh, route re-entry and Draft switching,
+  including result galleries, diagnostics, usage and activation readiness.
+- Activating automation no longer removes its Sample Test from the page. The immutable Version and
+  its report remain selectable as read-only activated evidence after refresh.
+- Reports older than the Draft's latest edit are retained as audit evidence but shown as out of
+  date; they cannot silently enable activation for changed automation.
+- Server tests pass 17/17, Web tests pass 41/41, the production Web build succeeds, and strict
+  Server Clippy, Rustfmt and `git diff --check` pass.
+
 ## Pinned Qwen VLM Revision — 2026-09-02
 
 - Updated the DashScope VLM default and Provider preset recommendation from the moving

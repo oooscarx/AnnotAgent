@@ -980,6 +980,13 @@ export interface WorkflowDryRunReport {
   estimated_cost: string;
 }
 
+export interface WorkflowSampleTestRecord {
+  draft_id: string;
+  project_id: string;
+  report: WorkflowDryRunReport;
+  completed_at: string;
+}
+
 export type AnnotationFailureClass =
   | "infrastructure_failure"
   | "provider_failure"

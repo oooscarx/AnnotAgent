@@ -548,6 +548,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(dry_run_workflow),
         )
         .route(
+            "/api/workflow-drafts/{draft_id}/sample-test",
+            get(get_workflow_sample_test),
+        )
+        .route(
             "/api/workflow-drafts/{draft_id}/publish",
             post(publish_workflow),
         )
@@ -3040,6 +3044,31 @@ async fn dry_run_workflow(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(report)))
+}
+
+async fn get_workflow_sample_test(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let draft = state
+        .application
+        .store()
+        .get_workflow_draft(&draft_id)
+        .map_err(ApiError::not_found)?;
+    let sample_test = state
+        .application
+        .store()
+        .get_workflow_sample_test(&draft_id)
+        .map_err(ApiError::internal)?;
+    let current = sample_test.as_ref().is_some_and(|record| {
+        record.project_id == draft.project_id
+            && (draft.status == annotagent_core::WorkflowDraftStatus::Published
+                || record.completed_at >= draft.updated_at)
+    });
+    Ok(Json(json!({
+        "sample_test": sample_test,
+        "current": current,
+    })))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -6541,6 +6570,59 @@ export:
         assert_eq!(dry_run["sandbox"], json!(true));
         assert_eq!(dry_run["samples"][0]["image_name"], json!("sample.png"));
 
+        let restored_sample_test = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/workflow-drafts/{draft_id}/sample-test"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(restored_sample_test["current"], json!(true));
+        assert_eq!(
+            restored_sample_test["sample_test"]["report"]["samples"][0]["image_name"],
+            json!("sample.png")
+        );
+
+        let mut changed_after_test = saved;
+        changed_after_test["name"] = json!("Changed after Sample Test");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::PATCH,
+                &format!("/api/workflow-drafts/{draft_id}"),
+                Some(changed_after_test),
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        let stale_sample_test = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/workflow-drafts/{draft_id}/sample-test"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(stale_sample_test["current"], json!(false));
+        assert!(stale_sample_test["sample_test"].is_object());
+        let refreshed_dry_run = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/workflow-drafts/{draft_id}/dry-run"),
+                Some(json!({"image_indices": [0]})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(refreshed_dry_run["validation"]["valid"], json!(true));
+
         let published = response_json(
             request(
                 &service,
@@ -6553,6 +6635,21 @@ export:
         .await;
         let workflow_id = published["workflow_id"].as_str().expect("workflow id");
         let version = published["version"].as_u64().expect("version");
+        let activated_sample_test = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/workflow-drafts/{draft_id}/sample-test"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(activated_sample_test["current"], json!(true));
+        assert_eq!(
+            activated_sample_test["sample_test"]["report"]["validation"]["valid"],
+            json!(true)
+        );
         let project = response_json(
             request(
                 &service,

@@ -31,6 +31,7 @@ import type {
   WorkflowDraftApplyReport,
   WorkflowCatalog,
   WorkflowDryRunReport,
+  WorkflowSampleTestRecord,
   WorkflowVersionComparison,
   WorkflowSuggestion,
   ProviderPresetProfile,
@@ -434,6 +435,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ image_indices: imageIndices }),
     }),
+  workflowSampleTest: (draftId: string) =>
+    request<{
+      sample_test?: WorkflowSampleTestRecord | null;
+      current: boolean;
+    }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test`),
   publishWorkflow: (draftId: string) =>
     request<{ workflow_id: string; version: number }>(
       `/api/workflow-drafts/${draftId}/publish`,

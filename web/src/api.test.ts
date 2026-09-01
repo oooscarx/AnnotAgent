@@ -86,4 +86,22 @@ describe("API client", () => {
     expect(JSON.stringify([runBody, batchBody])).not.toContain("provider");
     vi.unstubAllGlobals();
   });
+
+  it("restores the persisted Sample Test for a Draft", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sample_test: null, current: false }),
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await api.workflowSampleTest("draft id");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/workflow-drafts/draft%20id/sample-test",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
+    );
+    vi.unstubAllGlobals();
+  });
 });

@@ -986,35 +986,70 @@ function BuildTestPublish({
   const [draftId, setDraftId] = useState("");
   const [sampleCount, setSampleCount] = useState(3);
   const [report, setReport] = useState<WorkflowDryRunReport>();
+  const [reportLoading, setReportLoading] = useState(false);
+  const [staleReport, setStaleReport] = useState(false);
+  const [restoredAt, setRestoredAt] = useState<string>();
   const [images, setImages] = useState<ImageItem[]>([]);
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const load = () => api.workflowDrafts(project.id).then((value) => {
     setDrafts(value.drafts);
-    const editable = value.drafts.filter((draft) => !["published", "archived"].includes(draft.status));
-    setDraftId((current) => editable.some((draft) => draft.id === current) ? current : (editable[0]?.id ?? ""));
+    const visible = value.drafts.filter((draft) => draft.status !== "archived");
+    setDraftId((current) => visible.some((draft) => draft.id === current) ? current : (visible[0]?.id ?? ""));
   });
   useEffect(() => {
     void Promise.all([load(), api.images(project.id).then((value) => setImages(value.images))])
       .catch((error: Error) => onError(error.message));
   }, [project.id]);
+  useEffect(() => {
+    let cancelled = false;
+    setReport(undefined);
+    setRestoredAt(undefined);
+    setStaleReport(false);
+    if (!draftId) {
+      setReportLoading(false);
+      return () => { cancelled = true; };
+    }
+    setReportLoading(true);
+    void api.workflowSampleTest(draftId)
+      .then(({ sample_test: sampleTest, current }) => {
+        if (cancelled) return;
+        if (sampleTest && current) {
+          setReport(sampleTest.report);
+          setRestoredAt(sampleTest.completed_at);
+        } else {
+          setStaleReport(Boolean(sampleTest));
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) onError(error.message);
+      })
+      .finally(() => {
+        if (!cancelled) setReportLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [draftId]);
   const test = () => {
     if (!draftId) return;
     setBusy(true);
     void api.dryRunWorkflow(draftId, Array.from({ length: sampleCount }, (_, index) => index))
-      .then((value) => { setActivated(undefined); setReport(value); })
+      .then((value) => {
+        setActivated(undefined);
+        setReport(value);
+        setRestoredAt(undefined);
+        setStaleReport(false);
+      })
       .then(load)
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
   const publish = () => {
-    if (!draftId || !report?.validation.valid) return;
+    if (!draftId || !report?.validation.valid || drafts.find((draft) => draft.id === draftId)?.status === "published") return;
     setBusy(true);
     void api.publishWorkflow(draftId)
       .then((version) => {
         setActivated(version);
-        setDraftId("");
-        return onRefresh();
+        return Promise.all([onRefresh(), load()]);
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
@@ -1029,10 +1064,12 @@ function BuildTestPublish({
   const uncertainSamples = report?.samples.filter((sample) => sample.review_count > 0 || sample.failed) ?? [];
   const needsAttention = (summary?.needs_review_count ?? 0) + (summary?.failed_count ?? 0);
   const fullRun = summary?.estimated_full_run;
+  const currentDraft = drafts.find((draft) => draft.id === draftId);
+  const isActivated = currentDraft?.status === "published";
   const draftControls = <>
-    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => !["published", "archived"].includes(draft.status)).map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
+    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setRestoredAt(undefined); setStaleReport(false); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name}{draft.status === "published" ? " · Activated" : ""}</option>)}</select>
     <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
-    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || !draftId}>{busy ? "Testing…" : "Test samples"}</button>
+    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated}>{busy ? "Testing…" : isActivated ? "Activated" : "Test samples"}</button>
   </>;
   return (
     <>
@@ -1050,7 +1087,7 @@ function BuildTestPublish({
         <>
           <section className={`sample-test-hero ${report.validation.valid ? "ready" : "blocked"}`} aria-label="Dry Run result summary">
             <div className="sample-test-hero-copy">
-              <span className="eyebrow">{report.validation.valid ? "Ready to activate" : "Automation needs changes"}</span>
+              <span className="eyebrow">{isActivated ? "Activated evidence" : report.validation.valid ? "Ready to activate" : "Automation needs changes"}</span>
               <h2>Sample test complete</h2>
               <p>AnnotAgent tested real Project images in a sandbox. No formal Annotations were written.</p>
             </div>
@@ -1065,12 +1102,15 @@ function BuildTestPublish({
               <span>{summary.cache_hit_count} cache hit{summary.cache_hit_count === 1 ? "" : "s"}</span>
               <span>{formatSampleDuration(summary.duration_ms)}</span>
               <span>${summary.usage.estimated_cost} sample cost</span>
+              {restoredAt && <span title={new Date(restoredAt).toLocaleString()}>Restored saved Sample Test</span>}
             </div>
-            <div className="button-row">
-              {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline")}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
-              {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
-            </div>
-            {activated && <div className="activation-success" role="status"><strong>Automation activated</strong><span>Immutable Version v{activated.version} is ready for the full Dataset Run.</span></div>}
+            {isActivated ? <div className="activation-success" role="status"><strong>Automation activated</strong><span>This saved Sample Test belongs to the immutable active Version.</span></div> : <>
+              <div className="button-row">
+                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline")}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
+                {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
+              </div>
+              {activated && <div className="activation-success" role="status"><strong>Automation activated</strong><span>Immutable Version v{activated.version} is ready for the full Dataset Run.</span></div>}
+            </>}
           </section>
           {fullRun && <section className="full-run-estimate" aria-label="Full Run Estimate">
             <div><span className="eyebrow">Full Run Estimate</span><h2>{fullRun.image_count} Project images</h2><p>Projected from this Sample Test; actual usage can vary with image content and Provider behavior.</p></div>
@@ -1092,8 +1132,8 @@ function BuildTestPublish({
             <details><summary>Technical Artifacts</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`artifacts-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.filter((node) => node.output_types.length).map((node) => <span key={node.node_id}>{node.node_id}<small>{node.output_types.join(", ")}</small></span>)}</div>)}</details>
           </section>
         </>
-      ) : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
-      <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>
+      ) : reportLoading ? <div className="loading-banner" role="status">Restoring the saved Sample Test…</div> : staleReport ? <Empty title="Sample Test is out of date" detail="This Draft changed after its saved Sample Test. Test the current Draft again before activation." /> : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+      {!isActivated && <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>}
     </>
   );
 }

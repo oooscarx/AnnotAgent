@@ -1,5 +1,20 @@
 # AnnotAgent Acceptance Evidence
 
+## Persistent Sample Test Recovery Hotfix — 2026-09-02
+
+- `GET /api/workflow-drafts/{draft_id}/sample-test` returns the persisted report and whether it is
+  current relative to the editable Draft timestamp.
+- The Workflow Designer HTTP journey proves a completed Sample Test survives a separate GET,
+  becomes stale after a Draft edit, remains available as audit evidence, and becomes current again
+  after a new Dry Run.
+- The Web client restores current reports when the Test & Activate route mounts or the selected
+  Draft changes. It shows an explicit stale-state message instead of reusing outdated activation
+  evidence.
+- Published Drafts remain visible as `Activated` read-only choices, and the HTTP journey proves
+  their saved passing report remains current after publication's status-only timestamp update.
+- Verification: 17 Server tests and 41 Web tests passed; production Web build, strict Server
+  Clippy, Rustfmt and `git diff --check` all completed successfully.
+
 ## Pinned Qwen VLM Revision — 2026-09-02
 
 - Workspace execution settings, the checked-in DashScope example, the Server Provider preset and
