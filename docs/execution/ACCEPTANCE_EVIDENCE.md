@@ -1,5 +1,18 @@
 # AnnotAgent Acceptance Evidence
 
+## Run Preview Selection Focus Hotfix — 2026-09-02
+
+- On Run `1f40eaed-2b3b-479b-866c-82a55ce4cf31`, clicking the visible ball bbox previously focused
+  `.run-artifact-canvas`; computed style showed a 2 px primary-blue outline around the whole result
+  viewer even though the bbox stroke itself was only 2.6 px.
+- The result viewer is now a labelled, non-focusable region. Its interactive controls and SVG bbox
+  marks remain in the tab order, and scoped SVG focus styling does not invoke the global component
+  outline.
+- Browser verification after the fix shows no blue preview frame after clicking the same bbox. The
+  selected mark retains its annotation color, a 2.2 px non-scaling stroke and a 9% matching fill.
+- Verification: 41 Web tests passed; production Web build, TypeScript and `git diff --check`
+  completed successfully.
+
 ## Dataset Run History Grouping Hotfix — 2026-09-02
 
 - Persisted Batch `0a24985b-8ced-4843-a578-1585e05d85eb` records one launch, four images and four

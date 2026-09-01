@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-02 CST
 
+## Run Preview Selection Focus Hotfix — 2026-09-02
+
+- Removed the focusable wrapper around the Run result annotation viewer. Clicking a small bbox no
+  longer applies the global blue focus outline to the entire preview component.
+- The viewer remains keyboard-accessible through its real buttons and focusable SVG marks; arrow
+  navigation still works while the Zoom slider retains its native arrow-key behavior.
+- Selected geometry now keeps its Label color with a subtle 2.2 px stroke and matching translucent
+  fill instead of introducing a blue selection fill.
+- The reported persisted Run was reproduced before the fix and visually verified after it. Web
+  tests pass 41/41, and the production Web build, TypeScript and `git diff --check` pass.
+
 ## Dataset Run History Grouping Hotfix — 2026-09-02
 
 - Runs now treats one full-dataset launch as one top-level Dataset Run instead of flattening every

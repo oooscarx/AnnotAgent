@@ -336,8 +336,10 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .bbox-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
 .bbox-legend i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--aa-border); }
 .artifact-image-stage svg g { cursor: pointer; }
-.artifact-image-stage svg g rect { fill: transparent; stroke-width: 2.2; vector-effect: non-scaling-stroke; }
-.artifact-image-stage svg g.selected rect { fill: color-mix(in srgb, var(--aa-primary) 11%, transparent); stroke-width: 2.6; }
+.artifact-image-stage svg g rect { fill: transparent; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.artifact-image-stage svg g.selected rect { fill: color-mix(in srgb, currentColor 9%, transparent); stroke-width: 2.2; }
+.artifact-image-stage svg g[role="button"]:focus-visible { outline: none; }
+.artifact-image-stage svg g[role="button"]:focus-visible rect { filter: drop-shadow(0 0 1px currentColor); }
 .artifact-image-stage svg text { fill: white; stroke: rgba(0, 0, 0, .8); stroke-width: .55px; paint-order: stroke; font-size: 3.2px; font-weight: 800; pointer-events: none; }
 .crop-preview-list.enlarged button { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(110px, .7fr); gap: 10px; text-align: left; overflow: hidden; }
 .crop-preview-list.enlarged button.selected { border-color: var(--aa-primary); box-shadow: 0 0 0 2px var(--aa-primary-soft); }
