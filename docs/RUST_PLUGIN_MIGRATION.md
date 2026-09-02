@@ -4,8 +4,8 @@
 | --- | --- | --- | --- | --- | --- |
 | `examples/http_vision_worker.py` | Object detection | Image → bounding-box artifacts | provider protocol tests | `org.annotagent.yolo-onnx` | migrate after parity |
 | `examples/sam2_vision_worker.py` | Prompted segmentation | Image + box/point prompts → MaskSet | legacy SDK and RoboCup integration tests | `org.annotagent.sam-onnx` | Rust contract/process complete; real two-file smoke live-conditional |
-| `examples/rfdetr_vision_worker.py` | Object detection | Image → DetectionSet-compatible artifacts | adapter-only tests | `org.annotagent.rfdetr-onnx` | live-conditional |
-| `examples/locate_anything_worker.py` | Open-vocabulary detection, phrase grounding | Image + queries → DetectionSet | adapter-only tests | `org.annotagent.locate-anything-rust` | feasibility required |
+| `examples/rfdetr_vision_worker.py` | Object detection | Image → DetectionSet-compatible artifacts | adapter-only tests | `org.annotagent.rfdetr-onnx` | Rust ONNX implementation live-conditional; real export smoke pending |
+| `examples/locate_anything_worker.py` | Open-vocabulary detection, phrase grounding | Image + queries → DetectionSet | adapter-only tests | `org.annotagent.locate-anything-rust` | UnsupportedPlatform after official-runtime audit; no fallback |
 | `sdk/python/annotagent_vision_worker` | Worker SDK | protocol/manifest/conformance | Python unit tests | `annotagent-plugin-sdk` | replace in official path |
 | `web/e2e/fixtures/expert_vision_worker.py` | E2E fixture | protocol fixture | browser E2E | Rust dummy plugin | replace in release E2E |
 

@@ -241,6 +241,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-plugin-locate-anything-rust"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
+ "annotagent-plugin-sdk",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "image",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "annotagent-plugin-pidnet-onnx"
 version = "0.1.0"
 dependencies = [
@@ -276,6 +296,29 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "annotagent-plugin-rfdetr-onnx"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-model-runtime-common",
+ "annotagent-model-runtime-onnx",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
+ "annotagent-plugin-sdk",
+ "annotagent-runtime",
+ "annotagent-skill-object-detection",
+ "async-trait",
+ "base64 0.22.1",
+ "image",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

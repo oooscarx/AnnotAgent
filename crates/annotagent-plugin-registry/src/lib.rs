@@ -9,8 +9,8 @@ use std::{
 
 use annotagent_core::{ModelAvailability, ModelCapability};
 use annotagent_plugin_api::{
-    PluginId, PluginManifest, PluginModelReference, PluginStatus, PluginTestReport, PluginVersion,
-    Sha256Digest,
+    PluginId, PluginImplementationStatus, PluginManifest, PluginModelReference, PluginStatus,
+    PluginTestReport, PluginVersion, Sha256Digest,
 };
 use annotagent_plugin_host::{
     PackageSignatureState, PluginPackageError, current_target, verify_package,
@@ -271,11 +271,16 @@ impl PluginRegistry {
         verified.extract_to(&staging)?;
         std::fs::rename(&staging, &destination)?;
         let now = Utc::now();
-        let status = if verified.manifest.weights.required {
-            PluginStatus::NeedsWeights
-        } else {
-            PluginStatus::Installed
-        };
+        let status =
+            if verified.manifest.implementation_status == PluginImplementationStatus::Unsupported {
+                PluginStatus::UnsupportedPlatform
+            } else if verified.manifest.weights.required {
+                PluginStatus::NeedsWeights
+            } else {
+                PluginStatus::Installed
+            };
+        let enabled =
+            verified.manifest.implementation_status != PluginImplementationStatus::Unsupported;
         let installation = PluginInstallation {
             manifest: verified.manifest,
             package_digest: verified.package_digest,
@@ -285,7 +290,7 @@ impl PluginRegistry {
             }
             .to_owned(),
             status,
-            enabled: true,
+            enabled,
             installation_root: destination,
             installed_at: now,
             updated_at: now,
@@ -388,6 +393,11 @@ impl PluginRegistry {
         expected: Option<&Sha256Digest>,
     ) -> Result<PluginWeightSet, PluginRegistryError> {
         let installation = self.get(plugin_id, version)?.clone();
+        if installation.manifest.implementation_status == PluginImplementationStatus::Unsupported {
+            return Err(PluginRegistryError::InvalidTransition(
+                "unsupported plugin versions cannot provision model weights".to_owned(),
+            ));
+        }
         if !installation
             .manifest
             .models
@@ -507,12 +517,17 @@ impl PluginRegistry {
         report: PluginTestReport,
     ) -> Result<PluginStatus, PluginRegistryError> {
         let key = installation_key(&report.plugin_id, &report.plugin_version);
-        let weights_ready = self
+        let installation = self
             .state
             .installations
             .get(&key)
-            .ok_or(PluginRegistryError::NotInstalled)?
-            .weights_ready(&self.state.weight_sets);
+            .ok_or(PluginRegistryError::NotInstalled)?;
+        if installation.manifest.implementation_status == PluginImplementationStatus::Unsupported {
+            return Err(PluginRegistryError::InvalidTransition(
+                "unsupported plugin versions cannot run a readiness smoke test".to_owned(),
+            ));
+        }
+        let weights_ready = installation.weights_ready(&self.state.weight_sets);
         let smoke_passed = report
             .checks
             .iter()
@@ -587,8 +602,13 @@ impl PluginRegistry {
             .installations
             .get_mut(&key)
             .ok_or(PluginRegistryError::NotInstalled)?;
-        installation.enabled = true;
-        installation.status = if !weights_ready {
+        installation.enabled =
+            installation.manifest.implementation_status != PluginImplementationStatus::Unsupported;
+        installation.status = if installation.manifest.implementation_status
+            == PluginImplementationStatus::Unsupported
+        {
+            PluginStatus::UnsupportedPlatform
+        } else if !weights_ready {
             PluginStatus::NeedsWeights
         } else if installation
             .last_test

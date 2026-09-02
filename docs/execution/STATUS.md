@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-02 CST
 
+## Rust Expert Model Plugin M7 — 2026-09-02
+
+- Added the RF-DETR Rust ONNX process for the official detection export tensor/postprocess contract.
+  Its weight hash and dataset version are explicit, but no external export was real-smoke tested, so
+  the exact package remains live-conditional and non-Ready.
+- Added immutable Runnable/LiveConditional/Unsupported Manifest states. LocateAnything is installed
+  disabled as UnsupportedPlatform after the official-runtime audit; enable, provisioning and smoke
+  recording cannot bypass that state, and no legacy scripting fallback exists in the plugin.
+- A separately named, product-excluded Rust fixture proves LocateAnything protocol authentication,
+  capability and typed Artifact transport without model scores or inference claims.
+- Full workspace tests pass 370 cases with 5 explicit billable/external smokes ignored; full strict
+  Clippy, Rustfmt, build, Rust-only boundary scan and diff check pass. No weight, credential, push or
+  remote mutation was used.
+
 ## Rust Expert Model Plugin M6 — 2026-09-02
 
 - Added independent Rust SAM and PIDNet ONNX process plugins. SAM implements explicit Image +

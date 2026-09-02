@@ -18,6 +18,10 @@ These are current implementation boundaries, not hidden release claims:
   component/checkpoint identities, typed Artifacts and opt-in real-process tests. Their real-weight
   smoke and accuracy remain live-conditional because the repository contains no accepted
   checkpoints. Offline tensor/contract tests prove implementation behavior, not model accuracy.
+- RF-DETR has a Rust implementation for the official detection ONNX contract but no accepted export
+  was real-smoke tested in this repository, so its package is live-conditional. LocateAnything's
+  official release has no audited complete Rust-callable runtime; its contract package is explicitly
+  UnsupportedPlatform and cannot fall back to the historical Python Worker.
 - ZIP image import is deliberately rejected before extraction in Workflow Alpha. This provides a smaller safe boundary than accepting archives; users extract an archive themselves and import a workspace-local folder. There is no archive unpacker whose traversal behavior is implied to be safe.
 - COCO string RLE can be represented and exported but is not generally drawable or editable in the Web canvas. COCO, LabelMe, and YOLO cannot express every Native provenance, relation, attribute, mask, or revision field, so their compatibility reports list losses.
 - TUI can start/control legacy Project Runs and inspect Project, Workflow, node, Artifact, validation, recovery, model, usage, timeout, checkpoint, and review state from history. Workflow authoring, exact Published Version selection, Batch creation, and annotation geometry editing remain GUI/HTTP/CLI operations.

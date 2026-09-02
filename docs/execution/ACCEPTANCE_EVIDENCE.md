@@ -1,5 +1,28 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin M7 — 2026-09-02
+
+1. RF-DETR tests prove official-contract RGB/NCHW normalization, sigmoid flattened top-k decode,
+   last/explicit/no-background policy, source-normalized geometry, real score semantics, class
+   mapping boundary and required training dataset identity.
+2. RF-DETR package/Registry integration copies the actual binary and Manifest, installs
+   NeedsWeights, hashes a user-supplied export into the controlled `rfdetr.onnx` name and remains
+   Unknown/Installed until an actual sample smoke. The opt-in real-process test is ignored because
+   `ANNOTAGENT_TEST_RFDETR_ONNX` and sample input were not supplied.
+3. LocateAnything package integration records `UnsupportedPlatform`, disabled and Unknown. A later
+   enable remains UnsupportedPlatform and a fabricated passing test report is rejected before it can
+   alter status.
+4. The separate Rust scripted fixture starts under the Host's one-time authenticated process,
+   advertises OpenVocabularyDetection/PhraseGrounding, returns typed query-linked DetectionSet and
+   explicitly reports fixture/non-inference metadata with absent scores. It is not copied into the
+   product `.annotplugin` package.
+5. Core/Runtime brand scans and the Rust plugin boundary scan are clean. Neither new plugin invokes
+   a scripting runtime, child process, Provider credential, automatic download or Core brand branch.
+6. `cargo test --workspace --all-features`: PASS — 370 active tests, 5 ignored external/billable
+   tests. Full strict Clippy, Rustfmt, workspace build and diff check pass.
+7. RF-DETR real accuracy is not claimed. LocateAnything inference is explicitly unsupported. No
+   weight, API key, push or remote mutation occurred.
+
 ## Rust Expert Model Plugin M6 — 2026-09-02
 
 1. SAM unit tests prove exact SAM normalization, source-to-encoder coordinate scaling, box labels

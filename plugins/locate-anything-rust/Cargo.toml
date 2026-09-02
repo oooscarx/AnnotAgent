@@ -1,0 +1,40 @@
+[package]
+name = "annotagent-plugin-locate-anything-rust"
+description = "Unsupported-state Rust protocol contract for NVIDIA LocateAnything"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "annotagent_plugin_locate_anything_rust"
+path = "src/lib.rs"
+
+[[bin]]
+name = "annotagent-plugin-locate-anything-rust"
+path = "src/main.rs"
+
+[[bin]]
+name = "annotagent-plugin-locate-anything-fixture"
+path = "src/fixture_main.rs"
+
+[dependencies]
+annotagent-core = { path = "../../crates/annotagent-core" }
+annotagent-plugin-api = { path = "../../crates/annotagent-plugin-api" }
+annotagent-plugin-sdk = { path = "../../crates/annotagent-plugin-sdk" }
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }
+annotagent-plugin-registry = { path = "../../crates/annotagent-plugin-registry" }
+base64.workspace = true
+chrono.workspace = true
+image.workspace = true
+tempfile = "3"
+tokio-util.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -12,6 +12,12 @@ Required sections describe:
 - capability-oriented models with typed input/output Artifact contracts;
 - weight provisioning, immutable SHA-256 recipes and license metadata.
 
+`implementation_status` distinguishes `runnable`, `live_conditional` and `unsupported` package
+versions. The default preserves existing runnable manifests. Live-conditional packages contain an
+executable Rust inference path but still need external checkpoint evidence. Unsupported packages
+remain `UnsupportedPlatform`, disabled and unable to provision weights or record a readiness smoke;
+their contracts may be inspected, but they cannot be selected or published.
+
 Multi-file models declare named weight components under `weights.components`. Each component binds
 one model ID to one controlled filename and may include an expected SHA-256. Local provisioning
 preserves the original filename for audit, copies bytes under the controlled filename, hashes each

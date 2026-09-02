@@ -147,6 +147,20 @@ pub enum PluginRuntimeKind {
     NativeRustProcess,
 }
 
+/// Truthful implementation state shipped by this exact package version.
+///
+/// `LiveConditional` is executable Rust code whose real-model smoke still depends on an external
+/// legal checkpoint. `Unsupported` is a protocol/catalog package that must never be promoted to
+/// Ready until a later package version provides a Rust-callable model runtime.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginImplementationStatus {
+    #[default]
+    Runnable,
+    LiveConditional,
+    Unsupported,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginRuntimeManifest {
@@ -330,6 +344,8 @@ pub struct PluginManifest {
     pub description: String,
     pub publisher: String,
     pub plugin_api: String,
+    #[serde(default)]
+    pub implementation_status: PluginImplementationStatus,
     pub runtime: PluginRuntimeManifest,
     pub compatibility: PluginCompatibility,
     pub permissions: PluginPermissions,
@@ -738,6 +754,7 @@ mod tests {
             description: "Deterministic protocol conformance detector".to_owned(),
             publisher: "AnnotAgent".to_owned(),
             plugin_api: "1".to_owned(),
+            implementation_status: PluginImplementationStatus::Runnable,
             runtime: PluginRuntimeManifest {
                 kind: PluginRuntimeKind::NativeRustProcess,
                 entrypoint: "bin/{target}/annotagent-plugin-dummy-detector".to_owned(),

@@ -22,3 +22,9 @@
 - Dense semantic class maps are transported as JSON arrays in HTTP Vision v1. The configured 256 MiB
   response bound limits very large source images; a future binary Artifact store can reduce this
   transport cost without changing the typed `SemanticMask` contract.
+- RF-DETR supports the current official fixed-size detection ONNX `dets`/`labels` contract only.
+  Segmentation exports, dynamic shapes and other output contracts require new versioned models. No
+  accepted RF-DETR export was real-smoke tested in this milestone.
+- LocateAnything is not runnable: the official release has no audited complete ONNX, Candle, Burn or
+  Rust-native runtime. Its test fixture is protocol-only, excluded from product packaging and cannot
+  become availability evidence.

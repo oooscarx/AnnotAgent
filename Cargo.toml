@@ -23,8 +23,10 @@ members = [
     "crates/annotagent-skill-yolo",
     "crates/annotagent-storage",
     "plugins/dummy-detector",
-    "plugins/pidnet-onnx",
-    "plugins/sam-onnx",
+  "plugins/pidnet-onnx",
+  "plugins/rfdetr-onnx",
+  "plugins/locate-anything-rust",
+  "plugins/sam-onnx",
     "plugins/yolo-onnx",
 ]
 resolver = "2"

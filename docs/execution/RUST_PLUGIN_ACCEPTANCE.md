@@ -2,6 +2,31 @@
 
 Only commands actually executed are recorded here.
 
+## M7 RF-DETR and LocateAnything — 2026-09-02
+
+- Added `org.annotagent.rfdetr-onnx` with the official fixed NCHW detection export contract:
+  antialias-free half-pixel RGB resize, ImageNet normalization, `dets` normalized `cxcywh`, `labels`
+  logits, per-class sigmoid, flattened query/class top-k, explicit background handling, class mapping,
+  required training-dataset version and exact checkpoint identity. Official model-specific no-NMS
+  behavior is recorded rather than replaced.
+- RF-DETR unit/Registry tests prove preprocessing, score/decode/geometry, dataset requirement,
+  controlled local weight filename/hash and `NeedsWeights` → `Installed` without Ready. Its actual
+  process test compiles but is ignored because no accepted external export/sample was supplied.
+- Added immutable Manifest implementation states. Unsupported packages install disabled as
+  `UnsupportedPlatform`; enable, provisioning and readiness-smoke recording cannot promote them.
+- Official LocateAnything release audit found no complete ONNX, Candle, Burn or stable Rust runtime.
+  `org.annotagent.locate-anything-rust` therefore remains UnsupportedPlatform and its production
+  executable fails setup. No historical scripting Worker is used as a fallback.
+- The separately named Rust LocateAnything fixture passes authenticated process conformance and
+  typed DetectionSet transport while explicitly recording `protocol_fixture=true`,
+  `real_inference=false` and no score. The production package test copies only the unsupported
+  executable and proves the fixture cannot create availability evidence.
+- `cargo test --workspace --all-features`: PASS — 370 passed, 5 ignored (one billable Provider and
+  four external real-model smokes).
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --all --check`,
+  `cargo build --workspace --all-features`, Rust-only boundary scan and diff check: PASS.
+- No RF-DETR/LocateAnything weight, credential, project download, remote mutation or push was used.
+
 ## M6 SAM and PIDNet Rust plugins — 2026-09-02
 
 - Added `org.annotagent.sam-onnx` with strict two-session SAM ViT-B contracts, exact box/point

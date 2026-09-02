@@ -1,0 +1,61 @@
+schema_version = "1"
+id = "org.annotagent.locate-anything-rust"
+version = "1.0.0"
+display_name = "LocateAnything Rust Contract"
+description = "Open-vocabulary and phrase-grounding contract blocked until a verified Rust-callable runtime exists"
+publisher = "AnnotAgent"
+plugin_api = "1"
+implementation_status = "unsupported"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-locate-anything-rust"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 30
+shutdown_timeout_seconds = 10
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
+accelerators = ["cuda"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 8192
+recommended_memory_mb = 24576
+minimum_vram_mb = 0
+recommended_vram_mb = 24576
+maximum_response_mb = 64
+maximum_concurrency = 1
+maximum_requests_per_process = 10000
+
+[[models]]
+id = "locate-anything-3b-rust-contract"
+display_name = "LocateAnything 3B Rust Contract"
+capabilities = ["open_vocabulary_detection", "phrase_grounding"]
+input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
+output_contracts = [{ name = "detections", data_type = { artifact = "detection_set" }, required = true, multiple = false }]
+score_semantics = "not_provided"
+geometry_semantics = "predicted_geometry"
+
+[models.runtime_requirements]
+devices = ["cuda"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = false
+provisioning = "none"
+checkpoint_sha256_required = true
+
+[license]
+code = "MIT"
+weights = "nvidia-non-commercial-not-bundled"
+commercial_use = "restricted"
