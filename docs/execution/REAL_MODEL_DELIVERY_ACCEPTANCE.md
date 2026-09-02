@@ -14,15 +14,28 @@ Last updated: 2026-09-03 CST
 - [x] Initial full Rust baseline executed and its one stale test failure recorded.
 - [x] Corrected full Rust tests and build pass.
 - [x] Missing-real-model regression is automated independently from mutable workspace state.
-- [ ] M0 committed locally.
+- [x] M0 committed locally as `ccbd2f6`.
+
+## Milestone 1 evidence
+
+- [x] Four official candidates audited; at least three were required.
+- [x] Exact official repository revisions, model source URLs and license source recorded.
+- [x] Redistribution and commercial-use implications recorded without overriding license terms.
+- [x] EfficientSAM-Ti asset byte sizes and SHA-256 values independently reproduced.
+- [x] Both real EfficientSAM-Ti ONNX graphs load in the current Rust Runtime on macOS ARM64 CPU.
+- [x] Real tensor descriptors, preprocessing, prompt labels and postprocessing contract recorded.
+- [x] Existing SAM 1 Plugin incompatibility established; dedicated EfficientSAM Plugin selected.
+- [x] MobileSAM and SAM 1 rejected for the normal-user path because official assets require export.
+- [x] SAM 2.1 retained as Labs because its official path requires Python/PyTorch.
+- [ ] M1 committed locally.
 
 ## Release matrix
 
 ### A. Real model
 
 - [ ] A non-Fixture prompted-segmentation Bundle exists outside Git.
-- [ ] Official/audited source and exact licenses are recorded.
-- [ ] Rust Runtime loads the real graph on macOS ARM64.
+- [x] Official/audited source and exact licenses are recorded.
+- [x] Rust Runtime loads the real graph on macOS ARM64.
 - [ ] Real box-prompt inference produces a non-empty finite mask.
 - [ ] Mask-to-BBox produces valid refined geometry.
 - [ ] Report records all identities, digests, platform, provider, prompt, mask and duration.
@@ -45,8 +58,8 @@ Last updated: 2026-09-03 CST
 ### D. Truthfulness and Rust-only path
 
 - [x] Fixture and publishable status are separate in current schemas and selector logic.
-- [ ] Accepted model and Plugin naming accurately describe the model family.
-- [ ] SAM 2 remains Labs unless a verified Rust Bundle exists.
+- [x] Accepted model and Plugin naming accurately describe the model family.
+- [x] SAM 2 remains Labs unless a verified Rust Bundle exists.
 - [ ] Active install, smoke, run and replay process trees contain no Python.
 
 ### E. Regression

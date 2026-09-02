@@ -27,8 +27,10 @@ macOS ARM64 host without Python, conversion, or raw model-file upload.
 3. Meta SAM 1 ViT-B.
 4. Meta SAM 2.1 Tiny remains a Labs candidate unless an official directly executable asset exists.
 
-The first candidate is accepted only after its exact graph and real inference pass on this host.
-Failure moves work to the next audited candidate rather than weakening the acceptance gate.
+The first candidate is accepted for delivery only after its exact graph loads on this host and its
+official contract is compatible with a Rust implementation. It becomes Supported only after M3
+real inference passes. Failure moves work to the next audited candidate rather than weakening the
+acceptance gate.
 
 ## Non-negotiable boundaries
 
@@ -38,4 +40,3 @@ Failure moves work to the next audited candidate rather than weakening the accep
 - No Fixture selection in publishable Workflows.
 - No raw encoder/decoder upload in the normal user path.
 - No push, remote mutation, credential use, history rewrite, or destructive checkout.
-

@@ -4,15 +4,20 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M0 — baseline and missing-real-model regression complete.
+M1 — official candidate audit and delivery selection complete.
 
 ## Current candidate
 
-EfficientSAM-Ti split ONNX, pending graph inspection and candidate decision in M1.
+EfficientSAM-Ti split ONNX, accepted for delivery but not yet Supported.
 
 ## Candidate eliminations
 
-- None yet. Existing notes are prior research and do not count as this task's completed audit.
+- MobileSAM ViT-T: official normal-user path requires a PyTorch checkpoint and Python ONNX export;
+  no immutable complete split ONNX package was established.
+- Meta SAM 1 ViT-B: official ONNX export covers the prompt/mask decoder but does not distribute the
+  complete encoder/decoder pair needed for Rust-only installation.
+- Meta SAM 2.1 Tiny: official runtime requires Python/PyTorch and no fixed complete ONNX release was
+  established; retained as Labs.
 
 ## Completed
 
@@ -37,16 +42,21 @@ EfficientSAM-Ti split ONNX, pending graph inspection and candidate decision in M
   ignored. The all-features workspace build also passed.
 - Downloaded the two EfficientSAM-Ti candidate ONNX files to a temporary audit directory only and
   reproduced their audited sizes and SHA-256 values. No weight entered Git or the workspace.
+- Audited four official model candidates, their exact sources, licenses, formats, contracts,
+  redistribution considerations and platform feasibility.
+- Loaded both real EfficientSAM-Ti graphs through the repository's Rust ONNX Runtime on macOS
+  ARM64 CPU and recorded their actual tensor descriptors.
+- Selected a dedicated `org.annotagent.efficientsam-onnx` Plugin instead of adding incompatible
+  model-family branches to `org.annotagent.sam-onnx`.
 
 ## In progress
 
-- Complete the M1 official-source audit and inspect the EfficientSAM-Ti graphs through the Rust
-  ONNX Runtime.
+- Implement the controlled Rust Model Supply Recipe and trusted local Catalog in M2.
 
 ## Next
 
-Complete the three-candidate official-source audit, inspect the EfficientSAM graphs with the Rust
-ONNX Runtime, and accept or reject EfficientSAM-Ti with concrete evidence.
+Build a verified non-Fixture `.annotmodel` outside Git using revision-pinned assets, fixed sizes and
+hashes; expose it through a trusted local Catalog without executing downloaded code.
 
 ## Latest verification
 
@@ -57,10 +67,10 @@ ONNX Runtime, and accept or reject EfficientSAM-Ti with concrete evidence.
 | Repeated Rust workspace tests | PASS — `cargo test --workspace --all-features` |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle verification | PASS for installed Fixture only; real Bundle absent |
-| Real graph inspection | PENDING |
+| Real graph inspection | PASS — encoder and decoder loaded with ORT CPU; descriptors recorded |
 | Real inference | NOT RUN |
 | Web E2E | PENDING for this task |
-| Latest commit | M0 commit pending at the time of this ledger update |
+| Latest commit | `ccbd2f6` — M0; M1 commit pending |
 
 ## Release-blocking remainder
 
