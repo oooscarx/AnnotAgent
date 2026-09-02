@@ -8,9 +8,9 @@ demo_workspace=$(mktemp -d)
 target/debug/annotagent models --workspace "$demo_workspace" catalog
 target/debug/annotagent models --workspace "$demo_workspace" search prompted-segmentation
 target/debug/annotagent models --workspace "$demo_workspace" show \
-  org.annotagent.models.fixture-prompted-segmentation@1.0.0
+  org.annotagent.models.fixture-prompted-segmentation@1.1.0
 target/debug/annotagent models --workspace "$demo_workspace" install \
-  org.annotagent.models.fixture-prompted-segmentation@1.0.0
+  org.annotagent.models.fixture-prompted-segmentation@1.1.0
 target/debug/annotagent models --workspace "$demo_workspace" list
 ```
 

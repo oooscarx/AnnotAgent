@@ -276,6 +276,12 @@ export const api = {
       plugin_runtime_status: string;
       available: ModelCatalogEntry[];
       installed: InstalledModelBundle[];
+      setup_blockers: {
+        bundle_id: string;
+        bundle_version: string;
+        code: string;
+        message: string;
+      }[];
     }>(`/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/compatible-model-bundles`),
   modelBundles: () => request<{ bundles: InstalledModelBundle[] }>("/api/model-bundles"),
   availableModelBundles: () => request<{ bundles: ModelCatalogEntry[] }>("/api/model-bundles/available"),

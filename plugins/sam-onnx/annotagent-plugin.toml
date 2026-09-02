@@ -1,6 +1,6 @@
 schema_version = "1"
 id = "org.annotagent.sam-onnx"
-version = "1.0.0"
+version = "1.1.0"
 display_name = "SAM ViT-B ONNX"
 description = "Rust-native prompted segmentation with explicit image-encoder and mask-decoder contracts"
 publisher = "AnnotAgent"

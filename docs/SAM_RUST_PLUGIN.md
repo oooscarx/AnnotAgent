@@ -1,6 +1,6 @@
 # SAM Rust plugin
 
-`org.annotagent.sam-onnx@1.0.0` is an independent Rust process implementing the generic
+`org.annotagent.sam-onnx@1.1.0` is an independent Rust process implementing the generic
 `PromptedSegmentation` capability. Core and the Segmentation Skill do not branch on this plugin ID.
 
 ## Contract
@@ -43,11 +43,11 @@ Example provisioning:
 
 ```bash
 cargo run -p annotagent -- plugin provision org.annotagent.sam-onnx \
-  --version 1.0.0 --model sam-vit-b-onnx --component image_encoder \
+  --version 1.1.0 --model sam-vit-b-onnx --component image_encoder \
   --weights /absolute/path/to/encoder.onnx
 
 cargo run -p annotagent -- plugin provision org.annotagent.sam-onnx \
-  --version 1.0.0 --model sam-vit-b-onnx --component mask_decoder \
+  --version 1.1.0 --model sam-vit-b-onnx --component mask_decoder \
   --weights /absolute/path/to/decoder.onnx
 ```
 

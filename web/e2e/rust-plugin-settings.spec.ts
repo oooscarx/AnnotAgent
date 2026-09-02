@@ -57,7 +57,8 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
     agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false },
   } }));
   await page.route("**/api/model-instances", (route) => route.fulfill({ json: { instances: [], model_profiles: [] } }));
-  await page.route("**/api/plugins/org.annotagent.sam-onnx/1.0.0/compatible-model-bundles", (route) => route.fulfill({ json: { plugin_runtime_status: "installed", available: [entry], installed: [] } }));
+  const compatibilityRoute = "**/api/plugins/org.annotagent.sam-onnx/1.0.0/compatible-model-bundles";
+  await page.route(compatibilityRoute, (route) => route.fulfill({ json: { plugin_runtime_status: "installed", available: [entry], installed: [], setup_blockers: [] } }));
 
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.goto("/settings/plugins");
@@ -103,4 +104,25 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
   await page.reload();
   await expect(page.getByText("No compatible model installed").first()).toBeVisible();
   await expect(page.locator('input[accept*="onnx"]')).toHaveCount(0);
+
+  await page.unroute(compatibilityRoute);
+  await page.route(compatibilityRoute, (route) => route.fulfill({ json: {
+    plugin_runtime_status: "installed",
+    available: [],
+    installed: [],
+    setup_blockers: [{
+      bundle_id: entry.bundle_id,
+      bundle_version: entry.bundle_version,
+      code: "plugin_version_incompatible",
+      message: "Installed Plugin 1.0.0 does not satisfy the model requirement =1.1.0. Install a compatible immutable Plugin runtime version before installing this Bundle.",
+    }],
+  } }));
+  await page.reload();
+  await expect(page.getByText("Runtime update required", { exact: true })).toBeVisible();
+  await expect(page.getByText("No verified bundle is available for this platform")).toHaveCount(0);
+  await page.getByRole("button", { name: "Review required update" }).first().click();
+  await expect(page.getByRole("dialog", { name: "SAM Prompted Segmentation" })).toContainText("Plugin runtime update required");
+  await expect(page.getByRole("dialog", { name: "SAM Prompted Segmentation" })).toContainText("Update required");
+  await expect(page.getByRole("dialog", { name: "SAM Prompted Segmentation" })).toContainText("1.1.0");
+  await expect(page.getByRole("radio")).toHaveCount(0);
 });

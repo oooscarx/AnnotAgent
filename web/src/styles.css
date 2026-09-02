@@ -919,6 +919,10 @@ main { min-width: 0; padding-bottom: 48px; }
 .model-setup-content { display: grid; gap: 14px; min-width: 0; padding: 18px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-lg); background: var(--aa-surface); }
 .model-setup-content > h4, .model-setup-content > p { margin: 0; }
 .model-setup-content > p { color: var(--aa-text-muted); line-height: 1.55; }
+.model-setup-blocker { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--aa-warning); border-left-width: 4px; border-radius: var(--aa-radius-md); background: var(--aa-warning-soft); }
+.model-setup-blocker-label { width: max-content; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--aa-warning) 55%, transparent); border-radius: 999px; background: var(--aa-surface); color: var(--aa-warning-text); font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.model-setup-blocker > p, .model-setup-blocker > small { margin: 0; color: var(--aa-warning-text); line-height: 1.5; overflow-wrap: anywhere; }
+.model-setup-blocker > small { font-size: 9px; }
 .compatible-model-list { display: grid; gap: 9px; }
 .compatible-model-list > label, .compatible-model-list.compact > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 11px; align-items: center; min-width: 0; padding: 13px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .compatible-model-list > label { cursor: pointer; }
@@ -947,6 +951,8 @@ main { min-width: 0; padding-bottom: 48px; }
 .model-setup-error span, .model-setup-error small { line-height: 1.45; overflow-wrap: anywhere; }
 .model-setup-wizard > footer { display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: center; padding: 16px clamp(20px, 3vw, 28px); border-top: 1px solid var(--aa-border); background: color-mix(in srgb, var(--aa-surface) 94%, var(--aa-primary-soft)); }
 .bundle-empty-state { display: grid; gap: 7px; margin-top: 11px; padding: 14px; border: 1px dashed var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.bundle-empty-state.warning { border-style: solid; border-color: var(--aa-warning); background: var(--aa-warning-soft); }
+.bundle-empty-state.warning p { color: var(--aa-warning-text); }
 .bundle-empty-state p { margin: 0; color: var(--aa-text-muted); font-size: 10px; line-height: 1.5; }
 .bundle-empty-state button { width: max-content; margin-top: 3px; }
 .installed-bundle-list { display: grid; gap: 9px; }

@@ -30,7 +30,7 @@ use crate::{
 pub const BUILTIN_FIXTURE_CATALOG_ID: &str = "org.annotagent.catalog.fixture";
 pub const PROMPTED_SEGMENTATION_FIXTURE_BUNDLE_ID: &str =
     "org.annotagent.models.fixture-prompted-segmentation";
-const FIXTURE_BUNDLE_VERSION: &str = "1.0.0";
+const FIXTURE_BUNDLE_VERSION: &str = "1.1.0";
 const FIXTURE_MODEL_ID: &str = "sam-vit-b-onnx";
 const FIXTURE_PLUGIN_MANIFEST: &str =
     include_str!("../../../plugins/sam-onnx/annotagent-plugin.toml");

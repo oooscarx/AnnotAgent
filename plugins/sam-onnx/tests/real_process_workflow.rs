@@ -122,7 +122,7 @@ async fn real_sam_process_runs_prompt_mask_bbox_geometry_workflow() {
     assert!(conformance.passed, "{:?}", conformance.checks);
 
     let backend = Arc::new(PluginPipelineBackend::new(
-        "org.annotagent.sam-onnx@1.0.0/sam-vit-b-onnx",
+        "org.annotagent.sam-onnx@1.1.0/sam-vit-b-onnx",
         VisionCapability::PromptedSegmentation,
         Arc::clone(&hosted),
     ));

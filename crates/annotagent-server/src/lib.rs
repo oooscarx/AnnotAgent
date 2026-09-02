@@ -52,13 +52,14 @@ use annotagent_model_bundle::{
 };
 use annotagent_model_catalog::{
     LicenseAcceptanceActor, ModelBundleCompatibilityResolver, ModelBundleInstallSource,
-    ModelCatalogClient, ModelLicenseAcceptance, evaluate_bundle_smoke_response,
+    ModelCatalogClient, ModelCatalogEntry, ModelLicenseAcceptance, evaluate_bundle_smoke_response,
     prepare_bundle_smoke_test,
 };
 use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
 use annotagent_plugin_host::verify_package;
 use annotagent_plugin_registry::{
-    InstallApproval, PluginRegistryError, plugin_model_selection_id, run_model_instance_smoke,
+    InstallApproval, PluginInstallation, PluginRegistryError, plugin_model_selection_id,
+    run_model_instance_smoke,
 };
 use annotagent_provider::{
     EnvironmentSecretStore, HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig,
@@ -6656,6 +6657,150 @@ async fn get_model_instance(
     Ok(Json(installed_model_instance_view(&instance)))
 }
 
+enum CatalogPluginSetupMatch {
+    Compatible,
+    Irrelevant,
+    Blocked { code: &'static str, message: String },
+}
+
+fn catalog_plugin_setup_match(
+    plugin: &PluginInstallation,
+    entry: &ModelCatalogEntry,
+) -> CatalogPluginSetupMatch {
+    let relevant = entry
+        .compatible_plugins
+        .iter()
+        .filter(|requirement| requirement.plugin_id == plugin.manifest.id)
+        .collect::<Vec<_>>();
+    if relevant.is_empty() {
+        return CatalogPluginSetupMatch::Irrelevant;
+    }
+    let version_matches = relevant
+        .iter()
+        .copied()
+        .filter(|requirement| {
+            requirement.accepts(
+                &plugin.manifest.id,
+                &plugin.manifest.version,
+                &requirement.model_id,
+            )
+        })
+        .collect::<Vec<_>>();
+    if version_matches.is_empty() {
+        let required = relevant
+            .iter()
+            .map(|requirement| requirement.plugin_version.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return CatalogPluginSetupMatch::Blocked {
+            code: "plugin_version_incompatible",
+            message: format!(
+                "Installed Plugin {} does not satisfy the model requirement {required}. Install a compatible immutable Plugin runtime version before installing this Bundle.",
+                plugin.manifest.version
+            ),
+        };
+    }
+    if matches!(
+        plugin.runtime_status(),
+        annotagent_plugin_api::PluginRuntimeStatus::NotInstalled
+            | annotagent_plugin_api::PluginRuntimeStatus::Disabled
+            | annotagent_plugin_api::PluginRuntimeStatus::Crashed
+            | annotagent_plugin_api::PluginRuntimeStatus::Incompatible
+    ) {
+        return CatalogPluginSetupMatch::Blocked {
+            code: "plugin_runtime_unavailable",
+            message: "The matching Plugin runtime is not enabled and available.".to_owned(),
+        };
+    }
+    let target = annotagent_plugin_host::current_target();
+    let mut first_blocker = None;
+    for requirement in version_matches {
+        let Some(model) = plugin
+            .manifest
+            .models
+            .iter()
+            .find(|model| model.id == requirement.model_id)
+        else {
+            first_blocker.get_or_insert((
+                "plugin_model_missing",
+                format!(
+                    "Plugin {} does not declare the required model {}.",
+                    plugin.manifest.version, requirement.model_id
+                ),
+            ));
+            continue;
+        };
+        let plugin_roles = model
+            .required_file_roles
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let bundle_roles = requirement
+            .required_file_roles
+            .iter()
+            .map(ModelFileRole::as_str)
+            .collect::<BTreeSet<_>>();
+        if plugin_roles != bundle_roles {
+            first_blocker.get_or_insert((
+                "plugin_file_roles_incompatible",
+                "The installed Plugin package uses an older model-file role contract. Install a newer immutable Plugin runtime version.".to_owned(),
+            ));
+            continue;
+        }
+        let contract_hash = Sha256Digest::of_bytes(
+            &serde_json::to_vec(model).expect("validated Plugin model always serializes"),
+        );
+        if contract_hash.as_str() != requirement.contract_hash.as_str() {
+            first_blocker.get_or_insert((
+                "plugin_contract_incompatible",
+                "The installed Plugin package has a different model Contract. Install the exact compatible Plugin runtime version.".to_owned(),
+            ));
+            continue;
+        }
+        if !entry
+            .capabilities
+            .iter()
+            .all(|capability| model.capabilities.contains(capability))
+        {
+            first_blocker.get_or_insert((
+                "plugin_capability_incompatible",
+                "The installed Plugin model does not declare every capability required by this Bundle.".to_owned(),
+            ));
+            continue;
+        }
+        let Some(platform) = entry
+            .platform_requirements
+            .iter()
+            .find(|platform| platform.target == target)
+        else {
+            first_blocker.get_or_insert((
+                "platform_incompatible",
+                format!("This Bundle does not support the current platform {target}."),
+            ));
+            continue;
+        };
+        if !platform.execution_providers.iter().any(|provider| {
+            model
+                .runtime_requirements
+                .devices
+                .iter()
+                .any(|device| device == provider)
+        }) {
+            first_blocker.get_or_insert((
+                "execution_provider_incompatible",
+                "The Plugin and Bundle have no common execution provider.".to_owned(),
+            ));
+            continue;
+        }
+        return CatalogPluginSetupMatch::Compatible;
+    }
+    let (code, message) = first_blocker.unwrap_or((
+        "plugin_contract_incompatible",
+        "The installed Plugin package cannot bind this Model Bundle.".to_owned(),
+    ));
+    CatalogPluginSetupMatch::Blocked { code, message }
+}
+
 async fn list_plugin_compatible_model_bundles(
     State(state): State<ServerState>,
     AxumPath((plugin_id, version)): AxumPath<(String, String)>,
@@ -6673,34 +6818,32 @@ async fn list_plugin_compatible_model_bundles(
     let registry = registry
         .lock()
         .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
-    let compatible_plugin_id = plugin.manifest.id.clone();
-    let compatible_plugin_version = plugin.manifest.version.clone();
-    let available = registry
-        .catalogs()
-        .into_iter()
-        .flat_map(|catalog| {
-            let catalog_id = catalog.catalog_id;
-            let plugin_id = compatible_plugin_id.clone();
-            let plugin_version = compatible_plugin_version.clone();
-            catalog.entries.into_iter().filter_map(move |entry| {
-                entry
-                    .compatible_plugins
-                    .iter()
-                    .any(|requirement| {
-                        requirement.accepts(&plugin_id, &plugin_version, &requirement.model_id)
-                    })
-                    .then(|| {
-                        let mut value =
-                            serde_json::to_value(entry).expect("Catalog entries always serialize");
-                        value
-                            .as_object_mut()
-                            .expect("Catalog entries serialize as objects")
-                            .insert("catalog_id".to_owned(), json!(catalog_id));
-                        value
-                    })
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut available = Vec::new();
+    let mut setup_blockers = Vec::new();
+    for catalog in registry.catalogs() {
+        for entry in catalog.entries {
+            match catalog_plugin_setup_match(&plugin, &entry) {
+                CatalogPluginSetupMatch::Compatible => {
+                    let mut value =
+                        serde_json::to_value(entry).expect("Catalog entries always serialize");
+                    value
+                        .as_object_mut()
+                        .expect("Catalog entries serialize as objects")
+                        .insert("catalog_id".to_owned(), json!(catalog.catalog_id));
+                    available.push(value);
+                }
+                CatalogPluginSetupMatch::Blocked { code, message } => {
+                    setup_blockers.push(json!({
+                        "bundle_id": entry.bundle_id,
+                        "bundle_version": entry.bundle_version,
+                        "code": code,
+                        "message": message,
+                    }));
+                }
+                CatalogPluginSetupMatch::Irrelevant => {}
+            }
+        }
+    }
     let installed = registry
         .list()
         .into_iter()
@@ -6710,10 +6853,22 @@ async fn list_plugin_compatible_model_bundles(
                 .compatible_plugins
                 .iter()
                 .any(|requirement| {
-                    requirement.accepts(
-                        &plugin.manifest.id,
-                        &plugin.manifest.version,
-                        &requirement.model_id,
+                    matches!(
+                        ModelBundleCompatibilityResolver::resolve(
+                            Some(&plugin.manifest),
+                            plugin.runtime_status(),
+                            &bundle.manifest,
+                            &requirement.model_id,
+                            &annotagent_plugin_host::current_target(),
+                            bundle
+                                .manifest
+                                .runtime
+                                .execution_providers
+                                .first()
+                                .map_or("cpu", String::as_str),
+                            true,
+                        ),
+                        annotagent_model_catalog::ModelBundleCompatibility::Compatible { .. }
                     )
                 })
         })
@@ -6723,6 +6878,7 @@ async fn list_plugin_compatible_model_bundles(
         "plugin_runtime_status": plugin.runtime_status(),
         "available": available,
         "installed": installed,
+        "setup_blockers": setup_blockers,
     })))
 }
 
@@ -8434,6 +8590,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compatible_bundle_list_blocks_a_persisted_legacy_plugin_before_installation() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        let entry = application
+            .model_bundle_registry()
+            .lock()
+            .expect("registry")
+            .catalogs()[0]
+            .entries[0]
+            .clone();
+        let mut manifest = annotagent_plugin_api::PluginManifest::from_toml(include_str!(
+            "../../../plugins/sam-onnx/annotagent-plugin.toml"
+        ))
+        .expect("current manifest");
+        manifest.version = PluginVersion::parse("1.0.0").expect("legacy version");
+        manifest.models[0].required_file_roles.clear();
+        let legacy = PluginInstallation {
+            manifest,
+            package_digest: Sha256Digest::of_bytes(b"persisted legacy package"),
+            signature: "unsigned".to_owned(),
+            status: annotagent_plugin_api::PluginStatus::NeedsWeights,
+            enabled: true,
+            installation_root: temp.path().join("legacy-plugin"),
+            installed_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_test: None,
+        };
+        match catalog_plugin_setup_match(&legacy, &entry) {
+            CatalogPluginSetupMatch::Blocked { code, message } => {
+                assert_eq!(code, "plugin_version_incompatible");
+                assert!(message.contains("1.1.0"));
+            }
+            CatalogPluginSetupMatch::Compatible | CatalogPluginSetupMatch::Irrelevant => {
+                panic!("persisted legacy Plugin must be blocked before Bundle installation")
+            }
+        }
+    }
+
     #[tokio::test]
     async fn legacy_model_files_are_untrusted_and_preserved_during_local_bundle_migration() {
         let temp = tempfile::tempdir().expect("temp");
@@ -8459,7 +8654,7 @@ mod tests {
                 &service,
                 axum::http::Method::POST,
                 &format!(
-                    "/api/plugins/org.annotagent.sam-onnx/1.0.0/weights?filename={filename}&model_id=sam-vit-b-onnx&component_id={component}"
+                    "/api/plugins/org.annotagent.sam-onnx/1.1.0/weights?filename={filename}&model_id=sam-vit-b-onnx&component_id={component}"
                 ),
                 format!("untrusted legacy {component}").into_bytes(),
             )
@@ -8525,7 +8720,7 @@ mod tests {
         let (status, rejected) = call_json(
             &service,
             axum::http::Method::POST,
-            "/api/plugins/org.annotagent.sam-onnx/1.0.0/legacy-model-bundle",
+            "/api/plugins/org.annotagent.sam-onnx/1.1.0/legacy-model-bundle",
             request.clone(),
         )
         .await;
@@ -8536,7 +8731,7 @@ mod tests {
         let (status, migrated) = call_json(
             &service,
             axum::http::Method::POST,
-            "/api/plugins/org.annotagent.sam-onnx/1.0.0/legacy-model-bundle",
+            "/api/plugins/org.annotagent.sam-onnx/1.1.0/legacy-model-bundle",
             accepted,
         )
         .await;
