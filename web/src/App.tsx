@@ -5142,6 +5142,9 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const [setupStep, setSetupStep] = useState(0);
   const [setupLicenseAccepted, setSetupLicenseAccepted] = useState(false);
   const [setupError, setSetupError] = useState("");
+  const setupDialogRef = useRef<HTMLElement>(null);
+  const setupCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const setupReturnFocusRef = useRef<HTMLElement | null>(null);
   const [legacySetup, setLegacySetup] = useState<{ pluginIdentity: string; modelId: string }>();
   const [legacyError, setLegacyError] = useState("");
   const [legacyDraft, setLegacyDraft] = useState({
@@ -5264,13 +5267,52 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const setupEntry = setupInventory?.available.find((entry) => catalogBundleIdentity(entry) === setupEntryIdentity);
   const legacyInstallation = registry?.installations.find((installation) => pluginIdentity(installation) === legacySetup?.pluginIdentity);
 
+  useEffect(() => {
+    if (!setupPluginIdentity) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => setupCloseButtonRef.current?.focus());
+    const handleKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSetupPluginIdentity("");
+        return;
+      }
+      if (event.key !== "Tab" || !setupDialogRef.current) return;
+      const focusable = Array.from(setupDialogRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hidden);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyboard);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", handleKeyboard);
+      document.body.style.overflow = previousOverflow;
+      const returnTarget = setupReturnFocusRef.current;
+      window.requestAnimationFrame(() => returnTarget?.focus());
+    };
+  }, [setupPluginIdentity]);
+
   const openModelSetup = (installation: ExpertPluginInstallation, entry?: ModelCatalogEntry) => {
+    setupReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSetupPluginIdentity(pluginIdentity(installation));
     setSetupEntryIdentity(entry ? catalogBundleIdentity(entry) : "");
     setSetupStep(0);
     setSetupLicenseAccepted(false);
     setSetupError("");
   };
+
+  const closeModelSetup = () => setSetupPluginIdentity("");
 
   const installSelectedBundle = async () => {
     if (!setupInstallation || !setupEntry?.catalog_id) return;
@@ -5472,19 +5514,23 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       </div>
     </details>
 
-    {setupInstallation && <section className="model-setup-wizard" aria-label="Install compatible model">
-      <header><div><span className="eyebrow">Model Setup</span><h3>{setupInstallation.manifest.display_name}</h3><p>Only a verified Bundle that passes the exact Rust Plugin smoke test becomes selectable.</p></div><button className="icon-button" aria-label="Close model setup" onClick={() => setSetupPluginIdentity("")}>×</button></header>
-      <ol className="model-setup-progress" aria-label="Model installation progress">
-        {MODEL_SETUP_STEPS.map((step, index) => <li className={index < setupStep ? "complete" : index === setupStep ? "current" : ""} key={step}><span>{index < setupStep ? "✓" : index + 1}</span><small>{step}</small></li>)}
-      </ol>
-      {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">Select model</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : <Empty title="No verified bundle is available for this platform" detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
-      {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>{setupEntry.fixture ? "Package size" : "Download"}</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Delivery</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div></dl></div>}
-      {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review license</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">Read license source</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>I accept this exact model license and digest.</span></label>}</div></div>}
-      {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>File roles</strong><small>{setupEntry.compatible_plugins.flatMap((item) => item.required_file_roles).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Rust runtime</strong><small>{setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
-      {setupStep >= 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><h4>{setupStep === 4 ? (setupEntry?.fixture ? "Loading pinned offline Fixture" : "Downloading pinned Bundle") : setupStep === 5 ? "Files and ONNX Contract verified" : setupStep === 6 ? "Starting Rust Plugin and running sample inference" : setupEntry?.fixture ? "Fixture Model Instance Ready" : "Model Instance Ready"}</h4><p>{setupStep === 4 ? (setupEntry?.fixture ? "The built-in package is read from AnnotAgent's deterministic local Catalog and checked against its fixed SHA-256 identity." : "The HTTPS downloader enforces the Catalog size and SHA-256 identity before any archive content is trusted.") : setupStep === 5 ? "The installed verification report confirms the Manifest and every declared checksum." : setupStep === 6 ? "The exact installed Plugin and model files are running the Bundle's fixed test vector." : setupEntry?.fixture ? "This proves the provisioning and inference contracts offline. It is not SAM, accuracy evidence, or eligible for a publishable Workflow." : "The immutable Model Profile can now be selected by a Workflow Draft."}</p></div>}
-      {setupError && <div className="model-setup-error" role="alert"><strong>Setup stopped at {MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupError}</span><small>No Ready Model Profile was created. The existing Plugin, Model Bundles, and legacy files were left intact.</small></div>}
-      <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Installing verified model…" : "Install verified model"}</button>}{setupStep === 7 && <button className="primary" onClick={() => setSetupPluginIdentity("")}>Done</button>}{setupError && setupStep >= 4 && <button className="primary" onClick={() => setSetupStep(3)}>Review and retry</button>}</footer>
-    </section>}
+    {setupInstallation && <div className="modal-backdrop model-setup-backdrop">
+      <section ref={setupDialogRef} className="model-setup-wizard" role="dialog" aria-modal="true" aria-labelledby="model-setup-title" aria-describedby="model-setup-description">
+        <header><div><span className="eyebrow">Model Setup</span><h3 id="model-setup-title">{setupInstallation.manifest.display_name}</h3><p id="model-setup-description">Only a verified Bundle that passes the exact Rust Plugin smoke test becomes selectable.</p></div><button ref={setupCloseButtonRef} type="button" className="icon-button" aria-label="Close model setup" onClick={closeModelSetup}>×</button></header>
+        <div className="model-setup-scroll">
+          <ol className="model-setup-progress" aria-label="Model installation progress">
+            {MODEL_SETUP_STEPS.map((step, index) => <li className={index < setupStep ? "complete" : index === setupStep ? "current" : ""} key={step}><span>{index < setupStep ? "✓" : index + 1}</span><small>{step}</small></li>)}
+          </ol>
+          {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">Select model</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : <Empty title="No verified bundle is available for this platform" detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
+          {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>{setupEntry.fixture ? "Package size" : "Download"}</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Delivery</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div></dl></div>}
+          {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review license</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">Read license source</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>I accept this exact model license and digest.</span></label>}</div></div>}
+          {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>File roles</strong><small>{setupEntry.compatible_plugins.flatMap((item) => item.required_file_roles).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Rust runtime</strong><small>{setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
+          {setupStep >= 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><h4>{setupStep === 4 ? (setupEntry?.fixture ? "Loading pinned offline Fixture" : "Downloading pinned Bundle") : setupStep === 5 ? "Files and ONNX Contract verified" : setupStep === 6 ? "Starting Rust Plugin and running sample inference" : setupEntry?.fixture ? "Fixture Model Instance Ready" : "Model Instance Ready"}</h4><p>{setupStep === 4 ? (setupEntry?.fixture ? "The built-in package is read from AnnotAgent's deterministic local Catalog and checked against its fixed SHA-256 identity." : "The HTTPS downloader enforces the Catalog size and SHA-256 identity before any archive content is trusted.") : setupStep === 5 ? "The installed verification report confirms the Manifest and every declared checksum." : setupStep === 6 ? "The exact installed Plugin and model files are running the Bundle's fixed test vector." : setupEntry?.fixture ? "This proves the provisioning and inference contracts offline. It is not SAM, accuracy evidence, or eligible for a publishable Workflow." : "The immutable Model Profile can now be selected by a Workflow Draft."}</p></div>}
+          {setupError && <div className="model-setup-error" role="alert"><strong>Setup stopped at {MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupError}</span><small>No Ready Model Profile was created. The existing Plugin, Model Bundles, and legacy files were left intact.</small></div>}
+        </div>
+        <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Installing verified model…" : "Install verified model"}</button>}{setupStep === 7 && <button className="primary" onClick={closeModelSetup}>Done</button>}{setupError && setupStep >= 4 && <button className="primary" onClick={() => setSetupStep(3)}>Review and retry</button>}</footer>
+      </section>
+    </div>}
 
     {legacyInstallation && legacySetup && <section className="legacy-bundle-creator" aria-label="Create local model bundle">
       <header><div><span className="eyebrow">Legacy migration</span><h3>Create local model bundle</h3><p>AnnotAgent copies the existing files into a data-only Bundle, verifies every hash and ONNX tensor Contract, then runs the exact Rust Plugin smoke test. The originals are never deleted.</p></div><button className="icon-button" aria-label="Close local bundle creator" onClick={() => setLegacySetup(undefined)}>×</button></header>

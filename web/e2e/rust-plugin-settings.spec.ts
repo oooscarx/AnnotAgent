@@ -70,7 +70,19 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 
   await page.getByRole("button", { name: "Install compatible model" }).first().click();
-  await expect(page.getByLabel("Install compatible model")).toBeVisible();
+  const setupDialog = page.getByRole("dialog", { name: "SAM Prompted Segmentation" });
+  await expect(setupDialog).toBeVisible();
+  await expect(page.locator(".model-setup-backdrop")).toHaveCSS("position", "fixed");
+  await expect(setupDialog.getByRole("button", { name: "Close model setup" })).toBeFocused();
+  const desktopDialogBox = await setupDialog.boundingBox();
+  expect(desktopDialogBox).not.toBeNull();
+  expect(desktopDialogBox!.y).toBeGreaterThanOrEqual(0);
+  expect(desktopDialogBox!.y + desktopDialogBox!.height).toBeLessThanOrEqual(900);
+  await page.keyboard.press("Escape");
+  await expect(setupDialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Install compatible model" }).first()).toBeFocused();
+  await page.getByRole("button", { name: "Install compatible model" }).first().click();
+  await expect(setupDialog).toBeVisible();
   await expect(page.getByLabel("Model installation progress")).toContainText("Review license");
   await page.getByRole("radio").check();
   await page.getByRole("button", { name: "Continue" }).click();
@@ -82,7 +94,12 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-  await expect(page.getByLabel("Install compatible model")).toBeVisible();
+  await expect(setupDialog).toBeVisible();
+  expect(await setupDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+  const mobileDialogBox = await setupDialog.boundingBox();
+  expect(mobileDialogBox).not.toBeNull();
+  expect(mobileDialogBox!.y).toBeGreaterThanOrEqual(0);
+  expect(mobileDialogBox!.y + mobileDialogBox!.height).toBeLessThanOrEqual(844);
   await page.reload();
   await expect(page.getByText("No compatible model installed").first()).toBeVisible();
   await expect(page.locator('input[accept*="onnx"]')).toHaveCount(0);
