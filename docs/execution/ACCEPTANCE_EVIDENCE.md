@@ -1,5 +1,24 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin M5 — 2026-09-02
+
+1. org.annotagent.yolo-onnx parses and validates an exact ObjectDetection manifest whose output is
+   DetectionSet only. Unit tests prove 416 BGR/NCHW preprocessing, YOLOX stride decode, composed
+   score, class-aware NMS and rejection of an incompatible 84-column export.
+2. The official YOLOX Nano release asset was fetched only into a temporary developer directory:
+   3,659,407 bytes, SHA-256 c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d.
+   It is absent from Git and the package.
+3. The explicit real-model test starts the standalone binary through Plugin Host, validates token,
+   handshake, health, discovery and conformance, executes native CPU ONNX inference on the official
+   sample image, then executes generic Object Detection Skill → Core Filter. PASS in 1.41 seconds.
+4. A deterministic .annotplugin package verifies. A temporary unapproved install is rejected; the
+   explicit test approval path produces one exact NeedsWeights/MissingWeights Model Profile with
+   package digest, plugin/version, ObjectDetection capability and no fabricated checkpoint.
+5. Regular plugin/SDK/Host tests and strict all-target/all-feature Clippy pass. The billable
+   Provider smoke and externally supplied real-model test remain separately opt-in in ordinary
+   workspace tests. Full workspace/all-feature result: 351 passed, 2 ignored. No secret or remote
+   mutation was used.
+
 ## Rust Expert Model Plugin M4 — 2026-09-02
 
 1. annotagent-model-runtime-common tests cover reversible letterbox geometry, deterministic

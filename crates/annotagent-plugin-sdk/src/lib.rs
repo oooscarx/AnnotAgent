@@ -141,8 +141,23 @@ pub struct InferenceContext {
     pub cancellation: CancellationToken,
 }
 
+/// Least-privilege process directories made available once before the server reports ready.
+///
+/// Session credentials and host application paths are intentionally excluded.
+#[derive(Debug, Clone)]
+pub struct PluginRuntimeContext {
+    pub state_dir: PathBuf,
+    pub weights_dir: PathBuf,
+    pub cache_dir: PathBuf,
+    pub temporary_dir: PathBuf,
+}
+
 #[async_trait]
 pub trait ExpertModelPlugin: Send + Sync + 'static {
+    async fn setup(&self, _context: PluginRuntimeContext) -> Result<(), PluginSdkError> {
+        Ok(())
+    }
+
     fn descriptor(&self) -> PluginRuntimeDescriptor;
 
     fn models(&self) -> Vec<ModelRuntimeDescriptor>;
@@ -193,6 +208,14 @@ impl PluginServer {
     ) -> Result<RunningPluginServer, PluginSdkError> {
         config.validate()?;
         create_private_directories(&config).await?;
+        plugin
+            .setup(PluginRuntimeContext {
+                state_dir: config.state_dir.clone(),
+                weights_dir: config.weights_dir.clone(),
+                cache_dir: config.cache_dir.clone(),
+                temporary_dir: config.temporary_dir.clone(),
+            })
+            .await?;
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), config.listen_port);
         let listener = TcpListener::bind(address).await?;
         let address = listener.local_addr()?;

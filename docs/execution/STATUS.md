@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-02 CST
 
+## Rust Expert Model Plugin M5 — 2026-09-02
+
+- Added the official Rust YOLOX Nano ONNX process plugin with exact model/weight identity,
+  deterministic package metadata, real score decoding, original-image bbox projection,
+  class-aware NMS and typed DetectionSet output.
+- The actual 3.66 MB official ONNX checkpoint executed successfully in an isolated authenticated
+  process. Its output passed through the generic Object Detection Skill and Core Filter; no fixture
+  output, Crop or Commit shortcut was used.
+- Registry projection is MissingWeights/NeedsWeights until explicit terms confirmation,
+  provisioning and smoke evidence. Unapproved installation is rejected, and neither the checkpoint
+  nor sample image is committed.
+- Focused tests, real opt-in process E2E and strict Clippy pass. No credential, push or remote
+  mutation occurred.
+
 ## Rust Expert Model Plugin M4 — 2026-09-02
 
 - Added model-neutral Rust image/tensor/geometry helpers and a native ONNX Runtime session layer

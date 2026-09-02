@@ -1,0 +1,68 @@
+schema_version = "1"
+id = "org.annotagent.yolo-onnx"
+version = "1.0.0"
+display_name = "YOLOX Nano ONNX"
+description = "Rust-native closed-set object detector using a versioned YOLOX Nano ONNX contract"
+publisher = "AnnotAgent"
+plugin_api = "1"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-yolo-onnx"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 30
+shutdown_timeout_seconds = 10
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
+accelerators = ["cpu"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 512
+recommended_memory_mb = 1024
+minimum_vram_mb = 0
+recommended_vram_mb = 0
+maximum_response_mb = 32
+maximum_concurrency = 1
+maximum_requests_per_process = 10000
+
+[[models]]
+id = "yolox-nano-coco-onnx"
+display_name = "YOLOX Nano COCO ONNX"
+capabilities = ["object_detection"]
+input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
+output_contracts = [{ name = "detections", data_type = { artifact = "detection_set" }, required = true, multiple = false }]
+score_semantics = "detection_confidence"
+geometry_semantics = "predicted_geometry"
+
+[models.runtime_requirements]
+devices = ["cpu"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = true
+provisioning = "local_path_or_fixed_recipe"
+checkpoint_sha256_required = true
+
+[[weight_recipes]]
+id = "official-yolox-nano-0.1.1rc0"
+url = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx"
+sha256 = "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d"
+license_url = "https://github.com/Megvii-BaseDetection/YOLOX/blob/main/LICENSE"
+filename = "yolox_nano.onnx"
+maximum_bytes = 8388608
+
+[license]
+code = "MIT"
+weights = "upstream_terms_user_confirmation_required"
+commercial_use = "unknown"

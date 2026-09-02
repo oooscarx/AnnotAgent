@@ -33,3 +33,10 @@ Common image/geometry operations and native ONNX session mechanics are reusable 
 selection, model-family preprocessing/postprocessing, class semantics and Artifact construction
 remain in each plugin. Explicit accelerators fail setup if unavailable; the Registry must not
 describe an unverified CPU fallback as CUDA or TensorRT.
+
+## D007 — YOLO is a family, not one implicit tensor shape
+
+The first official detector declares the exact YOLOX Nano 416×416 COCO-80 input, output and
+postprocessing contract. Another YOLO export is rejected unless a distinct model contract and
+version describe its preprocessing, heads, label space and score semantics. Core still sees only
+ObjectDetection and DetectionSet.

@@ -5,10 +5,13 @@ use std::{
     time::Duration,
 };
 
-use annotagent_core::{PipelineInferenceRequest, PipelineInferenceResponse};
+use annotagent_core::{
+    CoreError, CoreResult, PipelineInferenceRequest, PipelineInferenceResponse,
+    PipelineModelBackend, VisionCapability,
+};
 use annotagent_plugin_api::{
-    PluginHealth, PluginManifest, PluginReadyHandshake, PluginStatus, PluginTestReport,
-    ShutdownRequest,
+    CancelRequest, CancelResponse, PluginHealth, PluginManifest, PluginReadyHandshake,
+    PluginStatus, PluginTestReport, ShutdownRequest,
 };
 use annotagent_plugin_sdk::{PluginStartupConfig, run_conformance};
 use reqwest::Url;
@@ -19,6 +22,7 @@ use tokio::{
     sync::Mutex,
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 const MAX_HANDSHAKE_BYTES: usize = 16 * 1024;
 const MAX_LOG_BYTES: usize = 64 * 1024;
@@ -210,6 +214,25 @@ impl HostedPlugin {
             .await?)
     }
 
+    pub async fn cancel_request(
+        &self,
+        request_id: &str,
+    ) -> Result<CancelResponse, PluginHostError> {
+        self.ensure_running().await?;
+        Ok(self
+            .client
+            .post(self.base_url.join("v1/cancel").expect("static endpoint"))
+            .bearer_auth(&self.session_token)
+            .json(&CancelRequest {
+                request_id: request_id.to_owned(),
+            })
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
     pub async fn test(
         &self,
         sample: Option<&PipelineInferenceRequest>,
@@ -263,6 +286,56 @@ impl HostedPlugin {
             Err(PluginHostError::Crashed)
         } else {
             Ok(())
+        }
+    }
+}
+
+/// Core-facing adapter for one already hosted, exact plugin model.
+pub struct PluginPipelineBackend {
+    id: String,
+    capability: VisionCapability,
+    plugin: Arc<HostedPlugin>,
+}
+
+impl PluginPipelineBackend {
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        capability: VisionCapability,
+        plugin: Arc<HostedPlugin>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            capability,
+            plugin,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PipelineModelBackend for PluginPipelineBackend {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn capability(&self) -> VisionCapability {
+        self.capability
+    }
+
+    async fn infer_pipeline(
+        &self,
+        request: PipelineInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<PipelineInferenceResponse> {
+        let request_id = request.request_id.clone();
+        tokio::select! {
+            result = self.plugin.infer(&request) => {
+                result.map_err(|error| CoreError::Provider(error.to_string()))
+            }
+            () = cancellation.cancelled() => {
+                let _ = self.plugin.cancel_request(&request_id).await;
+                Err(CoreError::Provider("plugin inference cancelled".to_owned()))
+            }
         }
     }
 }

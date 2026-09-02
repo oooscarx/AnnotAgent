@@ -23,6 +23,7 @@ members = [
     "crates/annotagent-skill-yolo",
     "crates/annotagent-storage",
     "plugins/dummy-detector",
+    "plugins/yolo-onnx",
 ]
 resolver = "2"
 

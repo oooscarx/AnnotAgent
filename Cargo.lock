@@ -226,6 +226,7 @@ dependencies = [
  "annotagent-core",
  "annotagent-plugin-api",
  "annotagent-plugin-sdk",
+ "async-trait",
  "reqwest",
  "serde",
  "serde_json",
@@ -233,6 +234,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "uuid",
  "walkdir",
  "zip",
@@ -275,6 +277,29 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "annotagent-plugin-yolo-onnx"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-model-runtime-common",
+ "annotagent-model-runtime-onnx",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
+ "annotagent-plugin-sdk",
+ "annotagent-runtime",
+ "annotagent-skill-object-detection",
+ "async-trait",
+ "base64 0.22.1",
+ "image",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

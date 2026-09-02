@@ -74,3 +74,23 @@ Milestone evidence will be appended after the corresponding tests pass.
 - Strict all-target/all-feature Clippy for both packages: PASS.
 - The fixture contains no learned weight and is not claimed as an expert model. The first real
   expert-model release gate remains M5.
+
+## M5 YOLO Rust Plugin — 2026-09-02
+
+- Added org.annotagent.yolo-onnx as a standalone Rust process with an exact YOLOX Nano 416×416
+  COCO-80 contract, CPU ONNX session, BGR NCHW preprocessing, grid/stride decode, true composed
+  detection score, original-image projection, class-aware NMS, mapping and typed DetectionSet.
+- Added a Core-facing PluginPipelineBackend. Cancellation is forwarded to the authenticated plugin
+  cancel endpoint and Provider failures remain structured.
+- The deterministic package verifies. Installation without explicit terms approval is rejected.
+  An approved temporary test installation projects an exact MissingWeights Model Profile and
+  NeedsWeights status with plugin/package/capability identity.
+- Fixed recipe identity: official YOLOX Nano release asset, 3,659,407 bytes, SHA-256
+  c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d. The file is not committed.
+- Explicit real-model test: PASS — isolated Host process, token/handshake/discovery/conformance,
+  native ONNX image inference, Object Detection Skill and Core Filter in 1.41 seconds.
+- Regular plugin/SDK/Host tests and strict all-target/all-feature Clippy: PASS. The real test stays
+  opt-in because it requires explicitly supplied external weights and image paths.
+- Full workspace/all-feature tests: PASS — 351 tests; the billable Provider smoke and externally
+  supplied real-model test are the 2 explicit ignored cases in the ordinary run.
+- The package produces only DetectionSet and has no Crop or Commit behavior.
