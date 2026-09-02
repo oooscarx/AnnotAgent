@@ -5127,6 +5127,49 @@ function catalogBundleIdentity(bundle: ModelCatalogEntry) {
   return `${bundle.bundle_id}@${bundle.bundle_version}`;
 }
 
+function FilePicker({
+  id,
+  label,
+  accept,
+  file,
+  chooseLabel,
+  emptyLabel,
+  onSelect,
+}: {
+  id: string;
+  label: string;
+  accept: string;
+  file?: File;
+  chooseLabel: string;
+  emptyLabel: string;
+  onSelect: (file?: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const statusId = `${id}-selection`;
+  const inputKey = file ? `${file.name}:${file.size}:${file.lastModified}` : "empty";
+  return <div className="file-picker-control">
+    <input
+      key={inputKey}
+      ref={inputRef}
+      id={id}
+      className="file-picker-native"
+      type="file"
+      accept={accept}
+      aria-label={label}
+      aria-describedby={statusId}
+      onChange={(event) => onSelect(event.target.files?.[0])}
+    />
+    <button type="button" className="file-picker-button" onClick={() => inputRef.current?.click()} aria-describedby={statusId}>
+      <span aria-hidden="true">↑</span>
+      {chooseLabel}
+    </button>
+    <span id={statusId} className={`file-picker-selection${file ? " selected" : ""}`} role="status" title={file?.name}>
+      <i aria-hidden="true">{file ? "✓" : "·"}</i>
+      <span>{file?.name ?? emptyLabel}</span>
+    </span>
+  </div>;
+}
+
 function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void }) {
   const [registry, setRegistry] = useState<ExpertPluginRegistry>();
   const [bundleInventory, setBundleInventory] = useState<Record<string, PluginBundleInventory>>({});
@@ -5152,6 +5195,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const setupCloseButtonRef = useRef<HTMLButtonElement>(null);
   const setupReturnFocusRef = useRef<HTMLElement | null>(null);
   const [legacySetup, setLegacySetup] = useState<{ pluginIdentity: string; modelId: string }>();
+  const [legacyContractFile, setLegacyContractFile] = useState<File>();
   const [legacyError, setLegacyError] = useState("");
   const [legacyDraft, setLegacyDraft] = useState({
     bundle_version: "1.0.0",
@@ -5362,6 +5406,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const openLegacyBundleSetup = (installation: ExpertPluginInstallation, modelId: string) => {
     const model = installation.manifest.models.find((item) => item.id === modelId);
     setLegacySetup({ pluginIdentity: pluginIdentity(installation), modelId });
+    setLegacyContractFile(undefined);
     setLegacyError("");
     setLegacyDraft((current) => ({
       ...current,
@@ -5472,7 +5517,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         </ol>
         <div className="plugin-package-picker">
           <label htmlFor="expert-plugin-package">Plugin package</label>
-          <input id="expert-plugin-package" type="file" accept=".annotplugin" onChange={(event) => { setPackageFile(event.target.files?.[0]); setVerified(undefined); setMessage(""); }} />
+          <FilePicker id="expert-plugin-package" label="Plugin package" accept=".annotplugin" file={packageFile} chooseLabel="Choose plugin package" emptyLabel="No .annotplugin selected" onSelect={(file) => { setPackageFile(file); setVerified(undefined); setMessage(""); }} />
           <button onClick={inspectPackage} disabled={!packageFile || Boolean(busy)}>{busy === "inspect" ? "Verifying…" : "Verify package"}</button>
         </div>
         {verified && <div className="plugin-review-grid">
@@ -5511,7 +5556,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       <div className="plugin-install-body">
         <div className="plugin-package-picker">
           <label htmlFor="expert-model-bundle">Model Bundle</label>
-          <input id="expert-model-bundle" type="file" accept=".annotmodel" onChange={(event) => { setBundleFile(event.target.files?.[0]); setVerifiedBundle(undefined); setMessage(""); }} />
+          <FilePicker id="expert-model-bundle" label="Model Bundle" accept=".annotmodel" file={bundleFile} chooseLabel="Choose model bundle" emptyLabel="No .annotmodel selected" onSelect={(file) => { setBundleFile(file); setVerifiedBundle(undefined); setMessage(""); }} />
           <button onClick={inspectBundle} disabled={!bundleFile || Boolean(busy)}>{busy === "inspect-bundle" ? "Verifying…" : "Verify Bundle"}</button>
         </div>
         {verifiedBundle && <div className="bundle-import-review">
@@ -5546,7 +5591,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         <fieldset><legend>Upstream source</legend><label>Upstream project<input value={legacyDraft.upstream_project} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_project: event.target.value }))} placeholder="Project or organization" /></label><label>Upstream model ID<input value={legacyDraft.upstream_model_id} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_model_id: event.target.value }))} /></label><label>Upstream version<input value={legacyDraft.upstream_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_version: event.target.value }))} /></label><label>Source URL<input type="url" value={legacyDraft.source_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, source_url: event.target.value }))} placeholder="https://…" /></label></fieldset>
         <fieldset><legend>Export provenance</legend><label>Exporter name<input value={legacyDraft.exporter_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_name: event.target.value }))} /></label><label>Exporter version<input value={legacyDraft.exporter_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_version: event.target.value }))} /></label><label>ONNX opset<input type="number" min="1" max="21" value={legacyDraft.opset} onChange={(event) => setLegacyDraft((current) => ({ ...current, opset: event.target.value }))} /></label></fieldset>
         <fieldset><legend>Model license</legend><label>License name<input value={legacyDraft.license_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_name: event.target.value }))} /></label><label>License URL<input type="url" value={legacyDraft.license_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_url: event.target.value }))} /></label><label>Redistribution<select value={legacyDraft.redistribution} onChange={(event) => setLegacyDraft((current) => ({ ...current, redistribution: event.target.value as typeof current.redistribution }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option><option value="prohibited">Prohibited</option></select></label><label>Commercial use<select value={legacyDraft.commercial_use} onChange={(event) => setLegacyDraft((current) => ({ ...current, commercial_use: event.target.value as typeof current.commercial_use }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option></select></label><label className="wide">Exact license text<textarea value={legacyDraft.license_text} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_text: event.target.value }))} rows={7} /></label>{legacyDraft.redistribution === "prohibited" && <p className="wide">A redistribution-prohibited asset cannot be packaged as a publishable local Bundle. Keep the legacy files unchanged and resolve the license terms first.</p>}</fieldset>
-        <fieldset><legend>ONNX Model Contract</legend><label className="wide">Contract JSON file<input type="file" accept=".json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void file.text().then((contract_document) => setLegacyDraft((current) => ({ ...current, contract_document }))); }} /></label><p className="wide">The Contract must use schema version 1 and exactly declare these file roles: <code>{legacyInstallation.manifest.models.find((model) => model.id === legacySetup.modelId)?.required_file_roles.join(", ")}</code>.</p>{legacyDraft.contract_document && <pre className="wide">{legacyDraft.contract_document.slice(0, 800)}{legacyDraft.contract_document.length > 800 ? "…" : ""}</pre>}</fieldset>
+        <fieldset><legend>ONNX Model Contract</legend><div className="wide legacy-contract-file"><label htmlFor="legacy-contract-json">Contract JSON file</label><FilePicker id="legacy-contract-json" label="Contract JSON file" accept=".json,application/json" file={legacyContractFile} chooseLabel="Choose Contract JSON" emptyLabel="No Contract JSON selected" onSelect={(file) => { setLegacyContractFile(file); if (!file) { setLegacyDraft((current) => ({ ...current, contract_document: "" })); return; } void file.text().then((contract_document) => setLegacyDraft((current) => ({ ...current, contract_document }))); }} /></div><p className="wide">The Contract must use schema version 1 and exactly declare these file roles: <code>{legacyInstallation.manifest.models.find((model) => model.id === legacySetup.modelId)?.required_file_roles.join(", ")}</code>.</p>{legacyDraft.contract_document && <pre className="wide">{legacyDraft.contract_document.slice(0, 800)}{legacyDraft.contract_document.length > 800 ? "…" : ""}</pre>}</fieldset>
       </div>
       <label className="checkbox-line legacy-license-acceptance"><input type="checkbox" checked={legacyDraft.license_accepted} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_accepted: event.target.checked }))} /><span>I supplied and accept the exact license above. I understand this local migration is not publisher-verified.</span></label>
       {legacyError && <div className="model-setup-error" role="alert"><strong>Local Bundle creation stopped</strong><span>{legacyError}</span><small>The legacy model files were not changed or removed.</small></div>}

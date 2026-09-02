@@ -7,7 +7,16 @@ test("Rust Expert Model Plugins are reachable, honest, responsive, and keyboard 
   await expect(page.getByLabel("Agent plugin permissions")).toContainText("read only");
   await expect(page.getByLabel("Installation steps")).toContainText("Verify package");
   await expect(page.getByLabel("Plugin package")).toHaveAttribute("accept", ".annotplugin");
+  await expect(page.getByRole("button", { name: "Choose plugin package" })).toBeVisible();
+  await expect(page.getByText("No .annotplugin selected")).toBeVisible();
   await expect(page.getByRole("button", { name: "Verify package" })).toBeDisabled();
+  await page.getByLabel("Plugin package").setInputFiles({
+    name: "annotagent-sam-onnx-1.1.0.annotplugin",
+    mimeType: "application/zip",
+    buffer: Buffer.from("package fixture"),
+  });
+  await expect(page.getByText("annotagent-sam-onnx-1.1.0.annotplugin")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Verify package" })).toBeEnabled();
   await expect(page.getByText("No Expert Model Plugins installed")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 

@@ -822,7 +822,18 @@ main { min-width: 0; padding-bottom: 48px; }
 .plugin-install-steps li.complete { background: var(--aa-success-soft); color: var(--aa-success-text); }
 .plugin-package-picker { display: grid; grid-template-columns: minmax(140px, .35fr) minmax(220px, 1fr) auto; gap: 12px; align-items: center; }
 .plugin-package-picker label { margin: 0; }
-.plugin-package-picker input { min-width: 0; }
+.file-picker-control { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; min-width: 0; min-height: 46px; padding: 5px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.file-picker-control:focus-within { border-color: var(--aa-primary); background: var(--aa-surface); box-shadow: 0 0 0 3px var(--aa-primary-soft); }
+.file-picker-native { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.file-picker-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 7px 11px; border-color: color-mix(in srgb, var(--aa-primary) 35%, var(--aa-border)); background: var(--aa-surface); color: var(--aa-primary); white-space: nowrap; }
+.file-picker-button:hover { border-color: var(--aa-primary); background: var(--aa-primary-soft); }
+.file-picker-button > span { display: grid; width: 18px; height: 18px; place-items: center; border-radius: 50%; background: var(--aa-primary-soft); font-size: 12px; font-weight: 800; line-height: 1; }
+.file-picker-selection { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 7px; color: var(--aa-text-muted); font-size: 9px; line-height: 1.35; }
+.file-picker-selection > i { flex: 0 0 auto; color: var(--aa-text-subtle); font-style: normal; font-weight: 850; }
+.file-picker-selection > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-picker-selection.selected { color: var(--aa-text); font-weight: 700; }
+.file-picker-selection.selected > i { display: grid; width: 18px; height: 18px; place-items: center; border-radius: 50%; background: var(--aa-success-soft); color: var(--aa-success-text); font-size: 8px; }
+.legacy-contract-file { display: grid; gap: 7px; min-width: 0; }
 .plugin-review-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr); gap: 18px; padding-top: 18px; border-top: 1px solid var(--aa-border); }
 .plugin-review-grid > section, .plugin-review-checks { min-width: 0; padding: 16px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
 .plugin-review-grid h3 { margin: 5px 0 8px; }
@@ -1419,6 +1430,9 @@ main { min-width: 0; padding-bottom: 48px; }
   .plugin-agent-policy { grid-template-columns: auto minmax(0, 1fr); }
   .plugin-install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plugin-package-picker, .plugin-weight-row { grid-template-columns: 1fr; align-items: stretch; }
+  .file-picker-control { grid-template-columns: 1fr; }
+  .file-picker-button { width: 100%; }
+  .file-picker-selection { min-height: 30px; padding: 0 9px; }
   .plugin-next-action { grid-template-columns: 1fr; gap: 5px; }
   .plugin-status-group { padding: 16px; }
   .plugin-card-facts, .plugin-permission-summary { grid-template-columns: 1fr; }
