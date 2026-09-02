@@ -1,4 +1,5 @@
 mod demo;
+mod model_cli;
 mod plugin_cli;
 mod runner;
 mod tui;
@@ -82,6 +83,10 @@ enum Command {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         command: PluginCommand,
+    },
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommand,
     },
     History {
         #[command(subcommand)]
@@ -232,6 +237,29 @@ enum PluginCommand {
 }
 
 #[derive(Subcommand)]
+enum ModelsCommand {
+    Bundle {
+        #[command(subcommand)]
+        command: ModelBundleCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelBundleCommand {
+    Pack {
+        directory: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Inspect {
+        package: PathBuf,
+    },
+    Verify {
+        package: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum HistoryCommand {
     List,
     Show {
@@ -281,6 +309,7 @@ async fn main() -> Result<()> {
         } => serve_command(&workspace, port, open).await,
         Command::Skills { command } => skills_command(command),
         Command::Plugin { data_dir, command } => plugin_cli::run(command, data_dir).await,
+        Command::Models { command } => model_cli::run(command),
         Command::History { command } => history_command(command),
         Command::Export {
             project,

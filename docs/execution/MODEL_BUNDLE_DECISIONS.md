@@ -1,6 +1,6 @@
 # Model Bundle Provisioning Decisions
 
-Last updated: 2026-09-02 CST
+Last updated: 2026-09-03 CST
 
 ## D001 — Preserve package separation
 
@@ -52,3 +52,15 @@ presented as SAM or as accuracy evidence.
 Manifest parsing denies unknown fields and validates every semantic reference before M2 accepts any
 archive bytes. This makes a package checksum proof necessary but not sufficient: a perfectly hashed
 archive with an incoherent model role, license or test contract is still invalid.
+
+## D010 — Stream model bytes
+
+Verifier and extractor hash model entries through bounded buffers rather than reading a potentially
+multi-gigabyte Bundle into memory. Only the small Manifest, checksum file and signature are captured
+for parsing.
+
+## D011 — Sign semantics, not a recursive archive
+
+The Ed25519 payload is the versioned concatenation of the exact Manifest bytes and exact checksum
+document bytes. The signature file is outside the checksum set, avoiding recursive identity while
+authenticating the complete payload list and every payload digest.

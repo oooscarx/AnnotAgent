@@ -14,6 +14,10 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::Url;
 
+mod package;
+
+pub use package::*;
+
 pub const MODEL_BUNDLE_MANIFEST_SCHEMA_VERSION: &str = "1";
 pub const MODEL_BUNDLE_MANIFEST_FILE: &str = "annotagent-model.toml";
 pub const MODEL_BUNDLE_CHECKSUM_FILE: &str = "checksums.json";
@@ -258,6 +262,14 @@ pub struct ModelContractReference {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ModelTransformReference {
+    pub kind: String,
+    pub path: String,
+    pub sha256: Sha256Digest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelSourceMetadata {
     pub upstream_project: String,
     pub upstream_model_id: String,
@@ -318,6 +330,7 @@ pub struct ModelLicenseMetadata {
     pub name: String,
     pub license_url: Option<Url>,
     pub license_file: String,
+    pub source_notice: Option<String>,
     pub license_digest: Sha256Digest,
     pub redistribution: RedistributionStatus,
     pub commercial_use: CommercialUseStatus,
@@ -350,6 +363,7 @@ pub struct ModelBundleManifest {
     pub compatible_plugins: Vec<PluginCompatibilityRequirement>,
     pub files: Vec<ModelBundleFile>,
     pub contracts: Vec<ModelContractReference>,
+    pub transforms: Vec<ModelTransformReference>,
     pub source: ModelSourceMetadata,
     pub export: ModelExportMetadata,
     pub runtime: ModelRuntimeMetadata,
@@ -451,6 +465,15 @@ impl ModelBundleManifest {
             }
         }
 
+        let mut transform_kinds = BTreeSet::new();
+        for transform in &self.transforms {
+            validate_text("transform kind", &transform.kind, 80)?;
+            validate_bundle_path(&transform.path, "transforms/")?;
+            if !transform_kinds.insert(transform.kind.as_str()) {
+                return invalid(format!("duplicate transform kind {}", transform.kind));
+            }
+        }
+
         for requirement in &self.compatible_plugins {
             requirement.version_requirement()?;
             validate_text("plugin model id", &requirement.model_id, 160)?;
@@ -484,6 +507,9 @@ impl ModelBundleManifest {
         }
         validate_text("license name", &self.license.name, 240)?;
         validate_bundle_path(&self.license.license_file, "licenses/")?;
+        if let Some(source_notice) = &self.license.source_notice {
+            validate_bundle_path(source_notice, "licenses/")?;
+        }
         if self.license.redistribution == RedistributionStatus::Prohibited && self.publishable {
             return invalid("a redistribution-prohibited bundle cannot be publishable".to_owned());
         }
@@ -590,6 +616,18 @@ mod tests {
                 sha256: digest("contract"),
                 file_roles: BTreeSet::from([encoder, decoder]),
             }],
+            transforms: vec![
+                ModelTransformReference {
+                    kind: "preprocessing".to_owned(),
+                    path: "transforms/preprocessing.json".to_owned(),
+                    sha256: digest("preprocessing"),
+                },
+                ModelTransformReference {
+                    kind: "postprocessing".to_owned(),
+                    path: "transforms/postprocessing.json".to_owned(),
+                    sha256: digest("postprocessing"),
+                },
+            ],
             source: ModelSourceMetadata {
                 upstream_project: "AnnotAgent fixtures".to_owned(),
                 upstream_model_id: "identity-mask".to_owned(),
@@ -615,6 +653,7 @@ mod tests {
                 name: "CC0-1.0".to_owned(),
                 license_url: None,
                 license_file: "licenses/MODEL-LICENSE".to_owned(),
+                source_notice: Some("licenses/SOURCE-NOTICE".to_owned()),
                 license_digest: digest("CC0"),
                 redistribution: RedistributionStatus::Allowed,
                 commercial_use: CommercialUseStatus::Allowed,

@@ -1,6 +1,6 @@
 # Model Bundle Provisioning Acceptance Evidence
 
-Last updated: 2026-09-02 CST
+Last updated: 2026-09-03 CST
 
 ## M0 evidence
 
@@ -18,8 +18,8 @@ Last updated: 2026-09-02 CST
 
 - [x] Plugin Package and Model Bundle are independent entities at the package API boundary.
 - [x] Model file roles are generic validated manifest strings.
-- [ ] `.annotmodel` pack, inspect and verify are deterministic and safe.
-- [ ] Bundle contains source, license, contracts, checksums and test vectors.
+- [x] `.annotmodel` pack, inspect and verify are deterministic and safe.
+- [x] Bundle contains source, license, contracts, checksums and test vectors.
 - [ ] Local fixture and HTTPS curated catalogs work without executable content.
 - [ ] Safe download and atomic content-addressed installation pass failure/cancel tests.
 - [ ] Plugin required roles, versions, capabilities, contracts, platform and provider are resolved.
@@ -46,3 +46,19 @@ Last updated: 2026-09-02 CST
 - [x] Generic roles prove that a new `depth_auxiliary_2` role does not require a Core enum change.
 - [x] Independent Bundle and Model Instance states no longer depend on the legacy `NeedsWeights`
       vocabulary.
+
+## M2 evidence
+
+- [x] Deterministic ZIP output has stable order, zeroed timestamps, owner-readable permissions and
+      stable whole-package SHA-256.
+- [x] Pack rejects unknown files, missing referenced files, links, empty/oversized files and a
+      mismatch between Manifest size/hash and actual bytes.
+- [x] Verify rejects traversal/absolute/mixed paths, duplicate or case-conflicting names, links,
+      excessive file count/size, missing Manifest/checksums and non-exact file lists.
+- [x] Every payload is stream-hashed; model assets additionally match Manifest size/hash, while
+      contract, transform and model-license files match their declared hashes.
+- [x] Optional Ed25519 verification uses a canonical versioned payload; required-but-missing and
+      wrong-key signatures fail.
+- [x] Extraction repeats hash/size checks and removes a partial destination after failure.
+- [x] CLI provides Bundle pack/inspect/verify only; no conversion, script execution or installation
+      side effect exists in M2.

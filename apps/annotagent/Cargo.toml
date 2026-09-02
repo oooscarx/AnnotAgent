@@ -15,6 +15,7 @@ annotagent-application = { path = "../../crates/annotagent-application" }
 annotagent-core = { path = "../../crates/annotagent-core" }
 annotagent-export = { path = "../../crates/annotagent-export" }
 annotagent-image-tools = { path = "../../crates/annotagent-image-tools" }
+annotagent-model-bundle = { path = "../../crates/annotagent-model-bundle" }
 annotagent-provider = { path = "../../crates/annotagent-provider" }
 annotagent-plugin-api = { path = "../../crates/annotagent-plugin-api" }
 annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }

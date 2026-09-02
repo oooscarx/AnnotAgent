@@ -1,5 +1,17 @@
 # AnnotAgent Acceptance Evidence
 
+## Model Bundle Provisioning Alpha M2 — 2026-09-03
+
+1. Nine Bundle tests pass, including deterministic two-pack identity, streamed verify/extract,
+   unknown-file and Manifest-hash rejection, traversal/duplicate/case/symlink rejection and valid,
+   missing and wrong-key Ed25519 signature policies.
+2. `cargo check -p annotagent` proves the new nested CLI composes with the existing application, and
+   `cargo run -p annotagent -- models --help` exposes the user boundary.
+3. Strict focused Clippy passes after the verifier moved its 64 KiB stream buffers to bounded heap
+   allocations. Rustfmt and diff checks pass.
+4. No archive content is executed, no model conversion exists and no model asset, credential,
+   remote mutation or push was used.
+
 ## Model Bundle Provisioning Alpha M1 — 2026-09-02
 
 1. The new package API round-trips a two-file prompted-segmentation Manifest while preserving

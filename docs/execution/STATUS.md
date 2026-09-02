@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-02 CST
 
+## Model Bundle Provisioning Alpha M2 — 2026-09-03
+
+- Implemented deterministic, streaming `.annotmodel` ZIP packing and verification. The archive
+  accepts only the exact Manifest-referenced asset, contract, transform, test and license files and
+  computes both whole-Bundle and per-file SHA-256 identities.
+- Added bounded size/count expansion, normalized descendant paths, duplicate/case-conflict and link
+  rejection, repeated extraction-time hashing, partial-output cleanup and optional trusted Ed25519
+  signature enforcement.
+- Added Rust CLI `models bundle pack`, `inspect` and `verify`. These operations never download,
+  install, convert or execute Bundle contents.
+
 ## Model Bundle Provisioning Alpha M1 — 2026-09-02
 
 - Added a dedicated `annotagent-model-bundle` crate and the versioned `.annotmodel` Manifest with

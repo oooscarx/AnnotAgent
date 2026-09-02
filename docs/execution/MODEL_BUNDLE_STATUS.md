@@ -1,10 +1,10 @@
 # Model Bundle Provisioning Alpha Status
 
-Last updated: 2026-09-02 CST
+Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M1 — versioned Model Bundle API and Manifest.
+M2 — Bundle verifier and safe deterministic archive.
 
 ## Completed
 
@@ -25,14 +25,24 @@ M1 — versioned Model Bundle API and Manifest.
   validation and independent Bundle/Model Instance status enums.
 - Added an explicit runtime-only status enum to the Plugin API. The existing combined legacy status
   remains temporarily for backward compatibility and is migrated by the compatibility milestone.
+- Added streaming deterministic ZIP pack, inspect and verify support with exact referenced-file
+  sets, bounded compressed/expanded/file sizes, bounded counts, path normalization, duplicate and
+  case-conflict detection, link rejection and per-file plus whole-Bundle SHA-256.
+- Manifest-declared model sizes/digests, contract digests, transform digests and license digest are
+  checked against package bytes. Verification never extracts; extraction re-hashes streamed bytes,
+  writes only descendants and removes partial output on failure.
+- Added optional Ed25519 verification over the canonical Manifest/checksum payload. Unsigned local
+  bundles remain explicit; a trusted official policy can require a valid signature.
+- Added `annotagent models bundle pack|inspect|verify`; none of these commands install or convert a
+  model.
 
 ## In progress
 
-- Focused M1 test and strict Clippy verification.
+- Focused M2 gate and milestone commit.
 
 ## Next
 
-M2 — deterministic Bundle pack/inspect/verify and safe archive staging.
+M3 — Curated Catalog, safe download/import and content-addressed installation.
 
 ## Latest verification
 
@@ -40,12 +50,12 @@ M2 — deterministic Bundle pack/inspect/verify and safe archive staging.
 | --- | --- |
 | Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
-| Bundle tests | PASS — 5 manifest/role/validation tests |
+| Bundle tests | PASS — 9 manifest/package/signature/security tests |
 | Plugin conformance | Existing SAM registry component regression passes after M0 assertions |
 | Real model smoke | Not run; no legally verified SAM assets are installed |
 | Web tests | Last established release baseline: 44 unit, 37 Chromium E2E |
 | E2E | M0 records the current route; installation UX changes begin in M6 |
-| Local commit | `77e3acb` — M0; M1 pending |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; M2 pending |
 
 ## Release-blocking remainder
 

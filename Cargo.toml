@@ -47,6 +47,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "copy-dylibs"] }
