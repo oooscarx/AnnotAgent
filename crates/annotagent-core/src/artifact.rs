@@ -175,6 +175,7 @@ fn pipeline_parents(artifact: &PipelineArtifact) -> Vec<ArtifactEnvelopeRef> {
         PipelineArtifact::MaskSet(masks) => std::iter::once(&masks.source_prompts)
             .chain(masks.masks.iter().map(|mask| &mask.prompt))
             .collect(),
+        PipelineArtifact::SemanticMask(mask) => vec![&mask.source_image],
         PipelineArtifact::PolygonSet(polygons) => std::iter::once(&polygons.source_masks)
             .chain(polygons.polygons.iter().map(|polygon| &polygon.parent))
             .collect(),

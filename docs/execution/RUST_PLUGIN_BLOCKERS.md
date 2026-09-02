@@ -10,4 +10,6 @@ Potential live-conditional constraints are tracked separately from implementatio
 - CUDA/TensorRT validation requires compatible hardware and native libraries;
 - RF-DETR and LocateAnything require a legally usable Rust-executable export before a real Ready
   claim;
-- SAM may require multiple ONNX files whose individual digests must be provisioned.
+- SAM real smoke requires a compatible encoder/decoder pair supplied under explicit upstream terms;
+  both component digests are now supported and enforced.
+- PIDNet real smoke requires a legal ONNX export matching the declared NCHW input/logit contract.

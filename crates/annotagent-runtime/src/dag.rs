@@ -762,6 +762,9 @@ fn built_in_output(
                     PipelineArtifact::MaskSet(masks) => {
                         masks.validation_state = ArtifactValidationState::Valid;
                     }
+                    PipelineArtifact::SemanticMask(mask) => {
+                        mask.validation_state = ArtifactValidationState::Valid;
+                    }
                     PipelineArtifact::AnnotationCandidateSet(candidates) => {
                         for candidate in &mut candidates.candidates {
                             candidate.validation_state = Some(ArtifactValidationState::Valid);
@@ -801,6 +804,9 @@ fn built_in_output(
                         }
                         PipelineArtifact::MaskSet(masks) => {
                             masks.validation_state != ArtifactValidationState::Valid
+                        }
+                        PipelineArtifact::SemanticMask(mask) => {
+                            mask.validation_state != ArtifactValidationState::Valid
                         }
                         PipelineArtifact::AnnotationCandidateSet(candidates) => {
                             candidates.candidates.iter().any(|candidate| {

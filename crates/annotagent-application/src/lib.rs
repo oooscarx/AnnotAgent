@@ -2753,12 +2753,12 @@ fn registry_requirement_for_node(
             ModelCapability::VisionLanguage,
             ModelBindingRole::PrimaryInference,
         ),
-        "capability.segment" | "semantic_segmentation" => (
-            ModelCapability::SemanticSegmentation,
+        "capability.segment" | "prompted_segmentation" => (
+            ModelCapability::PromptedSegmentation,
             ModelBindingRole::Segmentation,
         ),
-        "prompted_segmentation" => (
-            ModelCapability::PromptedSegmentation,
+        "capability.semantic_segment" | "semantic_segmentation" => (
+            ModelCapability::SemanticSegmentation,
             ModelBindingRole::Segmentation,
         ),
         "instance_segmentation" => (
@@ -3343,6 +3343,14 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
                 ArtifactKind::PointPromptSet,
             ],
             produces: vec![ArtifactKind::MaskSet],
+            deterministic: false,
+        },
+        VisionNodeDescriptor {
+            id: "capability.semantic_segment".to_owned(),
+            display_name: "Segment image classes".to_owned(),
+            required_capabilities: vec![VisionCapability::SemanticSegmentation],
+            accepts: vec![ArtifactKind::Image],
+            produces: vec![ArtifactKind::SemanticMask],
             deterministic: false,
         },
         VisionNodeDescriptor {
@@ -7468,6 +7476,7 @@ impl LocalApplication {
                         | PipelineArtifact::BoxPromptSet(_)
                         | PipelineArtifact::PointPromptSet(_)
                         | PipelineArtifact::MaskSet(_)
+                        | PipelineArtifact::SemanticMask(_)
                         | PipelineArtifact::PolygonSet(_)
                         | PipelineArtifact::CropSet(_) => {}
                     }

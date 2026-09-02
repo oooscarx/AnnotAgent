@@ -82,6 +82,7 @@ pub async fn run(command: PluginCommand, data_dir: Option<PathBuf>) -> Result<()
             plugin_id,
             version,
             model,
+            component,
             weights,
             sha256,
         } => {
@@ -89,13 +90,24 @@ pub async fn run(command: PluginCommand, data_dir: Option<PathBuf>) -> Result<()
             let version = PluginVersion::parse(&version)?;
             let expected = sha256.map(Sha256Digest::parse).transpose()?;
             let mut registry = PluginRegistry::open(data_root)?;
-            let provisioned = registry.provision_local_weights(
-                &plugin_id,
-                &version,
-                &model,
-                &weights,
-                expected.as_ref(),
-            )?;
+            let provisioned = if let Some(component) = component {
+                registry.provision_local_weight_component(
+                    &plugin_id,
+                    &version,
+                    &model,
+                    &component,
+                    &weights,
+                    expected.as_ref(),
+                )?
+            } else {
+                registry.provision_local_weights(
+                    &plugin_id,
+                    &version,
+                    &model,
+                    &weights,
+                    expected.as_ref(),
+                )?
+            };
             println!("checkpoint sha256: {}", provisioned.checkpoint_sha256);
             println!("stored: {}", provisioned.stored_path.display());
         }

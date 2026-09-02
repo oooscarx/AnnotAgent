@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-02 CST
 
+## Rust Expert Model Plugin M6 — 2026-09-02
+
+- Added independent Rust SAM and PIDNet ONNX process plugins. SAM implements explicit Image +
+  Box/Point Prompt → MaskSet with prompt lineage, multi-mask scores and encoder embedding cache;
+  PIDNet implements Image → dense original-size SemanticMask through NCHW logit argmax.
+- Multi-file model weights are named, copied, individually SHA-256 verified and collectively frozen.
+  SAM remains NeedsWeights after only one component, and neither plugin becomes Ready without a
+  real installed-process smoke.
+- The generic Segmentation Skill now has distinct prompted and semantic runners. The explicit Core
+  Mask-to-BBox and Geometry Evaluation/Decision path remains unchanged and passes its regression.
+- Full workspace tests pass 362 cases with 4 explicit billable/external smokes ignored; strict full
+  Clippy, Rustfmt, boundary scan and diff check pass. No real SAM/PIDNet checkpoint, credential,
+  push or remote mutation was used.
+
 ## Rust Expert Model Plugin M5 — 2026-09-02
 
 - Added the official Rust YOLOX Nano ONNX process plugin with exact model/weight identity,

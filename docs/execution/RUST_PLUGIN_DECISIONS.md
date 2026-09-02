@@ -40,3 +40,24 @@ The first official detector declares the exact YOLOX Nano 416×416 COCO-80 input
 postprocessing contract. Another YOLO export is rejected unless a distinct model contract and
 version describe its preprocessing, heads, label space and score semantics. Core still sees only
 ObjectDetection and DetectionSet.
+
+## D008 — Multi-file weights are named components
+
+A model may declare zero or more named weight components. Zero preserves the v1 single-file
+contract. A declared component fixes model ownership and controlled filename; provisioning records
+the original filename and exact digest. Every component is required before setup, and publication
+freezes a deterministic ordered aggregate digest. A partial SAM encoder/decoder set is not an
+installed runnable checkpoint.
+
+## D009 — Prompted and semantic masks are different Artifacts
+
+Prompted segmentation produces a `MaskSet` whose items retain prompt parents and independent
+scores. Semantic segmentation produces a dense `SemanticMask` with one lossless model class ID per
+source pixel and optional Project mapping. Conflating them would lose either prompt lineage or
+multiclass semantics and is rejected.
+
+## D010 — Contract-complete is not Ready
+
+SAM and PIDNet include real native ONNX execution code and opt-in process tests, but no accepted
+checkpoint is committed. Offline tensor tests establish deterministic implementation behavior;
+only a user-provisioned, hash-bound sample inference can produce smoke evidence and `Ready` status.

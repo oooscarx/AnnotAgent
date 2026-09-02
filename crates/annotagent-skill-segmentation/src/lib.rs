@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 pub const SEGMENTATION_SKILL_ID: &str = "annotagent.segmentation";
 pub const SEGMENTATION_SKILL_VERSION: &str = "1";
 pub const PROMPTED_SEGMENTATION_OPERATION: &str = "capability.segment";
+pub const SEMANTIC_SEGMENTATION_OPERATION: &str = "capability.semantic_segment";
 
 pub struct SegmentationCapabilitySkill {
     manifest: SkillManifest,
@@ -32,6 +33,116 @@ pub struct PromptedSegmentationRunner {
     backend: Arc<dyn PipelineModelBackend>,
     model_id: String,
     image: Option<ModelImage>,
+}
+
+/// Generic semantic-segmentation runner. Model branding and checkpoint loading stay behind the
+/// `PipelineModelBackend`; this runner enforces the Image-to-SemanticMask protocol boundary.
+pub struct SemanticSegmentationRunner {
+    backend: Arc<dyn PipelineModelBackend>,
+    model_id: String,
+    image: Option<ModelImage>,
+}
+
+impl SemanticSegmentationRunner {
+    pub fn new(
+        backend: Arc<dyn PipelineModelBackend>,
+        model_id: impl Into<String>,
+        image: Option<ModelImage>,
+    ) -> CoreResult<Self> {
+        if backend.capability() != VisionCapability::SemanticSegmentation {
+            return Err(CoreError::Validation(
+                "Semantic Segmentation requires a SemanticSegmentation backend".to_owned(),
+            ));
+        }
+        Ok(Self {
+            backend,
+            model_id: model_id.into(),
+            image,
+        })
+    }
+}
+
+#[async_trait]
+impl DagNodeRunner for SemanticSegmentationRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        if context.node.node_type != SEMANTIC_SEGMENTATION_OPERATION {
+            return Err(DagNodeFailure::terminal(
+                "wrong_skill_operation",
+                "Semantic Segmentation runner received another operation",
+            ));
+        }
+        let image_count = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter(|artifact| matches!(artifact, PipelineArtifact::Image(_)))
+            .count();
+        if image_count != 1 || context.input_pipeline_artifacts.len() != 1 {
+            return Err(DagNodeFailure::terminal(
+                "invalid_semantic_segmentation_inputs",
+                "Semantic Segmentation requires exactly one Image Artifact",
+            ));
+        }
+        let model_id = context
+            .node
+            .model_binding
+            .as_deref()
+            .unwrap_or(&self.model_id);
+        let response = self
+            .backend
+            .infer_pipeline(
+                PipelineInferenceRequest {
+                    protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    run_id: context.run_id,
+                    image_id: context.image_id,
+                    node_id: context.node.id.clone(),
+                    model_id: model_id.to_owned(),
+                    operation: VisionCapability::SemanticSegmentation,
+                    image: self.image.clone(),
+                    input_artifacts: context.input_pipeline_artifacts.clone(),
+                    parameters: context.node.parameters.clone(),
+                    timeout_ms: context
+                        .node
+                        .resources
+                        .timeout_seconds
+                        .map(|seconds| seconds.saturating_mul(1_000)),
+                },
+                context.cancellation.clone(),
+            )
+            .await
+            .map_err(|error| {
+                DagNodeFailure::retryable("semantic_segmentation_backend", error.to_string())
+            })?;
+        if let Some(error) = response.error {
+            return Err(DagNodeFailure {
+                code: error.code,
+                summary: error.message,
+                retryable: error.retryable,
+            });
+        }
+        if response.artifacts.len() != 1
+            || response.artifacts.iter().any(|artifact| {
+                !matches!(artifact, PipelineArtifact::SemanticMask(_))
+                    || artifact.image_id() != context.image_id
+                    || artifact.reference().source_node != context.node.id
+            })
+        {
+            return Err(DagNodeFailure::terminal(
+                "invalid_semantic_segmentation_output",
+                "Semantic Segmentation backend must return exactly one scoped SemanticMask",
+            ));
+        }
+        Ok(DagNodeOutput {
+            pipeline_artifacts: response.artifacts,
+            metadata: response.metadata,
+            usage: annotagent_runtime::DagNodeUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cost: Decimal::ZERO,
+            },
+            ..DagNodeOutput::default()
+        })
+    }
 }
 
 impl PromptedSegmentationRunner {

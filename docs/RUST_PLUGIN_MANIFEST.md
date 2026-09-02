@@ -12,6 +12,14 @@ Required sections describe:
 - capability-oriented models with typed input/output Artifact contracts;
 - weight provisioning, immutable SHA-256 recipes and license metadata.
 
+Multi-file models declare named weight components under `weights.components`. Each component binds
+one model ID to one controlled filename and may include an expected SHA-256. Local provisioning
+preserves the original filename for audit, copies bytes under the controlled filename, hashes each
+component and requires every declared component before the model can leave `NeedsWeights`.
+Published identity uses the single checkpoint hash unchanged for legacy one-file models and a
+deterministic ordered aggregate hash for multi-file models. Fixed recipes identify both the model
+and component whenever a component manifest is present.
+
 Official manifests cannot request provider secrets, arbitrary project files, child processes or
 non-loopback network access. A manifest is declaration, not availability evidence: runtime
 discovery, checkpoint identity, conformance and smoke testing still determine `PluginStatus`.

@@ -2612,6 +2612,7 @@ fn pipeline_annotations(
                 | PipelineArtifact::BoxPromptSet(_)
                 | PipelineArtifact::PointPromptSet(_)
                 | PipelineArtifact::MaskSet(_)
+                | PipelineArtifact::SemanticMask(_)
                 | PipelineArtifact::PolygonSet(_)
                 | PipelineArtifact::CropSet(_) => {}
             }

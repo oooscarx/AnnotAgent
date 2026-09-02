@@ -3,11 +3,16 @@
 | Existing active/reference path | Capability | Wire input/output | Existing evidence | Rust target | Initial state |
 | --- | --- | --- | --- | --- | --- |
 | `examples/http_vision_worker.py` | Object detection | Image → bounding-box artifacts | provider protocol tests | `org.annotagent.yolo-onnx` | migrate after parity |
-| `examples/sam2_vision_worker.py` | Prompted segmentation | Image + box/point prompts → MaskSet | Python SDK and RoboCup integration tests | `org.annotagent.sam-onnx` | migrate after parity |
+| `examples/sam2_vision_worker.py` | Prompted segmentation | Image + box/point prompts → MaskSet | legacy SDK and RoboCup integration tests | `org.annotagent.sam-onnx` | Rust contract/process complete; real two-file smoke live-conditional |
 | `examples/rfdetr_vision_worker.py` | Object detection | Image → DetectionSet-compatible artifacts | adapter-only tests | `org.annotagent.rfdetr-onnx` | live-conditional |
 | `examples/locate_anything_worker.py` | Open-vocabulary detection, phrase grounding | Image + queries → DetectionSet | adapter-only tests | `org.annotagent.locate-anything-rust` | feasibility required |
 | `sdk/python/annotagent_vision_worker` | Worker SDK | protocol/manifest/conformance | Python unit tests | `annotagent-plugin-sdk` | replace in official path |
 | `web/e2e/fixtures/expert_vision_worker.py` | E2E fixture | protocol fixture | browser E2E | Rust dummy plugin | replace in release E2E |
+
+PIDNet compatibility now targets `org.annotagent.pidnet-onnx`: its Rust process, semantic tensor
+decode and typed `SemanticMask` are complete, while the old external preset stays active only until
+M8 product lifecycle wiring and M9 migration remove that reference. No old worker result is reused
+as plugin smoke evidence.
 
 Migration rules:
 

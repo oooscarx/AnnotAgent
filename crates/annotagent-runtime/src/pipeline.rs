@@ -2057,6 +2057,10 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
             value.validation_state,
             ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
         ),
+        PipelineArtifact::SemanticMask(value) => matches!(
+            value.validation_state,
+            ArtifactValidationState::NeedsReview | ArtifactValidationState::Invalid
+        ),
         PipelineArtifact::Image(_)
         | PipelineArtifact::BoxPromptSet(_)
         | PipelineArtifact::PointPromptSet(_)
@@ -2119,6 +2123,9 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                         PipelineArtifact::MaskSet(value) => {
                             value.validation_state == ArtifactValidationState::Invalid
                         }
+                        PipelineArtifact::SemanticMask(value) => {
+                            value.validation_state == ArtifactValidationState::Invalid
+                        }
                         PipelineArtifact::Image(_)
                         | PipelineArtifact::BoxPromptSet(_)
                         | PipelineArtifact::PointPromptSet(_)
@@ -2146,6 +2153,9 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                             })
                         }
                         PipelineArtifact::MaskSet(value) => {
+                            value.validation_state == ArtifactValidationState::NeedsReview
+                        }
+                        PipelineArtifact::SemanticMask(value) => {
                             value.validation_state == ArtifactValidationState::NeedsReview
                         }
                         PipelineArtifact::Image(_)
@@ -2187,6 +2197,7 @@ fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValida
                 candidates.validation_state = state;
             }
             PipelineArtifact::MaskSet(masks) => masks.validation_state = state,
+            PipelineArtifact::SemanticMask(mask) => mask.validation_state = state,
             PipelineArtifact::AnnotationCandidateSet(candidates) => {
                 for candidate in &mut candidates.candidates {
                     candidate.validation_state = Some(state);
@@ -2223,7 +2234,8 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
             .iter()
             .filter_map(|mask| mask.score.comparable_confidence())
             .collect(),
-        PipelineArtifact::Image(_)
+        PipelineArtifact::SemanticMask(_)
+        | PipelineArtifact::Image(_)
         | PipelineArtifact::BoxPromptSet(_)
         | PipelineArtifact::PointPromptSet(_)
         | PipelineArtifact::PolygonSet(_)

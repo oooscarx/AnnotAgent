@@ -1,0 +1,61 @@
+schema_version = "1"
+id = "org.annotagent.pidnet-onnx"
+version = "1.0.0"
+display_name = "PIDNet ONNX"
+description = "Rust-native semantic segmentation through a strict PIDNet-compatible ONNX tensor contract"
+publisher = "AnnotAgent"
+plugin_api = "1"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-pidnet-onnx"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 60
+shutdown_timeout_seconds = 10
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
+accelerators = ["cpu"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 1024
+recommended_memory_mb = 4096
+minimum_vram_mb = 0
+recommended_vram_mb = 0
+maximum_response_mb = 256
+maximum_concurrency = 1
+maximum_requests_per_process = 10000
+
+[[models]]
+id = "pidnet-semantic-onnx"
+display_name = "PIDNet Semantic ONNX"
+capabilities = ["semantic_segmentation"]
+input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
+output_contracts = [{ name = "semantic_mask", data_type = { artifact = "semantic_mask" }, required = true, multiple = false }]
+score_semantics = "not_provided"
+geometry_semantics = "predicted_geometry"
+
+[models.runtime_requirements]
+devices = ["cpu"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = true
+provisioning = "local_path"
+checkpoint_sha256_required = true
+components = [{ id = "model", model_id = "pidnet-semantic-onnx", filename = "pidnet.onnx" }]
+
+[license]
+code = "MIT"
+weights = "upstream_terms_user_confirmation_required"
+commercial_use = "unknown"

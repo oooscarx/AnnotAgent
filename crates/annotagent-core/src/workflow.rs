@@ -1812,6 +1812,12 @@ fn legacy_operation_quality(
             crate::AutoAcceptEligibility::RequiresProjectCalibration,
             false,
         )),
+        "capability.semantic_segment" | "semantic_segmentation" => Some((
+            crate::GeometrySemantics::PredictedGeometry,
+            crate::ScoreSemantics::NotProvided,
+            crate::AutoAcceptEligibility::NeverFromScoreAlone,
+            false,
+        )),
         _ => None,
     }
 }

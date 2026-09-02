@@ -241,6 +241,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-plugin-pidnet-onnx"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-model-runtime-common",
+ "annotagent-model-runtime-onnx",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
+ "annotagent-plugin-sdk",
+ "annotagent-runtime",
+ "annotagent-skill-segmentation",
+ "async-trait",
+ "base64 0.22.1",
+ "image",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "annotagent-plugin-registry"
 version = "0.1.0"
 dependencies = [
@@ -253,6 +276,30 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "annotagent-plugin-sam-onnx"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-model-runtime-common",
+ "annotagent-model-runtime-onnx",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
+ "annotagent-plugin-sdk",
+ "annotagent-runtime",
+ "annotagent-skill-segmentation",
+ "async-trait",
+ "base64 0.22.1",
+ "image",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

@@ -185,6 +185,8 @@ enum PluginCommand {
         #[arg(long)]
         model: String,
         #[arg(long)]
+        component: Option<String>,
+        #[arg(long)]
         weights: PathBuf,
         #[arg(long)]
         sha256: Option<String>,

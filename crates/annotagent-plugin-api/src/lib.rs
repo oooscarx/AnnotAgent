@@ -227,6 +227,9 @@ pub struct PluginWeightsManifest {
     pub provisioning: WeightProvisioning,
     #[serde(default = "default_true")]
     pub checkpoint_sha256_required: bool,
+    /// Named files required by each model. An empty list preserves the single-file v1 contract.
+    #[serde(default)]
+    pub components: Vec<WeightComponentManifest>,
 }
 
 const fn default_true() -> bool {
@@ -235,8 +238,22 @@ const fn default_true() -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct WeightComponentManifest {
+    pub id: String,
+    pub model_id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub sha256: Option<Sha256Digest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WeightRecipe {
     pub id: String,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub component_id: Option<String>,
     pub url: String,
     pub sha256: Sha256Digest,
     pub license_url: String,
@@ -407,6 +424,36 @@ impl PluginManifest {
                 "required weights need a provisioning mode".to_owned(),
             ));
         }
+        let mut weight_components = std::collections::BTreeSet::new();
+        for component in &self.weights.components {
+            validate_identity("weight component id", &component.id, 160)?;
+            validate_filename(&component.filename)?;
+            if !models.contains(component.model_id.as_str()) {
+                return Err(PluginApiError::InvalidManifest(format!(
+                    "weight component {} references unknown model {}",
+                    component.id, component.model_id
+                )));
+            }
+            if !weight_components.insert((component.model_id.as_str(), component.id.as_str())) {
+                return Err(PluginApiError::InvalidManifest(
+                    "weight component ids must be unique within a model".to_owned(),
+                ));
+            }
+        }
+        if self.weights.required
+            && !self.weights.components.is_empty()
+            && self.models.iter().any(|model| {
+                !self
+                    .weights
+                    .components
+                    .iter()
+                    .any(|component| component.model_id == model.id)
+            })
+        {
+            return Err(PluginApiError::InvalidManifest(
+                "every weighted model requires at least one declared component".to_owned(),
+            ));
+        }
         for recipe in &self.weight_recipes {
             validate_identity("weight recipe id", &recipe.id, 160)?;
             if !recipe.url.starts_with("https://")
@@ -418,6 +465,23 @@ impl PluginManifest {
                 ));
             }
             validate_filename(&recipe.filename)?;
+            match (&recipe.model_id, &recipe.component_id) {
+                (Some(model_id), Some(component_id)) => {
+                    if !weight_components.contains(&(model_id.as_str(), component_id.as_str())) {
+                        return Err(PluginApiError::InvalidManifest(format!(
+                            "weight recipe {} references an unknown component",
+                            recipe.id
+                        )));
+                    }
+                }
+                (None, None) if self.weights.components.is_empty() => {}
+                _ => {
+                    return Err(PluginApiError::InvalidManifest(format!(
+                        "weight recipe {} must identify both model_id and component_id",
+                        recipe.id
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -728,6 +792,7 @@ mod tests {
                 required: false,
                 provisioning: WeightProvisioning::None,
                 checkpoint_sha256_required: false,
+                components: Vec::new(),
             },
             weight_recipes: Vec::new(),
             license: PluginLicenseManifest {

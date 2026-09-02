@@ -2,6 +2,33 @@
 
 Only commands actually executed are recorded here.
 
+## M6 SAM and PIDNet Rust plugins — 2026-09-02
+
+- Added `org.annotagent.sam-onnx` with strict two-session SAM ViT-B contracts, exact box/point
+  prompt tensors, bounded multi-mask selection, relative mask scores, original-coordinate
+  uncompressed RLE, typed prompt lineage and encoder embedding cache keyed by encoder plus image
+  digest.
+- Added named multi-file weight components to Manifest/Registry/CLI. The SAM registry test proves
+  one component stays `NeedsWeights`, both copied/hash-verified components move only to `Installed`,
+  and the ordered aggregate checkpoint identity persists across reopen. No smoke report is forged.
+- Added `org.annotagent.pidnet-onnx` with bounded fixed/dynamic NCHW input, ImageNet normalization,
+  strict NCHW logit decode, channel argmax, source-size restoration, explicit class mapping and a
+  new dense lineage-preserving `SemanticMaskArtifact`.
+- Added generic Prompted and Semantic Segmentation Skill runners and corrected capability binding:
+  `capability.segment` requires PromptedSegmentation, while `capability.semantic_segment` requires
+  SemanticSegmentation. Core contains no plugin-brand branch.
+- Offline plugin tests: PASS — 12 active focused cases across manifests, preprocessing, prompts,
+  masks, cache, semantic decode, Registry projections and component identities; 2 real-process
+  tests are explicitly ignored until legal SAM/PIDNet weights and sample images are supplied.
+- `cargo test --workspace --all-features`: PASS — 362 passed, 4 ignored (one billable Provider,
+  three external real-model smokes). Existing Core
+  `sam_artifact_chain_preserves_original_prompt_mask_and_refined_box` still proves
+  MaskSet → Mask-to-BBox → Geometry Evaluation/Decision lineage.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`, Rustfmt, diff check and
+  Rust-only boundary scan: PASS.
+- SAM and PIDNet real-weight tests were not run. Both product model projections remain
+  `NeedsWeights`; no production checkpoint, credential, remote mutation or push was used.
+
 ## M0 baseline — 2026-09-02
 
 - `git status --short --branch`: clean `main`, 17 commits ahead of `origin/main`.

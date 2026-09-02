@@ -1,0 +1,68 @@
+schema_version = "1"
+id = "org.annotagent.sam-onnx"
+version = "1.0.0"
+display_name = "SAM ViT-B ONNX"
+description = "Rust-native prompted segmentation with explicit image-encoder and mask-decoder contracts"
+publisher = "AnnotAgent"
+plugin_api = "1"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-sam-onnx"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 60
+shutdown_timeout_seconds = 10
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
+accelerators = ["cpu"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 4096
+recommended_memory_mb = 8192
+minimum_vram_mb = 0
+recommended_vram_mb = 0
+maximum_response_mb = 256
+maximum_concurrency = 1
+maximum_requests_per_process = 10000
+
+[[models]]
+id = "sam-vit-b-onnx"
+display_name = "SAM ViT-B ONNX"
+capabilities = ["prompted_segmentation"]
+input_contracts = [
+  { name = "image", data_type = { artifact = "image" }, required = true, multiple = false },
+  { name = "box_prompts", data_type = { artifact = "box_prompt_set" }, required = false, multiple = false },
+  { name = "point_prompts", data_type = { artifact = "point_prompt_set" }, required = false, multiple = false },
+]
+output_contracts = [{ name = "masks", data_type = { artifact = "mask_set" }, required = true, multiple = false }]
+score_semantics = "relative_confidence"
+geometry_semantics = "refined_geometry"
+
+[models.runtime_requirements]
+devices = ["cpu"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = true
+provisioning = "local_path"
+checkpoint_sha256_required = true
+components = [
+  { id = "image_encoder", model_id = "sam-vit-b-onnx", filename = "sam_image_encoder.onnx" },
+  { id = "mask_decoder", model_id = "sam-vit-b-onnx", filename = "sam_mask_decoder.onnx" },
+]
+
+[license]
+code = "MIT"
+weights = "upstream_terms_user_confirmation_required"
+commercial_use = "unknown"

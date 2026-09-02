@@ -24,6 +24,7 @@ use crate::{
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
 pub const PIPELINE_VISION_PROTOCOL_VERSION: u32 = crate::VISION_WORKER_PROTOCOL_VERSION;
 pub const DETECTION_ARTIFACT_SCHEMA_VERSION: u32 = 2;
+pub const SEMANTIC_MASK_ARTIFACT_SCHEMA_VERSION: u32 = 1;
 pub const IMAGE_INPUT_NODE_ID: &str = "core.image_input";
 pub const IMAGE_INPUT_OPERATION: &str = "core.image_input";
 
@@ -338,6 +339,30 @@ pub struct MaskSetArtifact {
     #[serde(default = "default_unvalidated")]
     pub validation_state: ArtifactValidationState,
     pub masks: Vec<MaskArtifactItem>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+/// Dense, row-major semantic class assignments restored to the source-image coordinate space.
+///
+/// This is deliberately distinct from `MaskSetArtifact`: prompted/instance masks preserve one
+/// prompt parent per mask, while semantic segmentation assigns exactly one model class to every
+/// source pixel. Model class identifiers remain lossless even when a Project label mapping is
+/// incomplete.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticMaskArtifact {
+    pub schema_version: u32,
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub source_image: ArtifactRef,
+    pub model_binding: String,
+    pub width: u32,
+    pub height: u32,
+    pub class_ids: Vec<u32>,
+    #[serde(default)]
+    pub class_mapping: BTreeMap<u32, LabelId>,
+    #[serde(default = "default_unvalidated")]
+    pub validation_state: ArtifactValidationState,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
@@ -726,6 +751,7 @@ pub enum PipelineArtifact {
     BoxPromptSet(BoxPromptSetArtifact),
     PointPromptSet(PointPromptSetArtifact),
     MaskSet(MaskSetArtifact),
+    SemanticMask(SemanticMaskArtifact),
     PolygonSet(PolygonSetArtifact),
     CandidateClusterSet(CandidateClusterSetArtifact),
     CropSet(CropSetArtifact),
@@ -742,6 +768,7 @@ impl PipelineArtifact {
             Self::BoxPromptSet(_) => ArtifactKind::BoxPromptSet,
             Self::PointPromptSet(_) => ArtifactKind::PointPromptSet,
             Self::MaskSet(_) => ArtifactKind::MaskSet,
+            Self::SemanticMask(_) => ArtifactKind::SemanticMask,
             Self::PolygonSet(_) => ArtifactKind::PolygonSet,
             Self::CandidateClusterSet(_) => ArtifactKind::CandidateClusterSet,
             Self::CropSet(_) => ArtifactKind::CropSet,
@@ -758,6 +785,7 @@ impl PipelineArtifact {
             Self::BoxPromptSet(artifact) => &artifact.reference,
             Self::PointPromptSet(artifact) => &artifact.reference,
             Self::MaskSet(artifact) => &artifact.reference,
+            Self::SemanticMask(artifact) => &artifact.reference,
             Self::PolygonSet(artifact) => &artifact.reference,
             Self::CandidateClusterSet(artifact) => &artifact.reference,
             Self::CropSet(artifact) => &artifact.reference,
@@ -774,6 +802,7 @@ impl PipelineArtifact {
             Self::BoxPromptSet(artifact) => artifact.image_id,
             Self::PointPromptSet(artifact) => artifact.image_id,
             Self::MaskSet(artifact) => artifact.image_id,
+            Self::SemanticMask(artifact) => artifact.image_id,
             Self::PolygonSet(artifact) => artifact.image_id,
             Self::CandidateClusterSet(artifact) => artifact.image_id,
             Self::CropSet(artifact) => artifact.image_id,
@@ -789,6 +818,7 @@ impl PipelineArtifact {
             Self::BoxPromptSet(artifact) => artifact.validate(),
             Self::PointPromptSet(artifact) => artifact.validate(),
             Self::MaskSet(artifact) => artifact.validate(),
+            Self::SemanticMask(artifact) => artifact.validate(),
             Self::PolygonSet(artifact) => artifact.validate(),
             Self::CandidateClusterSet(artifact) => artifact.validate(),
             Self::CropSet(artifact) => artifact.validate(),
@@ -1709,6 +1739,37 @@ impl MaskSetArtifact {
             }
             .validate()
             .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+impl SemanticMaskArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != SEMANTIC_MASK_ARTIFACT_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported Semantic Mask Artifact schema version {}",
+                self.schema_version
+            ));
+        }
+        validate_set_reference(&self.reference, ArtifactKind::SemanticMask)?;
+        validate_set_reference(&self.source_image, ArtifactKind::Image)?;
+        if self.model_binding.trim().is_empty() {
+            return Err("SemanticMask model_binding cannot be empty".to_owned());
+        }
+        let pixel_count = usize::try_from(self.width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(self.height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| "SemanticMask dimensions overflow".to_owned())?;
+        if pixel_count == 0 || pixel_count != self.class_ids.len() {
+            return Err(format!(
+                "SemanticMask requires one class id per pixel: expected {pixel_count}, received {}",
+                self.class_ids.len()
+            ));
         }
         Ok(())
     }
@@ -2821,6 +2882,44 @@ mod tests {
             detections: vec![detection],
             metadata: BTreeMap::new(),
         };
+        assert!(artifact.validate().is_err());
+    }
+
+    #[test]
+    fn semantic_mask_requires_dense_original_image_lineage() {
+        let image_id = ImageId::new();
+        let image_reference = ArtifactRef {
+            artifact_id: "image-1".to_owned(),
+            source_node: IMAGE_INPUT_NODE_ID.to_owned(),
+            port: "image".to_owned(),
+            artifact_type: ArtifactKind::Image,
+            item_id: None,
+        };
+        let mut artifact = SemanticMaskArtifact {
+            schema_version: SEMANTIC_MASK_ARTIFACT_SCHEMA_VERSION,
+            reference: ArtifactRef {
+                artifact_id: "semantic-mask-1".to_owned(),
+                source_node: "semantic-segmentation".to_owned(),
+                port: "semantic_mask".to_owned(),
+                artifact_type: ArtifactKind::SemanticMask,
+                item_id: None,
+            },
+            image_id,
+            source_image: image_reference,
+            model_binding: "semantic-model".to_owned(),
+            width: 2,
+            height: 2,
+            class_ids: vec![0, 1, 1, 0],
+            class_mapping: BTreeMap::from([(1, LabelId::from("foreground"))]),
+            validation_state: ArtifactValidationState::Unvalidated,
+            metadata: BTreeMap::new(),
+        };
+        artifact.validate().expect("valid semantic mask");
+        assert_eq!(
+            PipelineArtifact::SemanticMask(artifact.clone()).artifact_type(),
+            ArtifactKind::SemanticMask
+        );
+        artifact.class_ids.pop();
         assert!(artifact.validate().is_err());
     }
 }

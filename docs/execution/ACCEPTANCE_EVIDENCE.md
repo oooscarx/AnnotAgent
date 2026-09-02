@@ -1,5 +1,29 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin M6 — 2026-09-02
+
+1. SAM unit tests prove exact SAM normalization, source-to-encoder coordinate scaling, box labels
+   2/3, point labels 1/0 with sentinel, bounded best/multi-mask selection, real score preservation,
+   source-size RLE geometry and versioned embedding-cache round trip.
+2. Registry integration packs the actual SAM binary/manifest, installs as NeedsWeights, provisions
+   two differently named local components into controlled filenames, remains NeedsWeights after the
+   encoder alone, then records an ordered aggregate checkpoint identity after both components.
+3. PIDNet unit tests prove strict semantic capability/output, bounded dynamic dimensions, NCHW
+   class argmax and nearest original-size restoration. Package projection is MissingWeights and
+   contains no fabricated checkpoint.
+4. Core validates dense SemanticMask dimensions and Image lineage. Generic Skill runners require
+   exactly Image + PromptSet → MaskSet or Image → SemanticMask, and application model binding now
+   distinguishes PromptedSegmentation from SemanticSegmentation.
+5. Existing Runtime regression proves MaskSet → Mask-to-BBox → Geometry Evaluation/Decision with
+   exact detection/prompt/mask/output references and `semantic_score_used=false`. The SAM opt-in
+   test compiles the same full real-process path; PIDNet compiles an isolated real-process semantic
+   path. Both are ignored because no legal external checkpoints were supplied.
+6. `cargo test --workspace --all-features`: PASS — 362 active tests, 4 ignored external/billable
+   tests. `cargo clippy --workspace --all-targets --all-features -- -D warnings`, Rustfmt,
+   `git diff --check` and the Rust plugin boundary scan all pass.
+7. No SAM/PIDNet production inference or accuracy is claimed. No weight, API key, push or remote
+   mutation occurred.
+
 ## Rust Expert Model Plugin M5 — 2026-09-02
 
 1. org.annotagent.yolo-onnx parses and validates an exact ObjectDetection manifest whose output is

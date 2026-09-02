@@ -1,0 +1,40 @@
+[package]
+name = "annotagent-plugin-sam-onnx"
+description = "Rust-native SAM ONNX prompted segmentation plugin for AnnotAgent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "annotagent_plugin_sam_onnx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "annotagent-plugin-sam-onnx"
+path = "src/main.rs"
+
+[dependencies]
+annotagent-core = { path = "../../crates/annotagent-core" }
+annotagent-model-runtime-common = { path = "../../crates/annotagent-model-runtime-common" }
+annotagent-model-runtime-onnx = { path = "../../crates/annotagent-model-runtime-onnx" }
+annotagent-plugin-api = { path = "../../crates/annotagent-plugin-api" }
+annotagent-plugin-sdk = { path = "../../crates/annotagent-plugin-sdk" }
+async-trait.workspace = true
+base64.workspace = true
+image.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }
+annotagent-plugin-registry = { path = "../../crates/annotagent-plugin-registry" }
+annotagent-runtime = { path = "../../crates/annotagent-runtime" }
+annotagent-skill-segmentation = { path = "../../crates/annotagent-skill-segmentation" }
+tempfile = "3"
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -23,6 +23,22 @@ use thiserror::Error;
 const REGISTRY_SCHEMA_VERSION: u32 = 1;
 const MAX_WEIGHT_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 
+fn model_checkpoint_identity(mut weights: Vec<&PluginWeightSet>) -> Option<Sha256Digest> {
+    if weights.is_empty() {
+        return None;
+    }
+    weights.sort_by(|left, right| left.component_id.cmp(&right.component_id));
+    if weights.len() == 1 && weights[0].component_id == "default" {
+        return Some(weights[0].checkpoint_sha256.clone());
+    }
+    let identity = weights
+        .iter()
+        .map(|weight| format!("{}:{}", weight.component_id, weight.checkpoint_sha256))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(Sha256Digest::of_bytes(identity.as_bytes()))
+}
+
 #[derive(Debug, Error)]
 pub enum PluginRegistryError {
     #[error("plugin package failed verification: {0}")]
@@ -77,13 +93,41 @@ impl PluginInstallation {
     pub fn weights_ready(&self, weight_sets: &[PluginWeightSet]) -> bool {
         !self.manifest.weights.required
             || self.manifest.models.iter().all(|model| {
-                weight_sets.iter().any(|weights| {
-                    weights.plugin_id == self.manifest.id
-                        && weights.plugin_version == self.manifest.version
-                        && weights.model_id == model.id
-                })
+                let required = self
+                    .manifest
+                    .weights
+                    .components
+                    .iter()
+                    .filter(|component| component.model_id == model.id)
+                    .map(|component| component.id.as_str())
+                    .collect::<Vec<_>>();
+                if required.is_empty() {
+                    has_weight_component(self, weight_sets, &model.id, "default")
+                } else {
+                    required.iter().all(|component| {
+                        has_weight_component(self, weight_sets, &model.id, component)
+                    })
+                }
             })
     }
+}
+
+fn has_weight_component(
+    installation: &PluginInstallation,
+    weight_sets: &[PluginWeightSet],
+    model_id: &str,
+    component_id: &str,
+) -> bool {
+    weight_sets.iter().any(|weights| {
+        weights.plugin_id == installation.manifest.id
+            && weights.plugin_version == installation.manifest.version
+            && weights.model_id == model_id
+            && weights.component_id == component_id
+    })
+}
+
+fn default_weight_component_id() -> String {
+    "default".to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +135,8 @@ pub struct PluginWeightSet {
     pub plugin_id: PluginId,
     pub plugin_version: PluginVersion,
     pub model_id: String,
+    #[serde(default = "default_weight_component_id")]
+    pub component_id: String,
     pub checkpoint_sha256: Sha256Digest,
     pub original_filename: String,
     pub stored_path: PathBuf,
@@ -305,6 +351,42 @@ impl PluginRegistry {
         source: &Path,
         expected: Option<&Sha256Digest>,
     ) -> Result<PluginWeightSet, PluginRegistryError> {
+        let installation = self.get(plugin_id, version)?;
+        let components = installation
+            .manifest
+            .weights
+            .components
+            .iter()
+            .filter(|component| component.model_id == model_id)
+            .collect::<Vec<_>>();
+        let component_id = match components.as_slice() {
+            [] => "default".to_owned(),
+            [component] => component.id.clone(),
+            _ => {
+                return Err(PluginRegistryError::InvalidWeight(
+                    "model requires multiple weight components; provide a component id".to_owned(),
+                ));
+            }
+        };
+        self.provision_local_weight_component(
+            plugin_id,
+            version,
+            model_id,
+            &component_id,
+            source,
+            expected,
+        )
+    }
+
+    pub fn provision_local_weight_component(
+        &mut self,
+        plugin_id: &PluginId,
+        version: &PluginVersion,
+        model_id: &str,
+        component_id: &str,
+        source: &Path,
+        expected: Option<&Sha256Digest>,
+    ) -> Result<PluginWeightSet, PluginRegistryError> {
         let installation = self.get(plugin_id, version)?.clone();
         if !installation
             .manifest
@@ -314,6 +396,27 @@ impl PluginRegistry {
         {
             return Err(PluginRegistryError::UnknownModel);
         }
+        let declared_components = installation
+            .manifest
+            .weights
+            .components
+            .iter()
+            .filter(|component| component.model_id == model_id)
+            .collect::<Vec<_>>();
+        if declared_components.is_empty() {
+            if component_id != "default" {
+                return Err(PluginRegistryError::InvalidWeight(
+                    "single-file model only accepts the default component".to_owned(),
+                ));
+            }
+        } else if !declared_components
+            .iter()
+            .any(|component| component.id == component_id)
+        {
+            return Err(PluginRegistryError::InvalidWeight(format!(
+                "unknown weight component {component_id} for model {model_id}"
+            )));
+        }
         let metadata = std::fs::metadata(source)?;
         if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_WEIGHT_BYTES {
             return Err(PluginRegistryError::InvalidWeight(
@@ -321,7 +424,14 @@ impl PluginRegistry {
             ));
         }
         let digest = hash_file(source)?;
-        if expected.is_some_and(|expected| expected != &digest) {
+        let declared_expected = declared_components
+            .iter()
+            .find(|component| component.id == component_id)
+            .and_then(|component| component.sha256.as_ref());
+        if expected
+            .or(declared_expected)
+            .is_some_and(|expected| expected != &digest)
+        {
             return Err(PluginRegistryError::InvalidWeight(
                 "checkpoint digest does not match the expected identity".to_owned(),
             ));
@@ -333,14 +443,19 @@ impl PluginRegistry {
                 PluginRegistryError::InvalidWeight("weight filename is not UTF-8".to_owned())
             })?
             .to_owned();
+        let stored_filename = declared_components
+            .iter()
+            .find(|component| component.id == component_id)
+            .map_or(filename.as_str(), |component| component.filename.as_str());
         let directory = self
             .data_root
             .join("model-cache")
             .join(plugin_id.as_str())
+            .join(version.to_string())
             .join(model_id)
             .join(digest.as_str());
         std::fs::create_dir_all(&directory)?;
-        let destination = directory.join(&filename);
+        let destination = directory.join(stored_filename);
         if !destination.exists() {
             let temporary = directory.join(format!(".provisioning-{}", uuid::Uuid::new_v4()));
             std::fs::copy(source, &temporary)?;
@@ -355,6 +470,7 @@ impl PluginRegistry {
             plugin_id: plugin_id.clone(),
             plugin_version: version.clone(),
             model_id: model_id.to_owned(),
+            component_id: component_id.to_owned(),
             checkpoint_sha256: digest,
             original_filename: filename,
             stored_path: destination,
@@ -364,10 +480,25 @@ impl PluginRegistry {
         self.state.weight_sets.retain(|existing| {
             !(existing.plugin_id == *plugin_id
                 && existing.plugin_version == *version
-                && existing.model_id == model_id)
+                && existing.model_id == model_id
+                && existing.component_id == component_id)
         });
         self.state.weight_sets.push(weights.clone());
-        self.set_status(plugin_id, version, PluginStatus::Installed)?;
+        let weights_ready = self
+            .state
+            .installations
+            .get(&installation_key(plugin_id, version))
+            .ok_or(PluginRegistryError::NotInstalled)?
+            .weights_ready(&self.state.weight_sets);
+        self.set_status(
+            plugin_id,
+            version,
+            if weights_ready {
+                PluginStatus::Installed
+            } else {
+                PluginStatus::NeedsWeights
+            },
+        )?;
         Ok(weights)
     }
 
@@ -413,7 +544,11 @@ impl PluginRegistry {
         version: &PluginVersion,
     ) -> Result<PathBuf, PluginRegistryError> {
         self.get(plugin_id, version)?;
-        let root = self.data_root.join("model-cache").join(plugin_id.as_str());
+        let root = self
+            .data_root
+            .join("model-cache")
+            .join(plugin_id.as_str())
+            .join(version.to_string());
         std::fs::create_dir_all(&root)?;
         Ok(root)
     }
@@ -541,16 +676,17 @@ impl PluginRegistry {
             .values()
             .flat_map(|installation| {
                 installation.manifest.models.iter().map(move |model| {
-                    let checkpoint = self
+                    let model_weights = self
                         .state
                         .weight_sets
                         .iter()
-                        .find(|weights| {
+                        .filter(|weights| {
                             weights.plugin_id == installation.manifest.id
                                 && weights.plugin_version == installation.manifest.version
                                 && weights.model_id == model.id
                         })
-                        .map(|weights| weights.checkpoint_sha256.clone());
+                        .collect::<Vec<_>>();
+                    let checkpoint = model_checkpoint_identity(model_weights);
                     let contract = Sha256Digest::of_bytes(
                         &serde_json::to_vec(model).expect("model contract is serializable"),
                     );
@@ -709,6 +845,7 @@ mod tests {
                 WeightProvisioning::None
             },
             checkpoint_sha256_required: weights_required,
+            components: Vec::new(),
         };
         manifest.license.commercial_use = CommercialUseDeclaration::Allowed;
         std::fs::write(
