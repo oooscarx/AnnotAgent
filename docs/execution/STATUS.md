@@ -949,3 +949,23 @@ Model Bundle Provisioning M5 status: `PASS`.
   download, Python process, push or remote mutation was used.
 
 Model Bundle Provisioning M6 status: `PASS`.
+
+## Model Bundle Provisioning M7 — prompted-segmentation Fixture and model audit — 2026-09-03
+
+- The built-in local Catalog now contains a deterministic, MIT-licensed Prompted Segmentation
+  Fixture Bundle generated entirely in Rust. It contains no SAM weights and is explicitly
+  non-publishable.
+- The real SAM-compatible Rust Plugin and ONNX Runtime load both Fixture graphs, execute the fixed
+  inference, validate Mask output, preserve detection/prompt lineage, derive a BBox and run Geometry
+  Quality before the test disables and removes the Bundle.
+- Ready Fixture evidence remains distinct from product availability: its Model Profile is Unknown
+  and non-selectable, and Settings labels it as offline contract evidence rather than accuracy or
+  Workflow readiness.
+- EfficientSAM's official source/license/export path and exact Ti ONNX hashes were audited. Its
+  tensor and preprocessing Contract differs from the current SAM Plugin, so it is recorded as
+  live-conditional instead of being exposed as a false installable Bundle. SAM 2 remains Labs.
+- Nine Catalog tests, seven active SAM Plugin tests, 21 Server tests, 44 Web tests, production build,
+  two responsive Chromium scenarios, Rustfmt and strict focused Clippy pass. No third-party model
+  weight, Python process, credential, push or remote mutation was used.
+
+Model Bundle Provisioning M7 status: `PASS WITH EXPLICIT REAL-MODEL LIVE-CONDITIONAL`.

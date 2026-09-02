@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use annotagent_core::{
-    ImageId, MaskEncoding, ModelImage, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact,
-    PipelineInferenceRequest, PipelineInferenceResponse, RunId,
+    ArtifactKind, ArtifactRef, ImageArtifact, ImageId, MaskEncoding, ModelImage,
+    PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
+    PipelineInferenceResponse, RunId,
 };
 use annotagent_model_bundle::{
     ExpectedOutputSummary, ModelBundleSmokeRequest, ModelBundleSmokeTest, OutputTolerances,
@@ -65,6 +66,42 @@ pub fn prepare_bundle_smoke_test(
     )?;
     validate_definition(&request, &expected, &tolerances)?;
     let image_id = ImageId::new();
+    let decoded = image::load_from_memory(&image_bytes).map_err(|error| {
+        ModelCatalogError::Provisioning(format!("Smoke test image cannot be decoded: {error}"))
+    })?;
+    let mime_type = image_mime(&image_path)?.to_owned();
+    let mut input_artifacts = request
+        .input_artifacts
+        .clone()
+        .into_iter()
+        .filter(|artifact| !matches!(artifact, PipelineArtifact::Image(_)))
+        .map(|mut artifact| {
+            rebind_smoke_image(&mut artifact, image_id);
+            artifact
+        })
+        .collect::<Vec<_>>();
+    input_artifacts.insert(
+        0,
+        PipelineArtifact::Image(ImageArtifact {
+            reference: ArtifactRef {
+                artifact_id: format!("model-bundle-smoke-image:{image_id}"),
+                source_node: "model_bundle_smoke".to_owned(),
+                port: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                item_id: None,
+            },
+            image_id,
+            width: decoded.width(),
+            height: decoded.height(),
+            mime_type: mime_type.clone(),
+            blob_ref: format!(
+                "model-bundle://{}/{}",
+                bundle.manifest.id, request.image_path
+            ),
+            parent: None,
+            root_region: None,
+        }),
+    );
     let request_id = uuid::Uuid::new_v4().to_string();
     let pipeline_request = PipelineInferenceRequest {
         protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
@@ -76,10 +113,10 @@ pub fn prepare_bundle_smoke_test(
         operation: request.operation,
         image: Some(ModelImage {
             id: format!("bundle-smoke:{image_id}"),
-            mime_type: image_mime(&image_path)?.to_owned(),
+            mime_type,
             data_base64: STANDARD.encode(image_bytes),
         }),
-        input_artifacts: request.input_artifacts.clone(),
+        input_artifacts,
         parameters: request.parameters.clone(),
         timeout_ms: request.timeout_ms,
     };
@@ -92,6 +129,22 @@ pub fn prepare_bundle_smoke_test(
         },
         request: pipeline_request,
     })
+}
+
+fn rebind_smoke_image(artifact: &mut PipelineArtifact, image_id: ImageId) {
+    match artifact {
+        PipelineArtifact::Image(value) => value.image_id = image_id,
+        PipelineArtifact::DetectionSet(value) => value.image_id = image_id,
+        PipelineArtifact::BoxPromptSet(value) => value.image_id = image_id,
+        PipelineArtifact::PointPromptSet(value) => value.image_id = image_id,
+        PipelineArtifact::MaskSet(value) => value.image_id = image_id,
+        PipelineArtifact::SemanticMask(value) => value.image_id = image_id,
+        PipelineArtifact::PolygonSet(value) => value.image_id = image_id,
+        PipelineArtifact::CandidateClusterSet(value) => value.image_id = image_id,
+        PipelineArtifact::CropSet(value) => value.image_id = image_id,
+        PipelineArtifact::ClassificationSet(value) => value.image_id = image_id,
+        PipelineArtifact::AnnotationCandidateSet(value) => value.image_id = image_id,
+    }
 }
 
 pub fn evaluate_bundle_smoke_response(

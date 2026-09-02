@@ -96,15 +96,29 @@ M6 — Compatible-model installation, legacy raw-file migration and responsive G
   entry sent to installation rather than a guessed or UI-only source.
 - Focused Browser E2E proves the new path at 1024 px and 390 px, no ONNX upload control is exposed,
   page refresh recovers persisted Registry state and the installation journey stays reachable.
+- Added the built-in `org.annotagent.models.fixture-prompted-segmentation` Catalog entry. Its Rust
+  generator creates a deterministic two-file ONNX Bundle with license, source notice, Contract and
+  fixed Smoke Test below the Registry data root; installation resolves locally and still performs
+  normal package verification.
+- Smoke preparation now injects a canonical host-owned Image Artifact and rebinds packaged Artifact
+  image identities, so the real Plugin sees valid image/prompt/detection lineage.
+- The Fixture executes through the actual SAM-compatible Rust Plugin process and ONNX Runtime, then
+  continues through Mask to BBox and Geometry Quality. Its Ready instance remains non-selectable
+  because the Bundle is explicitly Fixture/non-publishable.
+- Settings distinguishes Fixture evidence from workflow-ready models in setup completion, summary,
+  installed status and primary-action logic.
+- Audited EfficientSAM's official repository, Apache-2.0 terms, official exporter Contract and the
+  author-owned ONNX Space. Exact Ti encoder/decoder SHA-256 values are recorded in the model card.
+  The assets remain live-conditional because their Contract is not the SAM ViT-B Plugin Contract
+  and no reproducible hosted AnnotAgent Bundle exists. SAM 2 remains Labs.
 
 ## In progress
 
-- Final M6 evidence update and milestone commit.
+- Final M7 release checks and milestone commit.
 
 ## Next
 
-M7 — Audit and deliver the first real Prompted Segmentation Bundle, with an offline Fixture kept
-explicitly non-publishable.
+M8 — Agent/CLI/TUI model provisioning, migration, full regression and release evidence.
 
 ## Latest verification
 
@@ -113,22 +127,24 @@ explicitly non-publishable.
 | Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle tests | PASS — 9 manifest/package/signature/security tests |
-| Catalog/provisioning tests | PASS — 8 tests including real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
+| Catalog/provisioning tests | PASS — 9 tests including deterministic built-in Fixture, real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
 | Plugin conformance | PASS — Registry, SAM and YOLO tests; 15 active and 2 explicit external-weight ignores in the focused command |
-| Real model smoke | Not run; no legally verified SAM assets are installed |
+| Fixture model smoke | PASS — real Rust Plugin/ORT process plus Mask→BBox and Geometry Quality lifecycle |
+| Real model smoke | LIVE-CONDITIONAL — EfficientSAM source/hash/Contract audited; no compatible published `.annotmodel` |
 | Server tests | PASS — 21, including legacy migration failure/preservation |
 | Web tests | PASS — 44 unit plus production TypeScript/Vite build |
 | E2E | PASS — focused desktop/mobile verified-Bundle installation journey, 2 scenarios |
 | Focused Clippy | PASS — Server, Bundle and Catalog, all targets/features, warnings denied |
-| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; `045a9e5` — M5; M6 pending |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; `045a9e5` — M5; `3a1bb64` — M6; M7 pending |
 
 ## Release-blocking remainder
 
-M7–M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
+M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
 
 ## Live-conditional
 
-- A legally redistributable, officially sourced prompted-segmentation ONNX bundle.
+- An EfficientSAM-specific Rust Plugin Contract, fixed real-image smoke vector and hosted,
+  reproducible `.annotmodel` built from the audited official ONNX identities.
 - External HTTPS curated-catalog hosting and signatures.
 - GPU execution-provider coverage and non-macOS real-model smoke.
 - SAM 2 remains Labs until a complete verified Rust ONNX package exists.

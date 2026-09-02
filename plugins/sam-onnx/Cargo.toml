@@ -29,10 +29,13 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+annotagent-model-bundle = { path = "../../crates/annotagent-model-bundle" }
+annotagent-model-catalog = { path = "../../crates/annotagent-model-catalog" }
 annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }
 annotagent-plugin-registry = { path = "../../crates/annotagent-plugin-registry" }
 annotagent-runtime = { path = "../../crates/annotagent-runtime" }
 annotagent-skill-segmentation = { path = "../../crates/annotagent-skill-segmentation" }
+chrono.workspace = true
 tempfile = "3"
 uuid.workspace = true
 

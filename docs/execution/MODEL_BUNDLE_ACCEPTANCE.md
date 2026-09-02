@@ -30,8 +30,8 @@ Last updated: 2026-09-03 CST
 - [x] Referenced bundles are protected and unreferenced content can be garbage-collected.
 - [x] Primary GUI path installs a compatible Bundle rather than raw ONNX components.
 - [ ] Pipeline Builder discovers readiness/setup requirements but cannot mutate model assets.
-- [ ] Fixture end-to-end lifecycle passes offline and is visibly non-publishable.
-- [ ] One real prompted-segmentation bundle passes legal, contract and Rust inference evidence, or is
+- [x] Fixture end-to-end lifecycle passes offline and is visibly non-publishable.
+- [x] One real prompted-segmentation bundle passes legal, contract and Rust inference evidence, or is
       recorded as an explicit external blocker without a false supported claim.
 - [ ] Geometry Safety, workflow validation, lineage, replay, batch, review, export and Providers do
       not regress.
@@ -150,3 +150,29 @@ Last updated: 2026-09-03 CST
       labeled controls and Registry-state recovery after reload.
 - [x] Verification passes 21 Server tests, 44 Web unit tests, Web production build, two focused
       Chromium scenarios, Rustfmt and strict focused Clippy.
+
+## M7 evidence
+
+- [x] The built-in Catalog materializes
+      `org.annotagent.models.fixture-prompted-segmentation@1.0.0` entirely in Rust and installs the
+      local package through the same identity/verification boundary as remote Bundles.
+- [x] The Fixture includes two legal, tiny, deterministic ONNX graphs, exact role hashes, a complete
+      tensor Contract, MIT license/source notice and fixed image/request/expectation/tolerance data.
+- [x] `offline_fixture_runs_bundle_plugin_smoke_geometry_and_removal_lifecycle` proves Pack → Verify
+      → Install → Contract → Bind → real Plugin/ORT inference → Smoke → Ready Instance → Mask to
+      BBox → Geometry Quality → Disable → Remove.
+- [x] Smoke preparation now injects one canonical host-scoped Image Artifact and rebinds every
+      packaged input Artifact to the fresh image identity, preserving detection/prompt subject
+      lineage instead of trusting package-selected Run identities.
+- [x] Fixture Ready does not imply publishability: the Model Instance retains auditable Ready
+      evidence while its derived Profile remains `Unknown` and non-selectable. The GUI labels it
+      Fixture and never says Ready for Workflows.
+- [x] EfficientSAM's official Apache-2.0 repository/exporter and author-owned ONNX Space were
+      audited. Encoder/decoder SHA-256 identities and the incompatible upstream tensor Contract are
+      recorded in `docs/MODEL_CARDS.md`.
+- [x] EfficientSAM remains `live-conditional` because the current SAM Plugin Contract is different
+      and no reproducible hosted AnnotAgent `.annotmodel` exists. No raw pair is mislabeled as a
+      supported Bundle. SAM 2 remains Labs for the same complete-package reason.
+- [x] Verification passes 9 Catalog tests, 7 active SAM Plugin tests with one legal-weight test
+      explicitly ignored, 21 Server tests, 44 Web tests, production build, two responsive Chromium
+      tests, Rustfmt and strict focused Clippy.

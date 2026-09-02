@@ -1676,3 +1676,25 @@ No external model, credential, download, push or remote mutation was used.
    Chromium tests, Rustfmt and strict all-target/all-feature Clippy for Server/Bundle/Catalog.
 
 No external model, credential, download, push or remote mutation was used.
+
+## Model Bundle Provisioning M7 — 2026-09-03
+
+1. `build_builtin_fixture_catalog` generates and verifies a deterministic local `.annotmodel` with
+   exact encoder/decoder roles, checksums, Contract, license, source notice and fixed test vector.
+2. `offline_fixture_runs_bundle_plugin_smoke_geometry_and_removal_lifecycle` performs the complete
+   offline lifecycle through the real Rust Plugin/ORT process, Mask Artifact, Mask to BBox,
+   Geometry Quality, Ready-instance evidence, disable and removal.
+3. Smoke requests now receive a host-owned Image Artifact and fresh image identity. Detection,
+   prompt and Mask lineage all refer to that same image and source subject.
+4. A passing Fixture instance is auditable but its Profile remains Unknown/non-selectable because
+   `publishable=false`; Settings labels this state Fixture-only and keeps a real-model setup action.
+5. The official EfficientSAM repository, Apache-2.0 license, opset-17 exporter and author-owned ONNX
+   Space were audited. The exact Ti encoder and decoder SHA-256 identities and tensor mismatch are
+   recorded in `docs/MODEL_CARDS.md`.
+6. EfficientSAM is an explicit live-conditional item—not a Catalog claim—until a compatible Rust
+   Plugin, hosted reproducible Bundle and real-image Smoke Test exist. SAM 2 remains Labs.
+7. Verification passes 9 Catalog tests, 7 active SAM Plugin tests with one legal-weight test
+   explicitly ignored, 21 Server tests, 44 Web tests, production build, two responsive Chromium
+   scenarios, Rustfmt, `git diff --check` and strict focused Clippy.
+
+No third-party model weights, credential, Python process, push or remote mutation was used.

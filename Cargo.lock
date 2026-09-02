@@ -222,6 +222,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "image",
  "prost",
  "reqwest",
  "semver",
@@ -395,6 +396,8 @@ name = "annotagent-plugin-sam-onnx"
 version = "0.1.0"
 dependencies = [
  "annotagent-core",
+ "annotagent-model-bundle",
+ "annotagent-model-catalog",
  "annotagent-model-runtime-common",
  "annotagent-model-runtime-onnx",
  "annotagent-plugin-api",
@@ -405,6 +408,7 @@ dependencies = [
  "annotagent-skill-segmentation",
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "image",
  "serde_json",
  "sha2",

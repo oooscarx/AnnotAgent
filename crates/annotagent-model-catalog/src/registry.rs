@@ -210,7 +210,14 @@ impl ModelBundleRegistry {
         } else {
             ModelBundleRegistryState::default()
         };
-        Ok(Self { data_root, state })
+        let mut registry = Self { data_root, state };
+        let fixture = crate::build_builtin_fixture_catalog(&registry.data_root)?;
+        registry
+            .state
+            .catalogs
+            .insert(fixture.catalog.catalog_id.clone(), fixture.catalog);
+        registry.persist()?;
+        Ok(registry)
     }
 
     #[must_use]
@@ -265,7 +272,9 @@ impl ModelBundleRegistry {
                     &instance.model_bundle_id,
                     &instance.model_bundle_version,
                 ));
-                let available = instance.status == ModelInstanceStatus::Ready;
+                let ready = instance.status == ModelInstanceStatus::Ready;
+                let publishable = bundle.is_none_or(|bundle| bundle.manifest.publishable);
+                let available = ready && publishable;
                 ModelInstanceProfile {
                     model_profile_id: instance.model_profile_id,
                     model_profile_revision: instance.model_profile_revision,
@@ -286,6 +295,30 @@ impl ModelBundleRegistry {
                 }
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn local_catalog_bundle_path(
+        &self,
+        catalog_id: &str,
+        id: &ModelBundleId,
+        version: &Version,
+    ) -> Option<PathBuf> {
+        if catalog_id != crate::BUILTIN_FIXTURE_CATALOG_ID {
+            return None;
+        }
+        let entry = self
+            .state
+            .catalogs
+            .get(catalog_id)?
+            .entries
+            .iter()
+            .find(|entry| entry.bundle_id == *id && entry.bundle_version == *version)?;
+        if !entry.fixture || entry.publishable {
+            return None;
+        }
+        let path = crate::builtin_catalog_bundle_path(&self.data_root, catalog_id, id, version);
+        path.is_file().then_some(path)
     }
 
     #[must_use]

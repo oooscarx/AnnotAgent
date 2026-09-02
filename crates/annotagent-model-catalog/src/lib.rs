@@ -2,6 +2,7 @@
 
 mod compatibility;
 mod download;
+mod fixture;
 mod registry;
 mod smoke;
 
@@ -20,6 +21,7 @@ use url::{Host, Url};
 
 pub use compatibility::*;
 pub use download::*;
+pub use fixture::*;
 pub use registry::*;
 pub use smoke::*;
 

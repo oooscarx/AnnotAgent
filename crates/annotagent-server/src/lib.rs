@@ -6933,12 +6933,12 @@ async fn install_model_bundle(
     let bundle_id = ModelBundleId::parse(&request.bundle_id).map_err(ApiError::bad_request)?;
     let bundle_version =
         semver::Version::parse(&request.bundle_version).map_err(ApiError::bad_request)?;
-    let entry = {
+    let (entry, local_bundle) = {
         let registry = state.application.model_bundle_registry();
         let registry = registry
             .lock()
             .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
-        registry
+        let entry = registry
             .catalogs()
             .into_iter()
             .find(|catalog| catalog.catalog_id == request.catalog_id)
@@ -6947,18 +6947,30 @@ async fn install_model_bundle(
                     entry.bundle_id == bundle_id && entry.bundle_version == bundle_version
                 })
             })
-            .ok_or_else(|| ApiError::not_found("Catalog Model Bundle was not found"))?
+            .ok_or_else(|| ApiError::not_found("Catalog Model Bundle was not found"))?;
+        let local_bundle = registry.local_catalog_bundle_path(
+            &request.catalog_id,
+            &entry.bundle_id,
+            &entry.bundle_version,
+        );
+        (entry, local_bundle)
     };
     let upload_root = model_bundle_registry_root(&state)?.join("model-downloads");
     tokio::fs::create_dir_all(&upload_root)
         .await
         .map_err(ApiError::internal)?;
     let download = upload_root.join(format!("{}.annotmodel", uuid::Uuid::new_v4()));
-    let client = ModelCatalogClient::new().map_err(ApiError::bad_request)?;
-    client
-        .download_bundle(&entry, &download, &CancellationToken::new(), None)
-        .await
-        .map_err(ApiError::bad_request)?;
+    if let Some(source) = local_bundle {
+        tokio::fs::copy(source, &download)
+            .await
+            .map_err(ApiError::internal)?;
+    } else {
+        let client = ModelCatalogClient::new().map_err(ApiError::bad_request)?;
+        client
+            .download_bundle(&entry, &download, &CancellationToken::new(), None)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
     let path = download.clone();
     let verified = tokio::task::spawn_blocking(move || verify_model_bundle(&path))
         .await
