@@ -1,12 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
-use annotagent_core::{
-    ImageId, ModelCapability, ModelImage, PipelineInferenceRequest, RunId, VisionCapability,
-};
 use annotagent_plugin_api::{PluginId, PluginStatus, PluginVersion, Sha256Digest};
-use annotagent_plugin_host::{
-    HostedPlugin, PluginProcessConfig, pack_directory, process_directories, verify_package,
-};
+use annotagent_plugin_host::{HostedPlugin, pack_directory, verify_package};
 use annotagent_plugin_registry::{
     InstallApproval, PluginInstallation, PluginRegistry, default_plugin_data_root,
 };
@@ -114,7 +109,7 @@ pub async fn run(command: PluginCommand, data_dir: Option<PathBuf>) -> Result<()
         PluginCommand::Test { plugin_id, version } => {
             let mut registry = PluginRegistry::open(data_root)?;
             let installation = resolve(&registry, &plugin_id, version.as_deref())?;
-            let report = test_installation(&registry, &installation).await?;
+            let report = registry.test_installation(&installation).await?;
             let status = registry.record_test(report.clone())?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             println!("status: {status:?}");
@@ -198,94 +193,13 @@ fn print_installation(installation: &PluginInstallation) {
     );
 }
 
-async fn test_installation(
-    registry: &PluginRegistry,
-    installation: &PluginInstallation,
-) -> Result<annotagent_plugin_api::PluginTestReport> {
-    if installation.status == PluginStatus::NeedsWeights {
-        bail!("plugin requires checkpoint provisioning before process testing");
-    }
-    let host = start_installation(registry, installation).await?;
-    let sample = sample_request(installation)?;
-    let report = host.test(Some(&sample)).await?;
-    host.stop().await?;
-    Ok(report)
-}
-
 async fn start_installation(
     registry: &PluginRegistry,
     installation: &PluginInstallation,
 ) -> Result<HostedPlugin> {
-    let executable =
-        registry.executable(&installation.manifest.id, &installation.manifest.version)?;
-    let process_root = registry
-        .data_root()
-        .join("plugin-state")
-        .join(installation.manifest.id.as_str())
-        .join(installation.manifest.version.to_string());
-    let (state, cache, temporary) = process_directories(&process_root);
-    let weights =
-        registry.weights_root(&installation.manifest.id, &installation.manifest.version)?;
-    let response_bytes = installation
-        .manifest
-        .resources
-        .maximum_response_mb
-        .saturating_mul(1024 * 1024);
     Ok(HostedPlugin::start(
         installation.manifest.clone(),
-        PluginProcessConfig {
-            executable,
-            installation_root: installation.installation_root.clone(),
-            state_dir: state,
-            weights_dir: weights,
-            cache_dir: cache,
-            temporary_dir: temporary,
-            max_request_bytes: 64 * 1024 * 1024,
-            max_response_bytes: usize::try_from(response_bytes).unwrap_or(256 * 1024 * 1024),
-        },
+        registry.process_config(installation)?,
     )
     .await?)
-}
-
-fn sample_request(installation: &PluginInstallation) -> Result<PipelineInferenceRequest> {
-    let model = installation
-        .manifest
-        .models
-        .first()
-        .context("plugin declares no model")?;
-    let capability = *model
-        .capabilities
-        .first()
-        .context("model declares no capability")?;
-    let operation = match capability {
-        ModelCapability::VisionLanguage => VisionCapability::VisionLanguage,
-        ModelCapability::ImageClassification => VisionCapability::Classification,
-        ModelCapability::ObjectDetection => VisionCapability::ObjectDetection,
-        ModelCapability::OpenVocabularyDetection => VisionCapability::OpenVocabularyDetection,
-        ModelCapability::PhraseGrounding => VisionCapability::PhraseGrounding,
-        ModelCapability::SemanticSegmentation => VisionCapability::SemanticSegmentation,
-        ModelCapability::PromptedSegmentation => VisionCapability::PromptedSegmentation,
-        ModelCapability::InstanceSegmentation => VisionCapability::InstanceSegmentation,
-        ModelCapability::KeypointDetection => VisionCapability::KeypointDetection,
-        ModelCapability::TextGeneration => {
-            bail!("text generation is not an expert vision operation")
-        }
-    };
-    Ok(PipelineInferenceRequest {
-        protocol_version: annotagent_core::PIPELINE_VISION_PROTOCOL_VERSION,
-        request_id: uuid::Uuid::new_v4().to_string(),
-        run_id: RunId::new(),
-        image_id: ImageId::new(),
-        node_id: "plugin_conformance".to_owned(),
-        model_id: model.id.clone(),
-        operation,
-        image: Some(ModelImage {
-            id: "conformance-image".to_owned(),
-            mime_type: "image/png".to_owned(),
-            data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".to_owned(),
-        }),
-        input_artifacts: Vec::new(),
-        parameters: BTreeMap::new(),
-        timeout_ms: Some(30_000),
-    })
 }

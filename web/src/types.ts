@@ -1316,6 +1316,21 @@ export interface WorkflowCatalog {
     display_name: string;
     capabilities: string[];
   }[];
+  expert_models: {
+    model_id: string;
+    display_name: string;
+    capabilities: ModelCapability[];
+    availability: string;
+    availability_evidence: {
+      health_passed: boolean;
+      protocol_compatible: boolean;
+      contracts_validated: boolean;
+      sample_conversion_passed: boolean;
+      weights_ready: boolean;
+      detail?: string;
+    };
+    metadata: Record<string, unknown>;
+  }[];
   validator_ids: string[];
   refiner_ids: string[];
   resource_ids: string[];
@@ -1650,4 +1665,157 @@ export interface SkillDetail {
   }[];
   projects: string[];
   project_template?: string;
+}
+
+export type PluginStatus =
+  | "discovered"
+  | "installing"
+  | "installed"
+  | "needs_weights"
+  | "unsupported_platform"
+  | "disabled"
+  | "starting"
+  | "ready"
+  | "unhealthy"
+  | "crashed"
+  | "incompatible_api"
+  | "invalid_manifest"
+  | "invalid_contract"
+  | "failed_smoke_test"
+  | "update_available";
+
+export interface ExpertPluginManifest {
+  schema_version: string;
+  id: string;
+  version: string;
+  display_name: string;
+  description: string;
+  publisher: string;
+  plugin_api: string;
+  implementation_status: "runnable" | "live_conditional" | "unsupported";
+  runtime: {
+    kind: "native_rust_process";
+    entrypoint: string;
+    protocol: string;
+    startup_timeout_seconds: number;
+    shutdown_timeout_seconds: number;
+  };
+  compatibility: {
+    annotagent: string;
+    targets: string[];
+    accelerators: string[];
+  };
+  permissions: {
+    network: "none" | "loopback_only";
+    provider_secrets: boolean;
+    project_files: boolean;
+    temporary_images: boolean;
+    plugin_cache: boolean;
+    subprocesses: boolean;
+  };
+  resources: {
+    minimum_memory_mb: number;
+    recommended_memory_mb: number;
+    minimum_vram_mb: number;
+    recommended_vram_mb: number;
+    maximum_response_mb: number;
+    maximum_concurrency: number;
+  };
+  models: {
+    id: string;
+    display_name: string;
+    capabilities: ModelCapability[];
+    input_contracts: unknown[];
+    output_contracts: unknown[];
+    score_semantics: string;
+    geometry_semantics: string;
+  }[];
+  weights: {
+    bundled: boolean;
+    required: boolean;
+    provisioning: "none" | "local_path" | "local_path_or_fixed_recipe";
+    checkpoint_sha256_required: boolean;
+    components: {
+      id: string;
+      model_id: string;
+      filename: string;
+      sha256?: string;
+    }[];
+  };
+  license: {
+    code: string;
+    weights: string;
+    commercial_use: "allowed" | "restricted" | "unknown";
+  };
+}
+
+export interface ExpertPluginInstallation {
+  manifest: ExpertPluginManifest;
+  package_sha256: string;
+  signature: string;
+  status: PluginStatus;
+  enabled: boolean;
+  installed_at: string;
+  updated_at: string;
+  last_test?: {
+    passed: boolean;
+    started_at: string;
+    finished_at: string;
+    checks: { name: string; passed: boolean; detail: string }[];
+  };
+  weights: {
+    model_id: string;
+    component_id: string;
+    checkpoint_sha256: string;
+    original_filename: string;
+    size_bytes: number;
+    provisioned_at: string;
+  }[];
+  references: {
+    plugin_id: string;
+    plugin_version: string;
+    kind: string;
+    location: string;
+    created_at: string;
+  }[];
+}
+
+export interface ExpertPluginModel {
+  selection_id: string;
+  reference: {
+    plugin_id: string;
+    plugin_version: string;
+    package_digest: string;
+    plugin_api_version: string;
+    protocol_version: string;
+    model_id: string;
+    model_profile_revision: number;
+    checkpoint_sha256?: string;
+    capability_contract_hash: string;
+  };
+  display_name: string;
+  capabilities: ModelCapability[];
+  availability: string;
+  plugin_status: PluginStatus;
+  enabled: boolean;
+  selectable: boolean;
+}
+
+export interface ExpertPluginRegistry {
+  installations: ExpertPluginInstallation[];
+  models: ExpertPluginModel[];
+  agent_permissions: {
+    discover: true;
+    install: false;
+    accept_licenses: false;
+    provision_weights: false;
+  };
+}
+
+export interface VerifiedExpertPluginPackage {
+  manifest: ExpertPluginManifest;
+  package_sha256: string;
+  signature: string;
+  verified: true;
+  installed: false;
 }

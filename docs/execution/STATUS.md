@@ -812,3 +812,21 @@ Persistent non-Keychain Provider credentials status: `PASS`.
   API/SQLite inspection with zero Mock Provider, Model Profile or unpublished Draft entries.
 
 Product Mock removal status: `PASS`.
+
+## Rust Expert Model Plugin M8 — product lifecycle — 2026-09-02
+
+- Settings now contains a responsive Expert Model Plugins workspace backed by actual Registry
+  state. It verifies `.annotplugin` packages, requires explicit publisher/permission/license review,
+  provisions hash-bound local checkpoints, runs the isolated Rust process and exposes test evidence.
+- Pipeline Builder can discover installed capability contracts but cannot install packages, accept
+  terms, provision weights or promote an unavailable model. Missing setup stays an Unresolved
+  Binding with a route to Plugin Settings.
+- Published Workflow Versions freeze exact plugin/package/API/protocol/model/revision/checkpoint/
+  contract identity. Referenced versions cannot be uninstalled and disabled or mismatched versions
+  block new Runs.
+- Detection, Classification and Prompted Segmentation plugin bindings execute through the isolated
+  Host boundary. Core and generic Skills remain model-brand neutral.
+- Focused Rust lifecycle/publication/API tests, all 44 Web unit tests, the production build and a
+  desktop/mobile Chromium accessibility journey pass. M9 release migration remains in progress.
+
+Rust Expert Model Plugin M8 status: `PASS`.

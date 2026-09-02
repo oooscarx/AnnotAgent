@@ -2,6 +2,7 @@ export type BuildStep = "data" | "labels" | "pipeline" | "test";
 export type SettingsSection =
   | "providers"
   | "models"
+  | "plugins"
   | "vision-workers"
   | "storage"
   | "usage";
@@ -49,6 +50,7 @@ const BUILD_STEPS = new Set<BuildStep>([
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   "providers",
   "models",
+  "plugins",
   "vision-workers",
   "storage",
   "usage",

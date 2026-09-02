@@ -44,6 +44,9 @@ use annotagent_core::{
     check_model_compatibility, effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
+use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
+use annotagent_plugin_host::verify_package;
+use annotagent_plugin_registry::{InstallApproval, PluginRegistryError, plugin_model_selection_id};
 use annotagent_provider::{
     EnvironmentSecretStore, HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig,
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, KeyringSecretStore,
@@ -63,11 +66,11 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use chrono::Utc;
-use futures::{Stream, stream};
+use futures::{Stream, StreamExt as _, stream};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::RwLock;
+use tokio::{io::AsyncWriteExt as _, sync::RwLock};
 use tokio_util::sync::CancellationToken;
 use tower_http::{
     cors::CorsLayer,
@@ -528,6 +531,35 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/model-profiles/{model_id}/quality-contracts",
             get(get_model_profile_quality_contracts),
+        )
+        .route("/api/plugins", get(list_expert_model_plugins))
+        .route(
+            "/api/plugins/packages/inspect",
+            post(inspect_expert_model_plugin_package),
+        )
+        .route(
+            "/api/plugins/packages/install",
+            post(install_expert_model_plugin_package),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}",
+            delete(uninstall_expert_model_plugin),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/weights",
+            post(provision_expert_model_plugin_weights),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/test",
+            post(test_expert_model_plugin),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/enable",
+            post(enable_expert_model_plugin),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/disable",
+            post(disable_expert_model_plugin),
         )
         .route(
             "/api/projects/{project_id}/model-bindings",
@@ -6346,6 +6378,408 @@ async fn events(
     )
 }
 
+const MAX_PLUGIN_PACKAGE_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_PLUGIN_WEIGHT_UPLOAD_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct PluginUploadQuery {
+    filename: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginInstallQuery {
+    filename: String,
+    #[serde(default)]
+    permissions_reviewed: bool,
+    #[serde(default)]
+    code_license_accepted: bool,
+    #[serde(default)]
+    weight_license_accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginWeightUploadQuery {
+    filename: String,
+    model_id: String,
+    component_id: Option<String>,
+    sha256: Option<String>,
+}
+
+fn safe_upload_filename(value: &str) -> ApiResult<String> {
+    let path = Path::new(value);
+    let filename = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| ApiError::bad_request("upload filename must be valid UTF-8"))?;
+    if filename != value || filename.is_empty() || matches!(filename, "." | "..") {
+        return Err(ApiError::bad_request(
+            "upload filename must be one safe file name without directories",
+        ));
+    }
+    Ok(filename.to_owned())
+}
+
+fn plugin_registry_root(state: &ServerState) -> ApiResult<PathBuf> {
+    let registry = state.application.plugin_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?;
+    Ok(registry.data_root().to_path_buf())
+}
+
+async fn receive_plugin_upload(
+    state: &ServerState,
+    filename: &str,
+    body: Body,
+    maximum_bytes: u64,
+) -> ApiResult<PathBuf> {
+    let filename = safe_upload_filename(filename)?;
+    let upload_root = plugin_registry_root(state)?.join("uploads");
+    tokio::fs::create_dir_all(&upload_root)
+        .await
+        .map_err(ApiError::internal)?;
+    let extension = Path::new(&filename)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("upload");
+    let path = upload_root.join(format!("{}.{}", uuid::Uuid::new_v4(), extension));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut stream = body.into_data_stream();
+    let mut written = 0_u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(ApiError::bad_request)?;
+        written = written.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+        if written > maximum_bytes {
+            drop(file);
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(ApiError::bad_request(format!(
+                "upload exceeds the {maximum_bytes} byte safety limit"
+            )));
+        }
+        file.write_all(&chunk).await.map_err(ApiError::internal)?;
+    }
+    file.flush().await.map_err(ApiError::internal)?;
+    if written == 0 {
+        drop(file);
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(ApiError::bad_request("upload cannot be empty"));
+    }
+    Ok(path)
+}
+
+fn plugin_registry_view(state: &ServerState) -> ApiResult<Value> {
+    let registry = state.application.plugin_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?;
+    let installations = registry
+        .list()
+        .into_iter()
+        .map(|installation| {
+            let weights = registry
+                .weight_sets(&installation.manifest.id, &installation.manifest.version)
+                .into_iter()
+                .map(|weights| {
+                    json!({
+                        "model_id": weights.model_id,
+                        "component_id": weights.component_id,
+                        "checkpoint_sha256": weights.checkpoint_sha256,
+                        "original_filename": weights.original_filename,
+                        "size_bytes": weights.size_bytes,
+                        "provisioned_at": weights.provisioned_at,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let references =
+                registry.references(&installation.manifest.id, &installation.manifest.version);
+            json!({
+                "manifest": installation.manifest,
+                "package_sha256": installation.package_digest,
+                "signature": installation.signature,
+                "status": installation.status,
+                "enabled": installation.enabled,
+                "installed_at": installation.installed_at,
+                "updated_at": installation.updated_at,
+                "last_test": installation.last_test,
+                "weights": weights,
+                "references": references,
+            })
+        })
+        .collect::<Vec<_>>();
+    let models = registry
+        .ready_models()
+        .into_iter()
+        .map(|profile| {
+            json!({
+                "selection_id": plugin_model_selection_id(&profile.reference),
+                "reference": profile.reference,
+                "display_name": profile.display_name,
+                "capabilities": profile.capabilities,
+                "availability": profile.availability,
+                "plugin_status": profile.plugin_status,
+                "enabled": profile.enabled,
+                "selectable": profile.enabled && profile.availability == ModelAvailability::Available,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "installations": installations,
+        "models": models,
+        "agent_permissions": {
+            "discover": true,
+            "install": false,
+            "accept_licenses": false,
+            "provision_weights": false,
+        },
+    }))
+}
+
+async fn list_expert_model_plugins(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    Ok(Json(plugin_registry_view(&state)?))
+}
+
+async fn inspect_expert_model_plugin_package(
+    State(state): State<ServerState>,
+    Query(query): Query<PluginUploadQuery>,
+    body: Body,
+) -> ApiResult<Json<Value>> {
+    if !query.filename.ends_with(".annotplugin") {
+        return Err(ApiError::bad_request(
+            "Expert Model plugin packages must use the .annotplugin extension",
+        ));
+    }
+    let upload = receive_plugin_upload(
+        &state,
+        &query.filename,
+        body,
+        MAX_PLUGIN_PACKAGE_UPLOAD_BYTES,
+    )
+    .await?;
+    let verify_path = upload.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_package(&verify_path))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::bad_request);
+    let _ = tokio::fs::remove_file(upload).await;
+    let verified = verified?;
+    Ok(Json(json!({
+        "manifest": verified.manifest,
+        "package_sha256": verified.package_digest,
+        "signature": format!("{:?}", verified.signature).to_ascii_lowercase(),
+        "verified": true,
+        "installed": false,
+    })))
+}
+
+async fn install_expert_model_plugin_package(
+    State(state): State<ServerState>,
+    Query(query): Query<PluginInstallQuery>,
+    body: Body,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    if !query.filename.ends_with(".annotplugin") {
+        return Err(ApiError::bad_request(
+            "Expert Model plugin packages must use the .annotplugin extension",
+        ));
+    }
+    let upload = receive_plugin_upload(
+        &state,
+        &query.filename,
+        body,
+        MAX_PLUGIN_PACKAGE_UPLOAD_BYTES,
+    )
+    .await?;
+    let approval = InstallApproval {
+        permissions_reviewed: query.permissions_reviewed,
+        code_license_accepted: query.code_license_accepted,
+        weight_license_accepted: query.weight_license_accepted,
+    };
+    let shared = state.application.plugin_registry();
+    let install_path = upload.clone();
+    let installed = tokio::task::spawn_blocking(move || {
+        shared
+            .lock()
+            .map_err(|_| "Rust plugin Registry lock is poisoned".to_owned())?
+            .install(&install_path, &approval)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::bad_request);
+    let _ = tokio::fs::remove_file(upload).await;
+    let installed = installed?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "plugin_id": installed.manifest.id,
+            "version": installed.manifest.version,
+            "status": installed.status,
+            "enabled": installed.enabled,
+        })),
+    ))
+}
+
+async fn provision_expert_model_plugin_weights(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+    Query(query): Query<PluginWeightUploadQuery>,
+    body: Body,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    let expected = query
+        .sha256
+        .map(Sha256Digest::parse)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    let upload = receive_plugin_upload(
+        &state,
+        &query.filename,
+        body,
+        MAX_PLUGIN_WEIGHT_UPLOAD_BYTES,
+    )
+    .await?;
+    let shared = state.application.plugin_registry();
+    let upload_path = upload.clone();
+    let model_id = query.model_id;
+    let component_id = query.component_id;
+    let provisioned = tokio::task::spawn_blocking(move || {
+        let mut registry = shared
+            .lock()
+            .map_err(|_| "Rust plugin Registry lock is poisoned".to_owned())?;
+        let result = if let Some(component_id) = component_id {
+            registry.provision_local_weight_component(
+                &plugin_id,
+                &version,
+                &model_id,
+                &component_id,
+                &upload_path,
+                expected.as_ref(),
+            )
+        } else {
+            registry.provision_local_weights(
+                &plugin_id,
+                &version,
+                &model_id,
+                &upload_path,
+                expected.as_ref(),
+            )
+        };
+        result.map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::bad_request);
+    let _ = tokio::fs::remove_file(upload).await;
+    let provisioned = provisioned?;
+    Ok(Json(json!({
+        "model_id": provisioned.model_id,
+        "component_id": provisioned.component_id,
+        "checkpoint_sha256": provisioned.checkpoint_sha256,
+        "size_bytes": provisioned.size_bytes,
+        "status": "installed",
+    })))
+}
+
+async fn test_expert_model_plugin(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    let root = plugin_registry_root(&state)?;
+    let test_registry =
+        annotagent_plugin_registry::PluginRegistry::open(root).map_err(ApiError::internal)?;
+    let installation = test_registry
+        .get(&plugin_id, &version)
+        .map_err(ApiError::bad_request)?
+        .clone();
+    let report = test_registry
+        .test_installation(&installation)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let status = state
+        .application
+        .plugin_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .record_test(report.clone())
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"report": report, "status": status})))
+}
+
+async fn enable_expert_model_plugin(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    let status = state
+        .application
+        .plugin_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .enable(&plugin_id, &version)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(
+        json!({"status": status, "enabled": status != annotagent_plugin_api::PluginStatus::UnsupportedPlatform}),
+    ))
+}
+
+async fn disable_expert_model_plugin(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    state
+        .application
+        .plugin_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .disable(&plugin_id, &version)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"status": "disabled", "enabled": false})))
+}
+
+async fn uninstall_expert_model_plugin(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    let shared = state.application.plugin_registry();
+    let mut registry = shared
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?;
+    let references = registry.references(&plugin_id, &version);
+    if !references.is_empty() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": "plugin_version_referenced",
+                "error": "This exact plugin version is frozen into a Published Workflow and cannot be uninstalled.",
+                "references": references,
+                "suggested_action": "Publish a replacement Workflow using another model version before uninstalling this version.",
+            }),
+        });
+    }
+    match registry.uninstall(&plugin_id, &version) {
+        Ok(()) => Ok(Json(
+            json!({"uninstalled": format!("{plugin_id}@{version}")}),
+        )),
+        Err(PluginRegistryError::Referenced(detail)) => Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"code": "plugin_version_referenced", "error": detail}),
+        }),
+        Err(error) => Err(ApiError::bad_request(error)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use annotagent_core::RunStatus;
@@ -6397,6 +6831,116 @@ mod tests {
             .expect("body");
         let value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
         (status, value)
+    }
+
+    async fn call_bytes(
+        service: &Router,
+        method: axum::http::Method,
+        uri: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let response = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        let value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
+        (status, value)
+    }
+
+    fn plugin_package(temp: &tempfile::TempDir) -> Vec<u8> {
+        let source = temp.path().join("plugin-source");
+        let binary = source
+            .join("bin")
+            .join(annotagent_plugin_host::current_target())
+            .join("annotagent-plugin-dummy-detector");
+        std::fs::create_dir_all(binary.parent().expect("binary parent")).expect("dirs");
+        std::fs::write(
+            source.join(annotagent_plugin_api::PLUGIN_MANIFEST_FILE),
+            include_str!("../../../plugins/dummy-detector/annotagent-plugin.toml"),
+        )
+        .expect("manifest");
+        std::fs::write(binary, b"server install fixture").expect("binary");
+        let package = temp.path().join("fixture.annotplugin");
+        annotagent_plugin_host::pack_directory(&source, &package).expect("package");
+        std::fs::read(package).expect("package bytes")
+    }
+
+    #[tokio::test]
+    async fn plugin_install_wizard_uses_real_package_validation_and_explicit_approval() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let package = plugin_package(&temp);
+
+        let (status, inspected) = call_bytes(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/packages/inspect?filename=fixture.annotplugin",
+            package.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{inspected:#?}");
+        assert_eq!(inspected["verified"], json!(true));
+        assert_eq!(
+            inspected["manifest"]["id"],
+            json!("org.annotagent.dummy-detector")
+        );
+
+        let (status, rejected) = call_bytes(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/packages/install?filename=fixture.annotplugin",
+            package.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected:#?}");
+        assert!(
+            rejected["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("approval"))
+        );
+
+        let (status, installed) = call_bytes(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/packages/install?filename=fixture.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
+            package,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
+
+        let (status, catalog) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/plugins",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{catalog:#?}");
+        assert_eq!(catalog["installations"].as_array().map(Vec::len), Some(1));
+        assert_eq!(catalog["models"].as_array().map(Vec::len), Some(1));
+        assert_eq!(catalog["models"][0]["selectable"], json!(false));
+        assert_eq!(catalog["agent_permissions"]["install"], json!(false));
+        assert!(
+            catalog["installations"][0]
+                .get("installation_root")
+                .is_none()
+        );
     }
 
     #[tokio::test]

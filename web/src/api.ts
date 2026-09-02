@@ -52,6 +52,8 @@ import type {
   ModelCapabilityQualityContract,
   PipelineImprovementSession,
   ProjectGeometryPolicy,
+  ExpertPluginRegistry,
+  VerifiedExpertPluginPackage,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -76,6 +78,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       .join(" ");
     throw new Error(
       active ?? (actionable || `${response.status} ${response.statusText}`),
+    );
+  }
+  return response.json() as Promise<T>;
+}
+
+async function upload<T>(path: string, file: File): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: file,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      suggested_action?: string;
+    };
+    throw new Error(
+      [body.error, body.suggested_action].filter(Boolean).join(" ") ||
+        `${response.status} ${response.statusText}`,
     );
   }
   return response.json() as Promise<T>;
@@ -226,6 +247,61 @@ export const api = {
       contracts: ModelCapabilityQualityContract[];
     }>(
       `/api/model-profiles/${encodeURIComponent(modelId)}/quality-contracts`,
+    ),
+  expertPlugins: () => request<ExpertPluginRegistry>("/api/plugins"),
+  inspectExpertPluginPackage: (file: File) =>
+    upload<VerifiedExpertPluginPackage>(
+      `/api/plugins/packages/inspect?${new URLSearchParams({ filename: file.name })}`,
+      file,
+    ),
+  installExpertPluginPackage: (
+    file: File,
+    approval: {
+      permissions_reviewed: boolean;
+      code_license_accepted: boolean;
+      weight_license_accepted: boolean;
+    },
+  ) =>
+    upload<{ plugin_id: string; version: string; status: string; enabled: boolean }>(
+      `/api/plugins/packages/install?${new URLSearchParams({
+        filename: file.name,
+        permissions_reviewed: String(approval.permissions_reviewed),
+        code_license_accepted: String(approval.code_license_accepted),
+        weight_license_accepted: String(approval.weight_license_accepted),
+      })}`,
+      file,
+    ),
+  provisionExpertPluginWeights: (
+    pluginId: string,
+    version: string,
+    modelId: string,
+    file: File,
+    componentId?: string,
+    sha256?: string,
+  ) =>
+    upload<{ model_id: string; component_id: string; checkpoint_sha256: string; size_bytes: number }>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/weights?${new URLSearchParams({
+        filename: file.name,
+        model_id: modelId,
+        ...(componentId ? { component_id: componentId } : {}),
+        ...(sha256 ? { sha256 } : {}),
+      })}`,
+      file,
+    ),
+  testExpertPlugin: (pluginId: string, version: string) =>
+    request<{ status: string; report: { passed: boolean; checks: { name: string; passed: boolean; detail: string }[] } }>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/test`,
+      { method: "POST" },
+    ),
+  setExpertPluginEnabled: (pluginId: string, version: string, enabled: boolean) =>
+    request<{ status: string; enabled: boolean }>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  uninstallExpertPlugin: (pluginId: string, version: string) =>
+    request<{ uninstalled: string }>(
+      `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}`,
+      { method: "DELETE" },
     ),
   dashboard: () => request<DashboardData>("/api/projects"),
   createProject: (id: string, yaml: string) =>

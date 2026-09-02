@@ -28,3 +28,9 @@
 - LocateAnything is not runnable: the official release has no audited complete ONNX, Candle, Burn or
   Rust-native runtime. Its test fixture is protocol-only, excluded from product packaging and cannot
   become availability evidence.
+- Plugin-backed Workflow nodes currently start an isolated process on demand rather than sharing a
+  long-lived cross-Run process pool. Native ONNX session caching remains inside each child process;
+  process pooling is a post-Alpha latency optimization that must preserve exact-version isolation.
+- The GUI installs a local package file and local checkpoint files. It does not yet implement a
+  signed remote marketplace or automatic model downloads; those would require a separate trust and
+  license workflow.

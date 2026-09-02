@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use annotagent_core::{
@@ -16,6 +16,8 @@ use annotagent_core::{
     VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
     WorkflowNodeKind,
 };
+use annotagent_plugin_host::{HostedPlugin, PluginPipelineBackend};
+use annotagent_plugin_registry::{PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
     HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig, HttpVisionDetectionBackend,
     OpenAiCompatiblePipelineClassifier, OpenAiCompatiblePipelineDetector, OpenAiCompatibleProvider,
@@ -96,6 +98,7 @@ pub(crate) struct PublishedWorkflowRuntime {
     validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
     refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
     detection_workers: Vec<DetectionWorkerSettings>,
+    plugin_registry: Arc<Mutex<PluginRegistry>>,
 }
 
 #[derive(Clone)]
@@ -107,6 +110,7 @@ struct ModelExecution {
 }
 
 impl PublishedWorkflowRuntime {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         workflow: PublishedWorkflowVersion,
         provider_kind: &str,
@@ -115,6 +119,7 @@ impl PublishedWorkflowRuntime {
         store: Arc<SqliteStore>,
         validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
         refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
+        plugin_registry: Arc<Mutex<PluginRegistry>>,
     ) -> Result<Self> {
         let mut pipeline_provider = None;
         let external_backend: Option<Arc<dyn VisionModelBackend>> = match provider_kind {
@@ -227,6 +232,7 @@ impl PublishedWorkflowRuntime {
             validators,
             refiners,
             detection_workers: settings.detection_workers.clone(),
+            plugin_registry,
         })
     }
 
@@ -366,6 +372,8 @@ impl PublishedWorkflowRuntime {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         false,
                     )?;
@@ -427,6 +435,8 @@ impl PublishedWorkflowRuntime {
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
                     )?;
@@ -438,6 +448,8 @@ impl PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
                     )?;
@@ -1065,6 +1077,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         false,
                     )?;
@@ -1126,6 +1140,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
                     )?;
@@ -1137,6 +1153,8 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
+                            plugin_registry: self.plugin_registry.clone(),
+                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
                     )?;
@@ -1323,10 +1341,76 @@ fn add_execution_metadata(output: &mut DagNodeOutput, execution: &ModelExecution
         .insert("model".to_owned(), json!(execution.model_name));
 }
 
+fn add_plugin_execution_metadata(output: &mut DagNodeOutput, model_id: &str) {
+    output
+        .metadata
+        .insert("provider".to_owned(), json!("rust_plugin"));
+    output.metadata.insert("model".to_owned(), json!(model_id));
+}
+
+async fn start_plugin_pipeline_backend(
+    registry: &Arc<Mutex<PluginRegistry>>,
+    frozen_models: &[annotagent_core::PluginModelSnapshot],
+    selection_id: &str,
+    capability: annotagent_core::VisionCapability,
+) -> Result<Arc<dyn annotagent_core::PipelineModelBackend>> {
+    let (manifest, config, worker_model_id) = {
+        let registry = registry
+            .lock()
+            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+        let profile = registry
+            .ready_models()
+            .into_iter()
+            .find(|profile| plugin_model_selection_id(&profile.reference) == selection_id)
+            .ok_or_else(|| anyhow!("Plugin model {selection_id:?} is not installed"))?;
+        let frozen = frozen_models
+            .iter()
+            .find(|frozen| {
+                frozen.plugin_id == profile.reference.plugin_id.as_str()
+                    && frozen.plugin_version == profile.reference.plugin_version.to_string()
+                    && frozen.model_id == profile.reference.model_id
+            })
+            .ok_or_else(|| {
+                anyhow!("Plugin model {selection_id:?} is not frozen into this Workflow Version")
+            })?;
+        if !frozen
+            .capabilities
+            .iter()
+            .copied()
+            .any(|declared| annotagent_core::vision_capability(declared) == capability)
+        {
+            bail!(
+                "Plugin model {selection_id:?} does not provide the requested {capability:?} Contract"
+            );
+        }
+        let installation = registry
+            .get(
+                &profile.reference.plugin_id,
+                &profile.reference.plugin_version,
+            )?
+            .clone();
+        let config = registry.process_config(&installation)?;
+        (
+            installation.manifest,
+            config,
+            profile.reference.model_id.clone(),
+        )
+    };
+    let hosted = Arc::new(HostedPlugin::start(manifest, config).await?);
+    Ok(Arc::new(PluginPipelineBackend::new_mapped(
+        selection_id,
+        capability,
+        worker_model_id,
+        hosted,
+    )))
+}
+
 struct BoundClassificationRunner {
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
+    plugin_registry: Arc<Mutex<PluginRegistry>>,
+    plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
 #[async_trait]
@@ -1337,32 +1421,51 @@ impl DagNodeRunner for BoundClassificationRunner {
             &self.profile_executions,
             context.node,
         );
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> =
-            if let Some(provider) = execution.pipeline_provider.as_ref() {
-                Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
-                    format!("registry-openai-classifier-{}", execution.model_name),
-                    provider.clone(),
-                    execution.model_name.clone(),
-                ))
-            } else if execution.provider_name == "mock" {
-                Arc::new(MockClassificationBackend::new(format!(
-                    "registry-mock-classifier-{}",
-                    execution.model_name
-                )))
-            } else {
-                return Err(DagNodeFailure::terminal(
-                    "classification_binding",
-                    "classification requires a configured live Provider Model Profile",
-                ));
-            };
+        let plugin_model_id = context
+            .node
+            .model_binding
+            .as_deref()
+            .filter(|model_id| model_id.starts_with("plugin:"));
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if let Some(model_id) =
+            plugin_model_id
+        {
+            start_plugin_pipeline_backend(
+                &self.plugin_registry,
+                &self.plugin_models,
+                model_id,
+                annotagent_core::VisionCapability::Classification,
+            )
+            .await
+            .map_err(|error| DagNodeFailure::terminal("classification_plugin", error.to_string()))?
+        } else if let Some(provider) = execution.pipeline_provider.as_ref() {
+            Arc::new(OpenAiCompatiblePipelineClassifier::with_model(
+                format!("registry-openai-classifier-{}", execution.model_name),
+                provider.clone(),
+                execution.model_name.clone(),
+            ))
+        } else if execution.provider_name == "mock" {
+            Arc::new(MockClassificationBackend::new(format!(
+                "registry-mock-classifier-{}",
+                execution.model_name
+            )))
+        } else {
+            return Err(DagNodeFailure::terminal(
+                "classification_binding",
+                "classification requires a configured live Provider Model Profile",
+            ));
+        };
         let runner = ClassificationSkillRunner::new(
             backend,
-            execution.model_name.clone(),
+            plugin_model_id.unwrap_or(&execution.model_name).to_owned(),
             self.model_image.clone(),
         )
         .map_err(|error| DagNodeFailure::terminal("classification_binding", error.to_string()))?;
         let mut output = runner.run(context).await?;
-        add_execution_metadata(&mut output, execution);
+        if let Some(model_id) = plugin_model_id {
+            add_plugin_execution_metadata(&mut output, model_id);
+        } else {
+            add_execution_metadata(&mut output, execution);
+        }
         Ok(output)
     }
 }
@@ -1372,12 +1475,16 @@ struct BoundDetectionRunner {
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
     detection_workers: Vec<DetectionWorkerSettings>,
+    plugin_registry: Arc<Mutex<PluginRegistry>>,
+    plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
 struct BoundPromptedSegmentationRunner {
     model_image: Option<annotagent_core::ModelImage>,
     detection_workers: Vec<DetectionWorkerSettings>,
     allow_test_fixtures: bool,
+    plugin_registry: Arc<Mutex<PluginRegistry>>,
+    plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
 #[async_trait]
@@ -1409,7 +1516,18 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 "test-only segmentation fixtures cannot run in a product Workflow",
             ));
         }
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = {
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if model_id
+            .starts_with("plugin:")
+        {
+            start_plugin_pipeline_backend(
+                &self.plugin_registry,
+                &self.plugin_models,
+                model_id,
+                annotagent_core::VisionCapability::PromptedSegmentation,
+            )
+            .await
+            .map_err(|error| DagNodeFailure::terminal("segmentation_plugin", error.to_string()))?
+        } else {
             let worker = self
                 .detection_workers
                 .iter()
@@ -1454,10 +1572,17 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 })?,
             )
         };
-        PromptedSegmentationRunner::new(backend, model_id, self.model_image.clone())
-            .map_err(|error| DagNodeFailure::terminal("segmentation_binding", error.to_string()))?
-            .run(context)
-            .await
+        let mut output =
+            PromptedSegmentationRunner::new(backend, model_id, self.model_image.clone())
+                .map_err(|error| {
+                    DagNodeFailure::terminal("segmentation_binding", error.to_string())
+                })?
+                .run(context)
+                .await?;
+        if model_id.starts_with("plugin:") {
+            add_plugin_execution_metadata(&mut output, model_id);
+        }
+        Ok(output)
     }
 }
 
@@ -1469,7 +1594,25 @@ impl DagNodeRunner for BoundDetectionRunner {
             &self.profile_executions,
             context.node,
         );
-        let mut output = if let Some(provider) = &execution.pipeline_provider {
+        let plugin_model_id = context
+            .node
+            .model_binding
+            .as_deref()
+            .filter(|model_id| model_id.starts_with("plugin:"));
+        let mut output = if let Some(model_id) = plugin_model_id {
+            let backend = start_plugin_pipeline_backend(
+                &self.plugin_registry,
+                &self.plugin_models,
+                model_id,
+                annotagent_core::VisionCapability::ObjectDetection,
+            )
+            .await
+            .map_err(|error| DagNodeFailure::terminal("detection_plugin", error.to_string()))?;
+            ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+                .map_err(|error| DagNodeFailure::terminal("detection_binding", error.to_string()))?
+                .run(context)
+                .await?
+        } else if let Some(provider) = &execution.pipeline_provider {
             let runner = VlmDetectionSkillRunner::new(
                 Arc::new(OpenAiCompatiblePipelineDetector::new(
                     format!("registry-openai-detector-{}", execution.model_name),
@@ -1551,7 +1694,11 @@ impl DagNodeRunner for BoundDetectionRunner {
                 runner.run(context).await?
             }
         };
-        add_execution_metadata(&mut output, execution);
+        if let Some(model_id) = plugin_model_id {
+            add_plugin_execution_metadata(&mut output, model_id);
+        } else {
+            add_execution_metadata(&mut output, execution);
+        }
         Ok(output)
     }
 }

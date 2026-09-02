@@ -1,5 +1,34 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin M8 — 2026-09-02
+
+1. The shared Application-owned Registry now drives Server, runtime, CLI-adjacent and TUI views.
+   Server uploads stream into an isolated Registry temporary directory with explicit package and
+   checkpoint size limits; API responses omit installation/cache paths, process tokens and secrets.
+2. Package inspect/install APIs validate actual `.annotplugin` bytes. Installation requires
+   separate human confirmation of permissions, code license and applicable weight license. The
+   integration regression proves verification succeeds, omitted approval fails and the approved
+   package becomes visible but not selectable before a real process test.
+3. Settings → Expert Model Plugins implements Select → Verify → Review → Accept → Install → Add
+   weights → Test. It groups lifecycle states, shows exact model IDs and evidence, supports versioned
+   enable/disable and protects uninstall when Published Workflow references exist.
+4. Plugin models enter the Agent catalog as credential-free Expert Model Manifests. Setup-only
+   models are discoverable; only models with health, protocol, contract, weight and typed sample
+   evidence become Available. Agent authority remains read-only for install/terms/weights/processes.
+5. Workflow publication freezes package/API/protocol/model/revision/checkpoint/contract/capability
+   identity. A focused Application test proves the exact installed version validates and a disabled
+   frozen version blocks every new Run. Runtime starts the installed child and maps the qualified
+   binding to its package-local model only at the Host boundary.
+6. CLI retains the full administrative lifecycle. TUI `/plugins` and `/plugins models` expose
+   versions, states, references, capabilities and qualified IDs without adding a second registry.
+7. Full `cargo test --workspace --all-features` passes 384 active tests with five explicit
+   external/billable tests ignored. Strict all-target/all-feature Clippy, Rustfmt, diff and Rust
+   boundary checks pass. All 44 Web unit tests and the production build pass. Chromium verifies the
+   Plugin Settings route, read-only Agent notice, labeled install controls, honest empty state and
+   no horizontal overflow at desktop or 390 px.
+8. No package, checkpoint, credential, Python runtime, push or remote mutation was introduced by
+   the M8 product flow.
+
 ## Rust Expert Model Plugin M7 — 2026-09-02
 
 1. RF-DETR tests prove official-contract RGB/NCHW normalization, sigmoid flattened top-k decode,

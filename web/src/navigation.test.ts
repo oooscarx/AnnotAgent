@@ -31,6 +31,14 @@ describe("guided workspace routing", () => {
     ).toBe("/runs?project_id=alpha&view=debug");
   });
 
+  it("keeps Expert Model Plugins as a durable Settings destination", () => {
+    expect(parseWorkspaceRoute("/settings/plugins")).toEqual({
+      kind: "settings",
+      section: "plugins",
+      canonicalPath: "/settings/plugins",
+    });
+  });
+
   it("keeps project build context in the path", () => {
     expect(parseWorkspaceRoute("/projects/demo/build/labels")).toEqual({
       kind: "build",

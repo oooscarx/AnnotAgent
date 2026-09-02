@@ -7,13 +7,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use annotagent_core::{ModelAvailability, ModelCapability};
+use annotagent_core::{
+    ArtifactKind, ArtifactRef, BoxPrompt, BoxPromptSetArtifact, CheckpointIdentity,
+    ExpertModelManifest, ImageId, LicenseMetadata, LicensePermission, ModelAvailability,
+    ModelAvailabilityEvidence, ModelCapability, ModelConnection, NormalizedRect,
+    PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest, PromptContract,
+    PromptKind, RunId, VisionCapability,
+};
 use annotagent_plugin_api::{
-    PluginId, PluginImplementationStatus, PluginManifest, PluginModelReference, PluginStatus,
-    PluginTestReport, PluginVersion, Sha256Digest,
+    CommercialUseDeclaration, PluginId, PluginImplementationStatus, PluginManifest,
+    PluginModelReference, PluginStatus, PluginTestReport, PluginVersion, Sha256Digest,
 };
 use annotagent_plugin_host::{
-    PackageSignatureState, PluginPackageError, current_target, verify_package,
+    HostedPlugin, PackageSignatureState, PluginHostError, PluginPackageError, PluginProcessConfig,
+    current_target, process_directories, verify_package,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -39,6 +46,80 @@ fn model_checkpoint_identity(mut weights: Vec<&PluginWeightSet>) -> Option<Sha25
     Some(Sha256Digest::of_bytes(identity.as_bytes()))
 }
 
+fn conformance_sample_request(
+    installation: &PluginInstallation,
+) -> Result<PipelineInferenceRequest, PluginRegistryError> {
+    let model = installation.manifest.models.first().ok_or_else(|| {
+        PluginRegistryError::InvalidTransition("plugin declares no model".to_owned())
+    })?;
+    let capability = *model.capabilities.first().ok_or_else(|| {
+        PluginRegistryError::InvalidTransition("plugin model declares no capability".to_owned())
+    })?;
+    let operation = match capability {
+        ModelCapability::VisionLanguage => VisionCapability::VisionLanguage,
+        ModelCapability::ImageClassification => VisionCapability::Classification,
+        ModelCapability::ObjectDetection => VisionCapability::ObjectDetection,
+        ModelCapability::OpenVocabularyDetection => VisionCapability::OpenVocabularyDetection,
+        ModelCapability::PhraseGrounding => VisionCapability::PhraseGrounding,
+        ModelCapability::SemanticSegmentation => VisionCapability::SemanticSegmentation,
+        ModelCapability::PromptedSegmentation => VisionCapability::PromptedSegmentation,
+        ModelCapability::InstanceSegmentation => VisionCapability::InstanceSegmentation,
+        ModelCapability::KeypointDetection => VisionCapability::KeypointDetection,
+        ModelCapability::TextGeneration => {
+            return Err(PluginRegistryError::InvalidTransition(
+                "text generation is not an expert vision operation".to_owned(),
+            ));
+        }
+    };
+    let image_id = ImageId::new();
+    let input_artifacts = if operation == VisionCapability::PromptedSegmentation {
+        let source = ArtifactRef {
+            artifact_id: "conformance-detections".to_owned(),
+            source_node: "plugin_conformance".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        vec![PipelineArtifact::BoxPromptSet(BoxPromptSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "conformance-prompts".to_owned(),
+                source_node: "plugin_conformance".to_owned(),
+                port: "box_prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            image_id,
+            source_detections: source.clone(),
+            prompts: vec![BoxPrompt {
+                id: "conformance-box".to_owned(),
+                subject: source.item("conformance-object"),
+                bbox: NormalizedRect::new(0.2, 0.2, 0.6, 0.6)
+                    .expect("static conformance rectangle is valid"),
+                attributes: BTreeMap::new(),
+            }],
+        })]
+    } else {
+        Vec::new()
+    };
+    Ok(PipelineInferenceRequest {
+        protocol_version: PIPELINE_VISION_PROTOCOL_VERSION,
+        request_id: uuid::Uuid::new_v4().to_string(),
+        run_id: RunId::new(),
+        image_id,
+        node_id: "plugin_conformance".to_owned(),
+        model_id: model.id.clone(),
+        operation,
+        image: Some(annotagent_core::ModelImage {
+            id: "conformance-image".to_owned(),
+            mime_type: "image/png".to_owned(),
+            data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".to_owned(),
+        }),
+        input_artifacts,
+        parameters: BTreeMap::new(),
+        timeout_ms: Some(30_000),
+    })
+}
+
 #[derive(Debug, Error)]
 pub enum PluginRegistryError {
     #[error("plugin package failed verification: {0}")]
@@ -61,6 +142,8 @@ pub enum PluginRegistryError {
     Referenced(String),
     #[error("plugin state transition is invalid: {0}")]
     InvalidTransition(String),
+    #[error("plugin process test failed: {0}")]
+    Host(#[from] PluginHostError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +262,14 @@ pub struct PluginBackedModelProfile {
     pub availability: ModelAvailability,
     pub plugin_status: PluginStatus,
     pub enabled: bool,
+}
+
+#[must_use]
+pub fn plugin_model_selection_id(reference: &PluginModelReference) -> String {
+    format!(
+        "plugin:{}@{}:{}",
+        reference.plugin_id, reference.plugin_version, reference.model_id
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -568,6 +659,70 @@ impl PluginRegistry {
         Ok(root)
     }
 
+    /// Constructs the same restricted process sandbox used by CLI, Server and runtime callers.
+    /// The child receives only its installation, state, cache, temporary and weight roots.
+    pub fn process_config(
+        &self,
+        installation: &PluginInstallation,
+    ) -> Result<PluginProcessConfig, PluginRegistryError> {
+        let executable =
+            self.executable(&installation.manifest.id, &installation.manifest.version)?;
+        let process_root = self
+            .data_root
+            .join("plugin-state")
+            .join(installation.manifest.id.as_str())
+            .join(installation.manifest.version.to_string());
+        let (state_dir, cache_dir, temporary_dir) = process_directories(&process_root);
+        let weights_dir =
+            self.weights_root(&installation.manifest.id, &installation.manifest.version)?;
+        let maximum_response_bytes = installation
+            .manifest
+            .resources
+            .maximum_response_mb
+            .saturating_mul(1024 * 1024);
+        Ok(PluginProcessConfig {
+            executable,
+            installation_root: installation.installation_root.clone(),
+            state_dir,
+            weights_dir,
+            cache_dir,
+            temporary_dir,
+            max_request_bytes: 64 * 1024 * 1024,
+            max_response_bytes: usize::try_from(maximum_response_bytes)
+                .unwrap_or(256 * 1024 * 1024),
+        })
+    }
+
+    /// Runs the authenticated HTTP Vision conformance and one typed sample inference in an
+    /// isolated child process. The caller records the returned report as a separate transaction.
+    pub async fn test_installation(
+        &self,
+        installation: &PluginInstallation,
+    ) -> Result<PluginTestReport, PluginRegistryError> {
+        if installation.status == PluginStatus::NeedsWeights {
+            return Err(PluginRegistryError::InvalidTransition(
+                "plugin requires checkpoint provisioning before process testing".to_owned(),
+            ));
+        }
+        if installation.manifest.implementation_status == PluginImplementationStatus::Unsupported {
+            return Err(PluginRegistryError::InvalidTransition(
+                "unsupported plugin versions cannot run a readiness smoke test".to_owned(),
+            ));
+        }
+        let host = HostedPlugin::start(
+            installation.manifest.clone(),
+            self.process_config(installation)?,
+        )
+        .await?;
+        let sample = conformance_sample_request(installation)?;
+        let report = host.test(Some(&sample)).await;
+        let stop_result = host.stop().await;
+        match (report, stop_result) {
+            (Ok(report), Ok(())) => Ok(report),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error.into()),
+        }
+    }
+
     pub fn disable(
         &mut self,
         plugin_id: &PluginId,
@@ -627,7 +782,12 @@ impl PluginRegistry {
 
     pub fn add_reference(&mut self, reference: PluginReference) -> Result<(), PluginRegistryError> {
         self.get(&reference.plugin_id, &reference.plugin_version)?;
-        if !self.state.references.contains(&reference) {
+        if !self.state.references.iter().any(|existing| {
+            existing.plugin_id == reference.plugin_id
+                && existing.plugin_version == reference.plugin_version
+                && existing.kind == reference.kind
+                && existing.location == reference.location
+        }) {
             self.state.references.push(reference);
             self.persist()?;
         }
@@ -739,6 +899,189 @@ impl PluginRegistry {
                     }
                 })
             })
+            .collect()
+    }
+
+    /// Returns credential-free expert manifests for Agent discovery. Ready models carry the full
+    /// availability evidence required for selection; setup-only models remain visible but cannot
+    /// be published.
+    #[must_use]
+    pub fn expert_model_manifests(&self) -> Vec<ExpertModelManifest> {
+        let profiles = self
+            .ready_models()
+            .into_iter()
+            .map(|profile| {
+                (
+                    format!(
+                        "{}@{}:{}",
+                        profile.reference.plugin_id,
+                        profile.reference.plugin_version,
+                        profile.reference.model_id
+                    ),
+                    profile,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        self.state
+            .installations
+            .values()
+            .flat_map(|installation| {
+                installation.manifest.models.iter().filter_map(|model| {
+                    let key = format!(
+                        "{}@{}:{}",
+                        installation.manifest.id, installation.manifest.version, model.id
+                    );
+                    let profile = profiles.get(&key)?;
+                    let test_passed = installation
+                        .last_test
+                        .as_ref()
+                        .is_some_and(|report| report.passed);
+                    let check_passed = |name: &str| {
+                        installation.last_test.as_ref().is_some_and(|report| {
+                            report
+                                .checks
+                                .iter()
+                                .any(|check| check.name == name && check.passed)
+                        })
+                    };
+                    let available = profile.availability == ModelAvailability::Available;
+                    let checked_at = installation
+                        .last_test
+                        .as_ref()
+                        .map(|report| report.finished_at);
+                    let prompt_contracts = model
+                        .input_contracts
+                        .iter()
+                        .filter_map(|contract| match contract.data_type {
+                            annotagent_core::ContractDataType::Artifact(
+                                ArtifactKind::BoxPromptSet,
+                            ) => Some(PromptContract {
+                                kind: PromptKind::Box,
+                                required: contract.required,
+                                multiple: contract.multiple,
+                            }),
+                            annotagent_core::ContractDataType::Artifact(
+                                ArtifactKind::PointPromptSet,
+                            ) => Some(PromptContract {
+                                kind: PromptKind::Point,
+                                required: contract.required,
+                                multiple: contract.multiple,
+                            }),
+                            _ => None,
+                        })
+                        .collect();
+                    let checkpoint = profile.reference.checkpoint_sha256.as_ref().map(|digest| {
+                        CheckpointIdentity {
+                            sha256: digest.to_string(),
+                            source: Some("AnnotAgent local plugin model cache".to_owned()),
+                            training_dataset_version: None,
+                        }
+                    });
+                    let availability_evidence = ModelAvailabilityEvidence {
+                        health_passed: available && check_passed("health"),
+                        protocol_compatible: available
+                            && check_passed("capability declaration")
+                            && check_passed("model discovery"),
+                        contracts_validated: available && check_passed("contract discovery"),
+                        sample_conversion_passed: available && check_passed("sample inference"),
+                        weights_ready: profile.reference.checkpoint_sha256.is_some()
+                            || !installation.manifest.weights.required,
+                        checked_at,
+                        detail: Some(if available && test_passed {
+                            "Installed Rust plugin passed authenticated process conformance and typed sample inference"
+                                .to_owned()
+                        } else {
+                            format!("Plugin lifecycle status is {:?}", profile.plugin_status)
+                        }),
+                    };
+                    let commercial_use = match installation.manifest.license.commercial_use {
+                        CommercialUseDeclaration::Allowed => LicensePermission::Allowed,
+                        CommercialUseDeclaration::Restricted => LicensePermission::Restricted,
+                        CommercialUseDeclaration::Unknown => LicensePermission::Unknown,
+                    };
+                    let manifest = ExpertModelManifest {
+                        schema_version:
+                            annotagent_core::EXPERT_MODEL_MANIFEST_SCHEMA_VERSION.to_string(),
+                        model_id: plugin_model_selection_id(&profile.reference),
+                        display_name: format!(
+                            "{} · {} {}",
+                            model.display_name,
+                            installation.manifest.display_name,
+                            installation.manifest.version
+                        ),
+                        architecture: Some(installation.manifest.id.to_string()),
+                        model_version: installation.manifest.version.to_string(),
+                        connection: ModelConnection::VisionWorkerModel {
+                            worker_id: format!(
+                                "plugin:{}@{}",
+                                installation.manifest.id, installation.manifest.version
+                            ),
+                            worker_model_id: model.id.clone(),
+                        },
+                        capabilities: model.capabilities.iter().copied().collect(),
+                        input_contracts: model.input_contracts.clone(),
+                        output_contracts: model.output_contracts.clone(),
+                        prompt_contracts,
+                        score_semantics: model.score_semantics,
+                        geometry_semantics: model.geometry_semantics,
+                        label_space: None,
+                        checkpoint,
+                        runtime_requirements: model.runtime_requirements.clone(),
+                        license: LicenseMetadata {
+                            code_license: Some(installation.manifest.license.code.clone()),
+                            weight_license: Some(installation.manifest.license.weights.clone()),
+                            commercial_use,
+                            usage_notes: vec![format!(
+                                "Published by {} as plugin {}@{}",
+                                installation.manifest.publisher,
+                                installation.manifest.id,
+                                installation.manifest.version
+                            )],
+                            ..LicenseMetadata::default()
+                        },
+                        availability: profile.availability,
+                        availability_evidence,
+                        metadata: BTreeMap::from([
+                            ("plugin_id".to_owned(), serde_json::json!(installation.manifest.id)),
+                            (
+                                "plugin_version".to_owned(),
+                                serde_json::json!(installation.manifest.version),
+                            ),
+                            (
+                                "plugin_package_sha256".to_owned(),
+                                serde_json::json!(installation.package_digest),
+                            ),
+                            (
+                                "plugin_api_version".to_owned(),
+                                serde_json::json!(installation.manifest.plugin_api),
+                            ),
+                            (
+                                "worker_protocol_version".to_owned(),
+                                serde_json::json!(profile.reference.protocol_version),
+                            ),
+                            (
+                                "capability_contract_sha256".to_owned(),
+                                serde_json::json!(profile.reference.capability_contract_hash),
+                            ),
+                        ]),
+                    };
+                    manifest.validate().ok().map(|()| manifest)
+                })
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn weight_sets(
+        &self,
+        plugin_id: &PluginId,
+        version: &PluginVersion,
+    ) -> Vec<PluginWeightSet> {
+        self.state
+            .weight_sets
+            .iter()
+            .filter(|weights| weights.plugin_id == *plugin_id && weights.plugin_version == *version)
+            .cloned()
             .collect()
     }
 
@@ -959,5 +1302,56 @@ mod tests {
 
         let reopened = PluginRegistry::open(temp.path().join("data")).expect("reopen");
         assert_eq!(reopened.list()[0].status, PluginStatus::Ready);
+    }
+
+    #[test]
+    fn expert_manifests_are_discoverable_but_only_selectable_after_conformance() {
+        let temp = tempfile::tempdir().expect("temp");
+        let (package, manifest) = package(&temp, "3.0.0", false);
+        let mut registry = PluginRegistry::open(temp.path().join("data")).expect("registry");
+        registry.install(&package, &approval()).expect("install");
+
+        let discovered = registry.expert_model_manifests();
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(
+            discovered[0].model_id,
+            format!(
+                "plugin:{}@{}:{}",
+                manifest.id, manifest.version, manifest.models[0].id
+            )
+        );
+        assert_ne!(discovered[0].availability, ModelAvailability::Available);
+        assert!(!discovered[0].availability_evidence.available());
+        discovered[0].validate().expect("setup-only manifest");
+
+        let now = Utc::now();
+        registry
+            .record_test(PluginTestReport {
+                plugin_id: manifest.id,
+                plugin_version: manifest.version,
+                passed: true,
+                checks: [
+                    "health",
+                    "capability declaration",
+                    "model discovery",
+                    "contract discovery",
+                    "sample inference",
+                ]
+                .into_iter()
+                .map(|name| annotagent_plugin_api::PluginTestCheck {
+                    name: name.to_owned(),
+                    passed: true,
+                    detail: "typed fixture".to_owned(),
+                })
+                .collect(),
+                started_at: now,
+                finished_at: now,
+            })
+            .expect("record conformance");
+
+        let ready = registry.expert_model_manifests();
+        assert_eq!(ready[0].availability, ModelAvailability::Available);
+        assert!(ready[0].availability_evidence.available());
+        ready[0].validate().expect("ready manifest");
     }
 }

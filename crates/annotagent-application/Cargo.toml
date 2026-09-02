@@ -11,6 +11,9 @@ annotagent-core = { path = "../annotagent-core" }
 annotagent-export = { path = "../annotagent-export" }
 annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-provider = { path = "../annotagent-provider" }
+annotagent-plugin-api = { path = "../annotagent-plugin-api" }
+annotagent-plugin-host = { path = "../annotagent-plugin-host" }
+annotagent-plugin-registry = { path = "../annotagent-plugin-registry" }
 annotagent-runtime = { path = "../annotagent-runtime" }
 annotagent-skill-classification = { path = "../annotagent-skill-classification" }
 annotagent-skill-open-vocabulary = { path = "../annotagent-skill-open-vocabulary" }

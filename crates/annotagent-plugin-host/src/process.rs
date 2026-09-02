@@ -294,6 +294,7 @@ impl HostedPlugin {
 pub struct PluginPipelineBackend {
     id: String,
     capability: VisionCapability,
+    worker_model_id: Option<String>,
     plugin: Arc<HostedPlugin>,
 }
 
@@ -307,6 +308,25 @@ impl PluginPipelineBackend {
         Self {
             id: id.into(),
             capability,
+            worker_model_id: None,
+            plugin,
+        }
+    }
+
+    /// Maps an opaque Registry selection id to the model id declared inside the exact plugin
+    /// package. Published Workflows keep the qualified selection id; the child only sees its own
+    /// package-local model identity.
+    #[must_use]
+    pub fn new_mapped(
+        id: impl Into<String>,
+        capability: VisionCapability,
+        worker_model_id: impl Into<String>,
+        plugin: Arc<HostedPlugin>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            capability,
+            worker_model_id: Some(worker_model_id.into()),
             plugin,
         }
     }
@@ -324,9 +344,17 @@ impl PipelineModelBackend for PluginPipelineBackend {
 
     async fn infer_pipeline(
         &self,
-        request: PipelineInferenceRequest,
+        mut request: PipelineInferenceRequest,
         cancellation: CancellationToken,
     ) -> CoreResult<PipelineInferenceResponse> {
+        if request.operation != self.capability {
+            return Err(CoreError::Validation(
+                "plugin request capability does not match the selected model binding".to_owned(),
+            ));
+        }
+        if let Some(worker_model_id) = &self.worker_model_id {
+            request.model_id.clone_from(worker_model_id);
+        }
         let request_id = request.request_id.clone();
         tokio::select! {
             result = self.plugin.infer(&request) => {

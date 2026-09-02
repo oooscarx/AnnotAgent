@@ -2,6 +2,25 @@
 
 Only commands actually executed are recorded here.
 
+## M8 product lifecycle and Agent discovery — 2026-09-02
+
+- Added real streaming package/weight HTTP endpoints over the shared durable Registry, with upload
+  bounds, safe names, explicit approvals, owner-controlled checkpoint cache, process testing,
+  enable/disable and reference-protected uninstall. Browser responses redact local paths.
+- Settings now provides the complete manual lifecycle and distinguishes Ready, setup-required,
+  Disabled, Unhealthy and Unsupported installations. Exact version/model identities, checkpoint
+  summaries, capability contracts and test checks are inspectable.
+- Agent and Workflow catalogs receive truthful plugin Expert Model Manifests. Unavailable entries
+  remain discoverable but non-selectable; Pipeline Builder cannot install, accept licenses,
+  provision checkpoints or run arbitrary binaries.
+- Publication freezes exact generic plugin identity and records the immutable Workflow reference.
+  New Runs compare the frozen identity with the current Registry and fail closed. Classification,
+  Detection and Prompted Segmentation runners launch the exact child process through the Host.
+- Full workspace/all-feature suite: 384 passed and five explicitly external/billable tests ignored.
+  Strict Clippy, Rustfmt, diff and Rust boundary checks pass. Web unit suite: 44 passed. Production
+  build: PASS. Focused Chromium responsive/accessibility journey: 1 passed. No credential,
+  checkpoint, remote mutation or push occurred.
+
 ## M7 RF-DETR and LocateAnything — 2026-09-02
 
 - Added `org.annotagent.rfdetr-onnx` with the official fixed NCHW detection export contract:

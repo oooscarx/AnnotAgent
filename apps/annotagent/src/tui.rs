@@ -678,6 +678,69 @@ impl TuiState {
         Ok(())
     }
 
+    fn plugins(&mut self, action: Option<&str>) -> Result<()> {
+        let registry = self.application.plugin_registry();
+        let registry = registry
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Rust plugin Registry lock is poisoned"))?;
+        match action {
+            None => {
+                let installations = registry.list();
+                if installations.is_empty() {
+                    self.push(
+                        "No Expert Model Plugins are installed. Use Settings → Expert Model Plugins or `annotagent plugin install` for the review-and-license flow.",
+                    );
+                }
+                let lines = installations
+                    .into_iter()
+                    .map(|installation| {
+                        let references = registry
+                            .references(&installation.manifest.id, &installation.manifest.version)
+                            .len();
+                        format!(
+                            "plugin · {} {} · {:?} · enabled {} · models {} · references {}",
+                            installation.manifest.display_name,
+                            installation.manifest.version,
+                            installation.status,
+                            installation.enabled,
+                            installation.manifest.models.len(),
+                            references,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                drop(registry);
+                for line in lines {
+                    self.push(line);
+                }
+                Ok(())
+            }
+            Some("models") => {
+                let lines = registry
+                    .ready_models()
+                    .into_iter()
+                    .map(|model| {
+                        format!(
+                            "plugin model · {} · {:?} · {:?} · {}",
+                            model.display_name,
+                            model.availability,
+                            model.capabilities,
+                            annotagent_plugin_registry::plugin_model_selection_id(&model.reference),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                drop(registry);
+                if lines.is_empty() {
+                    self.push("No plugin model contracts are registered.");
+                }
+                for line in lines {
+                    self.push(line);
+                }
+                Ok(())
+            }
+            Some(_) => anyhow::bail!("usage: /plugins | /plugins models"),
+        }
+    }
+
     fn bindings(&mut self) -> Result<()> {
         let Some(project) = self.project_context.as_ref() else {
             self.push("Open a Project before viewing model bindings.");
@@ -912,6 +975,7 @@ impl TuiState {
             "/replay" => self.replay(parts.next()).await,
             "/providers" => self.providers(parts.next(), parts.next()),
             "/models" => self.models(parts.next(), parts.next()).await,
+            "/plugins" => self.plugins(parts.next()),
             "/bindings" => self.bindings(),
             "/bind" => self.bind(parts.next(), parts.next()),
             "/geometry" => {
@@ -1099,7 +1163,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -1175,7 +1239,7 @@ fn binding_capability(
 }
 
 fn registry_model_lines(application: &LocalApplication) -> Result<Vec<String>> {
-    application
+    let mut lines = application
         .store()
         .list_model_profiles(None, false)?
         .into_iter()
@@ -1191,7 +1255,24 @@ fn registry_model_lines(application: &LocalApplication) -> Result<Vec<String>> {
                 model.id
             ))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    lines.extend(
+        application
+            .plugin_registry()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Rust plugin Registry lock is poisoned"))?
+            .ready_models()
+            .into_iter()
+            .map(|model| {
+                format!(
+                    "{} · Rust plugin · {:?} · {}",
+                    model.display_name,
+                    model.availability,
+                    annotagent_plugin_registry::plugin_model_selection_id(&model.reference),
+                )
+            }),
+    );
+    Ok(lines)
 }
 
 fn geometry_lines(

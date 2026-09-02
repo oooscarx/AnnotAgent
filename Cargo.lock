@@ -99,6 +99,9 @@ dependencies = [
  "annotagent-core",
  "annotagent-export",
  "annotagent-image-tools",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
  "annotagent-provider",
  "annotagent-runtime",
  "annotagent-skill-classification",
@@ -296,6 +299,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
@@ -447,6 +451,9 @@ dependencies = [
  "annotagent-core",
  "annotagent-export",
  "annotagent-image-tools",
+ "annotagent-plugin-api",
+ "annotagent-plugin-host",
+ "annotagent-plugin-registry",
  "annotagent-provider",
  "annotagent-runtime",
  "annotagent-storage",

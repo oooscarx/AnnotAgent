@@ -41,25 +41,25 @@ use annotagent_core::{
     PipelineDraftTools, PipelineGeometryMetrics, PipelineGeometrySizeMetrics,
     PipelineGrammarValidator, PipelineImprovementDiagnosis, PipelineImprovementId,
     PipelineImprovementPolicy, PipelineImprovementSession, PipelineImprovementStatus,
-    PipelineSource, PipelineStep, PortCardinality, PortDefinition, PricingConfig, PricingSource,
-    ProjectGeometryPolicy, ProjectId, ProjectModelBinding, ProjectSchema, ProjectSnapshot,
-    PromptContract, PromptKind, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
-    ProviderHealthSnapshot, ProviderHealthStatus, ProviderId, ProviderProfile,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
-    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
-    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
-    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
-    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
-    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftNode,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds, center_shift, compare_pipeline_geometry_metrics,
-    rect_iou, resolve_model_binding,
+    PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality, PortDefinition,
+    PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId, ProjectModelBinding,
+    ProjectSchema, ProjectSnapshot, PromptContract, PromptKind, ProtocolFeatures,
+    ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus,
+    ProviderId, ProviderProfile, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
+    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
+    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, center_shift,
+    compare_pipeline_geometry_metrics, rect_iou, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -67,6 +67,7 @@ use annotagent_export::{
     YoloSegmentationImporter,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
+use annotagent_plugin_registry::{PluginReference, PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
     MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
@@ -2789,6 +2790,7 @@ fn registry_requirement_for_node(
     Some(requirement)
 }
 
+#[cfg(test)]
 fn workflow_catalog(settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
     workflow_catalog_with_api_key(settings, None)
 }
@@ -4767,6 +4769,8 @@ impl<'a> DatasetCoordinator<'a> {
                 }
                 self.application
                     .validate_published_registry_models(&published)?;
+                self.application
+                    .validate_published_plugin_models(&published)?;
                 Ok(published)
             })
             .transpose()?;
@@ -5252,6 +5256,7 @@ pub struct LocalApplication {
     store: Arc<SqliteStore>,
     skills: Arc<SkillRegistry>,
     layered_skills: Arc<LayeredSkillRegistry>,
+    plugin_registry: Arc<Mutex<PluginRegistry>>,
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
@@ -5261,6 +5266,37 @@ pub struct LocalApplication {
 struct DryRunRuntimeProvider<'a> {
     kind: &'a str,
     api_key: Option<&'a str>,
+}
+
+struct PluginCatalogVisionBackend {
+    id: String,
+    capabilities: Vec<VisionCapability>,
+}
+
+#[async_trait]
+impl annotagent_core::VisionModelBackend for PluginCatalogVisionBackend {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn kind(&self) -> annotagent_core::VisionBackendKind {
+        annotagent_core::VisionBackendKind::HttpVision
+    }
+
+    fn capabilities(&self) -> Vec<VisionCapability> {
+        self.capabilities.clone()
+    }
+
+    async fn infer(
+        &self,
+        _request: VisionInferenceRequest,
+        _cancellation: CancellationToken,
+    ) -> annotagent_core::CoreResult<annotagent_core::VisionInferenceResponse> {
+        Err(annotagent_core::CoreError::Provider(
+            "Rust plugin models execute through the published Label Pipeline process host"
+                .to_owned(),
+        ))
+    }
 }
 
 impl LocalApplication {
@@ -5333,12 +5369,14 @@ impl LocalApplication {
         registry.register_layered(pack.clone())?;
         layered_skills.register(pack)?;
         let (event_sender, _) = broadcast::channel(1024);
+        let plugin_registry = PluginRegistry::open(workspace.join(".annotagent/plugins"))?;
         Ok(Self {
             workspace,
             database_path,
             store,
             skills: Arc::new(registry),
             layered_skills: Arc::new(layered_skills),
+            plugin_registry: Arc::new(Mutex::new(plugin_registry)),
             event_sender,
             active: Mutex::new(HashMap::new()),
             agent_cancellations: Mutex::new(HashMap::new()),
@@ -5358,6 +5396,54 @@ impl LocalApplication {
     #[must_use]
     pub fn store(&self) -> Arc<SqliteStore> {
         self.store.clone()
+    }
+
+    /// Shared durable Rust plugin Registry used by CLI-adjacent, TUI and Server product paths.
+    /// The lock guards short registry transactions only; plugin process calls clone their exact
+    /// installation identity before awaiting network or child-process work.
+    #[must_use]
+    pub fn plugin_registry(&self) -> Arc<Mutex<PluginRegistry>> {
+        self.plugin_registry.clone()
+    }
+
+    fn workflow_catalog(&self, settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {
+        self.workflow_catalog_with_api_key(settings, None)
+    }
+
+    fn workflow_catalog_with_api_key(
+        &self,
+        settings: &Settings,
+        temporary_api_key: Option<&str>,
+    ) -> Result<(NodeRegistry, ModelRegistry)> {
+        let (nodes, mut models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
+        let manifests = self
+            .plugin_registry
+            .lock()
+            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
+            .expert_model_manifests();
+        let mut backends = BTreeMap::<String, BTreeSet<VisionCapability>>::new();
+        for manifest in &manifests {
+            let ModelConnection::VisionWorkerModel { worker_id, .. } = &manifest.connection else {
+                continue;
+            };
+            backends.entry(worker_id.clone()).or_default().extend(
+                manifest
+                    .capabilities
+                    .iter()
+                    .copied()
+                    .map(annotagent_core::vision_capability),
+            );
+        }
+        for (id, capabilities) in backends {
+            models.register_backend(Arc::new(PluginCatalogVisionBackend {
+                id,
+                capabilities: capabilities.into_iter().collect(),
+            }))?;
+        }
+        for manifest in manifests {
+            models.register_expert_manifest(manifest)?;
+        }
+        Ok((nodes, models))
     }
 
     fn legacy_registry_import(&self, settings: &Settings) -> Result<LegacyRegistryImport> {
@@ -6429,7 +6515,7 @@ impl LocalApplication {
         };
         let mut setup_requirements = Vec::new();
         if primary_failure_class == AnnotationFailureClass::GeometryError {
-            let (_, models) = workflow_catalog(settings)?;
+            let (_, models) = self.workflow_catalog(settings)?;
             let model_descriptors = models.models();
             let mut summary = AgentDryRunSummary {
                 geometry_review_count: geometry_correction_count,
@@ -8008,6 +8094,7 @@ impl LocalApplication {
             self.store.clone(),
             validators,
             refiners,
+            self.plugin_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image("label-pipeline-review-resume", &image, 1280)
@@ -8160,6 +8247,7 @@ impl LocalApplication {
             self.store.clone(),
             validators,
             refiners,
+            self.plugin_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image("label-pipeline-replay", &image, 1280)
@@ -8266,7 +8354,7 @@ impl LocalApplication {
     ) -> Result<WorkflowAdvisorInput> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = project
             .project
             .enabled_skill_versions()
@@ -8309,6 +8397,15 @@ impl LocalApplication {
                 }
             })
             .collect();
+        let mut expert_models = models.expert_manifests();
+        expert_models.extend(
+            self.plugin_registry
+                .lock()
+                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
+                .expert_model_manifests(),
+        );
+        expert_models.sort_by(|left, right| left.model_id.cmp(&right.model_id));
+        expert_models.dedup_by(|left, right| left.model_id == right.model_id);
         Ok(WorkflowAdvisorInput {
             project_id: project_id.to_owned(),
             project_schema: project,
@@ -8319,7 +8416,7 @@ impl LocalApplication {
             runtime_policies: nodes.runtime_policies(),
             provider_profiles,
             model_profiles,
-            expert_models: models.expert_manifests(),
+            expert_models,
             model_registry: models.models(),
             validator_ids: extensions.validators.into_iter().collect(),
             refiner_ids: extensions.refiners.into_iter().collect(),
@@ -8695,11 +8792,11 @@ impl LocalApplication {
                     }
                 }
             }
-            let (nodes, _) = workflow_catalog(settings)?;
+            let (nodes, _) = self.workflow_catalog(settings)?;
             apply_project_capability_bindings(&mut draft, &project, &nodes)?;
             draft
         } else if from_template {
-            let (nodes, models) = workflow_catalog(settings)?;
+            let (nodes, models) = self.workflow_catalog(settings)?;
             let mut draft = RegistryWorkflowAdvisor
                 .suggest_workflow(
                     project_id,
@@ -8751,7 +8848,7 @@ impl LocalApplication {
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let suggestion = RegistryWorkflowAdvisor.suggest_workflow(
             project_id,
             &project,
@@ -8975,7 +9072,7 @@ impl LocalApplication {
         ) {
             return Ok(abort(session));
         }
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = invalid
             .enabled_skills
             .keys()
@@ -9304,7 +9401,7 @@ impl LocalApplication {
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let composition = controlled_label_composition(
             &project,
             target_task_id,
@@ -9680,7 +9777,7 @@ impl LocalApplication {
             | annotagent_core::BuildFeasibility::Unsupported { .. } => 6,
             _ => 10,
         };
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = safe_suggestion
             .draft
             .enabled_skills
@@ -12713,7 +12810,7 @@ impl LocalApplication {
     ) -> Result<WorkflowSuggestion> {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         Ok(RegistryWorkflowAdvisor.suggest_workflow(
             project_id,
             &project,
@@ -12855,7 +12952,7 @@ impl LocalApplication {
     ) -> Result<WorkflowValidationReport> {
         let project_path = self.project_path(&draft.project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (nodes, models) = workflow_catalog(settings)?;
+        let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = draft
             .enabled_skills
             .keys()
@@ -13074,7 +13171,7 @@ impl LocalApplication {
             })?;
             return Ok(report);
         }
-        let (nodes, models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
+        let (nodes, models) = self.workflow_catalog_with_api_key(settings, temporary_api_key)?;
         let mut samples = Vec::new();
         if validation.valid {
             for index in selected {
@@ -13256,12 +13353,14 @@ impl LocalApplication {
     ) -> Result<WorkflowDryRunReport> {
         let project_path = self.project_path(&draft.project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
-        let (_, models) = workflow_catalog(settings)?;
+        let (_, models) = self.workflow_catalog(settings)?;
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
+        let plugin_models = self.freeze_plugin_models(&draft)?;
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot =
             WorkflowSnapshot::frozen(&draft, &models, project.project.enabled_skill_versions())
-                .with_model_profiles(model_profiles);
+                .with_model_profiles(model_profiles)
+                .with_plugin_models(plugin_models);
         let content_hash = annotagent_image_tools::sha256(&snapshot.content_hash_material()?);
         let published = PublishedWorkflowVersion {
             workflow_id: format!("dry-run:{}", draft.id),
@@ -13294,6 +13393,7 @@ impl LocalApplication {
             self.store.clone(),
             validators,
             refiners,
+            self.plugin_registry.clone(),
         )?;
         let project = Arc::new(project);
         let project_root = project_path
@@ -13803,6 +13903,124 @@ impl LocalApplication {
         Ok((draft, profiles))
     }
 
+    fn freeze_plugin_models(&self, draft: &WorkflowDraft) -> Result<Vec<PluginModelSnapshot>> {
+        let referenced = draft
+            .nodes
+            .iter()
+            .filter_map(|node| node.model_binding.as_deref())
+            .filter(|binding| binding.starts_with("plugin:"))
+            .collect::<BTreeSet<_>>();
+        if referenced.is_empty() {
+            return Ok(Vec::new());
+        }
+        let registry = self
+            .plugin_registry
+            .lock()
+            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+        let ready_models = registry.ready_models();
+        let mut snapshots = Vec::new();
+        for binding in referenced {
+            let profile = ready_models
+                .iter()
+                .find(|profile| plugin_model_selection_id(&profile.reference) == binding)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Plugin model binding {binding:?} is not installed in the local Registry"
+                    )
+                })?;
+            if !profile.enabled || profile.availability != ModelAvailability::Available {
+                bail!(
+                    "Plugin model binding {binding:?} is not Ready; add weights, run Test, and enable the exact version before publication"
+                );
+            }
+            let snapshot = PluginModelSnapshot {
+                plugin_id: profile.reference.plugin_id.to_string(),
+                plugin_version: profile.reference.plugin_version.to_string(),
+                plugin_package_sha256: profile.reference.package_digest.to_string(),
+                plugin_api_version: profile.reference.plugin_api_version.clone(),
+                worker_protocol_version: profile.reference.protocol_version.clone(),
+                model_id: profile.reference.model_id.clone(),
+                model_profile_revision: profile.reference.model_profile_revision,
+                checkpoint_sha256: profile
+                    .reference
+                    .checkpoint_sha256
+                    .as_ref()
+                    .map(ToString::to_string),
+                capability_contract_sha256: profile.reference.capability_contract_hash.to_string(),
+                capabilities: profile.capabilities.clone(),
+            };
+            snapshot
+                .validate()
+                .map_err(|error| anyhow!("Plugin model identity cannot be frozen: {error}"))?;
+            snapshots.push(snapshot);
+        }
+        snapshots.sort_by(|left, right| {
+            left.plugin_id
+                .cmp(&right.plugin_id)
+                .then_with(|| left.plugin_version.cmp(&right.plugin_version))
+                .then_with(|| left.model_id.cmp(&right.model_id))
+        });
+        Ok(snapshots)
+    }
+
+    fn validate_published_plugin_models(&self, workflow: &PublishedWorkflowVersion) -> Result<()> {
+        if workflow.snapshot.plugin_models.is_empty() {
+            return Ok(());
+        }
+        let registry = self
+            .plugin_registry
+            .lock()
+            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+        let ready = registry.ready_models();
+        for frozen in &workflow.snapshot.plugin_models {
+            let current = ready.iter().find(|profile| {
+                profile.reference.plugin_id.as_str() == frozen.plugin_id
+                    && profile.reference.plugin_version.to_string() == frozen.plugin_version
+                    && profile.reference.model_id == frozen.model_id
+            });
+            let Some(current) = current else {
+                bail!(
+                    "new Run blocked: frozen Plugin model {}@{}:{} is no longer installed",
+                    frozen.plugin_id,
+                    frozen.plugin_version,
+                    frozen.model_id
+                );
+            };
+            if !current.enabled || current.availability != ModelAvailability::Available {
+                bail!(
+                    "new Run blocked: frozen Plugin model {}@{}:{} is disabled or unavailable",
+                    frozen.plugin_id,
+                    frozen.plugin_version,
+                    frozen.model_id
+                );
+            }
+            let current_snapshot = PluginModelSnapshot {
+                plugin_id: current.reference.plugin_id.to_string(),
+                plugin_version: current.reference.plugin_version.to_string(),
+                plugin_package_sha256: current.reference.package_digest.to_string(),
+                plugin_api_version: current.reference.plugin_api_version.clone(),
+                worker_protocol_version: current.reference.protocol_version.clone(),
+                model_id: current.reference.model_id.clone(),
+                model_profile_revision: current.reference.model_profile_revision,
+                checkpoint_sha256: current
+                    .reference
+                    .checkpoint_sha256
+                    .as_ref()
+                    .map(ToString::to_string),
+                capability_contract_sha256: current.reference.capability_contract_hash.to_string(),
+                capabilities: current.capabilities.clone(),
+            };
+            if &current_snapshot != frozen {
+                bail!(
+                    "new Run blocked: Plugin package, Contract, or checkpoint identity differs from Published Workflow {}@v{}",
+                    workflow.workflow_id,
+                    workflow.version
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn validate_published_registry_models(
         &self,
         workflow: &PublishedWorkflowVersion,
@@ -13889,16 +14107,36 @@ impl LocalApplication {
             bail!("workflow cannot be published: {blockers}");
         }
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
-        let (_, models) = workflow_catalog(settings)?;
+        let plugin_models = self.freeze_plugin_models(&draft)?;
+        let (_, models) = self.workflow_catalog(settings)?;
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
             .with_model_profiles(model_profiles)
+            .with_plugin_models(plugin_models)
             .with_safety_compatibility(annotagent_core::WorkflowSafetyCompatibility::Safe);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
-        Ok(self
+        let published = self
             .store
-            .publish_workflow_draft(&draft, content_hash, snapshot)?)
+            .publish_workflow_draft(&draft, content_hash, snapshot)?;
+        if !published.snapshot.plugin_models.is_empty() {
+            let mut registry = self
+                .plugin_registry
+                .lock()
+                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+            for model in &published.snapshot.plugin_models {
+                registry.add_reference(PluginReference {
+                    plugin_id: annotagent_plugin_api::PluginId::parse(&model.plugin_id)?,
+                    plugin_version: annotagent_plugin_api::PluginVersion::parse(
+                        &model.plugin_version,
+                    )?,
+                    kind: "published_workflow".to_owned(),
+                    location: format!("{}@v{}", published.workflow_id, published.version),
+                    created_at: chrono::Utc::now(),
+                })?;
+            }
+        }
+        Ok(published)
     }
 
     pub fn list_images_for_project_path(&self, project_path: &Path) -> Result<Vec<PathBuf>> {
@@ -14135,6 +14373,7 @@ impl LocalApplication {
                     bail!("selected Workflow Version belongs to a different Project");
                 }
                 self.validate_published_registry_models(&published)?;
+                self.validate_published_plugin_models(&published)?;
                 let (project, _) =
                     load_project_schema_with_registry(&canonical, &self.skills)?;
                 let geometry_context = self.geometry_safety_validation_context(
@@ -14753,6 +14992,13 @@ fn prepare_run_with_settings(
             .into_keys()
             .collect::<Vec<_>>();
         let (validators, refiners) = workflow_extension_implementations(skills, &enabled_ids)?;
+        let plugin_workspace = project_path
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| anyhow!("Project path has no workspace parent for Plugin Registry"))?;
+        let plugin_registry = Arc::new(Mutex::new(PluginRegistry::open(
+            plugin_workspace.join(".annotagent/plugins"),
+        )?));
         Arc::new(PublishedWorkflowRuntime::new(
             published,
             provider_kind,
@@ -14761,6 +15007,7 @@ fn prepare_run_with_settings(
             store,
             validators,
             refiners,
+            plugin_registry,
         )?)
     } else {
         if project_skills.len() != 1 {
@@ -16336,6 +16583,137 @@ review:
 export:
   formats: [native, coco]
 ";
+
+    fn plugin_package_fixture(temp: &tempfile::TempDir) -> std::path::PathBuf {
+        let source = temp.path().join("plugin-source");
+        let binary = source
+            .join("bin")
+            .join(annotagent_plugin_host::current_target())
+            .join("annotagent-plugin-dummy-detector");
+        std::fs::create_dir_all(binary.parent().expect("binary parent")).expect("dirs");
+        std::fs::write(
+            source.join(annotagent_plugin_api::PLUGIN_MANIFEST_FILE),
+            include_str!("../../../plugins/dummy-detector/annotagent-plugin.toml"),
+        )
+        .expect("manifest");
+        std::fs::write(binary, b"application publication fixture").expect("binary");
+        let package = temp.path().join("fixture.annotplugin");
+        annotagent_plugin_host::pack_directory(&source, &package).expect("package");
+        package
+    }
+
+    #[test]
+    fn publication_freezes_exact_plugin_identity_and_new_runs_fail_closed() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        let package = plugin_package_fixture(&temp);
+        let (selection_id, manifest) = {
+            let shared = application.plugin_registry();
+            let mut registry = shared.lock().expect("Registry");
+            let installed = registry
+                .install(
+                    &package,
+                    &annotagent_plugin_registry::InstallApproval {
+                        permissions_reviewed: true,
+                        code_license_accepted: true,
+                        weight_license_accepted: true,
+                    },
+                )
+                .expect("install");
+            let now = chrono::Utc::now();
+            registry
+                .record_test(annotagent_plugin_api::PluginTestReport {
+                    plugin_id: installed.manifest.id.clone(),
+                    plugin_version: installed.manifest.version.clone(),
+                    passed: true,
+                    checks: [
+                        "health",
+                        "capability declaration",
+                        "model discovery",
+                        "contract discovery",
+                        "sample inference",
+                    ]
+                    .into_iter()
+                    .map(|name| annotagent_plugin_api::PluginTestCheck {
+                        name: name.to_owned(),
+                        passed: true,
+                        detail: "typed fixture".to_owned(),
+                    })
+                    .collect(),
+                    started_at: now,
+                    finished_at: now,
+                })
+                .expect("ready");
+            let profile = registry.ready_models().remove(0);
+            (
+                plugin_model_selection_id(&profile.reference),
+                installed.manifest,
+            )
+        };
+        let now = chrono::Utc::now();
+        let draft = WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "plugin-publication".to_owned(),
+            project_id: "generic".to_owned(),
+            name: "Plugin publication fixture".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            nodes: vec![WorkflowDraftNode {
+                id: "detector".to_owned(),
+                node_type: "capability.detect".to_owned(),
+                kind: WorkflowNodeKind::VisionModel,
+                model_binding: Some(selection_id.clone()),
+                ..WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let plugin_models = application
+            .freeze_plugin_models(&draft)
+            .expect("frozen plugin model");
+        assert_eq!(plugin_models.len(), 1);
+        assert_eq!(plugin_models[0].plugin_id, manifest.id.to_string());
+        assert_eq!(
+            plugin_models[0].plugin_version,
+            manifest.version.to_string()
+        );
+        assert_eq!(plugin_models[0].model_id, manifest.models[0].id);
+        assert_eq!(plugin_models[0].plugin_package_sha256.len(), 64);
+        assert_eq!(plugin_models[0].capability_contract_sha256.len(), 64);
+
+        let snapshot = WorkflowSnapshot::default().with_plugin_models(plugin_models);
+        let published = PublishedWorkflowVersion {
+            workflow_id: "plugin-publication".to_owned(),
+            version: 1,
+            project_id: "generic".to_owned(),
+            source_draft_id: draft.id.clone(),
+            content_hash: annotagent_image_tools::sha256(
+                &snapshot.content_hash_material().expect("hash material"),
+            ),
+            draft,
+            snapshot,
+            published_at: now,
+        };
+        application
+            .validate_published_plugin_models(&published)
+            .expect("exact installed version remains runnable");
+        application
+            .plugin_registry()
+            .lock()
+            .expect("Registry")
+            .disable(&manifest.id, &manifest.version)
+            .expect("disable");
+        let error = application
+            .validate_published_plugin_models(&published)
+            .expect_err("new Run must fail closed when frozen Plugin is disabled");
+        assert!(error.to_string().contains("disabled or unavailable"));
+    }
 
     fn register_pipeline_builder_model(
         application: &LocalApplication,
@@ -18973,6 +19351,7 @@ export:
             application.store.clone(),
             BTreeMap::new(),
             BTreeMap::new(),
+            application.plugin_registry.clone(),
         )
         .expect("Runtime");
         let result = runtime
