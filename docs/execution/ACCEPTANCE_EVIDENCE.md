@@ -1651,3 +1651,28 @@ No model weights, credential, Python process, push or remote mutation was used.
 7. The active Plugin/Model source scan contains no Python/pip/uv/conda/venv process-launch pattern.
 
 No external model, credential, download, push or remote mutation was used.
+
+## Model Bundle Provisioning M6 — 2026-09-03
+
+1. The Plugin page now obtains compatible Catalog Bundles and installed Model Instances from the
+   Registry APIs and renders Runtime, Compatible Models, Installed Models, Model Setup and
+   References independently.
+2. A missing model produces `No compatible model installed` plus one Install compatible model
+   action. The old encoder/decoder file inputs are absent; local `.annotmodel` import is Advanced.
+3. The install wizard reviews the exact Catalog source, publisher, pinned digest, byte size, license
+   digest/terms and target/role compatibility before human initiation. Download/install,
+   verification and smoke transitions use their corresponding real API responses.
+4. Catalog API projections retain `catalog_id`, preventing the browser from guessing which trusted
+   Catalog owns an entry.
+5. Existing Plugin weight sets carry `legacy_model_status=legacy_unbundled_model`. Local conversion
+   validates exact roles and a user-supplied tensor Contract, packages via the Rust Bundle packer,
+   accepts the recorded license as LocalUser and runs the normal Model Instance smoke gate.
+6. `legacy_model_files_are_untrusted_and_preserved_during_local_bundle_migration` proves invalid
+   ONNX bytes stop at ContractMismatch, never become selectable and leave both original files
+   present after the failure.
+7. Focused Browser E2E passes at 1024×900 and 390×844 with no horizontal overflow, no `.onnx` input,
+   the full review journey and state recovery after refresh.
+8. Verification passes 21 Server tests, 44 Web tests, TypeScript/Vite production build, two focused
+   Chromium tests, Rustfmt and strict all-target/all-feature Clippy for Server/Bundle/Catalog.
+
+No external model, credential, download, push or remote mutation was used.

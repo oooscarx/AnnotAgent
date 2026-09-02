@@ -4,7 +4,7 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M5 — Rust Plugin smoke testing, reproducible asset snapshots and removal protection.
+M6 — Compatible-model installation, legacy raw-file migration and responsive GUI.
 
 ## Completed
 
@@ -80,14 +80,31 @@ M5 — Rust Plugin smoke testing, reproducible asset snapshots and removal prote
   content plus bounded staging/download leftovers.
 - Server APIs now cover Bundle/Instance test, compatibility, enable/disable, references, removal and
   conservative garbage collection.
+- Settings → Expert Model Plugins now presents Plugin Runtime, Compatible Models, Installed Models,
+  Model Setup and References as separate evidence sections. The primary call to action is Install
+  compatible model; raw encoder/decoder file controls are absent from the normal path.
+- Added the human-controlled installation journey: Select model → Review source → Review license →
+  Check compatibility → Download → Verify → Smoke Test → Ready. Catalog identity, size, publisher,
+  license digest, platform roles, persisted verification and real smoke errors remain visible.
+- Local `.annotmodel` import is an Advanced action that statically verifies first, requires the
+  exact license acceptance and executes compatible Model Instance smoke tests after import.
+- Existing raw files are projected as `LegacyUnbundledModel` and shown only below collapsed Legacy
+  manual provisioning. A Rust-only Create local model bundle flow requires source, export, license
+  and Model Contract metadata, packages the preserved files and fails closed before Ready when ONNX
+  inspection or the Plugin smoke test fails.
+- Compatible Catalog results now preserve their `catalog_id`, so the reviewed entry is the exact
+  entry sent to installation rather than a guessed or UI-only source.
+- Focused Browser E2E proves the new path at 1024 px and 390 px, no ONNX upload control is exposed,
+  page refresh recovers persisted Registry state and the installation journey stays reachable.
 
 ## In progress
 
-- Final M5 evidence update and milestone commit.
+- Final M6 evidence update and milestone commit.
 
 ## Next
 
-M6 — Replace primary raw ONNX provisioning with compatible-model installation and migration UI.
+M7 — Audit and deliver the first real Prompted Segmentation Bundle, with an offline Fixture kept
+explicitly non-publishable.
 
 ## Latest verification
 
@@ -99,13 +116,15 @@ M6 — Replace primary raw ONNX provisioning with compatible-model installation 
 | Catalog/provisioning tests | PASS — 8 tests including real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
 | Plugin conformance | PASS — Registry, SAM and YOLO tests; 15 active and 2 explicit external-weight ignores in the focused command |
 | Real model smoke | Not run; no legally verified SAM assets are installed |
-| Web tests | Last established release baseline: 44 unit, 37 Chromium E2E |
-| E2E | M0 records the current route; installation UX changes begin in M6 |
-| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; M5 pending |
+| Server tests | PASS — 21, including legacy migration failure/preservation |
+| Web tests | PASS — 44 unit plus production TypeScript/Vite build |
+| E2E | PASS — focused desktop/mobile verified-Bundle installation journey, 2 scenarios |
+| Focused Clippy | PASS — Server, Bundle and Catalog, all targets/features, warnings denied |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; `045a9e5` — M5; M6 pending |
 
 ## Release-blocking remainder
 
-M6–M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
+M7–M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
 
 ## Live-conditional
 

@@ -54,6 +54,11 @@ import type {
   ProjectGeometryPolicy,
   ExpertPluginRegistry,
   VerifiedExpertPluginPackage,
+  InstalledModelBundle,
+  InstalledModelInstance,
+  ModelCatalogEntry,
+  ModelInstanceProfile,
+  VerifiedModelBundlePackage,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -100,6 +105,23 @@ async function upload<T>(path: string, file: File): Promise<T> {
     );
   }
   return response.json() as Promise<T>;
+}
+
+async function requestNoContent(path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { "content-type": "application/json", ...init?.headers },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      suggested_action?: string;
+    };
+    throw new Error(
+      [body.error, body.suggested_action].filter(Boolean).join(" ") ||
+        `${response.status} ${response.statusText}`,
+    );
+  }
 }
 
 export const api = {
@@ -249,6 +271,55 @@ export const api = {
       `/api/model-profiles/${encodeURIComponent(modelId)}/quality-contracts`,
     ),
   expertPlugins: () => request<ExpertPluginRegistry>("/api/plugins"),
+  compatibleModelBundles: (pluginId: string, version: string) =>
+    request<{
+      plugin_runtime_status: string;
+      available: ModelCatalogEntry[];
+      installed: InstalledModelBundle[];
+    }>(`/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/compatible-model-bundles`),
+  modelBundles: () => request<{ bundles: InstalledModelBundle[] }>("/api/model-bundles"),
+  availableModelBundles: () => request<{ bundles: ModelCatalogEntry[] }>("/api/model-bundles/available"),
+  modelInstances: () => request<{ instances: InstalledModelInstance[]; model_profiles: ModelInstanceProfile[] }>("/api/model-instances"),
+  inspectModelBundlePackage: (file: File) =>
+    upload<VerifiedModelBundlePackage>(
+      `/api/model-bundles/packages/inspect?${new URLSearchParams({ filename: file.name })}`,
+      file,
+    ),
+  importModelBundlePackage: (file: File, licenseAccepted: boolean) =>
+    upload<{ bundle: InstalledModelBundle; model_instances: InstalledModelInstance[] }>(
+      `/api/model-bundles/import?${new URLSearchParams({ filename: file.name, license_accepted: String(licenseAccepted) })}`,
+      file,
+    ),
+  acceptModelBundleLicense: (bundleId: string, version: string, licenseDigest: string) =>
+    requestNoContent(
+      `/api/model-bundles/${encodeURIComponent(bundleId)}/${encodeURIComponent(version)}/license-acceptance`,
+      { method: "POST", body: JSON.stringify({ license_digest: licenseDigest }) },
+    ),
+  installModelBundle: (catalogId: string, bundleId: string, version: string) =>
+    request<{ bundle: InstalledModelBundle; model_instances: InstalledModelInstance[] }>("/api/model-bundles/install", {
+      method: "POST",
+      body: JSON.stringify({ catalog_id: catalogId, bundle_id: bundleId, bundle_version: version }),
+    }),
+  testModelInstance: (instanceId: string) =>
+    request<InstalledModelInstance>(`/api/model-instances/${encodeURIComponent(instanceId)}/test`, { method: "POST" }),
+  testModelBundle: (bundleId: string, version: string) =>
+    request<{ model_instances: InstalledModelInstance[] }>(
+      `/api/model-bundles/${encodeURIComponent(bundleId)}/${encodeURIComponent(version)}/test`,
+      { method: "POST" },
+    ),
+  setModelBundleEnabled: (bundleId: string, version: string, enabled: boolean) =>
+    requestNoContent(
+      `/api/model-bundles/${encodeURIComponent(bundleId)}/${encodeURIComponent(version)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  modelBundleReferences: (bundleId: string, version: string) =>
+    request<{ references: { kind: string; location: string; created_at: string }[] }>(
+      `/api/model-bundles/${encodeURIComponent(bundleId)}/${encodeURIComponent(version)}/references`,
+    ),
+  modelBundleCompatibility: (bundleId: string, version: string) =>
+    request<{ compatibility: { plugin_id: string; plugin_version?: string; model_id: string; compatibility: { compatible: boolean; reasons: string[] } }[] }>(
+      `/api/model-bundles/${encodeURIComponent(bundleId)}/${encodeURIComponent(version)}/compatibility`,
+    ),
   inspectExpertPluginPackage: (file: File) =>
     upload<VerifiedExpertPluginPackage>(
       `/api/plugins/packages/inspect?${new URLSearchParams({ filename: file.name })}`,
@@ -288,6 +359,37 @@ export const api = {
       })}`,
       file,
     ),
+  createLegacyLocalModelBundle: (
+    pluginId: string,
+    version: string,
+    value: {
+      model_id: string;
+      bundle_version: string;
+      display_name: string;
+      upstream_project: string;
+      upstream_model_id: string;
+      upstream_version?: string;
+      source_url?: string;
+      exporter_name: string;
+      exporter_version: string;
+      opset: number;
+      license_name: string;
+      license_url?: string;
+      redistribution: "allowed" | "restricted" | "prohibited" | "unknown";
+      commercial_use: "allowed" | "restricted" | "unknown";
+      license_text: string;
+      contract_document: string;
+      license_accepted: boolean;
+    },
+  ) => request<{
+    bundle: InstalledModelBundle;
+    model_instances: InstalledModelInstance[];
+    local_bundle_path: string;
+    legacy_files_preserved: true;
+  }>(`/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/legacy-model-bundle`, {
+    method: "POST",
+    body: JSON.stringify(value),
+  }),
   testExpertPlugin: (pluginId: string, version: string) =>
     request<{ status: string; report: { passed: boolean; checks: { name: string; passed: boolean; detail: string }[] } }>(
       `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/test`,

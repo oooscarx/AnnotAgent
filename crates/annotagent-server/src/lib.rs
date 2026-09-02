@@ -43,8 +43,12 @@ use annotagent_core::{
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_model_bundle::{
-    ModelBundleId, ModelInstanceId, Sha256Digest as ModelBundleSha256Digest, SmokeTestCheck,
-    SmokeTestResult, SmokeTestStatus, verify_model_bundle,
+    CommercialUseStatus, ExpectedOutputSummary, ModelBundleFile, ModelBundleId,
+    ModelBundleManifest, ModelBundleSmokeRequest, ModelContractDocument, ModelContractReference,
+    ModelExportMetadata, ModelFileRole, ModelFormat, ModelInstanceId, ModelLicenseMetadata,
+    ModelRuntimeMetadata, ModelSourceMetadata, ModelTestSuiteReference, OutputTolerances,
+    PluginCompatibilityRequirement, RedistributionStatus, Sha256Digest as ModelBundleSha256Digest,
+    SmokeTestCheck, SmokeTestResult, SmokeTestStatus, pack_model_bundle, verify_model_bundle,
 };
 use annotagent_model_catalog::{
     LicenseAcceptanceActor, ModelBundleCompatibilityResolver, ModelBundleInstallSource,
@@ -617,6 +621,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/plugins/{plugin_id}/{version}/weights",
             post(provision_expert_model_plugin_weights),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/legacy-model-bundle",
+            post(create_legacy_local_model_bundle),
         )
         .route(
             "/api/plugins/{plugin_id}/{version}/test",
@@ -6665,16 +6673,31 @@ async fn list_plugin_compatible_model_bundles(
     let registry = registry
         .lock()
         .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let compatible_plugin_id = plugin.manifest.id.clone();
+    let compatible_plugin_version = plugin.manifest.version.clone();
     let available = registry
-        .available()
+        .catalogs()
         .into_iter()
-        .filter(|entry| {
-            entry.compatible_plugins.iter().any(|requirement| {
-                requirement.accepts(
-                    &plugin.manifest.id,
-                    &plugin.manifest.version,
-                    &requirement.model_id,
-                )
+        .flat_map(|catalog| {
+            let catalog_id = catalog.catalog_id;
+            let plugin_id = compatible_plugin_id.clone();
+            let plugin_version = compatible_plugin_version.clone();
+            catalog.entries.into_iter().filter_map(move |entry| {
+                entry
+                    .compatible_plugins
+                    .iter()
+                    .any(|requirement| {
+                        requirement.accepts(&plugin_id, &plugin_version, &requirement.model_id)
+                    })
+                    .then(|| {
+                        let mut value =
+                            serde_json::to_value(entry).expect("Catalog entries always serialize");
+                        value
+                            .as_object_mut()
+                            .expect("Catalog entries serialize as objects")
+                            .insert("catalog_id".to_owned(), json!(catalog_id));
+                        value
+                    })
             })
         })
         .collect::<Vec<_>>();
@@ -6761,7 +6784,23 @@ async fn list_available_model_bundles(State(state): State<ServerState>) -> ApiRe
     let registry = registry
         .lock()
         .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
-    Ok(Json(json!({ "bundles": registry.available() })))
+    let bundles = registry
+        .catalogs()
+        .into_iter()
+        .flat_map(|catalog| {
+            let catalog_id = catalog.catalog_id;
+            catalog.entries.into_iter().map(move |entry| {
+                let mut value =
+                    serde_json::to_value(entry).expect("Catalog entries always serialize");
+                value
+                    .as_object_mut()
+                    .expect("Catalog entries serialize as objects")
+                    .insert("catalog_id".to_owned(), json!(catalog_id));
+                value
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "bundles": bundles })))
 }
 
 async fn get_model_bundle(
@@ -7305,6 +7344,28 @@ struct PluginWeightUploadQuery {
     sha256: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyLocalModelBundleRequest {
+    model_id: String,
+    bundle_version: semver::Version,
+    display_name: String,
+    upstream_project: String,
+    upstream_model_id: String,
+    upstream_version: Option<String>,
+    source_url: Option<url::Url>,
+    exporter_name: String,
+    exporter_version: String,
+    opset: u32,
+    license_name: String,
+    license_url: Option<url::Url>,
+    redistribution: RedistributionStatus,
+    commercial_use: CommercialUseStatus,
+    license_text: String,
+    contract_document: String,
+    license_accepted: bool,
+}
+
 fn safe_upload_filename(value: &str) -> ApiResult<String> {
     let path = Path::new(value);
     let filename = path
@@ -7397,6 +7458,7 @@ fn plugin_registry_view(state: &ServerState) -> ApiResult<Value> {
                 .collect::<Vec<_>>();
             let references =
                 registry.references(&installation.manifest.id, &installation.manifest.version);
+            let legacy_model_status = (!weights.is_empty()).then_some("legacy_unbundled_model");
             json!({
                 "manifest": installation.manifest,
                 "package_sha256": installation.package_digest,
@@ -7407,6 +7469,7 @@ fn plugin_registry_view(state: &ServerState) -> ApiResult<Value> {
                 "updated_at": installation.updated_at,
                 "last_test": installation.last_test,
                 "weights": weights,
+                "legacy_model_status": legacy_model_status,
                 "references": references,
             })
         })
@@ -7583,6 +7646,450 @@ async fn provision_expert_model_plugin_weights(
         "size_bytes": provisioned.size_bytes,
         "status": "installed",
     })))
+}
+
+fn legacy_bundle_smoke_shape(
+    capability: ModelCapability,
+) -> ApiResult<(VisionCapability, ArtifactKind, bool)> {
+    match capability {
+        ModelCapability::ImageClassification => Ok((
+            VisionCapability::Classification,
+            ArtifactKind::ClassificationSet,
+            false,
+        )),
+        ModelCapability::ObjectDetection => Ok((
+            VisionCapability::ObjectDetection,
+            ArtifactKind::DetectionSet,
+            false,
+        )),
+        ModelCapability::OpenVocabularyDetection => Ok((
+            VisionCapability::OpenVocabularyDetection,
+            ArtifactKind::DetectionSet,
+            false,
+        )),
+        ModelCapability::PhraseGrounding => Ok((
+            VisionCapability::PhraseGrounding,
+            ArtifactKind::DetectionSet,
+            false,
+        )),
+        ModelCapability::SemanticSegmentation => Ok((
+            VisionCapability::SemanticSegmentation,
+            ArtifactKind::SemanticMask,
+            false,
+        )),
+        ModelCapability::PromptedSegmentation => Ok((
+            VisionCapability::PromptedSegmentation,
+            ArtifactKind::MaskSet,
+            true,
+        )),
+        ModelCapability::InstanceSegmentation => Ok((
+            VisionCapability::InstanceSegmentation,
+            ArtifactKind::MaskSet,
+            false,
+        )),
+        ModelCapability::TextGeneration
+        | ModelCapability::VisionLanguage
+        | ModelCapability::KeypointDetection => Err(ApiError::bad_request(
+            "Legacy local Bundle migration does not have a typed smoke-test template for this capability",
+        )),
+    }
+}
+
+fn legacy_bundle_segment(value: &str) -> String {
+    let mut value = value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' {
+                char::from(byte)
+            } else if byte.is_ascii_uppercase() {
+                char::from(byte.to_ascii_lowercase())
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while value.contains("--") {
+        value = value.replace("--", "-");
+    }
+    value = value.trim_matches('-').chars().take(63).collect();
+    value.trim_end_matches('-').to_owned()
+}
+
+async fn create_legacy_local_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+    Json(request): Json<LegacyLocalModelBundleRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let plugin_version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    if !request.license_accepted {
+        return Err(ApiError::bad_request(
+            "creating a local Model Bundle requires explicit acceptance of the supplied license",
+        ));
+    }
+    if request.license_text.trim().is_empty() || request.license_text.len() > 1024 * 1024 {
+        return Err(ApiError::bad_request(
+            "the supplied model license must be non-empty and at most 1 MiB",
+        ));
+    }
+    if request.contract_document.len() > 1024 * 1024 {
+        return Err(ApiError::bad_request(
+            "the supplied Model Contract must be at most 1 MiB",
+        ));
+    }
+    let contract = ModelContractDocument::from_json(request.contract_document.as_bytes())
+        .map_err(ApiError::bad_request)?;
+    let (plugin, model, legacy_weights) = {
+        let shared = state.application.plugin_registry();
+        let registry = shared
+            .lock()
+            .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?;
+        let plugin = registry
+            .get(&plugin_id, &plugin_version)
+            .map_err(ApiError::not_found)?
+            .clone();
+        let model = plugin
+            .manifest
+            .models
+            .iter()
+            .find(|model| model.id == request.model_id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Plugin model was not found"))?;
+        let weights = registry
+            .weight_sets(&plugin_id, &plugin_version)
+            .into_iter()
+            .filter(|weight| weight.model_id == request.model_id)
+            .collect::<Vec<_>>();
+        (plugin, model, weights)
+    };
+    if legacy_weights.is_empty() {
+        return Err(ApiError::bad_request(
+            "no legacy model files exist for this Plugin model",
+        ));
+    }
+    let required_roles = model
+        .required_file_roles
+        .iter()
+        .map(|role| ModelFileRole::parse(role.clone()).map_err(ApiError::bad_request))
+        .collect::<ApiResult<BTreeSet<_>>>()?;
+    let provided_roles = legacy_weights
+        .iter()
+        .map(|weight| {
+            ModelFileRole::parse(weight.component_id.clone()).map_err(ApiError::bad_request)
+        })
+        .collect::<ApiResult<BTreeSet<_>>>()?;
+    if required_roles != provided_roles
+        || contract.roles.keys().cloned().collect::<BTreeSet<_>>() != required_roles
+    {
+        return Err(ApiError::bad_request(format!(
+            "legacy files, Plugin requirements, and Contract roles must match exactly; required={required_roles:?}, files={provided_roles:?}"
+        )));
+    }
+    let capability = *model
+        .capabilities
+        .first()
+        .ok_or_else(|| ApiError::bad_request("Plugin model declares no capability"))?;
+    let (operation, expected_kind, prompted) = legacy_bundle_smoke_shape(capability)?;
+    let plugin_segment = legacy_bundle_segment(plugin_id.as_str());
+    let model_segment = legacy_bundle_segment(&request.model_id);
+    if plugin_segment.is_empty() || model_segment.is_empty() {
+        return Err(ApiError::bad_request(
+            "Plugin and model ids cannot form a safe local Bundle id",
+        ));
+    }
+    let bundle_id = ModelBundleId::parse(format!("local.{plugin_segment}.{model_segment}"))
+        .map_err(ApiError::bad_request)?;
+    let contract_hash = ModelBundleSha256Digest::of_bytes(request.contract_document.as_bytes());
+    let license_hash = ModelBundleSha256Digest::of_bytes(request.license_text.as_bytes());
+    let plugin_contract_hash =
+        ModelBundleSha256Digest::of_bytes(&serde_json::to_vec(&model).map_err(ApiError::internal)?);
+    let registry_root = model_bundle_registry_root(&state)?;
+    let staging = registry_root
+        .join("legacy-bundle-staging")
+        .join(uuid::Uuid::new_v4().to_string());
+    let export_root = registry_root.join("local-bundle-exports");
+    let output = export_root.join(format!(
+        "{}@{}.annotmodel",
+        bundle_id, request.bundle_version
+    ));
+    if output.exists() {
+        return Err(ApiError::bad_request(format!(
+            "local Bundle {}@{} already exists; choose a new version after changing its metadata or Contract",
+            bundle_id, request.bundle_version
+        )));
+    }
+    let manifest = {
+        let source_url = request.source_url.clone();
+        let license_url = request.license_url.clone();
+        let upstream_checksum = if legacy_weights.len() == 1 {
+            Some(
+                ModelBundleSha256Digest::parse(
+                    legacy_weights[0].checkpoint_sha256.as_str().to_owned(),
+                )
+                .map_err(ApiError::bad_request)?,
+            )
+        } else {
+            None
+        };
+        let files = legacy_weights
+            .iter()
+            .map(|weight| {
+                let role = ModelFileRole::parse(weight.component_id.clone())
+                    .map_err(ApiError::bad_request)?;
+                Ok(ModelBundleFile {
+                    path: format!("files/{role}.onnx"),
+                    role,
+                    sha256: ModelBundleSha256Digest::parse(
+                        weight.checkpoint_sha256.as_str().to_owned(),
+                    )
+                    .map_err(ApiError::bad_request)?,
+                    size_bytes: weight.size_bytes,
+                    external_data_files: Vec::new(),
+                })
+            })
+            .collect::<ApiResult<Vec<_>>>()?;
+        ModelBundleManifest {
+            schema_version: "1".to_owned(),
+            id: bundle_id.clone(),
+            version: request.bundle_version.clone(),
+            display_name: request.display_name.clone(),
+            description: Some(format!(
+                "Local migration of legacy files for {}",
+                plugin.manifest.display_name
+            )),
+            model_family: request.upstream_project.clone(),
+            architecture: request.upstream_model_id.clone(),
+            format: ModelFormat::Onnx,
+            variant: "legacy-local-migration".to_owned(),
+            capabilities: model.capabilities.iter().copied().collect(),
+            compatible_plugins: vec![PluginCompatibilityRequirement {
+                plugin_id: plugin_id.clone(),
+                plugin_version: format!("={plugin_version}"),
+                model_id: request.model_id.clone(),
+                contract_hash: plugin_contract_hash,
+                required_file_roles: required_roles.clone(),
+            }],
+            files,
+            contracts: vec![ModelContractReference {
+                id: "legacy-user-supplied-contract".to_owned(),
+                path: "contracts/model-contract.json".to_owned(),
+                sha256: contract_hash,
+                file_roles: required_roles,
+            }],
+            transforms: Vec::new(),
+            source: ModelSourceMetadata {
+                upstream_project: request.upstream_project.clone(),
+                upstream_model_id: request.upstream_model_id.clone(),
+                upstream_version: request.upstream_version.clone(),
+                upstream_checkpoint_sha256: upstream_checksum,
+                source_url,
+            },
+            export: ModelExportMetadata {
+                exporter_name: request.exporter_name.clone(),
+                exporter_version: request.exporter_version.clone(),
+                exporter_revision: None,
+                export_date: Some(Utc::now()),
+                opset: Some(request.opset),
+                numerical_validation: None,
+            },
+            runtime: ModelRuntimeMetadata {
+                execution_providers: model.runtime_requirements.devices.iter().cloned().collect(),
+                platforms: plugin
+                    .manifest
+                    .compatibility
+                    .targets
+                    .iter()
+                    .cloned()
+                    .collect(),
+                minimum_memory_mb: plugin.manifest.resources.minimum_memory_mb,
+                recommended_memory_mb: plugin.manifest.resources.recommended_memory_mb,
+            },
+            license: ModelLicenseMetadata {
+                name: request.license_name.clone(),
+                license_url,
+                license_file: "licenses/MODEL-LICENSE".to_owned(),
+                source_notice: None,
+                license_digest: license_hash,
+                redistribution: request.redistribution,
+                commercial_use: request.commercial_use,
+                requires_acceptance: true,
+                usage_notes: vec![
+                    "User-supplied metadata for a local legacy-file migration".to_owned(),
+                ],
+            },
+            test_suite: ModelTestSuiteReference {
+                test_id: "legacy-local-smoke-v1".to_owned(),
+                input_artifacts: vec![
+                    "tests/input-image.png".to_owned(),
+                    "tests/request.json".to_owned(),
+                ],
+                expected_summary: "tests/expected-summary.json".to_owned(),
+                tolerances: "tests/tolerances.json".to_owned(),
+            },
+            fixture: false,
+            publishable: true,
+        }
+    };
+    manifest.validate().map_err(ApiError::bad_request)?;
+    let image_id = ImageId::new();
+    let input_artifacts = if prompted {
+        let detection = ArtifactRef {
+            artifact_id: "legacy-smoke-detections".to_owned(),
+            source_node: "legacy_bundle_migration".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        vec![PipelineArtifact::BoxPromptSet(BoxPromptSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "legacy-smoke-prompts".to_owned(),
+                source_node: "legacy_bundle_migration".to_owned(),
+                port: "box_prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            image_id,
+            source_detections: detection.clone(),
+            prompts: vec![BoxPrompt {
+                id: "legacy-smoke-box".to_owned(),
+                subject: detection.item("legacy-smoke-object"),
+                bbox: NormalizedRect::new(0.2, 0.2, 0.6, 0.6).map_err(ApiError::bad_request)?,
+                attributes: BTreeMap::new(),
+            }],
+        })]
+    } else {
+        Vec::new()
+    };
+    let smoke_request = ModelBundleSmokeRequest {
+        image_path: "tests/input-image.png".to_owned(),
+        operation,
+        input_artifacts,
+        parameters: BTreeMap::new(),
+        timeout_ms: Some(120_000),
+    };
+    let expected = ExpectedOutputSummary {
+        required_artifact_kinds: BTreeSet::from([expected_kind]),
+        minimum_artifact_count: 1,
+        minimum_item_count: 1,
+        require_non_empty_mask: prompted,
+    };
+    let tolerances = OutputTolerances {
+        maximum_duration_ms: 120_000,
+        minimum_mask_coverage: prompted.then_some(0.000_001),
+        maximum_mask_coverage: prompted.then_some(1.0),
+    };
+    let plugin_files = legacy_weights.clone();
+    let manifest_for_pack = manifest.clone();
+    let contract_document = request.contract_document;
+    let license_text = request.license_text;
+    let staging_for_pack = staging.clone();
+    let output_for_pack = output.clone();
+    let packed = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let result = (|| -> Result<_, Box<dyn std::error::Error>> {
+            for directory in ["files", "contracts", "licenses", "tests"] {
+                std::fs::create_dir_all(staging_for_pack.join(directory))?;
+            }
+            for (weight, file) in plugin_files.iter().zip(&manifest_for_pack.files) {
+                std::fs::copy(&weight.stored_path, staging_for_pack.join(&file.path))?;
+            }
+            std::fs::write(
+                staging_for_pack.join("contracts/model-contract.json"),
+                contract_document,
+            )?;
+            std::fs::write(
+                staging_for_pack.join("licenses/MODEL-LICENSE"),
+                license_text,
+            )?;
+            std::fs::write(
+                staging_for_pack.join("tests/input-image.png"),
+                [
+                    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
+                    0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04,
+                    0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44,
+                    0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0xf8, 0x0f, 0x00, 0x01, 0x05, 0x01, 0x01,
+                    0x27, 0x18, 0xe3, 0x66, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+                    0x42, 0x60, 0x82,
+                ],
+            )?;
+            std::fs::write(
+                staging_for_pack.join("tests/request.json"),
+                serde_json::to_vec_pretty(&smoke_request)?,
+            )?;
+            std::fs::write(
+                staging_for_pack.join("tests/expected-summary.json"),
+                serde_json::to_vec_pretty(&expected)?,
+            )?;
+            std::fs::write(
+                staging_for_pack.join("tests/tolerances.json"),
+                serde_json::to_vec_pretty(&tolerances)?,
+            )?;
+            std::fs::write(
+                staging_for_pack.join(annotagent_model_bundle::MODEL_BUNDLE_MANIFEST_FILE),
+                manifest_for_pack.to_toml()?,
+            )?;
+            std::fs::create_dir_all(
+                output_for_pack
+                    .parent()
+                    .ok_or("local Bundle output has no parent")?,
+            )?;
+            pack_model_bundle(&staging_for_pack, &output_for_pack)?;
+            Ok(verify_model_bundle(&output_for_pack)?)
+        })()
+        .map_err(|error| error.to_string());
+        let _ = std::fs::remove_dir_all(&staging_for_pack);
+        result
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::bad_request)?;
+    let installed = {
+        let registry = state.application.model_bundle_registry();
+        let mut registry = registry
+            .lock()
+            .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+        registry
+            .accept_license(ModelLicenseAcceptance {
+                bundle_id: packed.manifest.id.clone(),
+                bundle_version: packed.manifest.version.clone(),
+                license_digest: packed.manifest.license.license_digest.clone(),
+                accepted_at: Utc::now(),
+                accepted_by: LicenseAcceptanceActor::LocalUser,
+            })
+            .map_err(ApiError::internal)?;
+        registry
+            .install_verified(packed, ModelBundleInstallSource::LocalImport)
+            .map_err(ApiError::bad_request)?
+    };
+    let created_instances = bind_compatible_installed_plugins(&state, &installed)?;
+    let mut tested_instances = Vec::new();
+    for instance in created_instances {
+        match execute_model_instance_test(&state, instance.id).await {
+            Ok(tested) => tested_instances.push(tested),
+            Err(error) => {
+                return Err(ApiError {
+                    status: StatusCode::UNPROCESSABLE_ENTITY,
+                    body: json!({
+                        "code": "legacy_bundle_smoke_test_failed",
+                        "error": error.body.get("error").cloned().unwrap_or_else(|| json!("Local Model Bundle smoke test failed")),
+                        "failed_stage": "smoke_test",
+                        "local_bundle_path": output,
+                        "legacy_files_preserved": true,
+                        "model_instance": installed_model_instance_view(&instance),
+                        "suggested_action": "Correct the supplied Model Contract or model provenance, choose a new Bundle version, and retry. The original legacy files remain unchanged.",
+                    }),
+                });
+            }
+        }
+    }
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "bundle": installed_model_bundle_view(&installed),
+            "model_instances": tested_instances.iter().map(installed_model_instance_view).collect::<Vec<_>>(),
+            "local_bundle_path": output,
+            "legacy_files_preserved": true,
+        })),
+    ))
 }
 
 async fn test_expert_model_plugin(
@@ -7777,6 +8284,24 @@ mod tests {
         std::fs::read(package).expect("package bytes")
     }
 
+    fn sam_plugin_package(temp: &tempfile::TempDir) -> Vec<u8> {
+        let source = temp.path().join("sam-plugin-source");
+        let binary = source
+            .join("bin")
+            .join(annotagent_plugin_host::current_target())
+            .join("annotagent-plugin-sam-onnx");
+        std::fs::create_dir_all(binary.parent().expect("binary parent")).expect("dirs");
+        std::fs::write(
+            source.join(annotagent_plugin_api::PLUGIN_MANIFEST_FILE),
+            include_str!("../../../plugins/sam-onnx/annotagent-plugin.toml"),
+        )
+        .expect("manifest");
+        std::fs::write(binary, b"server SAM migration fixture").expect("binary");
+        let package = temp.path().join("sam-fixture.annotplugin");
+        annotagent_plugin_host::pack_directory(&source, &package).expect("package");
+        std::fs::read(package).expect("package bytes")
+    }
+
     fn legacy_http_sam_fixture() -> DetectionWorkerSettings {
         serde_json::from_value(json!({
             "id": "legacy-e2e-sam",
@@ -7894,6 +8419,147 @@ mod tests {
             catalog["installations"][0]
                 .get("installation_root")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_model_files_are_untrusted_and_preserved_during_local_bundle_migration() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let package = sam_plugin_package(&temp);
+        let (status, installed) = call_bytes(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/packages/install?filename=sam.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
+            package,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
+        for (component, filename) in [
+            ("image_encoder", "encoder.onnx"),
+            ("mask_decoder", "decoder.onnx"),
+        ] {
+            let (status, provisioned) = call_bytes(
+                &service,
+                axum::http::Method::POST,
+                &format!(
+                    "/api/plugins/org.annotagent.sam-onnx/1.0.0/weights?filename={filename}&model_id=sam-vit-b-onnx&component_id={component}"
+                ),
+                format!("untrusted legacy {component}").into_bytes(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{provisioned:#?}");
+        }
+        let (_, registry) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/plugins",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(
+            registry["installations"][0]["legacy_model_status"],
+            json!("legacy_unbundled_model")
+        );
+        assert_eq!(
+            registry["installations"][0]["weights"]
+                .as_array()
+                .map(Vec::len),
+            Some(2)
+        );
+
+        let contract = json!({
+            "contract_version": "1",
+            "roles": {
+                "image_encoder": {
+                    "inputs": [{"name": "image", "aliases": [], "dtype": "f32", "shape": [1, 3, 1024, 1024]}],
+                    "outputs": [{"name": "embedding", "aliases": [], "dtype": "f32", "shape": [1, 256, 64, 64]}]
+                },
+                "mask_decoder": {
+                    "inputs": [{"name": "embedding", "aliases": [], "dtype": "f32", "shape": [1, 256, 64, 64]}],
+                    "outputs": [{"name": "masks", "aliases": [], "dtype": "f32", "shape": [1, 1, 256, 256]}]
+                }
+            },
+            "connections": [{
+                "source_role": "image_encoder",
+                "source_output": "embedding",
+                "target_role": "mask_decoder",
+                "target_input": "embedding"
+            }]
+        });
+        let request = json!({
+            "model_id": "sam-vit-b-onnx",
+            "bundle_version": "1.0.0",
+            "display_name": "Local legacy SAM",
+            "upstream_project": "Owner supplied SAM export",
+            "upstream_model_id": "sam-vit-b",
+            "upstream_version": "unknown",
+            "source_url": "https://example.invalid/owner-record",
+            "exporter_name": "Owner supplied exporter",
+            "exporter_version": "unknown",
+            "opset": 17,
+            "license_name": "Owner supplied terms",
+            "license_url": null,
+            "redistribution": "unknown",
+            "commercial_use": "unknown",
+            "license_text": "Owner supplied license record for local testing.",
+            "contract_document": contract.to_string(),
+            "license_accepted": false
+        });
+        let (status, rejected) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/org.annotagent.sam-onnx/1.0.0/legacy-model-bundle",
+            request.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected:#?}");
+
+        let mut accepted = request;
+        accepted["license_accepted"] = json!(true);
+        let (status, migrated) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/org.annotagent.sam-onnx/1.0.0/legacy-model-bundle",
+            accepted,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{migrated:#?}");
+        assert_eq!(migrated["legacy_files_preserved"], json!(true));
+        assert!(
+            migrated["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("Contract-mismatched"))
+        );
+        let (_, model_registry) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/model-instances",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(
+            model_registry["instances"][0]["status"],
+            json!("contract_mismatch"),
+            "invalid fixture ONNX files cannot become a Ready Model Instance"
+        );
+        let (_, after) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/plugins",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(
+            after["installations"][0]["weights"]
+                .as_array()
+                .map(Vec::len),
+            Some(2),
+            "local migration never removes legacy files"
         );
     }
 

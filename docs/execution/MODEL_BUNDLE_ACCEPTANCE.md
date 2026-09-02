@@ -28,7 +28,7 @@ Last updated: 2026-09-03 CST
 - [x] Only a smoke-tested Ready Model Instance produces an available Model Profile.
 - [x] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
 - [x] Referenced bundles are protected and unreferenced content can be garbage-collected.
-- [ ] Primary GUI path installs a compatible Bundle rather than raw ONNX components.
+- [x] Primary GUI path installs a compatible Bundle rather than raw ONNX components.
 - [ ] Pipeline Builder discovers readiness/setup requirements but cannot mutate model assets.
 - [ ] Fixture end-to-end lifecycle passes offline and is visibly non-publishable.
 - [ ] One real prompted-segmentation bundle passes legal, contract and Rust inference evidence, or is
@@ -122,3 +122,31 @@ Last updated: 2026-09-03 CST
 - [x] Disable/enable, explicit removal and conservative GC are stateful and content-address aware.
 - [x] Focused Rust tests pass: 99 Core, 57 Application plus one explicit billable ignore, 8 Catalog,
       9 Bundle, 20 Server and Plugin Host/SDK/Registry suites. Focused strict Clippy passes.
+
+## M6 evidence
+
+- [x] Expert Model Plugins separates Runtime, Compatible Models, Installed Models, Model Setup and
+      References instead of presenting a combined weight-upload card.
+- [x] A Plugin without a Bundle says `No compatible model installed` and exposes one primary
+      `Install compatible model` action.
+- [x] Catalog entries preserve their source catalog ID and show publisher, pinned Bundle digest,
+      disk size, license name/digest, redistribution, commercial-use and platform requirements.
+- [x] The eight-step installation journey advances only after the corresponding API boundary:
+      license acceptance, pinned download/install verification and fixed Model Instance smoke.
+- [x] Errors identify the stopped stage and never claim Ready; only a returned Ready instance closes
+      the journey and increments selectable model count.
+- [x] `.annotmodel` inspect/import is available only as Advanced setup and performs the same static
+      verification and post-import smoke gate.
+- [x] Default UI contains no `.onnx` file input and gives no instruction to search for encoder or
+      decoder filenames.
+- [x] Existing raw files are explicitly projected and rendered as `LegacyUnbundledModel`; they are
+      not counted as installed Bundles or Ready Model Instances.
+- [x] Create local model bundle requires exact legacy roles, source/export metadata, license text and
+      acceptance plus a versioned JSON tensor Contract. Rust pack/verify/install/smoke is used and
+      the original raw files remain after failure.
+- [x] Server regression proves malformed legacy ONNX bytes stop at `ContractMismatch`, create no
+      selectable profile and preserve both original files.
+- [x] Browser E2E at 1024×900 and 390×844 proves no horizontal overflow, one-primary-action setup,
+      labeled controls and Registry-state recovery after reload.
+- [x] Verification passes 21 Server tests, 44 Web unit tests, Web production build, two focused
+      Chromium scenarios, Rustfmt and strict focused Clippy.

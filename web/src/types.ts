@@ -1725,6 +1725,7 @@ export interface ExpertPluginManifest {
     id: string;
     display_name: string;
     capabilities: ModelCapability[];
+    required_file_roles: string[];
     input_contracts: unknown[];
     output_contracts: unknown[];
     score_semantics: string;
@@ -1763,6 +1764,7 @@ export interface ExpertPluginInstallation {
     finished_at: string;
     checks: { name: string; passed: boolean; detail: string }[];
   };
+  legacy_model_status?: "legacy_unbundled_model";
   weights: {
     model_id: string;
     component_id: string;
@@ -1816,6 +1818,162 @@ export interface VerifiedExpertPluginPackage {
   manifest: ExpertPluginManifest;
   package_sha256: string;
   signature: string;
+  verified: true;
+  installed: false;
+}
+
+export interface ModelBundlePluginRequirement {
+  plugin_id: string;
+  plugin_version: string;
+  model_id: string;
+  contract_hash: string;
+  required_file_roles: string[];
+}
+
+export interface ModelBundleLicenseSummary {
+  name: string;
+  license_url?: string;
+  license_digest: string;
+  redistribution: "allowed" | "restricted" | "prohibited" | "unknown";
+  commercial_use: "allowed" | "restricted" | "unknown";
+  requires_acceptance: boolean;
+}
+
+export interface ModelCatalogEntry {
+  catalog_id?: string;
+  bundle_id: string;
+  bundle_version: string;
+  display_name: string;
+  description: string;
+  capabilities: ModelCapability[];
+  compatible_plugins: ModelBundlePluginRequirement[];
+  platform_requirements: {
+    target: string;
+    execution_providers: string[];
+    minimum_memory_mb: number;
+    minimum_disk_bytes: number;
+  }[];
+  bundle_url: string;
+  bundle_sha256: string;
+  bundle_size_bytes: number;
+  license_summary: ModelBundleLicenseSummary;
+  publisher: { id: string; display_name: string; verified: boolean };
+  fixture: boolean;
+  publishable: boolean;
+}
+
+export interface ModelBundleManifest {
+  schema_version: string;
+  id: string;
+  version: string;
+  display_name: string;
+  description?: string;
+  model_family: string;
+  architecture: string;
+  format: "onnx" | "safetensors" | "native";
+  variant: string;
+  capabilities: ModelCapability[];
+  compatible_plugins: ModelBundlePluginRequirement[];
+  files: {
+    role: string;
+    path: string;
+    sha256: string;
+    size_bytes: number;
+    external_data_files: string[];
+  }[];
+  source: {
+    upstream_project: string;
+    upstream_model_id: string;
+    upstream_version?: string;
+    upstream_checkpoint_sha256?: string;
+    source_url?: string;
+  };
+  export: {
+    exporter_name: string;
+    exporter_version: string;
+    exporter_revision?: string;
+    export_date?: string;
+    opset?: number;
+  };
+  runtime: {
+    execution_providers: string[];
+    platforms: string[];
+    minimum_memory_mb: number;
+    recommended_memory_mb: number;
+  };
+  license: ModelBundleLicenseSummary & {
+    license_file: string;
+    source_notice?: string;
+    usage_notes: string[];
+  };
+  fixture: boolean;
+  publishable: boolean;
+}
+
+export interface InstalledModelBundle {
+  manifest: ModelBundleManifest;
+  bundle_sha256: string;
+  status: string;
+  source: "local_import" | { curated_catalog: { catalog_id: string } };
+  installed_at: string;
+  updated_at: string;
+  verification: {
+    verified_at: string;
+    bundle_digest: string;
+    signature: string;
+    file_count: number;
+    manifest_valid: boolean;
+    checksums_valid: boolean;
+  };
+  enabled: boolean;
+}
+
+export interface InstalledModelInstance {
+  id: string;
+  plugin_id: string;
+  plugin_version: string;
+  plugin_package_sha256: string;
+  model_id: string;
+  model_bundle_id: string;
+  model_bundle_version: string;
+  model_bundle_sha256: string;
+  model_variant: string;
+  model_file_digests: Record<string, string>;
+  execution_provider: string;
+  capability_contract_sha256: string;
+  status: string;
+  contract_inspection: { valid: boolean; errors: string[] };
+  smoke_test_id?: string;
+  smoke_test_result?: {
+    test_id: string;
+    status: "passed" | "failed" | "crashed";
+    checks: { name: string; passed: boolean; detail: string }[];
+    duration_ms: number;
+    started_at: string;
+    finished_at: string;
+  };
+  model_profile_id: string;
+  model_profile_revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelInstanceProfile {
+  model_profile_id: string;
+  model_profile_revision: number;
+  model_instance_id: string;
+  selection_id: string;
+  display_name: string;
+  capabilities: ModelCapability[];
+  availability: string;
+  selectable: boolean;
+}
+
+export interface VerifiedModelBundlePackage {
+  manifest: ModelBundleManifest;
+  bundle_sha256: string;
+  signature: string;
+  file_count: number;
   verified: true;
   installed: false;
 }

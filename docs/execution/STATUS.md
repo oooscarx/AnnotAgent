@@ -932,3 +932,20 @@ Model Bundle Provisioning M4 status: `PASS`.
   Python, pip, uv, conda or venv process launch.
 
 Model Bundle Provisioning M5 status: `PASS`.
+
+## Model Bundle Provisioning M6 — verified installation GUI and legacy migration — 2026-09-03
+
+- Settings → Expert Model Plugins now separates the Rust Runtime from compatible and installed
+  Model Bundles, Model Setup evidence and protected References. The normal setup path contains no
+  raw ONNX uploader.
+- The curated journey reviews source, publisher, digest, disk size, license and platform/file-role
+  compatibility before a human initiates download. Persisted Bundle verification and fixed Rust
+  Plugin smoke responses are the only transitions shown as Verify, Smoke Test and Ready.
+- `.annotmodel` import is an Advanced verified path. Existing raw Plugin weight sets are explicitly
+  `LegacyUnbundledModel`; Rust-only local migration requires source/export/license/Contract input,
+  copies the originals and fails closed before a selectable Profile on Contract or smoke failure.
+- Focused verification passes 21 Server tests, 44 Web unit tests, production build, two Chromium
+  desktop/mobile scenarios, Rustfmt and strict focused Clippy. No external model, credential,
+  download, Python process, push or remote mutation was used.
+
+Model Bundle Provisioning M6 status: `PASS`.

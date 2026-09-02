@@ -77,7 +77,12 @@ import type {
   WorkflowSuggestion,
   ExpertPluginInstallation,
   ExpertPluginRegistry,
+  InstalledModelBundle,
+  InstalledModelInstance,
+  ModelCatalogEntry,
+  ModelInstanceProfile,
   VerifiedExpertPluginPackage,
+  VerifiedModelBundlePackage,
 } from "./types";
 
 const PAGE_TITLES: Record<ProductPage | "project" | "build" | "export", string> = {
@@ -5075,30 +5080,11 @@ const REGISTRY_MODEL_CAPABILITIES: { id: ModelCapability; label: string }[] = [
 
 const PLUGIN_STATUS_GROUPS: { title: string; description: string; statuses: string[] }[] = [
   { title: "Ready to use", description: "Enabled models that passed their isolated process test.", statuses: ["ready"] },
-  { title: "Finish setup", description: "Installed packages that still need checkpoints, testing, or platform support.", statuses: ["installed", "needs_weights", "unsupported_platform"] },
+  { title: "Finish setup", description: "Installed runtimes that still need a verified Model Bundle, smoke test, or platform support.", statuses: ["installed", "needs_weights", "unsupported_platform"] },
   { title: "Disabled", description: "Verified installations hidden from new Workflow bindings.", statuses: ["disabled"] },
   { title: "Needs attention", description: "A process, API, Manifest, or Contract check did not pass.", statuses: ["unhealthy", "crashed", "failed_smoke_test", "incompatible_api", "invalid_manifest", "invalid_contract"] },
   { title: "Updates available", description: "New versions install alongside versions used by published Workflows.", statuses: ["update_available"] },
 ];
-
-function pluginWeightTargets(installation: ExpertPluginInstallation) {
-  return installation.manifest.models.flatMap((model) => {
-    const components = installation.manifest.weights.components.filter(
-      (component) => component.model_id === model.id,
-    );
-    return components.length
-      ? components.map((component) => ({ model, component }))
-      : [{
-          model,
-          component: {
-            id: "default",
-            model_id: model.id,
-            filename: "checkpoint",
-            sha256: undefined,
-          },
-        }];
-  });
-}
 
 function formatPluginBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -5106,8 +5092,40 @@ function formatPluginBytes(bytes: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+interface PluginBundleInventory {
+  plugin_runtime_status: string;
+  available: ModelCatalogEntry[];
+  installed: InstalledModelBundle[];
+}
+
+const MODEL_SETUP_STEPS = [
+  "Select model",
+  "Review source",
+  "Review license",
+  "Check compatibility",
+  "Download",
+  "Verify",
+  "Smoke Test",
+  "Ready",
+];
+
+function pluginIdentity(installation: ExpertPluginInstallation) {
+  return `${installation.manifest.id}@${installation.manifest.version}`;
+}
+
+function bundleIdentity(bundle: InstalledModelBundle) {
+  return `${bundle.manifest.id}@${bundle.manifest.version}`;
+}
+
+function catalogBundleIdentity(bundle: ModelCatalogEntry) {
+  return `${bundle.bundle_id}@${bundle.bundle_version}`;
+}
+
 function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void }) {
   const [registry, setRegistry] = useState<ExpertPluginRegistry>();
+  const [bundleInventory, setBundleInventory] = useState<Record<string, PluginBundleInventory>>({});
+  const [instances, setInstances] = useState<InstalledModelInstance[]>([]);
+  const [instanceProfiles, setInstanceProfiles] = useState<ModelInstanceProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -5116,14 +5134,53 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const [permissionsReviewed, setPermissionsReviewed] = useState(false);
   const [codeLicenseAccepted, setCodeLicenseAccepted] = useState(false);
   const [weightLicenseAccepted, setWeightLicenseAccepted] = useState(false);
-  const [weightFiles, setWeightFiles] = useState<Record<string, File | undefined>>({});
+  const [bundleFile, setBundleFile] = useState<File>();
+  const [verifiedBundle, setVerifiedBundle] = useState<VerifiedModelBundlePackage>();
+  const [bundleImportLicenseAccepted, setBundleImportLicenseAccepted] = useState(false);
+  const [setupPluginIdentity, setSetupPluginIdentity] = useState("");
+  const [setupEntryIdentity, setSetupEntryIdentity] = useState("");
+  const [setupStep, setSetupStep] = useState(0);
+  const [setupLicenseAccepted, setSetupLicenseAccepted] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  const [legacySetup, setLegacySetup] = useState<{ pluginIdentity: string; modelId: string }>();
+  const [legacyError, setLegacyError] = useState("");
+  const [legacyDraft, setLegacyDraft] = useState({
+    bundle_version: "1.0.0",
+    display_name: "",
+    upstream_project: "",
+    upstream_model_id: "",
+    upstream_version: "",
+    source_url: "",
+    exporter_name: "Existing ONNX export",
+    exporter_version: "unknown",
+    opset: "17",
+    license_name: "",
+    license_url: "",
+    redistribution: "unknown" as "allowed" | "restricted" | "prohibited" | "unknown",
+    commercial_use: "unknown" as "allowed" | "restricted" | "unknown",
+    license_text: "",
+    contract_document: "",
+    license_accepted: false,
+  });
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    return api.expertPlugins()
-      .then(setRegistry)
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setLoading(false));
+    try {
+      const pluginRegistry = await api.expertPlugins();
+      const modelRegistry = await api.modelInstances();
+      const inventories = await Promise.all(pluginRegistry.installations.map(async (installation) => {
+        const identity = pluginIdentity(installation);
+        return [identity, await api.compatibleModelBundles(installation.manifest.id, installation.manifest.version)] as const;
+      }));
+      setRegistry(pluginRegistry);
+      setInstances(modelRegistry.instances);
+      setInstanceProfiles(modelRegistry.model_profiles);
+      setBundleInventory(Object.fromEntries(inventories));
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { void load(); }, []);
 
@@ -5156,10 +5213,149 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       });
       setPackageFile(undefined);
       setVerified(undefined);
-      setMessage("Plugin installed. Add required weights, then run the process test.");
+      setMessage("Plugin runtime installed. Install a compatible verified model to make it usable.");
       await load();
     } catch (error) {
       onError((error as Error).message);
+      await load();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const inspectBundle = async () => {
+    if (!bundleFile) return;
+    setBusy("inspect-bundle");
+    setMessage("");
+    try {
+      const result = await api.inspectModelBundlePackage(bundleFile);
+      setVerifiedBundle(result);
+      setBundleImportLicenseAccepted(!result.manifest.license.requires_acceptance);
+      setMessage("Model Bundle verification passed. Review its identity and license before importing.");
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const importBundle = async () => {
+    if (!bundleFile || !verifiedBundle) return;
+    setBusy("import-bundle");
+    try {
+      const result = await api.importModelBundlePackage(bundleFile, bundleImportLicenseAccepted);
+      for (const instance of result.model_instances) await api.testModelInstance(instance.id);
+      setBundleFile(undefined);
+      setVerifiedBundle(undefined);
+      setMessage(result.model_instances.length
+        ? "Local Model Bundle imported, verified, and smoke tested."
+        : "Local Model Bundle imported, but no compatible installed Plugin can create a Model Instance yet.");
+      await load();
+    } catch (error) {
+      onError((error as Error).message);
+      await load();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const setupInstallation = registry?.installations.find((installation) => pluginIdentity(installation) === setupPluginIdentity);
+  const setupInventory = bundleInventory[setupPluginIdentity];
+  const setupEntry = setupInventory?.available.find((entry) => catalogBundleIdentity(entry) === setupEntryIdentity);
+  const legacyInstallation = registry?.installations.find((installation) => pluginIdentity(installation) === legacySetup?.pluginIdentity);
+
+  const openModelSetup = (installation: ExpertPluginInstallation, entry?: ModelCatalogEntry) => {
+    setSetupPluginIdentity(pluginIdentity(installation));
+    setSetupEntryIdentity(entry ? catalogBundleIdentity(entry) : "");
+    setSetupStep(0);
+    setSetupLicenseAccepted(false);
+    setSetupError("");
+  };
+
+  const installSelectedBundle = async () => {
+    if (!setupInstallation || !setupEntry?.catalog_id) return;
+    setBusy("install-model-bundle");
+    setSetupError("");
+    try {
+      if (setupEntry.license_summary.requires_acceptance) {
+        await api.acceptModelBundleLicense(setupEntry.bundle_id, setupEntry.bundle_version, setupEntry.license_summary.license_digest);
+      }
+      setSetupStep(4);
+      const installed = await api.installModelBundle(setupEntry.catalog_id, setupEntry.bundle_id, setupEntry.bundle_version);
+      setSetupStep(5);
+      if (!installed.bundle.verification.manifest_valid || !installed.bundle.verification.checksums_valid) {
+        throw new Error("The installed Model Bundle did not retain valid Manifest and checksum evidence.");
+      }
+      if (!installed.model_instances.length) {
+        throw new Error("The Bundle was verified, but no compatible installed Plugin produced a Model Instance.");
+      }
+      setSetupStep(6);
+      const tested = [] as InstalledModelInstance[];
+      for (const instance of installed.model_instances) tested.push(await api.testModelInstance(instance.id));
+      const selectedPluginInstances = tested.filter((instance) => instance.plugin_id === setupInstallation.manifest.id && instance.plugin_version === setupInstallation.manifest.version);
+      if (!selectedPluginInstances.length || selectedPluginInstances.some((instance) => instance.status !== "ready")) {
+        const failure = selectedPluginInstances.flatMap((instance) => instance.smoke_test_result?.checks.filter((check) => !check.passed).map((check) => check.detail) ?? []).join(" ");
+        throw new Error(failure || "The Rust Plugin smoke test did not produce a Ready Model Instance.");
+      }
+      setSetupStep(7);
+      setMessage(`${setupEntry.display_name} is Ready and selectable by new Workflow Drafts.`);
+      await load();
+    } catch (error) {
+      setSetupError((error as Error).message);
+      await load();
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const openLegacyBundleSetup = (installation: ExpertPluginInstallation, modelId: string) => {
+    const model = installation.manifest.models.find((item) => item.id === modelId);
+    setLegacySetup({ pluginIdentity: pluginIdentity(installation), modelId });
+    setLegacyError("");
+    setLegacyDraft((current) => ({
+      ...current,
+      display_name: `${model?.display_name ?? modelId} · Local Bundle`,
+      upstream_model_id: modelId,
+      license_name: installation.manifest.license.weights,
+      license_accepted: false,
+      contract_document: "",
+    }));
+  };
+
+  const createLegacyBundle = async () => {
+    const installation = registry?.installations.find((item) => pluginIdentity(item) === legacySetup?.pluginIdentity);
+    if (!installation || !legacySetup) return;
+    setBusy("create-legacy-bundle");
+    setLegacyError("");
+    try {
+      const result = await api.createLegacyLocalModelBundle(installation.manifest.id, installation.manifest.version, {
+        model_id: legacySetup.modelId,
+        bundle_version: legacyDraft.bundle_version,
+        display_name: legacyDraft.display_name,
+        upstream_project: legacyDraft.upstream_project,
+        upstream_model_id: legacyDraft.upstream_model_id,
+        ...(legacyDraft.upstream_version.trim() ? { upstream_version: legacyDraft.upstream_version.trim() } : {}),
+        ...(legacyDraft.source_url.trim() ? { source_url: legacyDraft.source_url.trim() } : {}),
+        exporter_name: legacyDraft.exporter_name,
+        exporter_version: legacyDraft.exporter_version,
+        opset: Number(legacyDraft.opset),
+        license_name: legacyDraft.license_name,
+        ...(legacyDraft.license_url.trim() ? { license_url: legacyDraft.license_url.trim() } : {}),
+        redistribution: legacyDraft.redistribution,
+        commercial_use: legacyDraft.commercial_use,
+        license_text: legacyDraft.license_text,
+        contract_document: legacyDraft.contract_document,
+        license_accepted: legacyDraft.license_accepted,
+      });
+      const ready = result.model_instances.some((instance) => instance.status === "ready");
+      setMessage(ready
+        ? `Local Model Bundle created and smoke tested. Export retained at ${result.local_bundle_path}.`
+        : `Local Model Bundle was created at ${result.local_bundle_path}, but its Model Instance did not pass the fixed smoke test. Legacy files were preserved.`);
+      setLegacySetup(undefined);
+      await load();
+    } catch (error) {
+      setLegacyError((error as Error).message);
+      await load();
     } finally {
       setBusy("");
     }
@@ -5179,7 +5375,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   };
 
   const installations = registry?.installations ?? [];
-  const readyModels = registry?.models.filter((model) => model.selectable).length ?? 0;
+  const readyModels = instanceProfiles.filter((model) => model.selectable).length;
   const setupInstallations = installations.filter((installation) =>
     ["installed", "needs_weights", "unsupported_platform"].includes(installation.status),
   ).length;
@@ -5191,8 +5387,8 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       <div className="plugin-page-heading">
         <span className="eyebrow">Local model runtime</span>
         <h2>Expert Model Plugins</h2>
-        <p>Install native Rust model packages, add their local checkpoints, and verify the exact process before a model can enter an Automation.</p>
-        <div className="plugin-trust-line" aria-label="Plugin runtime properties"><span>Isolated process</span><span>Local checkpoints</span><span>Immutable versions</span></div>
+        <p>Install an isolated Rust runtime, then pair it with a verified, versioned Model Bundle. Files, licenses, Contracts, and smoke-test evidence stay visible.</p>
+        <div className="plugin-trust-line" aria-label="Plugin runtime properties"><span>Isolated Rust process</span><span>Verified Model Bundles</span><span>Immutable versions</span></div>
       </div>
       <dl className="plugin-registry-summary" aria-label="Plugin Registry summary">
         <div><dt>Ready models</dt><dd>{readyModels}</dd><small>selectable now</small></div>
@@ -5206,22 +5402,22 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         <div><span className="eyebrow">How setup works</span><strong>From local package to selectable model</strong></div>
         <ol>
           <li><span>1</span><small>Install package</small></li>
-          <li><span>2</span><small>Add weights</small></li>
-          <li><span>3</span><small>Test process</small></li>
+          <li><span>2</span><small>Install model</small></li>
+          <li><span>3</span><small>Smoke test</small></li>
           <li><span>4</span><small>Use in Workflow</small></li>
         </ol>
       </article>
       <article className="plugin-agent-policy" aria-label="Agent plugin permissions">
         <span className="plugin-policy-mark" aria-hidden="true">A</span>
-        <div><strong>Agent discovery is read only</strong><p>Pipeline Builder can recommend compatible Ready models. Installation, licenses, checkpoints, and executables always remain manual actions.</p></div>
+        <div><strong>Agent discovery is read only</strong><p>Pipeline Builder can recommend compatible Ready models. Installation, licenses, model assets, and executables always remain manual actions.</p></div>
       </article>
     </section>
 
     <details className="plugin-install-wizard" open={!installations.length}>
-      <summary><span className="plugin-install-summary"><i aria-hidden="true">+</i><span><strong>Add a plugin package</strong><small>Choose a local .annotplugin, verify its identity, then review permissions and licenses.</small></span></span><b>Local install</b></summary>
+      <summary><span className="plugin-install-summary"><i aria-hidden="true">+</i><span><strong>Install plugin runtime</strong><small>Advanced setup for a local .annotplugin package. Model assets are installed separately.</small></span></span><b>Advanced</b></summary>
       <div className="plugin-install-body">
         <ol className="plugin-install-steps" aria-label="Installation steps">
-          {['Select package', 'Verify package', 'Review & install', 'Add weights', 'Test & enable'].map((step, index) => <li className={verified && index < 2 ? "complete" : ""} key={step}><span>{index + 1}</span>{step}</li>)}
+          {['Select package', 'Verify package', 'Review permissions', 'Install runtime'].map((step, index) => <li className={verified && index < 2 ? "complete" : ""} key={step}><span>{index + 1}</span>{step}</li>)}
         </ol>
         <div className="plugin-package-picker">
           <label htmlFor="expert-plugin-package">Plugin package</label>
@@ -5259,6 +5455,49 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       </div>
     </details>
 
+    <details className="plugin-install-wizard model-bundle-import">
+      <summary><span className="plugin-install-summary"><i aria-hidden="true">⇧</i><span><strong>Import .annotmodel</strong><small>Advanced local import for an already prepared data-only Model Bundle.</small></span></span><b>Advanced</b></summary>
+      <div className="plugin-install-body">
+        <div className="plugin-package-picker">
+          <label htmlFor="expert-model-bundle">Model Bundle</label>
+          <input id="expert-model-bundle" type="file" accept=".annotmodel" onChange={(event) => { setBundleFile(event.target.files?.[0]); setVerifiedBundle(undefined); setMessage(""); }} />
+          <button onClick={inspectBundle} disabled={!bundleFile || Boolean(busy)}>{busy === "inspect-bundle" ? "Verifying…" : "Verify Bundle"}</button>
+        </div>
+        {verifiedBundle && <div className="bundle-import-review">
+          <div><span className="eyebrow">Verified package</span><h3>{verifiedBundle.manifest.display_name}</h3><p>{verifiedBundle.manifest.source.upstream_project} · {verifiedBundle.manifest.architecture} · {verifiedBundle.file_count} files</p><code>{verifiedBundle.bundle_sha256}</code></div>
+          <div><strong>{verifiedBundle.manifest.license.name}</strong><small>{verifiedBundle.manifest.license.redistribution} redistribution · {verifiedBundle.manifest.license.commercial_use} commercial use</small>{verifiedBundle.manifest.license.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={bundleImportLicenseAccepted} onChange={(event) => setBundleImportLicenseAccepted(event.target.checked)} /><span>I accept this exact license digest.</span></label>}<button className="primary" onClick={importBundle} disabled={Boolean(busy) || !bundleImportLicenseAccepted}>{busy === "import-bundle" ? "Importing and testing…" : "Import verified Bundle"}</button></div>
+        </div>}
+      </div>
+    </details>
+
+    {setupInstallation && <section className="model-setup-wizard" aria-label="Install compatible model">
+      <header><div><span className="eyebrow">Model Setup</span><h3>{setupInstallation.manifest.display_name}</h3><p>Only a verified Bundle that passes the exact Rust Plugin smoke test becomes selectable.</p></div><button className="icon-button" aria-label="Close model setup" onClick={() => setSetupPluginIdentity("")}>×</button></header>
+      <ol className="model-setup-progress" aria-label="Model installation progress">
+        {MODEL_SETUP_STEPS.map((step, index) => <li className={index < setupStep ? "complete" : index === setupStep ? "current" : ""} key={step}><span>{index < setupStep ? "✓" : index + 1}</span><small>{step}</small></li>)}
+      </ol>
+      {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">Select model</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : <Empty title="No verified bundle is available for this platform" detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
+      {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>Download</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Source</dt><dd>{setupEntry.bundle_url}</dd></div></dl></div>}
+      {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review license</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">Read license source</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>I accept this exact model license and digest.</span></label>}</div></div>}
+      {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>File roles</strong><small>{setupEntry.compatible_plugins.flatMap((item) => item.required_file_roles).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Rust runtime</strong><small>{setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
+      {setupStep >= 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><h4>{setupStep === 4 ? "Downloading pinned Bundle" : setupStep === 5 ? "Files and ONNX Contract verified" : setupStep === 6 ? "Starting Rust Plugin and running sample inference" : "Model Instance Ready"}</h4><p>{setupStep === 4 ? "The HTTPS downloader enforces the Catalog size and SHA-256 identity before any archive content is trusted." : setupStep === 5 ? "The installed verification report confirms the Manifest and every declared checksum." : setupStep === 6 ? "The exact installed Plugin and model files are running the Bundle's fixed test vector." : "The immutable Model Profile can now be selected by a Workflow Draft."}</p></div>}
+      {setupError && <div className="model-setup-error" role="alert"><strong>Setup stopped at {MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupError}</span><small>No Ready Model Profile was created. The existing Plugin, Model Bundles, and legacy files were left intact.</small></div>}
+      <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Installing verified model…" : "Install verified model"}</button>}{setupStep === 7 && <button className="primary" onClick={() => setSetupPluginIdentity("")}>Done</button>}{setupError && setupStep >= 4 && <button className="primary" onClick={() => setSetupStep(3)}>Review and retry</button>}</footer>
+    </section>}
+
+    {legacyInstallation && legacySetup && <section className="legacy-bundle-creator" aria-label="Create local model bundle">
+      <header><div><span className="eyebrow">Legacy migration</span><h3>Create local model bundle</h3><p>AnnotAgent copies the existing files into a data-only Bundle, verifies every hash and ONNX tensor Contract, then runs the exact Rust Plugin smoke test. The originals are never deleted.</p></div><button className="icon-button" aria-label="Close local bundle creator" onClick={() => setLegacySetup(undefined)}>×</button></header>
+      <div className="legacy-bundle-form">
+        <fieldset><legend>Bundle identity</legend><label>Display name<input value={legacyDraft.display_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, display_name: event.target.value }))} /></label><label>Bundle version<input value={legacyDraft.bundle_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, bundle_version: event.target.value }))} placeholder="1.0.0" /></label><label>Model<input value={legacySetup.modelId} readOnly /></label></fieldset>
+        <fieldset><legend>Upstream source</legend><label>Upstream project<input value={legacyDraft.upstream_project} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_project: event.target.value }))} placeholder="Project or organization" /></label><label>Upstream model ID<input value={legacyDraft.upstream_model_id} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_model_id: event.target.value }))} /></label><label>Upstream version<input value={legacyDraft.upstream_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_version: event.target.value }))} /></label><label>Source URL<input type="url" value={legacyDraft.source_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, source_url: event.target.value }))} placeholder="https://…" /></label></fieldset>
+        <fieldset><legend>Export provenance</legend><label>Exporter name<input value={legacyDraft.exporter_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_name: event.target.value }))} /></label><label>Exporter version<input value={legacyDraft.exporter_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_version: event.target.value }))} /></label><label>ONNX opset<input type="number" min="1" max="21" value={legacyDraft.opset} onChange={(event) => setLegacyDraft((current) => ({ ...current, opset: event.target.value }))} /></label></fieldset>
+        <fieldset><legend>Model license</legend><label>License name<input value={legacyDraft.license_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_name: event.target.value }))} /></label><label>License URL<input type="url" value={legacyDraft.license_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_url: event.target.value }))} /></label><label>Redistribution<select value={legacyDraft.redistribution} onChange={(event) => setLegacyDraft((current) => ({ ...current, redistribution: event.target.value as typeof current.redistribution }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option><option value="prohibited">Prohibited</option></select></label><label>Commercial use<select value={legacyDraft.commercial_use} onChange={(event) => setLegacyDraft((current) => ({ ...current, commercial_use: event.target.value as typeof current.commercial_use }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option></select></label><label className="wide">Exact license text<textarea value={legacyDraft.license_text} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_text: event.target.value }))} rows={7} /></label>{legacyDraft.redistribution === "prohibited" && <p className="wide">A redistribution-prohibited asset cannot be packaged as a publishable local Bundle. Keep the legacy files unchanged and resolve the license terms first.</p>}</fieldset>
+        <fieldset><legend>ONNX Model Contract</legend><label className="wide">Contract JSON file<input type="file" accept=".json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void file.text().then((contract_document) => setLegacyDraft((current) => ({ ...current, contract_document }))); }} /></label><p className="wide">The Contract must use schema version 1 and exactly declare these file roles: <code>{legacyInstallation.manifest.models.find((model) => model.id === legacySetup.modelId)?.required_file_roles.join(", ")}</code>.</p>{legacyDraft.contract_document && <pre className="wide">{legacyDraft.contract_document.slice(0, 800)}{legacyDraft.contract_document.length > 800 ? "…" : ""}</pre>}</fieldset>
+      </div>
+      <label className="checkbox-line legacy-license-acceptance"><input type="checkbox" checked={legacyDraft.license_accepted} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_accepted: event.target.checked }))} /><span>I supplied and accept the exact license above. I understand this local migration is not publisher-verified.</span></label>
+      {legacyError && <div className="model-setup-error" role="alert"><strong>Local Bundle creation stopped</strong><span>{legacyError}</span><small>The legacy model files were not changed or removed.</small></div>}
+      <footer><button onClick={() => setLegacySetup(undefined)} disabled={Boolean(busy)}>Cancel</button><button className="primary" onClick={createLegacyBundle} disabled={Boolean(busy) || legacyDraft.redistribution === "prohibited" || !legacyDraft.display_name.trim() || !legacyDraft.upstream_project.trim() || !legacyDraft.upstream_model_id.trim() || !legacyDraft.license_name.trim() || !legacyDraft.license_text.trim() || !legacyDraft.contract_document.trim() || !legacyDraft.license_accepted}>{busy === "create-legacy-bundle" ? "Hashing, packing, and testing…" : "Create and test local Bundle"}</button></footer>
+    </section>}
+
     {message && <p className="registry-message" role="status" aria-live="polite">{message}</p>}
     {loading && <div className="loading-banner" role="status">Loading the local Plugin Registry…</div>}
     {!loading && !installations.length && <Empty title="No Expert Model Plugins installed" detail="Install a verified .annotplugin package above. No model becomes selectable until its real process test passes." />}
@@ -5271,62 +5510,52 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         <div className="plugin-card-grid">
           {groupItems.map((installation) => {
             const identity = `${installation.manifest.id}@${installation.manifest.version}`;
-            const modelProfiles = registry?.models.filter((model) => model.reference.plugin_id === installation.manifest.id && model.reference.plugin_version === installation.manifest.version) ?? [];
-            const firstCheckpoint = installation.weights[0]?.checkpoint_sha256;
-            const weightTargets = installation.manifest.weights.required ? pluginWeightTargets(installation) : [];
-            const missingWeightCount = weightTargets.filter(({ model, component }) => !installation.weights.some((weight) => weight.model_id === model.id && weight.component_id === component.id)).length;
-            const selectableModels = modelProfiles.filter((model) => model.selectable).length;
-            const setupState = installation.status === "ready" && installation.enabled
-              ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${selectableModels} model${selectableModels === 1 ? "" : "s"} available`, detail: "Package, checkpoint, Contract, and process evidence are registered." }
+            const inventory = bundleInventory[identity] ?? { plugin_runtime_status: "installed", available: [], installed: [] };
+            const pluginInstances = instances.filter((instance) => instance.plugin_id === installation.manifest.id && instance.plugin_version === installation.manifest.version);
+            const readyInstances = pluginInstances.filter((instance) => instance.status === "ready");
+            const setupState = readyInstances.length
+              ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${readyInstances.length} verified model${readyInstances.length === 1 ? "" : "s"} available`, detail: "Plugin, Bundle, Contract, and sample inference evidence are registered." }
               : installation.status === "unsupported_platform"
                 ? { tone: "blocked", eyebrow: "Unavailable on this platform", title: "No compatible native runtime", detail: "This package remains visible but cannot be enabled or selected." }
-                : missingWeightCount > 0
-                  ? { tone: "setup", eyebrow: "Next step", title: `Add ${missingWeightCount} checkpoint file${missingWeightCount === 1 ? "" : "s"}`, detail: "Files stay in the owner-only local model cache and receive an exact SHA-256 identity." }
-                  : !installation.last_test?.passed
-                    ? { tone: "setup", eyebrow: "Next step", title: "Run the isolated process test", detail: "Verify discovery, Contracts, authentication, and typed sample inference." }
-                    : !installation.enabled
-                      ? { tone: "setup", eyebrow: "Next step", title: "Enable this verified version", detail: "Its Ready models will then become selectable in new Automation Drafts." }
-                      : { tone: "blocked", eyebrow: "Needs attention", title: "Review the latest test evidence", detail: "Resolve the failed check before this model is used by a Workflow." };
+                : inventory.installed.length
+                  ? { tone: "setup", eyebrow: "Next step", title: "Finish Model Bundle verification", detail: "Run the fixed smoke test or inspect the latest structured failure." }
+                  : { tone: "setup", eyebrow: "Model required", title: "No compatible model installed", detail: "This Plugin cannot run until a verified Model Bundle is installed." };
             return <article className="plugin-card" key={identity}>
-              <header><div className="registry-monogram">RS</div><div><strong>{installation.manifest.display_name}</strong><small>{installation.manifest.id} · v{installation.manifest.version}</small></div><Status status={installation.status.replaceAll("_", " ")} /></header>
+              <header><div className="registry-monogram">RS</div><div><strong>{installation.manifest.display_name}</strong><small>{installation.manifest.id} · v{installation.manifest.version}</small></div><Status status={installation.status === "needs_weights" ? "Model required" : installation.status.replaceAll("_", " ")} /></header>
               <div className={`plugin-next-action ${setupState.tone}`}><span>{setupState.eyebrow}</span><strong>{setupState.title}</strong><small>{setupState.detail}</small></div>
               <p>{installation.manifest.description}</p>
               <dl className="plugin-card-facts">
                 <div><dt>Capabilities</dt><dd>{installation.manifest.models.flatMap((model) => model.capabilities).map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div>
                 <div><dt>Runtime</dt><dd>Rust native process</dd></div>
-                <div><dt>Models</dt><dd>{installation.manifest.models.map((model) => model.display_name).join(", ")}</dd></div>
+                <div><dt>Runtime models</dt><dd>{installation.manifest.models.map((model) => model.display_name).join(", ")}</dd></div>
                 <div><dt>Device</dt><dd>{installation.manifest.compatibility.accelerators.join(", ") || "CPU"}</dd></div>
-                <div><dt>Checkpoint</dt><dd title={firstCheckpoint}>{firstCheckpoint ? `${firstCheckpoint.slice(0, 12)}…` : installation.manifest.weights.required ? "Not configured" : "Bundled"}</dd></div>
+                <div><dt>Installed Bundles</dt><dd>{inventory.installed.length}</dd></div>
                 <div><dt>Used by</dt><dd>{installation.references.length} Published Workflow reference{installation.references.length === 1 ? "" : "s"}</dd></div>
               </dl>
               <div className="registry-card-actions">
-                <button className={missingWeightCount === 0 && !installation.last_test?.passed ? "primary" : ""} onClick={() => perform(`${identity}:test`, () => api.testExpertPlugin(installation.manifest.id, installation.manifest.version), "Process conformance and typed sample inference completed." )} disabled={Boolean(busy) || missingWeightCount > 0 || installation.status === "unsupported_platform"}>{busy === `${identity}:test` ? "Testing…" : installation.last_test ? "Test again" : "Run test"}</button>
+                {!readyInstances.length && <button className="primary" onClick={() => openModelSetup(installation)} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>Install compatible model</button>}
                 <button onClick={() => perform(`${identity}:toggle`, () => api.setExpertPluginEnabled(installation.manifest.id, installation.manifest.version, !installation.enabled), installation.enabled ? "Plugin disabled." : "Plugin enabled; test evidence is preserved.")} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{installation.enabled ? "Disable" : "Enable"}</button>
-                <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Checkpoint cache for this exact version will also be removed.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? "Published Workflow references protect this exact version" : undefined}>Uninstall</button>
+                <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Installed Model Bundles remain in the shared model store.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? "Published Workflow references protect this exact version" : undefined}>Uninstall</button>
               </div>
-              {installation.manifest.weights.required && <details className="registry-card-section" open={installation.status === "needs_weights"}>
-                <summary><span>Checkpoint files</span><small>{weightTargets.length - missingWeightCount} of {weightTargets.length} added</small></summary>
-                <div className="plugin-weight-list">
-                  {weightTargets.map(({ model, component }) => {
-                    const key = `${identity}:${model.id}:${component.id}`;
-                    const current = installation.weights.find((weight) => weight.model_id === model.id && weight.component_id === component.id);
-                    return <div className="plugin-weight-row" key={key}>
-                      <div><span className={`plugin-file-state ${current ? "added" : "required"}`}>{current ? "Added" : "Required"}</span><strong>{component.id.replaceAll("_", " ")}</strong><small>{current ? `${current.original_filename} · ${formatPluginBytes(current.size_bytes)} · ${current.checkpoint_sha256.slice(0, 12)}…` : `Expected: ${component.filename}${component.sha256 ? ` · SHA-256 ${component.sha256.slice(0, 12)}…` : ""}`}</small></div>
-                      <input aria-label={`${model.display_name} ${component.id} checkpoint file`} type="file" onChange={(event) => setWeightFiles((currentFiles) => ({ ...currentFiles, [key]: event.target.files?.[0] }))} />
-                      <button onClick={() => { const file = weightFiles[key]; if (file) void perform(`${key}:upload`, () => api.provisionExpertPluginWeights(installation.manifest.id, installation.manifest.version, model.id, file, component.id === "default" ? undefined : component.id, component.sha256), "Checkpoint copied into the owner-only local model cache and hash verified."); }} disabled={!weightFiles[key] || Boolean(busy)}>{busy === `${key}:upload` ? "Adding…" : current ? "Replace" : "Add file"}</button>
-                    </div>;
-                  })}
-                </div>
-              </details>}
-              <details className="registry-card-section">
-                <summary><span>Models and exact identities</span><small>{modelProfiles.length} registered</small></summary>
-                <div className="plugin-model-list">{modelProfiles.map((model) => <div key={model.selection_id}><span><strong>{model.display_name}</strong><small>{model.capabilities.map((value) => value.replaceAll("_", " ")).join(", ")}</small></span><Status status={model.selectable ? "Available" : model.availability.replaceAll("_", " ")} /><code>{model.selection_id}</code></div>)}</div>
+              <details className="registry-card-section" open>
+                <summary><span>Runtime</span><small>{inventory.plugin_runtime_status.replaceAll("_", " ")}</small></summary>
+                <dl className="plugin-detail-list"><div><dt>Process</dt><dd>Isolated native Rust</dd></div><div><dt>Protocol</dt><dd>{installation.manifest.runtime.protocol}</dd></div><div><dt>Plugin version</dt><dd>{installation.manifest.version}</dd></div><div><dt>Package SHA-256</dt><dd>{installation.package_sha256}</dd></div></dl>
+              </details>
+              <details className="registry-card-section" open={!inventory.installed.length}>
+                <summary><span>Compatible Models</span><small>{inventory.available.length} available</small></summary>
+                {inventory.available.length ? <div className="compatible-model-list compact">{inventory.available.map((entry) => <div key={catalogBundleIdentity(entry)}><span><strong>{entry.display_name}</strong><small>{entry.publisher.display_name} · {formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /><button onClick={() => openModelSetup(installation, entry)}>Install model</button></div>)}</div> : <div className="bundle-empty-state"><strong>No verified bundle is available for this platform</strong><p>Unpublished SAM 2 and unverified checkpoints stay in Labs; AnnotAgent will not turn them into a selectable model.</p></div>}
               </details>
               <details className="registry-card-section">
-                <summary><span>Security and test evidence</span><small>{installation.last_test ? installation.last_test.passed ? "Last test passed" : "Last test failed" : "Not tested"}</small></summary>
-                <dl className="plugin-detail-list"><div><dt>Package SHA-256</dt><dd>{installation.package_sha256}</dd></div><div><dt>Code license</dt><dd>{installation.manifest.license.code}</dd></div><div><dt>Weight license</dt><dd>{installation.manifest.license.weights}</dd></div><div><dt>Signature</dt><dd>{installation.signature.replaceAll("_", " ")}</dd></div></dl>
-                {installation.last_test ? <ul className="plugin-test-checks">{installation.last_test.checks.map((check) => <li className={check.passed ? "passed" : "failed"} key={check.name}><strong>{check.passed ? "Pass" : "Fail"} · {check.name}</strong><span>{check.detail}</span></li>)}</ul> : <p>No process test recorded. This version is not selectable.</p>}
+                <summary><span>Installed Models</span><small>{pluginInstances.length} instances</small></summary>
+                {inventory.installed.length ? <div className="installed-bundle-list">{inventory.installed.map((bundle) => { const matching = pluginInstances.filter((instance) => instance.model_bundle_id === bundle.manifest.id && instance.model_bundle_version === bundle.manifest.version); return <div key={bundleIdentity(bundle)}><header><span><strong>{bundle.manifest.display_name}</strong><small>{bundleIdentity(bundle)} · {bundle.manifest.variant}</small></span><Status status={matching.some((instance) => instance.status === "ready") ? "Ready" : bundle.status.replaceAll("_", " ")} /></header><code>{bundle.bundle_sha256}</code>{matching.map((instance) => <p key={instance.id}>{instance.execution_provider.toUpperCase()} · {instance.status.replaceAll("_", " ")} · profile revision {instance.model_profile_revision}</p>)}</div>; })}</div> : <div className="bundle-empty-state"><strong>No compatible model installed</strong><p>This Plugin cannot run until a verified model is installed.</p><button className="primary" onClick={() => openModelSetup(installation)}>Install compatible model</button></div>}
               </details>
+              <details className="registry-card-section">
+                <summary><span>Model Setup</span><small>{readyInstances.length ? "Ready" : "Action required"}</small></summary>
+                {pluginInstances.map((instance) => <div className="model-instance-evidence" key={instance.id}><span><strong>{instance.model_bundle_id}</strong><small>{instance.contract_inspection.valid ? "ONNX Contract verified" : instance.contract_inspection.errors.join(" · ")}</small></span><Status status={instance.status.replaceAll("_", " ")} />{instance.status !== "ready" && <button onClick={() => perform(`${instance.id}:smoke`, () => api.testModelInstance(instance.id), "Fixed Bundle smoke test completed.")} disabled={Boolean(busy)}>{busy === `${instance.id}:smoke` ? "Testing…" : "Run Smoke Test"}</button>}</div>)}
+                {!pluginInstances.length && <p>No verified Model Instance exists. Choose <strong>Install compatible model</strong> to review an available Bundle.</p>}
+              </details>
+              <details className="registry-card-section"><summary><span>References</span><small>{installation.references.length} protected</small></summary>{installation.references.length ? <ul className="plugin-reference-list">{installation.references.map((reference) => <li key={`${reference.kind}:${reference.location}`}><strong>{reference.kind.replaceAll("_", " ")}</strong><span>{reference.location}</span></li>)}</ul> : <p>No Published Workflow currently protects this Plugin version. Bundle references are tracked independently by exact digest.</p>}</details>
+              {installation.weights.length > 0 && <details className="registry-card-section legacy-provisioning"><summary><span>Legacy manual provisioning</span><small>Not recommended</small></summary><div className="legacy-model-warning"><strong>LegacyUnbundledModel</strong><p>These files predate Model Bundles. Their hashes are preserved, but they have no Bundle source, license document, Contract, or reproducible smoke-test identity and are not treated as trusted assets.</p>{installation.weights.map((weight) => <code key={`${weight.model_id}:${weight.component_id}`}>{weight.component_id} · {weight.original_filename} · {weight.checkpoint_sha256}</code>)}<p>Create a local Bundle only after supplying source, license, and a complete Model Contract. A failed conversion never removes these files.</p>{Array.from(new Set(installation.weights.map((weight) => weight.model_id))).map((modelId) => <button key={modelId} onClick={() => openLegacyBundleSetup(installation, modelId)}>Create local model bundle</button>)}</div></details>}
             </article>;
           })}
         </div>
@@ -8897,15 +9126,19 @@ function Status({ status }: { status: string }) {
                 ? "Waiting for human"
                 : "Completed with review",
           }
-        : normalized === "needs_weights" || normalized === "installed"
-          ? { tone: "needs-review", label: normalized === "needs_weights" ? "Needs weights" : "Needs test" }
+        : normalized === "needs_weights" || normalized === "model_required" || normalized === "installed" || normalized === "license_acceptance_required"
+          ? { tone: "needs-review", label: normalized === "needs_weights" || normalized === "model_required" ? "Model required" : normalized === "license_acceptance_required" ? "License required" : "Needs test" }
+        : normalized === "ready_to_install"
+          ? { tone: "needs-review", label: "Ready to install" }
+        : normalized === "fixture"
+          ? { tone: "draft", label: "Fixture" }
         : normalized === "unsupported_platform"
           ? { tone: "failed", label: "Unsupported" }
         : normalized === "update_available"
           ? { tone: "running", label: "Update available" }
-        : normalized === "discovered" || normalized === "installing" || normalized === "starting"
+        : normalized === "discovered" || normalized === "installing" || normalized === "starting" || normalized === "preparing" || normalized === "smoke_testing" || normalized === "downloading" || normalized === "verifying" || normalized === "importing"
           ? { tone: "running", label: normalized.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()) }
-        : normalized === "unhealthy" || normalized === "crashed" || normalized === "failed_smoke_test" || normalized === "incompatible_api" || normalized === "invalid_manifest" || normalized === "invalid_contract"
+        : normalized === "unhealthy" || normalized === "crashed" || normalized === "failed_smoke_test" || normalized === "incompatible_api" || normalized === "invalid_manifest" || normalized === "invalid_contract" || normalized === "invalid_checksum" || normalized === "contract_mismatch" || normalized === "missing_plugin" || normalized === "missing_model_bundle" || normalized === "plugin_unavailable" || normalized === "incompatible_plugin" || normalized === "corrupted"
           ? { tone: "failed", label: normalized.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()) }
         : normalized === "configured" || normalized === "unverified" || normalized === "unknown"
           ? { tone: "draft", label: normalized === "configured" ? "Configured" : normalized === "unverified" ? "Unverified" : "Unknown" }

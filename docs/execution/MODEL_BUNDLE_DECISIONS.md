@@ -109,3 +109,18 @@ regular descendants of the verified content root and are never returned by produ
 Automatic GC removes only disabled and unreferenced installed Bundles plus abandoned staging or
 download entries. Enabled assets are retained even without a current Project reference; explicit
 removal remains a human action. Published Workflow references are durable blockers.
+
+## D019 — Legacy files are migration inputs, never trusted models
+
+An old Plugin weight-set record is projected as `LegacyUnbundledModel`. Its existing SHA-256 is
+useful evidence but cannot substitute for source, license, Bundle identity, tensor Contract or a
+fixed smoke test. The migration flow copies rather than moves old files, creates a normal local
+`.annotmodel`, binds through the same resolver and never promotes a Contract-mismatched instance.
+
+## D020 — Installation progress follows auditable boundaries
+
+The GUI does not simulate a background stage machine. It displays review-only steps before the
+mutation, then advances from Download to Verify only when the atomic install API returns its
+persisted verification report, and advances to Smoke Test/Ready only from the exact Model Instance
+test response. A synchronous download is labeled as that combined trusted operation rather than
+showing fabricated byte progress.
