@@ -49,3 +49,18 @@ smoke inference, geometry, installation, Workflow and Replay gates pass.
 The official SAM 2.1 Tiny distribution is a PyTorch checkpoint and its documented user path
 requires Python/PyTorch. It is not exposed as an installable or selectable Rust model. The existing
 local `.pt` file is preserved but is not evidence for this release.
+
+## RMD-D009 — Trusted local Catalogs are explicit, verified sources
+
+A maintainer must explicitly add a canonical Catalog root. AnnotAgent verifies `catalog.json`, the
+size and digest of every local Bundle, its archive checksums, Manifest identity, publication flags,
+capabilities, Plugin compatibility and license digest before persisting the source. Local bundle
+resolution is confined to that root's `bundles/` directory; refresh is transactional and fails
+without replacing the last verified Catalog.
+
+## RMD-D010 — The first Catalog artifact is unsigned but not publisher-verified
+
+The generated Developer Preview Bundle is deterministically hashed and fully verified, but this
+local build has no release signing key. Its Catalog card therefore records
+`publisher_verified=false`. A future remote release may change this only when signature
+verification is implemented and evidenced; local trust never masquerades as publisher signing.

@@ -1,5 +1,6 @@
 /target/
 /dist/
+/model-recipes/**/.cache/
 /web/node_modules/
 /web/dist/
 /web/test-results/

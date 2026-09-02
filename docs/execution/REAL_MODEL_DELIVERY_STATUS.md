@@ -4,7 +4,7 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M1 — official candidate audit and delivery selection complete.
+M2 — controlled Model Supply Recipe and trusted local Catalog complete.
 
 ## Current candidate
 
@@ -48,15 +48,32 @@ EfficientSAM-Ti split ONNX, accepted for delivery but not yet Supported.
   ARM64 CPU and recorded their actual tensor descriptors.
 - Selected a dedicated `org.annotagent.efficientsam-onnx` Plugin instead of adding incompatible
   model-family branches to `org.annotagent.sam-onnx`.
+- Implemented Rust-only `models recipe audit/fetch/build/verify` with deny-unknown-fields parsing,
+  safe relative paths, public HTTPS validation, explicit redirect hosts, bounded downloads,
+  atomic partial cleanup, exact size/digest checks and deterministic packaging.
+- Added the versioned EfficientSAM-Ti Recipe, real graph Contract, preprocessing/postprocessing
+  metadata, exact Apache-2.0 license, source notice, box-prompt smoke request and author-repository
+  dog test image declaration.
+- Built and verified the real non-Fixture Bundle at
+  `dist/model-catalog/bundles/efficientsam-ti-onnx-1.0.0.annotmodel` without adding model bytes to
+  Git. Size: 38,577,735 bytes; SHA-256:
+  `3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c`.
+- Rebuilt the Bundle and reproduced the same digest.
+- Implemented and tested explicit trusted-local Catalog registration, persistence, local Bundle
+  confinement, transactional refresh, and tamper rejection.
+- Generated `dist/model-catalog/catalog.json`, Catalog entry and verification report, then added
+  `org.annotagent.catalog.local-models` to the current workspace. Search now returns the real
+  `fixture=false`, `publishable=true` model as well as the clearly separate Fixture.
 
 ## In progress
 
-- Implement the controlled Rust Model Supply Recipe and trusted local Catalog in M2.
+- Implement the dedicated EfficientSAM Rust Plugin and real box-prompt smoke inference in M3.
 
 ## Next
 
-Build a verified non-Fixture `.annotmodel` outside Git using revision-pinned assets, fixed sizes and
-hashes; expose it through a trusted local Catalog without executing downloaded code.
+Package and install `org.annotagent.efficientsam-onnx@1.0.0`, bind the real Bundle, inspect its
+graphs, run the Bundle smoke request, require a non-empty finite mask, derive a valid tight bbox,
+and record execution identity and timing.
 
 ## Latest verification
 
@@ -66,11 +83,17 @@ hashes; expose it through a trusted local Catalog without executing downloaded c
 | Initial Rust workspace tests | FAIL — 1 stale test fixture identity; 57 Application tests passed, 1 failed, 1 billable ignored before the workspace run stopped |
 | Repeated Rust workspace tests | PASS — `cargo test --workspace --all-features` |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
-| Bundle verification | PASS for installed Fixture only; real Bundle absent |
+| Bundle verification | PASS — real non-Fixture EfficientSAM-Ti Bundle built and verified outside Git |
 | Real graph inspection | PASS — encoder and decoder loaded with ORT CPU; descriptors recorded |
 | Real inference | NOT RUN |
 | Web E2E | PENDING for this task |
-| Latest commit | `ccbd2f6` — M0; M1 commit pending |
+| Model Recipe | PASS — 3 downloads / 41,814,211 bytes and 8 static files verified |
+| Real Bundle | PASS — 38,577,735 bytes / `3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c` |
+| Local Catalog | PASS — persisted `trusted_local_catalog`, real entry searchable after refresh |
+| Latest focused tests | PASS — 14 model-catalog tests and strict Clippy for Catalog/CLI |
+| Latest Rust workspace tests | PASS — all runnable tests; only explicitly external/billable tests ignored |
+| Latest Rust workspace build | PASS — `cargo build --workspace --all-features` |
+| Latest commit | `fb22f8d` — M1; M2 commit pending |
 
 ## Release-blocking remainder
 

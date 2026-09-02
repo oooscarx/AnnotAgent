@@ -235,6 +235,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "toml",
  "url",
  "uuid",
 ]

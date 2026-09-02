@@ -1,0 +1,89 @@
+schema_version = "1"
+id = "org.annotagent.models.efficientsam-ti-onnx"
+version = "1.0.0"
+display_name = "EfficientSAM-Ti ONNX"
+description = "Real compact box- and point-prompted segmentation using the author-published EfficientSAM-Ti split ONNX graphs"
+model_family = "EfficientSAM"
+architecture = "EfficientSAM-Ti split image encoder and prompt mask decoder"
+format = "onnx"
+variant = "ti"
+capabilities = ["prompted_segmentation"]
+fixture = false
+publishable = true
+
+[[compatible_plugins]]
+plugin_id = "org.annotagent.efficientsam-onnx"
+plugin_version = "=1.0.0"
+model_id = "efficientsam-ti-onnx"
+contract_hash = "{{PLUGIN_MODEL_CONTRACT_SHA256}}"
+required_file_roles = ["image_encoder", "mask_decoder"]
+
+[[files]]
+role = "image_encoder"
+path = "files/efficientsam_ti_encoder.onnx"
+sha256 = "84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951"
+size_bytes = 24799761
+external_data_files = []
+
+[[files]]
+role = "mask_decoder"
+path = "files/efficientsam_ti_decoder.onnx"
+sha256 = "a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11"
+size_bytes = 16565728
+external_data_files = []
+
+[[contracts]]
+id = "efficientsam-ti-split-onnx-v1"
+path = "contracts/efficientsam-ti-v1.json"
+sha256 = "03c0cc857150645d4bd1eb5c39f74b06122189ebb4302012d172110b5481f377"
+file_roles = ["image_encoder", "mask_decoder"]
+
+[[transforms]]
+kind = "preprocess"
+path = "transforms/preprocess-v1.json"
+sha256 = "b9de7f258c557fccdf410a2b5ff7a93b7515a821029f838d05db63efebced6c1"
+
+[[transforms]]
+kind = "postprocess"
+path = "transforms/postprocess-v1.json"
+sha256 = "b9bb0548573b1557b31b9ff8db0ea1c5161686edb79b9e634b9cd756df4e7c6f"
+
+[source]
+upstream_project = "yformer/EfficientSAM"
+upstream_model_id = "yunyangx/EfficientSAM:efficientsam_ti"
+upstream_version = "d8dbb1eee73bfb3392aa6f6e8944aeb13f3f4036"
+upstream_checkpoint_sha256 = "68c4d899a75022851f5cc98e3fae44ef9965780928a6c1e4568faf0a101e9864"
+source_url = "https://huggingface.co/spaces/yunyangx/EfficientSAM/tree/d8dbb1eee73bfb3392aa6f6e8944aeb13f3f4036"
+
+[export]
+exporter_name = "yformer/EfficientSAM export_to_onnx.py"
+exporter_version = "d525f622e6f640acf5a0fc37c7ca1f243da5bde0"
+exporter_revision = "d525f622e6f640acf5a0fc37c7ca1f243da5bde0"
+opset = 17
+
+[runtime]
+execution_providers = ["cpu"]
+platforms = ["macos-aarch64", "linux-x86_64"]
+minimum_memory_mb = 2048
+recommended_memory_mb = 4096
+
+[license]
+name = "Apache-2.0"
+license_url = "https://github.com/yformer/EfficientSAM/blob/d525f622e6f640acf5a0fc37c7ca1f243da5bde0/LICENSE"
+license_file = "licenses/MODEL-LICENSE"
+source_notice = "licenses/SOURCE-NOTICE"
+license_digest = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+redistribution = "allowed"
+commercial_use = "allowed"
+requires_acceptance = true
+usage_notes = [
+  "Retain the Apache-2.0 license and source notice when redistributing the Bundle",
+  "EfficientSAM and upstream publisher names do not imply endorsement",
+  "Model output requires task-specific validation and human review policy"
+]
+
+[test_suite]
+test_id = "efficientsam-ti-box-prompt-v1"
+input_artifacts = ["tests/dogs.jpg", "tests/request.json"]
+expected_summary = "tests/expected-summary.json"
+tolerances = "tests/tolerances.json"

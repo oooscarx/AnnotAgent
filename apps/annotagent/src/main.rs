@@ -280,6 +280,10 @@ enum ModelsCommand {
         model_instance_id: String,
     },
     Gc,
+    Recipe {
+        #[command(subcommand)]
+        command: ModelRecipeCommand,
+    },
     Bundle {
         #[command(subcommand)]
         command: ModelBundleCommand,
@@ -288,6 +292,11 @@ enum ModelsCommand {
 
 #[derive(Subcommand)]
 enum ModelCatalogCommand {
+    List,
+    AddLocal {
+        directory: PathBuf,
+    },
+    Refresh,
     Build {
         directory: PathBuf,
         #[arg(long)]
@@ -297,6 +306,28 @@ enum ModelCatalogCommand {
     },
     Verify {
         catalog_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelRecipeCommand {
+    Audit {
+        recipe: PathBuf,
+    },
+    Fetch {
+        recipe: PathBuf,
+    },
+    Build {
+        recipe: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        catalog_entry: Option<PathBuf>,
+        #[arg(long)]
+        verification_report: Option<PathBuf>,
+    },
+    Verify {
+        recipe: PathBuf,
     },
 }
 

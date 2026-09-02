@@ -27,13 +27,31 @@ Last updated: 2026-09-03 CST
 - [x] Existing SAM 1 Plugin incompatibility established; dedicated EfficientSAM Plugin selected.
 - [x] MobileSAM and SAM 1 rejected for the normal-user path because official assets require export.
 - [x] SAM 2.1 retained as Labs because its official path requires Python/PyTorch.
-- [ ] M1 committed locally.
+- [x] M1 committed locally as `fb22f8d`.
+
+## Milestone 2 evidence
+
+- [x] Controlled schema-1 Model Supply Recipe added for EfficientSAM-Ti.
+- [x] Recipe schema rejects commands, unknown fields, unsafe paths and non-HTTPS sources.
+- [x] Rust audit/fetch/build/verify commands implemented.
+- [x] Redirects are disabled by default and bounded to explicit HTTPS host allowlists with public
+  DNS revalidation.
+- [x] Every download and static payload is checked against fixed size and SHA-256.
+- [x] Download failure/cancellation removes its partial file; cached mismatches fail closed.
+- [x] Recipe cannot execute shell, Python, package managers, Git or downloaded programs.
+- [x] Real non-Fixture `.annotmodel` built outside Git and independently verified.
+- [x] Deterministic rebuild reproduced the same Bundle SHA-256.
+- [x] Trusted local Catalog add/list/refresh and restart persistence implemented.
+- [x] Local Catalog validates every Bundle and confines lookup to its explicit `bundles/` root.
+- [x] Tampered local Bundle causes refresh to fail without replacing stored metadata.
+- [x] Generated Catalog search exposes the real publishable model separately from Fixture.
+- [ ] M2 committed locally.
 
 ## Release matrix
 
 ### A. Real model
 
-- [ ] A non-Fixture prompted-segmentation Bundle exists outside Git.
+- [x] A non-Fixture prompted-segmentation Bundle exists outside Git.
 - [x] Official/audited source and exact licenses are recorded.
 - [x] Rust Runtime loads the real graph on macOS ARM64.
 - [ ] Real box-prompt inference produces a non-empty finite mask.

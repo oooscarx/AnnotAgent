@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "candidate_selection": "maximum_finite_iou_prediction",
+  "mask_value": "logit",
+  "mask_threshold": 0.0,
+  "box_labels": [2.0, 3.0],
+  "positive_point_label": 1.0,
+  "negative_point_label": 0.0,
+  "padding_label": -1.0,
+  "geometry_output": "mask_in_original_image_space"
+}

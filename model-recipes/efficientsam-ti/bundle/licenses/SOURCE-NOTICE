@@ -1,0 +1,11 @@
+EfficientSAM-Ti model assets are from the official EfficientSAM project-linked Hugging Face Space.
+
+Project: https://github.com/yformer/EfficientSAM
+Project revision audited by AnnotAgent: d525f622e6f640acf5a0fc37c7ca1f243da5bde0
+Model source: https://huggingface.co/spaces/yunyangx/EfficientSAM
+Model revision: d8dbb1eee73bfb3392aa6f6e8944aeb13f3f4036
+Variant: EfficientSAM-Ti split ONNX encoder and decoder, opset 17
+
+The model and code are provided under Apache License 2.0. AnnotAgent does not claim authorship,
+endorsement, or trademark rights in EfficientSAM. The ONNX bytes are redistributed unmodified;
+their exact sizes and SHA-256 digests are recorded in the Bundle Manifest.

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "color_space": "rgb",
+  "input_layout": "nchw",
+  "host_pixel_transform": "uint8_to_float32_divide_255",
+  "graph_internal_resize": [1024, 1024],
+  "graph_internal_normalization": {
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225]
+  },
+  "prompt_coordinates": "original_input_pixels_xy",
+  "original_size": "int64_height_width"
+}

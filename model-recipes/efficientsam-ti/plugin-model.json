@@ -1,0 +1,42 @@
+{
+  "id": "efficientsam-ti-onnx",
+  "display_name": "EfficientSAM-Ti ONNX",
+  "capabilities": ["prompted_segmentation"],
+  "input_contracts": [
+    {
+      "name": "image",
+      "data_type": { "artifact": "image" },
+      "required": true,
+      "multiple": false
+    },
+    {
+      "name": "box_prompts",
+      "data_type": { "artifact": "box_prompt_set" },
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "point_prompts",
+      "data_type": { "artifact": "point_prompt_set" },
+      "required": false,
+      "multiple": false
+    }
+  ],
+  "output_contracts": [
+    {
+      "name": "masks",
+      "data_type": { "artifact": "mask_set" },
+      "required": true,
+      "multiple": false
+    }
+  ],
+  "required_file_roles": ["image_encoder", "mask_decoder"],
+  "score_semantics": "relative_confidence",
+  "geometry_semantics": "mask_refined_geometry",
+  "runtime_requirements": {
+    "devices": ["cpu"],
+    "minimum_gpu_memory_mb": null,
+    "dependencies": [],
+    "supports_batch": false
+  }
+}

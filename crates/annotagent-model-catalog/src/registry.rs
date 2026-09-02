@@ -22,7 +22,14 @@ use crate::{
     OnnxContractInspection, inspect_onnx_contract,
 };
 
-const MODEL_REGISTRY_SCHEMA_VERSION: u32 = 3;
+const MODEL_REGISTRY_SCHEMA_VERSION: u32 = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedLocalCatalogSource {
+    pub catalog_id: String,
+    pub root: PathBuf,
+    pub catalog_sha256: Sha256Digest,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +172,7 @@ pub struct ModelBundleGcReport {
 struct ModelBundleRegistryState {
     schema_version: u32,
     catalogs: BTreeMap<String, ModelCatalog>,
+    trusted_local_catalogs: BTreeMap<String, TrustedLocalCatalogSource>,
     installations: BTreeMap<String, InstalledModelBundle>,
     model_instances: BTreeMap<String, InstalledModelInstance>,
     references: Vec<ModelBundleReference>,
@@ -177,6 +185,7 @@ impl Default for ModelBundleRegistryState {
         Self {
             schema_version: MODEL_REGISTRY_SCHEMA_VERSION,
             catalogs: BTreeMap::new(),
+            trusted_local_catalogs: BTreeMap::new(),
             installations: BTreeMap::new(),
             model_instances: BTreeMap::new(),
             references: Vec::new(),
@@ -233,9 +242,63 @@ impl ModelBundleRegistry {
     pub fn save_catalog(&mut self, catalog: ModelCatalog) -> Result<(), ModelCatalogError> {
         catalog.validate()?;
         self.state
+            .trusted_local_catalogs
+            .remove(&catalog.catalog_id);
+        self.state
             .catalogs
             .insert(catalog.catalog_id.clone(), catalog);
         self.persist()
+    }
+
+    #[must_use]
+    pub fn trusted_local_catalogs(&self) -> Vec<TrustedLocalCatalogSource> {
+        self.state
+            .trusted_local_catalogs
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub fn add_trusted_local_catalog(
+        &mut self,
+        root: &Path,
+    ) -> Result<ModelCatalog, ModelCatalogError> {
+        let root = root.canonicalize().map_err(|error| {
+            ModelCatalogError::Provisioning(format!(
+                "cannot resolve trusted local Catalog {}: {error}",
+                root.display()
+            ))
+        })?;
+        let (catalog, source) = load_trusted_local_catalog(&root)?;
+        self.state
+            .catalogs
+            .insert(catalog.catalog_id.clone(), catalog.clone());
+        self.state
+            .trusted_local_catalogs
+            .insert(catalog.catalog_id.clone(), source);
+        self.persist()?;
+        Ok(catalog)
+    }
+
+    pub fn refresh_trusted_local_catalogs(
+        &mut self,
+    ) -> Result<Vec<ModelCatalog>, ModelCatalogError> {
+        let refreshed = self
+            .state
+            .trusted_local_catalogs
+            .values()
+            .map(|source| load_trusted_local_catalog(&source.root))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (catalog, source) in &refreshed {
+            self.state
+                .catalogs
+                .insert(catalog.catalog_id.clone(), catalog.clone());
+            self.state
+                .trusted_local_catalogs
+                .insert(catalog.catalog_id.clone(), source.clone());
+        }
+        self.persist()?;
+        Ok(refreshed.into_iter().map(|(catalog, _)| catalog).collect())
     }
 
     #[must_use]
@@ -304,9 +367,6 @@ impl ModelBundleRegistry {
         id: &ModelBundleId,
         version: &Version,
     ) -> Option<PathBuf> {
-        if catalog_id != crate::BUILTIN_FIXTURE_CATALOG_ID {
-            return None;
-        }
         let entry = self
             .state
             .catalogs
@@ -314,11 +374,19 @@ impl ModelBundleRegistry {
             .entries
             .iter()
             .find(|entry| entry.bundle_id == *id && entry.bundle_version == *version)?;
-        if !entry.fixture || entry.publishable {
-            return None;
+        if catalog_id == crate::BUILTIN_FIXTURE_CATALOG_ID {
+            if !entry.fixture || entry.publishable {
+                return None;
+            }
+            let path = crate::builtin_catalog_bundle_path(&self.data_root, catalog_id, id, version);
+            return path.is_file().then_some(path);
         }
-        let path = crate::builtin_catalog_bundle_path(&self.data_root, catalog_id, id, version);
-        path.is_file().then_some(path)
+        let source = self.state.trusted_local_catalogs.get(catalog_id)?;
+        let filename = catalog_bundle_filename(entry)?;
+        let bundles_root = source.root.join("bundles").canonicalize().ok()?;
+        let path = bundles_root.join(filename);
+        let canonical = path.canonicalize().ok()?;
+        canonical.starts_with(bundles_root).then_some(canonical)
     }
 
     #[must_use]
@@ -802,6 +870,90 @@ impl ModelBundleRegistry {
     }
 }
 
+fn load_trusted_local_catalog(
+    root: &Path,
+) -> Result<(ModelCatalog, TrustedLocalCatalogSource), ModelCatalogError> {
+    let catalog_path = root.join("catalog.json");
+    let bytes = std::fs::read(&catalog_path)?;
+    if bytes.is_empty() || bytes.len() as u64 > crate::MAX_CATALOG_BYTES {
+        return Err(ModelCatalogError::Provisioning(
+            "trusted local Catalog is empty or exceeds the size limit".to_owned(),
+        ));
+    }
+    let catalog = ModelCatalog::from_json(&bytes)?;
+    let bundles_root = root.join("bundles").canonicalize().map_err(|error| {
+        ModelCatalogError::Provisioning(format!(
+            "trusted local Catalog bundles directory is unavailable: {error}"
+        ))
+    })?;
+    if !bundles_root.starts_with(root) {
+        return Err(ModelCatalogError::Provisioning(
+            "trusted local Catalog bundles directory escapes its root".to_owned(),
+        ));
+    }
+    for entry in &catalog.entries {
+        let filename = catalog_bundle_filename(entry).ok_or_else(|| {
+            ModelCatalogError::Provisioning(format!(
+                "local Catalog Bundle {} has no safe release filename",
+                entry.bundle_id
+            ))
+        })?;
+        let package = bundles_root
+            .join(filename)
+            .canonicalize()
+            .map_err(|error| {
+                ModelCatalogError::Provisioning(format!(
+                    "local Catalog Bundle {} is unavailable: {error}",
+                    entry.bundle_id
+                ))
+            })?;
+        if !package.starts_with(&bundles_root)
+            || std::fs::metadata(&package)?.len() != entry.bundle_size_bytes
+        {
+            return Err(ModelCatalogError::Provisioning(format!(
+                "local Catalog Bundle {} escaped its root or changed size",
+                entry.bundle_id
+            )));
+        }
+        let verified = verify_model_bundle(&package).map_err(|error| {
+            ModelCatalogError::Provisioning(format!(
+                "local Catalog Bundle {} failed verification: {error}",
+                entry.bundle_id
+            ))
+        })?;
+        if verified.bundle_digest != entry.bundle_sha256
+            || verified.manifest.id != entry.bundle_id
+            || verified.manifest.version != entry.bundle_version
+            || verified.manifest.fixture != entry.fixture
+            || verified.manifest.publishable != entry.publishable
+            || verified.manifest.capabilities != entry.capabilities
+            || verified.manifest.compatible_plugins != entry.compatible_plugins
+            || verified.manifest.license.license_digest != entry.license_summary.license_digest
+        {
+            return Err(ModelCatalogError::Provisioning(format!(
+                "local Catalog Bundle {} metadata does not match catalog.json",
+                entry.bundle_id
+            )));
+        }
+    }
+    let source = TrustedLocalCatalogSource {
+        catalog_id: catalog.catalog_id.clone(),
+        root: root.to_path_buf(),
+        catalog_sha256: Sha256Digest::of_bytes(&bytes),
+    };
+    Ok((catalog, source))
+}
+
+fn catalog_bundle_filename(entry: &crate::ModelCatalogEntry) -> Option<&str> {
+    let filename = entry.bundle_url.path_segments()?.next_back()?;
+    (!filename.is_empty()
+        && filename.len() <= 240
+        && filename
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')))
+    .then_some(filename)
+}
+
 fn bundle_key(id: &ModelBundleId, version: &Version) -> String {
     format!("{id}@{version}")
 }
@@ -842,6 +994,63 @@ mod tests {
         assert_eq!(reopened.license_acceptances()[0].bundle_id, id);
         assert_eq!(reopened.license_acceptances()[0].bundle_version, version);
         assert_eq!(reopened.license_acceptances()[0].license_digest, digest);
+    }
+
+    #[test]
+    fn trusted_local_catalog_is_verified_persisted_and_refreshes_fail_closed() {
+        let temp = tempfile::tempdir().expect("temp");
+        let fixture_root = temp.path().join("fixture-source");
+        let fixture = crate::build_builtin_fixture_catalog(&fixture_root).expect("fixture Catalog");
+        let catalog_root = temp.path().join("trusted-catalog");
+        let bundles_root = catalog_root.join("bundles");
+        std::fs::create_dir_all(&bundles_root).expect("bundle directory");
+        let filename = "verified-fixture.annotmodel";
+        std::fs::copy(&fixture.package_path, bundles_root.join(filename)).expect("copy Bundle");
+        let mut catalog = fixture.catalog;
+        catalog.catalog_id = "org.annotagent.catalog.test-local".to_owned();
+        catalog.entries[0].bundle_url =
+            url::Url::parse(&format!("https://models.example/{filename}")).expect("URL");
+        std::fs::write(
+            catalog_root.join("catalog.json"),
+            serde_json::to_vec_pretty(&catalog).expect("Catalog JSON"),
+        )
+        .expect("Catalog file");
+
+        let registry_root = temp.path().join("registry");
+        let mut registry = ModelBundleRegistry::open(&registry_root).expect("registry");
+        let added = registry
+            .add_trusted_local_catalog(&catalog_root)
+            .expect("add local Catalog");
+        assert_eq!(added, catalog);
+        assert_eq!(registry.trusted_local_catalogs().len(), 1);
+        assert_eq!(
+            registry.local_catalog_bundle_path(
+                &catalog.catalog_id,
+                &catalog.entries[0].bundle_id,
+                &catalog.entries[0].bundle_version,
+            ),
+            Some(bundles_root.join(filename).canonicalize().expect("path"))
+        );
+
+        let mut reopened = ModelBundleRegistry::open(&registry_root).expect("reopen");
+        assert_eq!(reopened.trusted_local_catalogs().len(), 1);
+        assert_eq!(
+            reopened
+                .refresh_trusted_local_catalogs()
+                .expect("refresh")
+                .len(),
+            1
+        );
+        std::fs::write(bundles_root.join(filename), b"tampered").expect("tamper");
+        assert!(reopened.refresh_trusted_local_catalogs().is_err());
+        assert_eq!(
+            reopened
+                .catalogs()
+                .iter()
+                .filter(|value| value.catalog_id == catalog.catalog_id)
+                .count(),
+            1
+        );
     }
 
     #[test]

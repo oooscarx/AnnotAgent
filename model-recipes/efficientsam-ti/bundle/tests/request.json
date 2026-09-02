@@ -1,0 +1,45 @@
+{
+  "image_path": "tests/dogs.jpg",
+  "operation": "prompted_segmentation",
+  "input_artifacts": [
+    {
+      "kind": "box_prompt_set",
+      "artifact": {
+        "reference": {
+          "artifact_id": "efficientsam-smoke-box-prompts",
+          "source_node": "model_bundle_smoke",
+          "port": "box_prompts",
+          "artifact_type": "box_prompt_set",
+          "item_id": null
+        },
+        "image_id": "00000000-0000-0000-0000-000000000000",
+        "source_detections": {
+          "artifact_id": "efficientsam-smoke-source",
+          "source_node": "model_bundle_smoke",
+          "port": "detections",
+          "artifact_type": "detection_set",
+          "item_id": null
+        },
+        "prompts": [
+          {
+            "id": "right-dog-box",
+            "subject": {
+              "artifact_id": "efficientsam-smoke-source",
+              "source_node": "model_bundle_smoke",
+              "port": "detections",
+              "artifact_type": "detection_set",
+              "item_id": "right-dog"
+            },
+            "bbox": [0.53, 0.31, 0.2, 0.67],
+            "attributes": {}
+          }
+        ]
+      }
+    }
+  ],
+  "parameters": {
+    "mask_threshold": 0.0,
+    "multi_mask": false
+  },
+  "timeout_ms": 120000
+}

@@ -1,0 +1,6 @@
+{
+  "required_artifact_kinds": ["mask_set"],
+  "minimum_artifact_count": 1,
+  "minimum_item_count": 1,
+  "require_non_empty_mask": true
+}

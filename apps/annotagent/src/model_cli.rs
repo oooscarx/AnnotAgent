@@ -7,7 +7,8 @@ use annotagent_model_bundle::{
 use annotagent_model_catalog::{
     BindModelInstanceRequest, LicenseAcceptanceActor, ModelBundleInstallSource,
     ModelBundleRegistry, ModelCatalog, ModelCatalogClient, ModelCatalogEntry,
-    ModelLicenseAcceptance, evaluate_bundle_smoke_response, prepare_bundle_smoke_test,
+    ModelLicenseAcceptance, audit_model_recipe, build_model_recipe, evaluate_bundle_smoke_response,
+    fetch_model_recipe, prepare_bundle_smoke_test, verify_model_recipe,
 };
 use annotagent_plugin_registry::{PluginRegistry, PluginRegistryError, run_model_instance_smoke};
 use anyhow::{Context, Result, bail};
@@ -15,7 +16,7 @@ use chrono::Utc;
 use semver::Version;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ModelBundleCommand, ModelCatalogCommand, ModelsCommand};
+use crate::{ModelBundleCommand, ModelCatalogCommand, ModelRecipeCommand, ModelsCommand};
 
 pub async fn run(workspace: &Path, command: ModelsCommand) -> Result<()> {
     match command {
@@ -23,7 +24,7 @@ pub async fn run(workspace: &Path, command: ModelsCommand) -> Result<()> {
         ModelsCommand::Catalog { command: None } => list_catalogs(workspace),
         ModelsCommand::Catalog {
             command: Some(command),
-        } => catalog(command),
+        } => catalog(workspace, command),
         ModelsCommand::Search { query } => search(workspace, &query),
         ModelsCommand::Show { bundle_id } => show(workspace, &bundle_id),
         ModelsCommand::Install { bundle, accept } => install(workspace, &bundle, accept).await,
@@ -44,6 +45,7 @@ pub async fn run(workspace: &Path, command: ModelsCommand) -> Result<()> {
             doctor(workspace, parse_instance_id(&model_instance_id)?)
         }
         ModelsCommand::Gc => garbage_collect(workspace),
+        ModelsCommand::Recipe { command } => recipe(command).await,
     }
 }
 
@@ -73,8 +75,27 @@ fn bundle(command: ModelBundleCommand) -> Result<()> {
     Ok(())
 }
 
-fn catalog(command: ModelCatalogCommand) -> Result<()> {
+fn catalog(workspace: &Path, command: ModelCatalogCommand) -> Result<()> {
     match command {
+        ModelCatalogCommand::List => list_catalogs(workspace),
+        ModelCatalogCommand::AddLocal { directory } => {
+            let catalog = registry(workspace)?.add_trusted_local_catalog(&directory)?;
+            println!(
+                "added trusted local Catalog {} ({} entries) from {}",
+                catalog.catalog_id,
+                catalog.entries.len(),
+                directory.display()
+            );
+            Ok(())
+        }
+        ModelCatalogCommand::Refresh => {
+            let catalogs = registry(workspace)?.refresh_trusted_local_catalogs()?;
+            println!("refreshed {} trusted local Catalogs", catalogs.len());
+            for catalog in catalogs {
+                println!("{} · {} bundles", catalog.catalog_id, catalog.entries.len());
+            }
+            Ok(())
+        }
         ModelCatalogCommand::Build {
             directory,
             output,
@@ -140,6 +161,51 @@ fn catalog(command: ModelCatalogCommand) -> Result<()> {
     }
 }
 
+async fn recipe(command: ModelRecipeCommand) -> Result<()> {
+    match command {
+        ModelRecipeCommand::Audit { recipe } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&audit_model_recipe(&recipe)?)?
+            );
+        }
+        ModelRecipeCommand::Fetch { recipe } => {
+            let report = fetch_model_recipe(&recipe, &CancellationToken::new()).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ModelRecipeCommand::Build {
+            recipe,
+            output,
+            catalog_entry,
+            verification_report,
+        } => {
+            let report = build_model_recipe(&recipe, &output)?;
+            if let Some(path) = catalog_entry {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, serde_json::to_vec_pretty(&report.catalog_entry)?)?;
+                println!("catalog entry: {}", path.display());
+            }
+            if let Some(path) = verification_report {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, serde_json::to_vec_pretty(&report)?)?;
+                println!("verification report: {}", path.display());
+            }
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ModelRecipeCommand::Verify { recipe } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&verify_model_recipe(&recipe)?)?
+            );
+        }
+    }
+    Ok(())
+}
+
 fn registry(workspace: &Path) -> Result<ModelBundleRegistry> {
     std::fs::create_dir_all(workspace)?;
     Ok(ModelBundleRegistry::open(workspace.join(".annotagent"))?)
@@ -150,12 +216,26 @@ fn plugins(workspace: &Path) -> Result<PluginRegistry> {
 }
 
 fn list_catalogs(workspace: &Path) -> Result<()> {
-    for catalog in registry(workspace)?.catalogs() {
+    let registry = registry(workspace)?;
+    let local = registry
+        .trusted_local_catalogs()
+        .into_iter()
+        .map(|source| (source.catalog_id, source.root))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for catalog in registry.catalogs() {
+        let source = if catalog.catalog_id == annotagent_model_catalog::BUILTIN_FIXTURE_CATALOG_ID {
+            "builtin_fixture".to_owned()
+        } else if let Some(root) = local.get(&catalog.catalog_id) {
+            format!("trusted_local_catalog:{}", root.display())
+        } else {
+            "curated_remote".to_owned()
+        };
         println!(
-            "{} · {} bundles · {}",
+            "{} · {} bundles · {} · {}",
             catalog.catalog_id,
             catalog.entries.len(),
-            catalog.generated_at
+            catalog.generated_at,
+            source
         );
     }
     Ok(())

@@ -1,0 +1,5 @@
+{
+  "maximum_duration_ms": 120000,
+  "minimum_mask_coverage": 0.01,
+  "maximum_mask_coverage": 0.45
+}

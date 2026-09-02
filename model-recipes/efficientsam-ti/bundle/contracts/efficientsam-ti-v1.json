@@ -1,0 +1,34 @@
+{
+  "contract_version": "1",
+  "roles": {
+    "image_encoder": {
+      "inputs": [
+        { "name": "batched_images", "aliases": [], "dtype": "f32", "shape": [-1, 3, -1, -1] }
+      ],
+      "outputs": [
+        { "name": "image_embeddings", "aliases": [], "dtype": "f32", "shape": [-1, 256, -1, -1] }
+      ]
+    },
+    "mask_decoder": {
+      "inputs": [
+        { "name": "image_embeddings", "aliases": [], "dtype": "f32", "shape": [-1, 256, 64, 64] },
+        { "name": "batched_point_coords", "aliases": [], "dtype": "f32", "shape": [1, 1, -1, 2] },
+        { "name": "batched_point_labels", "aliases": [], "dtype": "f32", "shape": [1, 1, -1] },
+        { "name": "orig_im_size", "aliases": [], "dtype": "i64", "shape": [2] }
+      ],
+      "outputs": [
+        { "name": "output_masks", "aliases": [], "dtype": "f32", "shape": [-1, -1, -1, -1, -1] },
+        { "name": "iou_predictions", "aliases": [], "dtype": "f32", "shape": [1, 1, -1] },
+        { "name": "onnx::Shape_1830", "aliases": ["low_res_masks"], "dtype": "f32", "shape": [-1, -1, -1, -1] }
+      ]
+    }
+  },
+  "connections": [
+    {
+      "source_role": "image_encoder",
+      "source_output": "image_embeddings",
+      "target_role": "mask_decoder",
+      "target_input": "image_embeddings"
+    }
+  ]
+}

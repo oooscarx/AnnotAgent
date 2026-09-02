@@ -3,6 +3,7 @@
 mod compatibility;
 mod download;
 mod fixture;
+mod recipe;
 mod registry;
 mod smoke;
 
@@ -22,6 +23,7 @@ use url::{Host, Url};
 pub use compatibility::*;
 pub use download::*;
 pub use fixture::*;
+pub use recipe::*;
 pub use registry::*;
 pub use smoke::*;
 
@@ -47,6 +49,8 @@ pub enum ModelCatalogError {
     DownloadSize,
     #[error("model bundle provisioning failed: {0}")]
     Provisioning(String),
+    #[error("model supply recipe is invalid: {0}")]
+    Recipe(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
