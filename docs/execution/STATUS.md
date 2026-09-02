@@ -917,3 +917,18 @@ Rust Expert Model Plugin M8 status: `PASS`.
   credential, download, push or remote mutation was used.
 
 Model Bundle Provisioning M4 status: `PASS`.
+
+## Model Bundle Provisioning M5 — smoke, pinning and references — 2026-09-03
+
+- Verified Bundle test vectors now execute through the existing isolated Rust Plugin Host using an
+  exact role-to-file map. Plugin conformance and model-output tolerances are independently audited.
+- Only a passing fixed inference transitions a Model Instance to Ready and exposes its Profile as
+  selectable. Failure/crash evidence remains persisted and unavailable.
+- Immutable Workflow snapshots freeze Plugin, Bundle, Instance/Profile, file digests, Contract and
+  execution provider. New Runs re-hash frozen files and reject changed/disabled/missing assets.
+- Published Workflow references block model removal; disable/enable and conservative GC preserve
+  historical identity and content-address sharing.
+- Focused Rust suites and strict focused Clippy pass. Active model install/inference paths contain no
+  Python, pip, uv, conda or venv process launch.
+
+Model Bundle Provisioning M5 status: `PASS`.

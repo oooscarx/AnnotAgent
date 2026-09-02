@@ -24,6 +24,7 @@ async fn host_contains_process_crash_and_preserves_typed_inference() {
             installation_root,
             state_dir: state,
             weights_dir: weights,
+            model_files: BTreeMap::new(),
             cache_dir: cache,
             temporary_dir: scratch,
             max_request_bytes: 1_000_000,

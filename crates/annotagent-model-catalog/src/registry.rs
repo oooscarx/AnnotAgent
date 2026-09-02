@@ -6,8 +6,8 @@ use std::{
 use annotagent_core::{ModelAvailability, ModelCapability, ModelProfileId};
 use annotagent_model_bundle::{
     ModelBundleId, ModelBundleManifest, ModelBundleSignatureState, ModelBundleStatus,
-    ModelFileRole, ModelInstanceId, ModelInstanceStatus, Sha256Digest, VerifiedModelBundle,
-    verify_model_bundle,
+    ModelFileRole, ModelInstanceId, ModelInstanceStatus, Sha256Digest, SmokeTestResult,
+    SmokeTestStatus, VerifiedModelBundle, verify_model_bundle,
 };
 use annotagent_plugin_api::{
     PluginId, PluginManifest, PluginRuntimeStatus, PluginVersion,
@@ -22,7 +22,7 @@ use crate::{
     OnnxContractInspection, inspect_onnx_contract,
 };
 
-const MODEL_REGISTRY_SCHEMA_VERSION: u32 = 2;
+const MODEL_REGISTRY_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,7 +103,7 @@ pub struct InstalledModelInstance {
     pub status: ModelInstanceStatus,
     pub contract_inspection: OnnxContractInspection,
     pub smoke_test_id: Option<String>,
-    pub smoke_test_result: Option<serde_json::Value>,
+    pub smoke_test_result: Option<SmokeTestResult>,
     pub model_profile_id: ModelProfileId,
     pub model_profile_revision: u64,
     pub created_at: DateTime<Utc>,
@@ -115,10 +115,21 @@ pub struct ModelInstanceProfile {
     pub model_profile_id: ModelProfileId,
     pub model_profile_revision: u64,
     pub model_instance_id: ModelInstanceId,
+    pub selection_id: String,
     pub display_name: String,
     pub capabilities: BTreeSet<ModelCapability>,
     pub availability: ModelAvailability,
     pub selectable: bool,
+}
+
+#[must_use]
+pub fn model_instance_selection_id(id: ModelInstanceId) -> String {
+    format!("model-instance:{id}")
+}
+
+#[must_use]
+pub fn parse_model_instance_selection_id(value: &str) -> Option<ModelInstanceId> {
+    value.strip_prefix("model-instance:")?.parse().ok()
 }
 
 pub struct BindModelInstanceRequest<'a> {
@@ -132,6 +143,23 @@ pub struct BindModelInstanceRequest<'a> {
     pub execution_provider: &'a str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelBundleReference {
+    pub bundle_id: ModelBundleId,
+    pub bundle_version: Version,
+    pub bundle_digest: Sha256Digest,
+    pub kind: String,
+    pub location: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelBundleGcReport {
+    pub removed_bundles: Vec<String>,
+    pub removed_staging_entries: usize,
+    pub reclaimed_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct ModelBundleRegistryState {
@@ -139,6 +167,7 @@ struct ModelBundleRegistryState {
     catalogs: BTreeMap<String, ModelCatalog>,
     installations: BTreeMap<String, InstalledModelBundle>,
     model_instances: BTreeMap<String, InstalledModelInstance>,
+    references: Vec<ModelBundleReference>,
     license_acceptances: Vec<ModelLicenseAcceptance>,
     events: Vec<ModelBundleEvent>,
 }
@@ -150,6 +179,7 @@ impl Default for ModelBundleRegistryState {
             catalogs: BTreeMap::new(),
             installations: BTreeMap::new(),
             model_instances: BTreeMap::new(),
+            references: Vec::new(),
             license_acceptances: Vec::new(),
             events: Vec::new(),
         }
@@ -221,6 +251,11 @@ impl ModelBundleRegistry {
     }
 
     #[must_use]
+    pub fn model_instance(&self, id: ModelInstanceId) -> Option<&InstalledModelInstance> {
+        self.state.model_instances.get(&id.to_string())
+    }
+
+    #[must_use]
     pub fn model_profiles(&self) -> Vec<ModelInstanceProfile> {
         self.state
             .model_instances
@@ -235,6 +270,7 @@ impl ModelBundleRegistry {
                     model_profile_id: instance.model_profile_id,
                     model_profile_revision: instance.model_profile_revision,
                     model_instance_id: instance.id,
+                    selection_id: model_instance_selection_id(instance.id),
                     display_name: bundle.map_or_else(
                         || instance.model_id.clone(),
                         |bundle| bundle.manifest.display_name.clone(),
@@ -490,6 +526,237 @@ impl ModelBundleRegistry {
         Ok(instance)
     }
 
+    pub fn record_model_instance_smoke(
+        &mut self,
+        id: ModelInstanceId,
+        result: SmokeTestResult,
+    ) -> Result<InstalledModelInstance, ModelCatalogError> {
+        let instance = self
+            .state
+            .model_instances
+            .get_mut(&id.to_string())
+            .ok_or_else(|| {
+                ModelCatalogError::Provisioning("Model Instance was not found".to_owned())
+            })?;
+        if instance.status == ModelInstanceStatus::ContractMismatch {
+            return Err(ModelCatalogError::Provisioning(
+                "a Contract-mismatched Model Instance cannot run a smoke test".to_owned(),
+            ));
+        }
+        instance.smoke_test_id = Some(result.test_id.clone());
+        instance.status = if result.status == SmokeTestStatus::Passed {
+            ModelInstanceStatus::Ready
+        } else {
+            ModelInstanceStatus::FailedSmokeTest
+        };
+        instance.smoke_test_result = Some(result);
+        instance.updated_at = Utc::now();
+        let instance = instance.clone();
+        self.state.events.push(ModelBundleEvent {
+            bundle_id: instance.model_bundle_id.clone(),
+            bundle_version: instance.model_bundle_version.clone(),
+            event: "model_instance_smoke_tested".to_owned(),
+            detail: format!("instance={} status={:?}", instance.id, instance.status),
+            created_at: instance.updated_at,
+        });
+        self.persist()?;
+        Ok(instance)
+    }
+
+    pub fn add_reference(
+        &mut self,
+        reference: ModelBundleReference,
+    ) -> Result<(), ModelCatalogError> {
+        let installed = self
+            .get(&reference.bundle_id, &reference.bundle_version)
+            .ok_or_else(|| {
+                ModelCatalogError::Provisioning("Model Bundle is not installed".to_owned())
+            })?;
+        if installed.bundle_digest != reference.bundle_digest {
+            return Err(ModelCatalogError::Provisioning(
+                "Model Bundle reference digest does not match installed content".to_owned(),
+            ));
+        }
+        if !self.state.references.iter().any(|existing| {
+            existing.bundle_id == reference.bundle_id
+                && existing.bundle_version == reference.bundle_version
+                && existing.bundle_digest == reference.bundle_digest
+                && existing.kind == reference.kind
+                && existing.location == reference.location
+        }) {
+            self.state.references.push(reference);
+            self.persist()?;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn references(&self, id: &ModelBundleId, version: &Version) -> Vec<ModelBundleReference> {
+        self.state
+            .references
+            .iter()
+            .filter(|reference| reference.bundle_id == *id && reference.bundle_version == *version)
+            .cloned()
+            .collect()
+    }
+
+    pub fn disable(
+        &mut self,
+        id: &ModelBundleId,
+        version: &Version,
+    ) -> Result<(), ModelCatalogError> {
+        let key = bundle_key(id, version);
+        let installation = self.state.installations.get_mut(&key).ok_or_else(|| {
+            ModelCatalogError::Provisioning("Model Bundle is not installed".to_owned())
+        })?;
+        installation.enabled = false;
+        installation.updated_at = Utc::now();
+        for instance in self.state.model_instances.values_mut().filter(|instance| {
+            instance.model_bundle_id == *id && instance.model_bundle_version == *version
+        }) {
+            instance.status = ModelInstanceStatus::Disabled;
+            instance.updated_at = installation.updated_at;
+        }
+        self.persist()
+    }
+
+    pub fn enable(
+        &mut self,
+        id: &ModelBundleId,
+        version: &Version,
+    ) -> Result<(), ModelCatalogError> {
+        let key = bundle_key(id, version);
+        let installation = self.state.installations.get_mut(&key).ok_or_else(|| {
+            ModelCatalogError::Provisioning("Model Bundle is not installed".to_owned())
+        })?;
+        installation.enabled = true;
+        installation.updated_at = Utc::now();
+        for instance in self.state.model_instances.values_mut().filter(|instance| {
+            instance.model_bundle_id == *id && instance.model_bundle_version == *version
+        }) {
+            instance.status = match instance
+                .smoke_test_result
+                .as_ref()
+                .map(|result| &result.status)
+            {
+                Some(SmokeTestStatus::Passed) => ModelInstanceStatus::Ready,
+                Some(SmokeTestStatus::Failed | SmokeTestStatus::Crashed) => {
+                    ModelInstanceStatus::FailedSmokeTest
+                }
+                None if instance.contract_inspection.valid => ModelInstanceStatus::Preparing,
+                None => ModelInstanceStatus::ContractMismatch,
+            };
+            instance.updated_at = installation.updated_at;
+        }
+        self.persist()
+    }
+
+    pub fn remove(
+        &mut self,
+        id: &ModelBundleId,
+        version: &Version,
+    ) -> Result<(), ModelCatalogError> {
+        let references = self.references(id, version);
+        if !references.is_empty() {
+            return Err(ModelCatalogError::Provisioning(format!(
+                "Cannot remove this model bundle. Referenced by: {}",
+                references
+                    .iter()
+                    .map(|reference| format!("{} {}", reference.kind, reference.location))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let key = bundle_key(id, version);
+        let installation = self.state.installations.remove(&key).ok_or_else(|| {
+            ModelCatalogError::Provisioning("Model Bundle is not installed".to_owned())
+        })?;
+        self.state.model_instances.retain(|_, instance| {
+            instance.model_bundle_id != *id || instance.model_bundle_version != *version
+        });
+        let digest_still_used = self
+            .state
+            .installations
+            .values()
+            .any(|other| other.bundle_digest == installation.bundle_digest);
+        if !digest_still_used {
+            let models_root = self.data_root.join("models/sha256");
+            if !installation.content_root.starts_with(&models_root) {
+                return Err(ModelCatalogError::Provisioning(
+                    "refusing to remove an unexpected model content path".to_owned(),
+                ));
+            }
+            if installation.content_root.exists() {
+                std::fs::remove_dir_all(&installation.content_root)?;
+            }
+        }
+        self.state.events.push(ModelBundleEvent {
+            bundle_id: id.clone(),
+            bundle_version: version.clone(),
+            event: "removed".to_owned(),
+            detail: format!("digest={}", installation.bundle_digest),
+            created_at: Utc::now(),
+        });
+        self.persist()
+    }
+
+    pub fn garbage_collect(&mut self) -> Result<ModelBundleGcReport, ModelCatalogError> {
+        let removable = self
+            .state
+            .installations
+            .values()
+            .filter(|bundle| {
+                !bundle.enabled
+                    && self
+                        .references(&bundle.manifest.id, &bundle.manifest.version)
+                        .is_empty()
+            })
+            .map(|bundle| (bundle.manifest.id.clone(), bundle.manifest.version.clone()))
+            .collect::<Vec<_>>();
+        let mut report = ModelBundleGcReport::default();
+        for (id, version) in removable {
+            let key = bundle_key(&id, &version);
+            if let Some(bundle) = self.state.installations.get(&key) {
+                report.reclaimed_bytes = report.reclaimed_bytes.saturating_add(
+                    bundle
+                        .manifest
+                        .files
+                        .iter()
+                        .map(|file| file.size_bytes)
+                        .sum::<u64>(),
+                );
+            }
+            self.remove(&id, &version)?;
+            report.removed_bundles.push(key);
+        }
+        for directory in [
+            self.data_root.join("model-staging"),
+            self.data_root.join("model-downloads"),
+        ] {
+            if !directory.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&directory)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !path.starts_with(&directory) {
+                    continue;
+                }
+                let metadata = std::fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    std::fs::remove_dir_all(path)?;
+                } else if metadata.is_file() {
+                    std::fs::remove_file(path)?;
+                }
+                report.removed_staging_entries += 1;
+            }
+        }
+        Ok(report)
+    }
+
     fn persist(&self) -> Result<(), ModelCatalogError> {
         let state_path = self.data_root.join("model-bundle-registry.json");
         let temporary = self.data_root.join(format!(
@@ -545,6 +812,70 @@ mod tests {
     }
 
     #[test]
+    fn only_a_passing_smoke_test_makes_the_instance_profile_selectable() {
+        let temp = tempfile::tempdir().expect("temp");
+        let mut registry = ModelBundleRegistry::open(temp.path()).expect("registry");
+        let instance_id = ModelInstanceId::new();
+        let now = Utc::now();
+        registry.state.model_instances.insert(
+            instance_id.to_string(),
+            InstalledModelInstance {
+                id: instance_id,
+                plugin_id: PluginId::parse("org.annotagent.fixture-plugin").expect("plugin"),
+                plugin_version: PluginVersion::parse("1.0.0").expect("version"),
+                plugin_package_digest: PluginSha256Digest::of_bytes(b"plugin"),
+                model_id: "fixture-model".to_owned(),
+                model_bundle_id: ModelBundleId::parse("org.annotagent.models.fixture")
+                    .expect("bundle"),
+                model_bundle_version: Version::new(1, 0, 0),
+                model_bundle_digest: Sha256Digest::of_bytes(b"bundle"),
+                model_variant: "tiny".to_owned(),
+                model_file_digests: BTreeMap::from([(
+                    ModelFileRole::parse("model").expect("role"),
+                    Sha256Digest::of_bytes(b"model"),
+                )]),
+                execution_provider: "cpu".to_owned(),
+                capability_contract_hash: Sha256Digest::of_bytes(b"contract"),
+                status: ModelInstanceStatus::Preparing,
+                contract_inspection: OnnxContractInspection {
+                    contract_sha256: Sha256Digest::of_bytes(b"contract"),
+                    roles: BTreeMap::new(),
+                    valid: true,
+                    errors: Vec::new(),
+                },
+                smoke_test_id: None,
+                smoke_test_result: None,
+                model_profile_id: ModelProfileId::new(),
+                model_profile_revision: 1,
+                created_at: now,
+                updated_at: now,
+            },
+        );
+        assert!(!registry.model_profiles()[0].selectable);
+        let result = SmokeTestResult {
+            test_id: "fixture-smoke".to_owned(),
+            status: SmokeTestStatus::Passed,
+            checks: vec![annotagent_model_bundle::SmokeTestCheck {
+                name: "sample".to_owned(),
+                passed: true,
+                detail: "typed output".to_owned(),
+            }],
+            duration_ms: 1,
+            started_at: now,
+            finished_at: now,
+        };
+        let ready = registry
+            .record_model_instance_smoke(instance_id, result)
+            .expect("record smoke");
+        assert_eq!(ready.status, ModelInstanceStatus::Ready);
+        assert!(registry.model_profiles()[0].selectable);
+        assert_eq!(
+            registry.model_profiles()[0].availability,
+            ModelAvailability::Available
+        );
+    }
+
+    #[test]
     fn verified_bundle_installs_once_into_content_addressed_storage() {
         let temp = tempfile::tempdir().expect("temp");
         let source = temp.path().join("source");
@@ -588,6 +919,45 @@ mod tests {
         let reopened = ModelBundleRegistry::open(&registry_root).expect("reopen");
         assert_eq!(reopened.list().len(), 1);
         assert_eq!(reopened.events().len(), 1);
+    }
+
+    #[test]
+    fn published_reference_blocks_removal_and_gc_preserves_the_bundle() {
+        let temp = tempfile::tempdir().expect("temp");
+        let source = temp.path().join("source");
+        let package = temp.path().join("fixture.annotmodel");
+        std::fs::create_dir_all(&source).expect("source");
+        let manifest = fixture_bundle_source(&source);
+        pack_model_bundle(&source, &package).expect("pack");
+        let mut registry =
+            ModelBundleRegistry::open(temp.path().join("registry")).expect("registry");
+        registry
+            .accept_license(ModelLicenseAcceptance {
+                bundle_id: manifest.id.clone(),
+                bundle_version: manifest.version.clone(),
+                license_digest: manifest.license.license_digest.clone(),
+                accepted_at: Utc::now(),
+                accepted_by: LicenseAcceptanceActor::LocalUser,
+            })
+            .expect("accept");
+        let installed = registry.import_local(&package).expect("install");
+        registry
+            .add_reference(ModelBundleReference {
+                bundle_id: manifest.id.clone(),
+                bundle_version: manifest.version.clone(),
+                bundle_digest: installed.bundle_digest,
+                kind: "published_workflow".to_owned(),
+                location: "fixture@v1".to_owned(),
+                created_at: Utc::now(),
+            })
+            .expect("reference");
+        registry
+            .disable(&manifest.id, &manifest.version)
+            .expect("disable");
+        assert!(registry.remove(&manifest.id, &manifest.version).is_err());
+        let report = registry.garbage_collect().expect("gc");
+        assert!(report.removed_bundles.is_empty());
+        assert!(registry.get(&manifest.id, &manifest.version).is_some());
     }
 
     fn fixture_bundle_source(root: &Path) -> ModelBundleManifest {

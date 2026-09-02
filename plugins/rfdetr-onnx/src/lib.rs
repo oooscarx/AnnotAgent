@@ -94,7 +94,11 @@ impl RfDetrOnnxPlugin {
 #[async_trait]
 impl ExpertModelPlugin for RfDetrOnnxPlugin {
     async fn setup(&self, context: PluginRuntimeContext) -> Result<(), PluginSdkError> {
-        let model_path = find_component(&context.weights_dir, MODEL_FILENAME)?;
+        let model_path = context
+            .model_files
+            .get("model")
+            .cloned()
+            .map_or_else(|| find_component(&context.weights_dir, MODEL_FILENAME), Ok)?;
         let session = tokio::task::spawn_blocking(move || {
             OnnxSession::load(model_path, &SessionOptions::default())
         })

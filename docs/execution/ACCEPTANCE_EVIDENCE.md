@@ -1631,3 +1631,23 @@ performed.
    `cargo check -p annotagent-server`, Rustfmt and strict focused Clippy pass.
 
 No model weights, credential, Python process, push or remote mutation was used.
+
+## Model Bundle Provisioning M5 — 2026-09-03
+
+1. A Bundle test suite now yields a bounded, host-scoped request and typed expected/tolerance
+   documents. Artifact validation, required output shape, item count, Mask coverage and latency are
+   checked without exact-pixel assumptions.
+2. The existing Rust Plugin Host runs package conformance and exactly one fixed Bundle inference
+   using verified role-to-file bindings. Official SAM, YOLO, RF-DETR and PIDNet plugins consume the
+   map without relying on Bundle filenames.
+3. `only_a_passing_smoke_test_makes_the_instance_profile_selectable` proves `Preparing` remains
+   unavailable and a passing result alone produces Ready/Available.
+4. Workflow snapshots freeze every Plugin/Bundle/file/Instance/Profile/Contract/provider identity;
+   runtime startup re-hashes the exact files and fails closed on any difference.
+5. `published_reference_blocks_removal_and_gc_preserves_the_bundle` proves a disabled but referenced
+   Bundle cannot be removed or garbage-collected.
+6. Focused execution passed 99 Core, 57 Application (one explicit billable ignore), 8 Catalog,
+   9 Bundle, 20 Server and all focused Plugin Host/SDK/Registry tests. Strict focused Clippy passed.
+7. The active Plugin/Model source scan contains no Python/pip/uv/conda/venv process-launch pattern.
+
+No external model, credential, download, push or remote mutation was used.

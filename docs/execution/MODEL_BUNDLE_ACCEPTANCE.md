@@ -25,9 +25,9 @@ Last updated: 2026-09-03 CST
 - [x] Safe download and atomic content-addressed installation are implemented; external HTTPS live
       transfer remains live-conditional while URL, cancellation and local install paths are tested.
 - [x] Plugin required roles, versions, capabilities, contracts, platform and provider are resolved.
-- [ ] Only a smoke-tested Ready Model Instance produces an available Model Profile.
-- [ ] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
-- [ ] Referenced bundles are protected and unreferenced content can be garbage-collected.
+- [x] Only a smoke-tested Ready Model Instance produces an available Model Profile.
+- [x] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
+- [x] Referenced bundles are protected and unreferenced content can be garbage-collected.
 - [ ] Primary GUI path installs a compatible Bundle rather than raw ONNX components.
 - [ ] Pipeline Builder discovers readiness/setup requirements but cannot mutate model assets.
 - [ ] Fixture end-to-end lifecycle passes offline and is visibly non-publishable.
@@ -100,3 +100,25 @@ Last updated: 2026-09-03 CST
 - [x] Model Instance and compatible-Bundle APIs expose exact identities and structured evidence but
       omit local content paths.
 - [x] Focused strict Clippy passes for Bundle, Catalog, Plugin API/Registry and Server.
+
+## M5 evidence
+
+- [x] Fixed smoke suites load a bounded image and one data-only request template from verified
+      Bundle content; package data cannot choose local paths or host Run identities.
+- [x] Smoke evaluation requires a matching request, no typed error, Core-valid finite Artifacts,
+      required kinds/counts/items, optional non-empty Mask coverage and bounded duration.
+- [x] Plugin health/capability/model/Contract conformance and Bundle output tolerances are separate
+      checks; either failure prevents Ready.
+- [x] Host/SDK startup carries an explicit model-neutral role-to-file map whose files must be regular
+      descendants of the verified Bundle root. SAM and single-file official plugins consume it.
+- [x] Passing smoke evidence alone makes the Model Instance `Ready` and its stable Profile
+      `Available`/selectable; a dedicated regression proves the transition.
+- [x] Published Model Asset identity includes exact Plugin package, Bundle/version/digest,
+      Instance/Profile revision, every file-role digest, Contract hash and execution provider.
+- [x] New Run admission validates the exact Ready instance; process startup re-hashes every frozen
+      file before handing the role map to the Plugin.
+- [x] Publication creates durable Plugin and Bundle references. Referenced removal and GC are
+      blocked with the concrete referencing Workflow location.
+- [x] Disable/enable, explicit removal and conservative GC are stateful and content-address aware.
+- [x] Focused Rust tests pass: 99 Core, 57 Application plus one explicit billable ignore, 8 Catalog,
+      9 Bundle, 20 Server and Plugin Host/SDK/Registry suites. Focused strict Clippy passes.

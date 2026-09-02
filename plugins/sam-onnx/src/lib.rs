@@ -210,8 +210,22 @@ impl SamOnnxPlugin {
 #[async_trait]
 impl ExpertModelPlugin for SamOnnxPlugin {
     async fn setup(&self, context: PluginRuntimeContext) -> Result<(), PluginSdkError> {
-        let encoder_path = find_component(&context.weights_dir, ENCODER_FILENAME)?;
-        let decoder_path = find_component(&context.weights_dir, DECODER_FILENAME)?;
+        let encoder_path = context
+            .model_files
+            .get("image_encoder")
+            .cloned()
+            .map_or_else(
+                || find_component(&context.weights_dir, ENCODER_FILENAME),
+                Ok,
+            )?;
+        let decoder_path = context
+            .model_files
+            .get("mask_decoder")
+            .cloned()
+            .map_or_else(
+                || find_component(&context.weights_dir, DECODER_FILENAME),
+                Ok,
+            )?;
         let (encoder, decoder) = tokio::task::spawn_blocking(move || {
             let options = SessionOptions::default();
             Ok::<_, annotagent_model_runtime_onnx::OnnxRuntimeError>((

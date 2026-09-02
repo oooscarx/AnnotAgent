@@ -16,6 +16,7 @@ use annotagent_core::{
     VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
     WorkflowNodeKind,
 };
+use annotagent_model_catalog::{ModelBundleRegistry, parse_model_instance_selection_id};
 use annotagent_plugin_host::{HostedPlugin, PluginPipelineBackend};
 use annotagent_plugin_registry::{PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
@@ -99,6 +100,7 @@ pub(crate) struct PublishedWorkflowRuntime {
     refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
     detection_workers: Vec<DetectionWorkerSettings>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
 }
 
 #[derive(Clone)]
@@ -120,6 +122,7 @@ impl PublishedWorkflowRuntime {
         validators: BTreeMap<String, Arc<dyn AnnotationValidator>>,
         refiners: BTreeMap<String, Arc<dyn AnnotationRefiner>>,
         plugin_registry: Arc<Mutex<PluginRegistry>>,
+        model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
     ) -> Result<Self> {
         let mut pipeline_provider = None;
         let external_backend: Option<Arc<dyn VisionModelBackend>> = match provider_kind {
@@ -233,6 +236,7 @@ impl PublishedWorkflowRuntime {
             refiners,
             detection_workers: settings.detection_workers.clone(),
             plugin_registry,
+            model_bundle_registry,
         })
     }
 
@@ -373,6 +377,7 @@ impl PublishedWorkflowRuntime {
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         false,
@@ -436,6 +441,7 @@ impl PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
@@ -449,6 +455,7 @@ impl PublishedWorkflowRuntime {
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
@@ -1078,6 +1085,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         false,
@@ -1141,6 +1149,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
@@ -1154,6 +1163,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
+                            model_bundle_registry: self.model_bundle_registry.clone(),
                             plugin_models: self.workflow.snapshot.plugin_models.clone(),
                         }),
                         true,
@@ -1350,10 +1360,113 @@ fn add_plugin_execution_metadata(output: &mut DagNodeOutput, model_id: &str) {
 
 async fn start_plugin_pipeline_backend(
     registry: &Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: &Arc<Mutex<ModelBundleRegistry>>,
     frozen_models: &[annotagent_core::PluginModelSnapshot],
     selection_id: &str,
     capability: annotagent_core::VisionCapability,
 ) -> Result<Arc<dyn annotagent_core::PipelineModelBackend>> {
+    let frozen = frozen_models
+        .iter()
+        .find(|frozen| {
+            if let Some(instance_id) = parse_model_instance_selection_id(selection_id) {
+                frozen
+                    .model_asset
+                    .as_ref()
+                    .is_some_and(|asset| asset.model_instance_id == instance_id.to_string())
+            } else {
+                format!(
+                    "plugin:{}@{}:{}",
+                    frozen.plugin_id, frozen.plugin_version, frozen.model_id
+                ) == selection_id
+            }
+        })
+        .ok_or_else(|| {
+            anyhow!("Plugin model {selection_id:?} is not frozen into this Workflow Version")
+        })?;
+    if !frozen
+        .capabilities
+        .iter()
+        .copied()
+        .any(|declared| annotagent_core::vision_capability(declared) == capability)
+    {
+        bail!(
+            "Plugin model {selection_id:?} does not provide the requested {capability:?} Contract"
+        );
+    }
+    if let Some(asset) = &frozen.model_asset {
+        let bundle = {
+            let bundles = model_bundle_registry
+                .lock()
+                .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+            let bundle_id = annotagent_model_bundle::ModelBundleId::parse(&asset.model_bundle_id)?;
+            let bundle_version = semver::Version::parse(&asset.model_bundle_version)?;
+            let bundle = bundles
+                .get(&bundle_id, &bundle_version)
+                .cloned()
+                .ok_or_else(|| anyhow!("frozen Model Bundle is not installed"))?;
+            if !bundle.enabled || bundle.bundle_digest.to_string() != asset.model_bundle_digest {
+                bail!("frozen Model Bundle is disabled or has a different content identity");
+            }
+            bundle
+        };
+        let (manifest, config) = {
+            let registry = registry
+                .lock()
+                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+            let plugin_id = annotagent_plugin_api::PluginId::parse(&frozen.plugin_id)?;
+            let plugin_version =
+                annotagent_plugin_api::PluginVersion::parse(&frozen.plugin_version)?;
+            let installation = registry.get(&plugin_id, &plugin_version)?.clone();
+            if !installation.enabled
+                || installation.package_digest.to_string() != frozen.plugin_package_sha256
+            {
+                bail!("frozen Rust Plugin is disabled or has a different package identity");
+            }
+            if bundle.manifest.files.len() != asset.model_file_digests.len() {
+                bail!("frozen Model Instance file-role set has changed");
+            }
+            for file in &bundle.manifest.files {
+                let expected = asset
+                    .model_file_digests
+                    .get(file.role.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("frozen Model Instance is missing role {}", file.role)
+                    })?;
+                let path = bundle.content_root.join(&file.path);
+                let actual = annotagent_model_bundle::Sha256Digest::of_file(&path)?;
+                if actual.as_str() != expected || actual != file.sha256 {
+                    bail!(
+                        "frozen Model Instance file role {} failed identity verification",
+                        file.role
+                    );
+                }
+            }
+            let model_files = bundle
+                .manifest
+                .files
+                .iter()
+                .map(|file| {
+                    (
+                        file.role.as_str().to_owned(),
+                        bundle.content_root.join(&file.path),
+                    )
+                })
+                .collect();
+            let config = registry.process_config_for_model_files(
+                &installation,
+                &bundle.content_root,
+                model_files,
+            )?;
+            (installation.manifest, config)
+        };
+        let hosted = Arc::new(HostedPlugin::start(manifest, config).await?);
+        return Ok(Arc::new(PluginPipelineBackend::new_mapped(
+            selection_id,
+            capability,
+            frozen.model_id.clone(),
+            hosted,
+        )));
+    }
     let (manifest, config, worker_model_id) = {
         let registry = registry
             .lock()
@@ -1363,26 +1476,6 @@ async fn start_plugin_pipeline_backend(
             .into_iter()
             .find(|profile| plugin_model_selection_id(&profile.reference) == selection_id)
             .ok_or_else(|| anyhow!("Plugin model {selection_id:?} is not installed"))?;
-        let frozen = frozen_models
-            .iter()
-            .find(|frozen| {
-                frozen.plugin_id == profile.reference.plugin_id.as_str()
-                    && frozen.plugin_version == profile.reference.plugin_version.to_string()
-                    && frozen.model_id == profile.reference.model_id
-            })
-            .ok_or_else(|| {
-                anyhow!("Plugin model {selection_id:?} is not frozen into this Workflow Version")
-            })?;
-        if !frozen
-            .capabilities
-            .iter()
-            .copied()
-            .any(|declared| annotagent_core::vision_capability(declared) == capability)
-        {
-            bail!(
-                "Plugin model {selection_id:?} does not provide the requested {capability:?} Contract"
-            );
-        }
         let installation = registry
             .get(
                 &profile.reference.plugin_id,
@@ -1410,6 +1503,7 @@ struct BoundClassificationRunner {
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
     plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
@@ -1421,16 +1515,15 @@ impl DagNodeRunner for BoundClassificationRunner {
             &self.profile_executions,
             context.node,
         );
-        let plugin_model_id = context
-            .node
-            .model_binding
-            .as_deref()
-            .filter(|model_id| model_id.starts_with("plugin:"));
+        let plugin_model_id = context.node.model_binding.as_deref().filter(|model_id| {
+            model_id.starts_with("plugin:") || model_id.starts_with("model-instance:")
+        });
         let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if let Some(model_id) =
             plugin_model_id
         {
             start_plugin_pipeline_backend(
                 &self.plugin_registry,
+                &self.model_bundle_registry,
                 &self.plugin_models,
                 model_id,
                 annotagent_core::VisionCapability::Classification,
@@ -1476,6 +1569,7 @@ struct BoundDetectionRunner {
     model_image: Option<annotagent_core::ModelImage>,
     detection_workers: Vec<DetectionWorkerSettings>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
     plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
@@ -1484,6 +1578,7 @@ struct BoundPromptedSegmentationRunner {
     detection_workers: Vec<DetectionWorkerSettings>,
     allow_test_fixtures: bool,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
     plugin_models: Vec<annotagent_core::PluginModelSnapshot>,
 }
 
@@ -1516,11 +1611,12 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 "test-only segmentation fixtures cannot run in a product Workflow",
             ));
         }
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if model_id
-            .starts_with("plugin:")
-        {
+        let plugin_bound =
+            model_id.starts_with("plugin:") || model_id.starts_with("model-instance:");
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if plugin_bound {
             start_plugin_pipeline_backend(
                 &self.plugin_registry,
+                &self.model_bundle_registry,
                 &self.plugin_models,
                 model_id,
                 annotagent_core::VisionCapability::PromptedSegmentation,
@@ -1579,7 +1675,7 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 })?
                 .run(context)
                 .await?;
-        if model_id.starts_with("plugin:") {
+        if plugin_bound {
             add_plugin_execution_metadata(&mut output, model_id);
         }
         Ok(output)
@@ -1594,14 +1690,13 @@ impl DagNodeRunner for BoundDetectionRunner {
             &self.profile_executions,
             context.node,
         );
-        let plugin_model_id = context
-            .node
-            .model_binding
-            .as_deref()
-            .filter(|model_id| model_id.starts_with("plugin:"));
+        let plugin_model_id = context.node.model_binding.as_deref().filter(|model_id| {
+            model_id.starts_with("plugin:") || model_id.starts_with("model-instance:")
+        });
         let mut output = if let Some(model_id) = plugin_model_id {
             let backend = start_plugin_pipeline_backend(
                 &self.plugin_registry,
+                &self.model_bundle_registry,
                 &self.plugin_models,
                 model_id,
                 annotagent_core::VisionCapability::ObjectDetection,

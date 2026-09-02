@@ -90,3 +90,22 @@ matching filenames can bypass that gate.
 Contract verification opens each declared role with `annotagent-model-runtime-onnx` and compares
 the returned tensor descriptors. No Python exporter, filename convention or parallel ONNX parser is
 used in the user installation path.
+
+## D016 — Smoke evidence has two independent layers
+
+Plugin package conformance proves authenticated process health, capability/model discovery and
+wire Contracts. Bundle expectations prove the fixed model assets produce a valid typed result
+inside declared tolerances. Both must pass; neither an ONNX load nor a non-empty response alone is
+sufficient for Ready.
+
+## D017 — Bind roles explicitly at process startup
+
+The Host passes a verified role-to-file map in the existing startup handshake. This avoids making a
+filename the compatibility Contract while retaining legacy discovery for migration. Paths must be
+regular descendants of the verified content root and are never returned by product APIs.
+
+## D018 — Garbage collection is conservative
+
+Automatic GC removes only disabled and unreferenced installed Bundles plus abandoned staging or
+download entries. Enabled assets are retained even without a current Project reference; explicit
+removal remains a human action. Published Workflow references are durable blockers.

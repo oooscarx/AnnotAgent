@@ -68,6 +68,7 @@ async fn scripted_rust_fixture_proves_protocol_without_claiming_model_inference(
             installation_root,
             state_dir,
             weights_dir,
+            model_files: BTreeMap::new(),
             cache_dir,
             temporary_dir,
             max_request_bytes: 8 * 1024 * 1024,

@@ -11,6 +11,7 @@ annotagent-core = { path = "../annotagent-core" }
 annotagent-export = { path = "../annotagent-export" }
 annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-model-catalog = { path = "../annotagent-model-catalog" }
+annotagent-model-bundle = { path = "../annotagent-model-bundle" }
 annotagent-provider = { path = "../annotagent-provider" }
 annotagent-plugin-api = { path = "../annotagent-plugin-api" }
 annotagent-plugin-host = { path = "../annotagent-plugin-host" }
@@ -30,6 +31,7 @@ chrono.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver.workspace = true
 serde_yaml.workspace = true
 rust_decimal.workspace = true
 tokio.workspace = true

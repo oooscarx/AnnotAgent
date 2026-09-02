@@ -100,7 +100,11 @@ impl YoloOnnxPlugin {
 #[async_trait]
 impl ExpertModelPlugin for YoloOnnxPlugin {
     async fn setup(&self, context: PluginRuntimeContext) -> Result<(), PluginSdkError> {
-        let model_path = find_single_onnx(&context.weights_dir)?;
+        let model_path = context
+            .model_files
+            .get("model")
+            .cloned()
+            .map_or_else(|| find_single_onnx(&context.weights_dir), Ok)?;
         let session = tokio::task::spawn_blocking(move || {
             OnnxSession::load(model_path, &SessionOptions::default())
         })

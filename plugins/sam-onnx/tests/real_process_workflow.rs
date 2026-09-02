@@ -92,6 +92,7 @@ async fn real_sam_process_runs_prompt_mask_bbox_geometry_workflow() {
                 installation_root,
                 state_dir,
                 weights_dir: weights,
+                model_files: BTreeMap::new(),
                 cache_dir,
                 temporary_dir,
                 max_request_bytes: 64 * 1024 * 1024,

@@ -44,6 +44,7 @@ async fn real_yolox_process_runs_image_detector_filter_workflow() {
                 installation_root,
                 state_dir,
                 weights_dir: weights,
+                model_files: BTreeMap::new(),
                 cache_dir,
                 temporary_dir,
                 max_request_bytes: 32 * 1024 * 1024,

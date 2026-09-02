@@ -46,21 +46,22 @@ use annotagent_core::{
     PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
     ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
     ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
-    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
-    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
-    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, center_shift,
-    compare_pipeline_geometry_metrics, rect_iou, resolve_model_binding,
+    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedModelAssetReference,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
+    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
+    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
+    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftNode,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds, center_shift, compare_pipeline_geometry_metrics,
+    rect_iou, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -68,7 +69,9 @@ use annotagent_export::{
     YoloSegmentationImporter,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
-use annotagent_model_catalog::ModelBundleRegistry;
+use annotagent_model_catalog::{
+    ModelBundleReference, ModelBundleRegistry, parse_model_instance_selection_id,
+};
 use annotagent_plugin_registry::{PluginReference, PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
@@ -8112,6 +8115,7 @@ impl LocalApplication {
             validators,
             refiners,
             self.plugin_registry.clone(),
+            self.model_bundle_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image("label-pipeline-review-resume", &image, 1280)
@@ -8265,6 +8269,7 @@ impl LocalApplication {
             validators,
             refiners,
             self.plugin_registry.clone(),
+            self.model_bundle_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image("label-pipeline-replay", &image, 1280)
@@ -13401,6 +13406,7 @@ impl LocalApplication {
             validators,
             refiners,
             self.plugin_registry.clone(),
+            self.model_bundle_registry.clone(),
         )?;
         let project = Arc::new(project);
         let project_root = project_path
@@ -13915,46 +13921,128 @@ impl LocalApplication {
             .nodes
             .iter()
             .filter_map(|node| node.model_binding.as_deref())
-            .filter(|binding| binding.starts_with("plugin:"))
+            .filter(|binding| {
+                binding.starts_with("plugin:") || binding.starts_with("model-instance:")
+            })
             .collect::<BTreeSet<_>>();
         if referenced.is_empty() {
             return Ok(Vec::new());
         }
-        let registry = self
-            .plugin_registry
+        let (installations, legacy_profiles) = {
+            let registry = self
+                .plugin_registry
+                .lock()
+                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+            (registry.list(), registry.ready_models())
+        };
+        let instances = self
+            .model_bundle_registry
             .lock()
-            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
-        let ready_models = registry.ready_models();
+            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?
+            .model_instances();
         let mut snapshots = Vec::new();
         for binding in referenced {
-            let profile = ready_models
-                .iter()
-                .find(|profile| plugin_model_selection_id(&profile.reference) == binding)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Plugin model binding {binding:?} is not installed in the local Registry"
+            let snapshot = if let Some(instance_id) = parse_model_instance_selection_id(binding) {
+                let instance = instances
+                    .iter()
+                    .find(|instance| instance.id == instance_id)
+                    .ok_or_else(|| {
+                        anyhow!("Model Instance binding {binding:?} is not installed")
+                    })?;
+                if instance.status != annotagent_model_bundle::ModelInstanceStatus::Ready {
+                    bail!(
+                        "Model Instance binding {binding:?} is not Ready; run the fixed Bundle smoke test before publication"
+                    );
+                }
+                let installation = installations
+                    .iter()
+                    .find(|installation| {
+                        installation.manifest.id == instance.plugin_id
+                            && installation.manifest.version == instance.plugin_version
+                    })
+                    .ok_or_else(|| anyhow!("Model Instance Plugin is not installed"))?;
+                if !installation.enabled
+                    || installation.package_digest != instance.plugin_package_digest
+                    || !matches!(
+                        installation.runtime_status(),
+                        annotagent_plugin_api::PluginRuntimeStatus::Installed
+                            | annotagent_plugin_api::PluginRuntimeStatus::Ready
                     )
-                })?;
-            if !profile.enabled || profile.availability != ModelAvailability::Available {
-                bail!(
-                    "Plugin model binding {binding:?} is not Ready; add weights, run Test, and enable the exact version before publication"
-                );
-            }
-            let snapshot = PluginModelSnapshot {
-                plugin_id: profile.reference.plugin_id.to_string(),
-                plugin_version: profile.reference.plugin_version.to_string(),
-                plugin_package_sha256: profile.reference.package_digest.to_string(),
-                plugin_api_version: profile.reference.plugin_api_version.clone(),
-                worker_protocol_version: profile.reference.protocol_version.clone(),
-                model_id: profile.reference.model_id.clone(),
-                model_profile_revision: profile.reference.model_profile_revision,
-                checkpoint_sha256: profile
-                    .reference
-                    .checkpoint_sha256
-                    .as_ref()
-                    .map(ToString::to_string),
-                capability_contract_sha256: profile.reference.capability_contract_hash.to_string(),
-                capabilities: profile.capabilities.clone(),
+                {
+                    bail!("Model Instance Plugin runtime is disabled, unavailable, or changed");
+                }
+                let model = installation
+                    .manifest
+                    .models
+                    .iter()
+                    .find(|model| model.id == instance.model_id)
+                    .ok_or_else(|| anyhow!("Model Instance Plugin model Contract is missing"))?;
+                let model_asset = PublishedModelAssetReference {
+                    plugin_id: instance.plugin_id.to_string(),
+                    plugin_version: instance.plugin_version.to_string(),
+                    plugin_package_digest: instance.plugin_package_digest.to_string(),
+                    model_bundle_id: instance.model_bundle_id.to_string(),
+                    model_bundle_version: instance.model_bundle_version.to_string(),
+                    model_bundle_digest: instance.model_bundle_digest.to_string(),
+                    model_instance_id: instance.id.to_string(),
+                    model_profile_id: instance.model_profile_id,
+                    model_profile_revision: instance.model_profile_revision,
+                    model_file_digests: instance
+                        .model_file_digests
+                        .iter()
+                        .map(|(role, digest)| (role.to_string(), digest.to_string()))
+                        .collect(),
+                    capability_contract_hash: instance.capability_contract_hash.to_string(),
+                    execution_provider: instance.execution_provider.clone(),
+                };
+                PluginModelSnapshot {
+                    plugin_id: instance.plugin_id.to_string(),
+                    plugin_version: instance.plugin_version.to_string(),
+                    plugin_package_sha256: instance.plugin_package_digest.to_string(),
+                    plugin_api_version: installation.manifest.plugin_api.clone(),
+                    worker_protocol_version: annotagent_plugin_api::PLUGIN_PROTOCOL_VERSION
+                        .to_owned(),
+                    model_id: instance.model_id.clone(),
+                    model_profile_revision: instance.model_profile_revision,
+                    checkpoint_sha256: Some(instance.model_bundle_digest.to_string()),
+                    capability_contract_sha256: instance.capability_contract_hash.to_string(),
+                    capabilities: model.capabilities.iter().copied().collect(),
+                    model_asset: Some(model_asset),
+                }
+            } else {
+                let profile = legacy_profiles
+                    .iter()
+                    .find(|profile| plugin_model_selection_id(&profile.reference) == binding)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Plugin model binding {binding:?} is not installed in the local Registry"
+                        )
+                    })?;
+                if !profile.enabled || profile.availability != ModelAvailability::Available {
+                    bail!(
+                        "Plugin model binding {binding:?} is not Ready; add weights, run Test, and enable the exact version before publication"
+                    );
+                }
+                PluginModelSnapshot {
+                    plugin_id: profile.reference.plugin_id.to_string(),
+                    plugin_version: profile.reference.plugin_version.to_string(),
+                    plugin_package_sha256: profile.reference.package_digest.to_string(),
+                    plugin_api_version: profile.reference.plugin_api_version.clone(),
+                    worker_protocol_version: profile.reference.protocol_version.clone(),
+                    model_id: profile.reference.model_id.clone(),
+                    model_profile_revision: profile.reference.model_profile_revision,
+                    checkpoint_sha256: profile
+                        .reference
+                        .checkpoint_sha256
+                        .as_ref()
+                        .map(ToString::to_string),
+                    capability_contract_sha256: profile
+                        .reference
+                        .capability_contract_hash
+                        .to_string(),
+                    capabilities: profile.capabilities.clone(),
+                    model_asset: None,
+                }
             };
             snapshot
                 .validate()
@@ -13974,12 +14062,73 @@ impl LocalApplication {
         if workflow.snapshot.plugin_models.is_empty() {
             return Ok(());
         }
-        let registry = self
-            .plugin_registry
+        let (ready, installations) = {
+            let registry = self
+                .plugin_registry
+                .lock()
+                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
+            (registry.ready_models(), registry.list())
+        };
+        let instances = self
+            .model_bundle_registry
             .lock()
-            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?;
-        let ready = registry.ready_models();
+            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?
+            .model_instances();
         for frozen in &workflow.snapshot.plugin_models {
+            if let Some(asset) = &frozen.model_asset {
+                let current = instances.iter().find(|instance| {
+                    instance.id.to_string() == asset.model_instance_id
+                        && instance.model_profile_id == asset.model_profile_id
+                        && instance.model_profile_revision == asset.model_profile_revision
+                });
+                let Some(current) = current else {
+                    bail!(
+                        "new Run blocked: frozen Model Instance {} is no longer installed",
+                        asset.model_instance_id
+                    );
+                };
+                let installation = installations.iter().find(|installation| {
+                    installation.manifest.id == current.plugin_id
+                        && installation.manifest.version == current.plugin_version
+                });
+                if current.status != annotagent_model_bundle::ModelInstanceStatus::Ready
+                    || installation.is_none_or(|installation| {
+                        !installation.enabled
+                            || installation.package_digest != current.plugin_package_digest
+                    })
+                {
+                    bail!(
+                        "new Run blocked: frozen Model Instance {} is disabled, unavailable, or changed",
+                        asset.model_instance_id
+                    );
+                }
+                let actual = PublishedModelAssetReference {
+                    plugin_id: current.plugin_id.to_string(),
+                    plugin_version: current.plugin_version.to_string(),
+                    plugin_package_digest: current.plugin_package_digest.to_string(),
+                    model_bundle_id: current.model_bundle_id.to_string(),
+                    model_bundle_version: current.model_bundle_version.to_string(),
+                    model_bundle_digest: current.model_bundle_digest.to_string(),
+                    model_instance_id: current.id.to_string(),
+                    model_profile_id: current.model_profile_id,
+                    model_profile_revision: current.model_profile_revision,
+                    model_file_digests: current
+                        .model_file_digests
+                        .iter()
+                        .map(|(role, digest)| (role.to_string(), digest.to_string()))
+                        .collect(),
+                    capability_contract_hash: current.capability_contract_hash.to_string(),
+                    execution_provider: current.execution_provider.clone(),
+                };
+                if &actual != asset {
+                    bail!(
+                        "new Run blocked: Model Bundle, files, Contract, or execution provider differs from Published Workflow {}@v{}",
+                        workflow.workflow_id,
+                        workflow.version
+                    );
+                }
+                continue;
+            }
             let current = ready.iter().find(|profile| {
                 profile.reference.plugin_id.as_str() == frozen.plugin_id
                     && profile.reference.plugin_version.to_string() == frozen.plugin_version
@@ -14016,6 +14165,7 @@ impl LocalApplication {
                     .map(ToString::to_string),
                 capability_contract_sha256: current.reference.capability_contract_hash.to_string(),
                 capabilities: current.capabilities.clone(),
+                model_asset: None,
             };
             if &current_snapshot != frozen {
                 bail!(
@@ -14136,6 +14286,32 @@ impl LocalApplication {
                     plugin_id: annotagent_plugin_api::PluginId::parse(&model.plugin_id)?,
                     plugin_version: annotagent_plugin_api::PluginVersion::parse(
                         &model.plugin_version,
+                    )?,
+                    kind: "published_workflow".to_owned(),
+                    location: format!("{}@v{}", published.workflow_id, published.version),
+                    created_at: chrono::Utc::now(),
+                })?;
+            }
+        }
+        let model_assets = published
+            .snapshot
+            .plugin_models
+            .iter()
+            .filter_map(|model| model.model_asset.as_ref())
+            .collect::<Vec<_>>();
+        if !model_assets.is_empty() {
+            let mut registry = self
+                .model_bundle_registry
+                .lock()
+                .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+            for asset in model_assets {
+                registry.add_reference(ModelBundleReference {
+                    bundle_id: annotagent_model_bundle::ModelBundleId::parse(
+                        &asset.model_bundle_id,
+                    )?,
+                    bundle_version: semver::Version::parse(&asset.model_bundle_version)?,
+                    bundle_digest: annotagent_model_bundle::Sha256Digest::parse(
+                        &asset.model_bundle_digest,
                     )?,
                     kind: "published_workflow".to_owned(),
                     location: format!("{}@v{}", published.workflow_id, published.version),
@@ -15006,6 +15182,9 @@ fn prepare_run_with_settings(
         let plugin_registry = Arc::new(Mutex::new(PluginRegistry::open(
             plugin_workspace.join(".annotagent/plugins"),
         )?));
+        let model_bundle_registry = Arc::new(Mutex::new(ModelBundleRegistry::open(
+            plugin_workspace.join(".annotagent"),
+        )?));
         Arc::new(PublishedWorkflowRuntime::new(
             published,
             provider_kind,
@@ -15015,6 +15194,7 @@ fn prepare_run_with_settings(
             validators,
             refiners,
             plugin_registry,
+            model_bundle_registry,
         )?)
     } else {
         if project_skills.len() != 1 {
@@ -19359,6 +19539,7 @@ export:
             BTreeMap::new(),
             BTreeMap::new(),
             application.plugin_registry.clone(),
+            application.model_bundle_registry.clone(),
         )
         .expect("Runtime");
         let result = runtime

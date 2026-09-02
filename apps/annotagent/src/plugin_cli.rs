@@ -217,6 +217,7 @@ async fn run_development_plugin(
             installation_root: root,
             state_dir,
             weights_dir,
+            model_files: std::collections::BTreeMap::new(),
             cache_dir,
             temporary_dir,
             max_request_bytes: 64 * 1024 * 1024,

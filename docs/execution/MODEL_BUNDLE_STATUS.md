@@ -4,7 +4,7 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M4 — Plugin compatibility, ONNX Contract inspection and staged Model Instances.
+M5 — Rust Plugin smoke testing, reproducible asset snapshots and removal protection.
 
 ## Completed
 
@@ -63,14 +63,31 @@ M4 — Plugin compatibility, ONNX Contract inspection and staged Model Instances
   remains non-selectable until M5 records a passing real Plugin smoke test.
 - Application/Server expose compatible Bundles, Model Instances and their setup-only Model Profile
   projections without returning local file paths.
+- Bundle smoke inputs are data-only request templates; the verifier injects fresh Run/image/request
+  identities and bounded image bytes. Expected Artifact kinds/counts, finite Core validation,
+  non-empty Mask/coverage ranges and wall-clock tolerance are evaluated independently from Plugin
+  package conformance.
+- The existing Rust Plugin Host receives an explicit verified role-to-file map. Official ONNX
+  plugins use these exact role bindings and retain their legacy filename discovery only for the
+  folded migration path. No Python process or conversion path was introduced.
+- A passing Plugin conformance report plus Bundle tolerance report is the sole transition from
+  `Preparing` to `Ready`; failed/crashed tests persist evidence and stay non-selectable.
+- Published Workflow Plugin snapshots may now contain a complete immutable Model Asset reference:
+  Plugin package, Bundle/version/digest, Model Instance/Profile revision, every role digest,
+  Contract hash and execution provider. New Runs re-hash exact model files before process startup.
+- Published Workflow references protect Bundles from removal. Disable affects only new selection;
+  enable restores readiness from persisted smoke evidence. GC removes only disabled, unreferenced
+  content plus bounded staging/download leftovers.
+- Server APIs now cover Bundle/Instance test, compatibility, enable/disable, references, removal and
+  conservative garbage collection.
 
 ## In progress
 
-- Final M4 evidence update and milestone commit.
+- Final M5 evidence update and milestone commit.
 
 ## Next
 
-M5 — Rust Plugin smoke tests, immutable Workflow asset snapshots, references and garbage collection.
+M6 — Replace primary raw ONNX provisioning with compatible-model installation and migration UI.
 
 ## Latest verification
 
@@ -79,16 +96,16 @@ M5 — Rust Plugin smoke tests, immutable Workflow asset snapshots, references a
 | Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle tests | PASS — 9 manifest/package/signature/security tests |
-| Catalog/provisioning tests | PASS — 5 tests including resolver failures and a real Rust ORT tensor-descriptor comparison |
+| Catalog/provisioning tests | PASS — 8 tests including real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
 | Plugin conformance | PASS — Registry, SAM and YOLO tests; 15 active and 2 explicit external-weight ignores in the focused command |
 | Real model smoke | Not run; no legally verified SAM assets are installed |
 | Web tests | Last established release baseline: 44 unit, 37 Chromium E2E |
 | E2E | M0 records the current route; installation UX changes begin in M6 |
-| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; M4 pending |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; M5 pending |
 
 ## Release-blocking remainder
 
-M5–M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
+M6–M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
 
 ## Live-conditional
 

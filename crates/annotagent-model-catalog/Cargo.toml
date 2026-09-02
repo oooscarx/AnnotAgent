@@ -11,6 +11,7 @@ annotagent-core = { path = "../annotagent-core" }
 annotagent-model-bundle = { path = "../annotagent-model-bundle" }
 annotagent-model-runtime-onnx = { path = "../annotagent-model-runtime-onnx" }
 annotagent-plugin-api = { path = "../annotagent-plugin-api" }
+base64.workspace = true
 chrono.workspace = true
 futures.workspace = true
 reqwest.workspace = true

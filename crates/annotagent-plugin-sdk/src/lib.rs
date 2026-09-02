@@ -68,6 +68,10 @@ pub struct PluginStartupConfig {
     pub session_nonce: String,
     pub state_dir: PathBuf,
     pub weights_dir: PathBuf,
+    /// Exact role-to-file bindings supplied by a verified Model Instance. Legacy manual
+    /// provisioning leaves this empty and plugins may use their historical discovery logic.
+    #[serde(default)]
+    pub model_files: BTreeMap<String, PathBuf>,
     pub cache_dir: PathBuf,
     pub temporary_dir: PathBuf,
     #[serde(default)]
@@ -116,6 +120,23 @@ impl PluginStartupConfig {
                 )));
             }
         }
+        for (role, path) in &self.model_files {
+            let valid_role = !role.is_empty()
+                && role.len() <= 80
+                && role.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte)
+                });
+            if !valid_role
+                || !path.is_absolute()
+                || !path.starts_with(&self.weights_dir)
+                || path.components().any(|part| part.as_os_str() == "..")
+                || !path.is_file()
+            {
+                return Err(PluginSdkError::InvalidStartup(format!(
+                    "model file role {role:?} must resolve to a regular file inside the weights directory"
+                )));
+            }
+        }
         if self.max_request_bytes == 0 || self.max_response_bytes == 0 {
             return Err(PluginSdkError::InvalidStartup(
                 "request and response limits must be greater than zero".to_owned(),
@@ -128,6 +149,7 @@ impl PluginStartupConfig {
 #[derive(Debug, Clone)]
 pub struct WarmupContext {
     pub weights_dir: PathBuf,
+    pub model_files: BTreeMap<String, PathBuf>,
     pub cache_dir: PathBuf,
     pub cancellation: CancellationToken,
 }
@@ -136,6 +158,7 @@ pub struct WarmupContext {
 pub struct InferenceContext {
     pub request_id: String,
     pub weights_dir: PathBuf,
+    pub model_files: BTreeMap<String, PathBuf>,
     pub cache_dir: PathBuf,
     pub temporary_dir: PathBuf,
     pub cancellation: CancellationToken,
@@ -148,6 +171,7 @@ pub struct InferenceContext {
 pub struct PluginRuntimeContext {
     pub state_dir: PathBuf,
     pub weights_dir: PathBuf,
+    pub model_files: BTreeMap<String, PathBuf>,
     pub cache_dir: PathBuf,
     pub temporary_dir: PathBuf,
 }
@@ -212,6 +236,7 @@ impl PluginServer {
             .setup(PluginRuntimeContext {
                 state_dir: config.state_dir.clone(),
                 weights_dir: config.weights_dir.clone(),
+                model_files: config.model_files.clone(),
                 cache_dir: config.cache_dir.clone(),
                 temporary_dir: config.temporary_dir.clone(),
             })
@@ -392,6 +417,7 @@ async fn warmup(
         &request.model_id,
         WarmupContext {
             weights_dir: state.config.weights_dir.clone(),
+            model_files: state.config.model_files.clone(),
             cache_dir: state.config.cache_dir.clone(),
             cancellation,
         },
@@ -436,6 +462,7 @@ async fn infer(
         InferenceContext {
             request_id: request_id.clone(),
             weights_dir: state.config.weights_dir.clone(),
+            model_files: state.config.model_files.clone(),
             cache_dir: state.config.cache_dir.clone(),
             temporary_dir: state.config.temporary_dir.clone(),
             cancellation,
@@ -955,6 +982,7 @@ mod tests {
             session_nonce: "nonce-1".to_owned(),
             state_dir: temp.path().join("state"),
             weights_dir: temp.path().join("weights"),
+            model_files: BTreeMap::new(),
             cache_dir: temp.path().join("cache"),
             temporary_dir: temp.path().join("temporary"),
             listen_port: 0,

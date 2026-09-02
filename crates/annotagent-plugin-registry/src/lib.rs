@@ -11,8 +11,8 @@ use annotagent_core::{
     ArtifactKind, ArtifactRef, BoxPrompt, BoxPromptSetArtifact, CheckpointIdentity,
     ExpertModelManifest, ImageId, LicenseMetadata, LicensePermission, ModelAvailability,
     ModelAvailabilityEvidence, ModelCapability, ModelConnection, NormalizedRect,
-    PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest, PromptContract,
-    PromptKind, RunId, VisionCapability,
+    PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
+    PipelineInferenceResponse, PromptContract, PromptKind, RunId, VisionCapability,
 };
 use annotagent_plugin_api::{
     CommercialUseDeclaration, PluginId, PluginImplementationStatus, PluginManifest,
@@ -288,6 +288,12 @@ pub struct PluginBackedModelProfile {
     pub availability: ModelAvailability,
     pub plugin_status: PluginStatus,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginModelSmokeReport {
+    pub conformance: PluginTestReport,
+    pub response: PipelineInferenceResponse,
 }
 
 #[must_use]
@@ -711,12 +717,67 @@ impl PluginRegistry {
             installation_root: installation.installation_root.clone(),
             state_dir,
             weights_dir,
+            model_files: BTreeMap::new(),
             cache_dir,
             temporary_dir,
             max_request_bytes: 64 * 1024 * 1024,
             max_response_bytes: usize::try_from(maximum_response_bytes)
                 .unwrap_or(256 * 1024 * 1024),
         })
+    }
+
+    pub fn process_config_for_model_files(
+        &self,
+        installation: &PluginInstallation,
+        weights_dir: &Path,
+        model_files: BTreeMap<String, PathBuf>,
+    ) -> Result<PluginProcessConfig, PluginRegistryError> {
+        if !weights_dir.is_absolute() || !weights_dir.is_dir() {
+            return Err(PluginRegistryError::InvalidWeight(
+                "verified Bundle content root must be an absolute directory".to_owned(),
+            ));
+        }
+        for (role, path) in &model_files {
+            if !installation
+                .manifest
+                .models
+                .iter()
+                .any(|model| model.required_file_roles.contains(role))
+                || !path.starts_with(weights_dir)
+                || !path.is_file()
+            {
+                return Err(PluginRegistryError::InvalidWeight(format!(
+                    "model file role {role:?} is not a verified file for this Plugin"
+                )));
+            }
+        }
+        let mut config = self.process_config(installation)?;
+        config.weights_dir = weights_dir.to_path_buf();
+        config.model_files = model_files;
+        Ok(config)
+    }
+
+    /// Runs package conformance plus exactly one Bundle-provided inference request against the
+    /// exact role-bound files. Readiness is recorded by the Model Bundle Registry, not by the
+    /// legacy raw-weight Plugin status.
+    pub async fn test_model_instance(
+        &self,
+        installation: &PluginInstallation,
+        weights_dir: &Path,
+        model_files: BTreeMap<String, PathBuf>,
+        sample: &PipelineInferenceRequest,
+    ) -> Result<PluginModelSmokeReport, PluginRegistryError> {
+        if installation.manifest.implementation_status == PluginImplementationStatus::Unsupported {
+            return Err(PluginRegistryError::InvalidTransition(
+                "unsupported plugin versions cannot run a Model Instance smoke test".to_owned(),
+            ));
+        }
+        run_model_instance_smoke(
+            installation.manifest.clone(),
+            self.process_config_for_model_files(installation, weights_dir, model_files)?,
+            sample,
+        )
+        .await
     }
 
     /// Runs the authenticated HTTP Vision conformance and one typed sample inference in an
@@ -1145,6 +1206,38 @@ impl PluginRegistry {
         std::fs::rename(temporary, path)?;
         Ok(())
     }
+}
+
+pub async fn run_model_instance_smoke(
+    manifest: PluginManifest,
+    config: PluginProcessConfig,
+    sample: &PipelineInferenceRequest,
+) -> Result<PluginModelSmokeReport, PluginRegistryError> {
+    let host = HostedPlugin::start(manifest, config).await?;
+    let conformance = host.test(None).await;
+    let response = host.infer(sample).await;
+    let stop_result = host.stop().await;
+    let mut report = conformance?;
+    let response = response?;
+    stop_result?;
+    let passed = response.request_id.as_deref() == Some(sample.request_id.as_str())
+        && response.error.is_none()
+        && !response.artifacts.is_empty()
+        && response
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.validate().is_ok());
+    report.checks.push(annotagent_plugin_api::PluginTestCheck {
+        name: "bundle sample inference".to_owned(),
+        passed,
+        detail: "fixed Bundle sample returns scoped, typed and valid artifacts".to_owned(),
+    });
+    report.finished_at = Utc::now();
+    report.passed = report.checks.iter().all(|check| check.passed);
+    Ok(PluginModelSmokeReport {
+        conformance: report,
+        response,
+    })
 }
 
 fn installation_key(plugin_id: &PluginId, version: &PluginVersion) -> String {

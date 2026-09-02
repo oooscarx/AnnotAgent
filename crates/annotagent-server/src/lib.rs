@@ -43,14 +43,19 @@ use annotagent_core::{
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_model_bundle::{
-    ModelBundleId, Sha256Digest as ModelBundleSha256Digest, verify_model_bundle,
+    ModelBundleId, ModelInstanceId, Sha256Digest as ModelBundleSha256Digest, SmokeTestCheck,
+    SmokeTestResult, SmokeTestStatus, verify_model_bundle,
 };
 use annotagent_model_catalog::{
-    LicenseAcceptanceActor, ModelBundleInstallSource, ModelCatalogClient, ModelLicenseAcceptance,
+    LicenseAcceptanceActor, ModelBundleCompatibilityResolver, ModelBundleInstallSource,
+    ModelCatalogClient, ModelLicenseAcceptance, evaluate_bundle_smoke_response,
+    prepare_bundle_smoke_test,
 };
 use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
 use annotagent_plugin_host::verify_package;
-use annotagent_plugin_registry::{InstallApproval, PluginRegistryError, plugin_model_selection_id};
+use annotagent_plugin_registry::{
+    InstallApproval, PluginRegistryError, plugin_model_selection_id, run_model_instance_smoke,
+};
 use annotagent_provider::{
     EnvironmentSecretStore, HttpJsonPipelineBackend, HttpJsonPipelineBackendConfig,
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, KeyringSecretStore,
@@ -553,12 +558,33 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/model-bundles/import", post(import_model_bundle))
         .route(
             "/api/model-bundles/{bundle_id}/{version}",
-            get(get_model_bundle),
+            get(get_model_bundle).delete(remove_model_bundle),
         )
         .route(
             "/api/model-bundles/{bundle_id}/{version}/verify",
             post(verify_installed_model_bundle),
         )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/test",
+            post(test_model_bundle),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/enable",
+            post(enable_model_bundle),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/disable",
+            post(disable_model_bundle),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/references",
+            get(list_model_bundle_references),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/compatibility",
+            get(get_model_bundle_compatibility),
+        )
+        .route("/api/model-bundles/gc", post(garbage_collect_model_bundles))
         .route(
             "/api/model-bundles/{bundle_id}/{version}/license-acceptance",
             post(accept_model_bundle_license),
@@ -567,6 +593,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/model-instances/{instance_id}",
             get(get_model_instance),
+        )
+        .route(
+            "/api/model-instances/{instance_id}/test",
+            post(test_model_instance),
         )
         .route(
             "/api/plugins/{plugin_id}/{version}/compatible-model-bundles",
@@ -6949,6 +6979,306 @@ async fn verify_installed_model_bundle(
         .get(&bundle_id, &version)
         .ok_or_else(|| ApiError::not_found("Model Bundle was not found"))?;
     Ok(Json(json!({ "verification": installed.verification })))
+}
+
+async fn execute_model_instance_test(
+    state: &ServerState,
+    instance_id: ModelInstanceId,
+) -> ApiResult<annotagent_model_catalog::InstalledModelInstance> {
+    let (instance, bundle, prepared) = {
+        let registry = state.application.model_bundle_registry();
+        let registry = registry
+            .lock()
+            .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+        let instance = registry
+            .model_instance(instance_id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Model Instance was not found"))?;
+        let bundle = registry
+            .get(&instance.model_bundle_id, &instance.model_bundle_version)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Model Bundle was not found"))?;
+        if !bundle.enabled {
+            return Err(ApiError::bad_request("Model Bundle is disabled"));
+        }
+        let prepared = prepare_bundle_smoke_test(&bundle, &instance.model_id)
+            .map_err(ApiError::bad_request)?;
+        (instance, bundle, prepared)
+    };
+    let (manifest, config) = {
+        let shared = state.application.plugin_registry();
+        let registry = shared
+            .lock()
+            .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?;
+        let installation = registry
+            .get(&instance.plugin_id, &instance.plugin_version)
+            .map_err(ApiError::bad_request)?
+            .clone();
+        if installation.package_digest != instance.plugin_package_digest {
+            return Err(ApiError::bad_request(
+                "installed Plugin package no longer matches the Model Instance",
+            ));
+        }
+        let model_files = bundle
+            .manifest
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.role.as_str().to_owned(),
+                    bundle.content_root.join(&file.path),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let config = registry
+            .process_config_for_model_files(&installation, &bundle.content_root, model_files)
+            .map_err(ApiError::bad_request)?;
+        (installation.manifest, config)
+    };
+    let started_at = Utc::now();
+    let started = std::time::Instant::now();
+    let result = match run_model_instance_smoke(manifest, config, &prepared.request).await {
+        Ok(plugin_report) => {
+            let mut result = evaluate_bundle_smoke_response(
+                &prepared.definition,
+                &prepared.request,
+                &plugin_report.response,
+                started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                started_at,
+            );
+            result.checks.push(SmokeTestCheck {
+                name: "plugin conformance".to_owned(),
+                passed: plugin_report.conformance.passed,
+                detail: "Rust Plugin health, capability, model and Contract discovery passed"
+                    .to_owned(),
+            });
+            if !plugin_report.conformance.passed {
+                result.status = SmokeTestStatus::Failed;
+            }
+            result
+        }
+        Err(error) => SmokeTestResult {
+            test_id: prepared.definition.test_id,
+            status: SmokeTestStatus::Crashed,
+            checks: vec![SmokeTestCheck {
+                name: "plugin process".to_owned(),
+                passed: false,
+                detail: format!(
+                    "Rust Plugin smoke process failed ({})",
+                    match error {
+                        PluginRegistryError::Host(_) => "plugin_host",
+                        PluginRegistryError::InvalidWeight(_) => "model_files",
+                        _ => "plugin_registry",
+                    }
+                ),
+            }],
+            duration_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            started_at,
+            finished_at: Utc::now(),
+        },
+    };
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .record_model_instance_smoke(instance_id, result)
+        .map_err(ApiError::bad_request)
+}
+
+async fn test_model_instance(
+    State(state): State<ServerState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let instance_id = instance_id
+        .parse::<ModelInstanceId>()
+        .map_err(ApiError::bad_request)?;
+    let instance = execute_model_instance_test(&state, instance_id).await?;
+    Ok(Json(installed_model_instance_view(&instance)))
+}
+
+async fn test_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let instance_ids = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .model_instances()
+        .into_iter()
+        .filter(|instance| {
+            instance.model_bundle_id == bundle_id && instance.model_bundle_version == version
+        })
+        .map(|instance| instance.id)
+        .collect::<Vec<_>>();
+    if instance_ids.is_empty() {
+        return Err(ApiError::bad_request(
+            "Model Bundle has no compatible installed Plugin instance",
+        ));
+    }
+    let mut tested = Vec::new();
+    for instance_id in instance_ids {
+        tested.push(execute_model_instance_test(&state, instance_id).await?);
+    }
+    Ok(Json(json!({
+        "model_instances": tested.iter().map(installed_model_instance_view).collect::<Vec<_>>()
+    })))
+}
+
+async fn enable_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .enable(&bundle_id, &version)
+        .map_err(ApiError::bad_request)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn disable_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .disable(&bundle_id, &version)
+        .map_err(ApiError::bad_request)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .remove(&bundle_id, &version)
+        .map_err(ApiError::bad_request)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_model_bundle_references(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let references = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .references(&bundle_id, &version);
+    Ok(Json(json!({ "references": references })))
+}
+
+async fn get_model_bundle_compatibility(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let (bundle, license_accepted) = {
+        let shared = state.application.model_bundle_registry();
+        let registry = shared
+            .lock()
+            .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+        let bundle = registry
+            .get(&bundle_id, &version)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Model Bundle was not found"))?;
+        let accepted = !bundle.manifest.license.requires_acceptance
+            || registry.license_acceptances().iter().any(|acceptance| {
+                acceptance.bundle_id == bundle_id
+                    && acceptance.bundle_version == version
+                    && acceptance.license_digest == bundle.manifest.license.license_digest
+            });
+        (bundle, accepted)
+    };
+    let plugins = state
+        .application
+        .plugin_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .list();
+    let mut outcomes = Vec::new();
+    for requirement in &bundle.manifest.compatible_plugins {
+        let matching = plugins
+            .iter()
+            .filter(|plugin| plugin.manifest.id == requirement.plugin_id)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            outcomes.push(json!({
+                "plugin_id": requirement.plugin_id,
+                "model_id": requirement.model_id,
+                "compatibility": ModelBundleCompatibilityResolver::resolve(
+                    None,
+                    annotagent_plugin_api::PluginRuntimeStatus::NotInstalled,
+                    &bundle.manifest,
+                    &requirement.model_id,
+                    &annotagent_plugin_host::current_target(),
+                    "cpu",
+                    license_accepted,
+                )
+            }));
+            continue;
+        }
+        for plugin in matching {
+            let execution_provider = bundle
+                .manifest
+                .runtime
+                .execution_providers
+                .iter()
+                .next()
+                .map_or("cpu", String::as_str);
+            outcomes.push(json!({
+                "plugin_id": plugin.manifest.id,
+                "plugin_version": plugin.manifest.version,
+                "model_id": requirement.model_id,
+                "compatibility": ModelBundleCompatibilityResolver::resolve(
+                    Some(&plugin.manifest),
+                    plugin.runtime_status(),
+                    &bundle.manifest,
+                    &requirement.model_id,
+                    &annotagent_plugin_host::current_target(),
+                    execution_provider,
+                    license_accepted,
+                )
+            }));
+        }
+    }
+    Ok(Json(json!({ "compatibility": outcomes })))
+}
+
+async fn garbage_collect_model_bundles(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let report = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .garbage_collect()
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(report)))
 }
 
 #[derive(Debug, Deserialize)]

@@ -3,6 +3,7 @@
 mod compatibility;
 mod download;
 mod registry;
+mod smoke;
 
 use std::{collections::BTreeSet, net::IpAddr};
 
@@ -20,6 +21,7 @@ use url::{Host, Url};
 pub use compatibility::*;
 pub use download::*;
 pub use registry::*;
+pub use smoke::*;
 
 pub const MODEL_CATALOG_SCHEMA_VERSION: &str = "1";
 

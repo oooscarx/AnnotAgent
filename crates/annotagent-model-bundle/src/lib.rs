@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeSet, fmt, path::Path, str::FromStr};
 
-use annotagent_core::ModelCapability;
+use annotagent_core::{ArtifactKind, ModelCapability, PipelineArtifact, VisionCapability};
 use annotagent_plugin_api::{PluginId, PluginVersion};
 use chrono::{DateTime, Utc};
 use semver::{Version, VersionReq};
@@ -97,6 +97,14 @@ impl fmt::Display for ModelInstanceId {
     }
 }
 
+impl FromStr for ModelInstanceId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
 impl fmt::Display for ModelBundleId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -174,6 +182,20 @@ impl Sha256Digest {
     #[must_use]
     pub fn of_bytes(bytes: &[u8]) -> Self {
         Self(format!("{:x}", Sha256::digest(bytes)))
+    }
+
+    pub fn of_file(path: &Path) -> std::io::Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+        loop {
+            let read = std::io::Read::read(&mut file, &mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(Self(format!("{:x}", hasher.finalize())))
     }
 
     #[must_use]
@@ -475,6 +497,76 @@ pub struct ModelTestSuiteReference {
     pub input_artifacts: Vec<String>,
     pub expected_summary: String,
     pub tolerances: String,
+}
+
+/// Data-only request template stored below `tests/` in a Bundle. Runtime-scoped ids and image
+/// bytes are injected by the verifier, so packages cannot choose host paths or Run identities.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelBundleSmokeRequest {
+    pub image_path: String,
+    pub operation: VisionCapability,
+    #[serde(default)]
+    pub input_artifacts: Vec<PipelineArtifact>,
+    #[serde(default)]
+    pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedOutputSummary {
+    pub required_artifact_kinds: BTreeSet<ArtifactKind>,
+    pub minimum_artifact_count: usize,
+    pub minimum_item_count: usize,
+    #[serde(default)]
+    pub require_non_empty_mask: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputTolerances {
+    pub maximum_duration_ms: u64,
+    #[serde(default)]
+    pub minimum_mask_coverage: Option<f64>,
+    #[serde(default)]
+    pub maximum_mask_coverage: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelBundleSmokeTest {
+    pub test_id: String,
+    pub request: ModelBundleSmokeRequest,
+    pub expected: ExpectedOutputSummary,
+    pub tolerances: OutputTolerances,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SmokeTestStatus {
+    Passed,
+    Failed,
+    Crashed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmokeTestCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmokeTestResult {
+    pub test_id: String,
+    pub status: SmokeTestStatus,
+    pub checks: Vec<SmokeTestCheck>,
+    pub duration_ms: u64,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

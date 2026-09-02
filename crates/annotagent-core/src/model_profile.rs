@@ -399,6 +399,55 @@ pub struct PluginModelSnapshot {
     pub checkpoint_sha256: Option<String>,
     pub capability_contract_sha256: String,
     pub capabilities: BTreeSet<ModelCapability>,
+    #[serde(default)]
+    pub model_asset: Option<PublishedModelAssetReference>,
+}
+
+/// Exact verified model-asset identity frozen into an immutable Workflow Version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishedModelAssetReference {
+    pub plugin_id: String,
+    pub plugin_version: String,
+    pub plugin_package_digest: String,
+    pub model_bundle_id: String,
+    pub model_bundle_version: String,
+    pub model_bundle_digest: String,
+    pub model_instance_id: String,
+    pub model_profile_id: ModelProfileId,
+    pub model_profile_revision: u64,
+    pub model_file_digests: BTreeMap<String, String>,
+    pub capability_contract_hash: String,
+    pub execution_provider: String,
+}
+
+impl PublishedModelAssetReference {
+    pub fn validate(&self) -> Result<(), ModelProfileValidationError> {
+        if self.plugin_id.trim().is_empty()
+            || self.plugin_version.trim().is_empty()
+            || self.model_bundle_id.trim().is_empty()
+            || self.model_bundle_version.trim().is_empty()
+            || self.model_instance_id.trim().is_empty()
+            || self.execution_provider.trim().is_empty()
+            || self.model_profile_revision == 0
+            || self.model_file_digests.is_empty()
+        {
+            return Err(ModelProfileValidationError::InvalidPluginIdentity);
+        }
+        for digest in [
+            &self.plugin_package_digest,
+            &self.model_bundle_digest,
+            &self.capability_contract_hash,
+        ]
+        .into_iter()
+        .chain(self.model_file_digests.values())
+        {
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(ModelProfileValidationError::InvalidPluginIdentity);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PluginModelSnapshot {
@@ -423,6 +472,17 @@ impl PluginModelSnapshot {
             || self.capabilities.is_empty()
         {
             return Err(ModelProfileValidationError::InvalidPluginIdentity);
+        }
+        if let Some(asset) = &self.model_asset {
+            asset.validate()?;
+            if asset.plugin_id != self.plugin_id
+                || asset.plugin_version != self.plugin_version
+                || asset.plugin_package_digest != self.plugin_package_sha256
+                || asset.capability_contract_hash != self.capability_contract_sha256
+                || asset.model_profile_revision != self.model_profile_revision
+            {
+                return Err(ModelProfileValidationError::InvalidPluginIdentity);
+            }
         }
         Ok(())
     }
@@ -876,6 +936,46 @@ pub enum ProviderRouteError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_model_asset_requires_every_exact_digest_and_matching_plugin_identity() {
+        let asset = PublishedModelAssetReference {
+            plugin_id: "org.annotagent.fixture-plugin".to_owned(),
+            plugin_version: "1.0.0".to_owned(),
+            plugin_package_digest: "a".repeat(64),
+            model_bundle_id: "org.annotagent.models.fixture".to_owned(),
+            model_bundle_version: "1.0.0".to_owned(),
+            model_bundle_digest: "b".repeat(64),
+            model_instance_id: uuid::Uuid::new_v4().to_string(),
+            model_profile_id: ModelProfileId::new(),
+            model_profile_revision: 1,
+            model_file_digests: BTreeMap::from([("model".to_owned(), "c".repeat(64))]),
+            capability_contract_hash: "d".repeat(64),
+            execution_provider: "cpu".to_owned(),
+        };
+        asset.validate().expect("valid exact asset identity");
+        let snapshot = PluginModelSnapshot {
+            plugin_id: asset.plugin_id.clone(),
+            plugin_version: asset.plugin_version.clone(),
+            plugin_package_sha256: asset.plugin_package_digest.clone(),
+            plugin_api_version: "1".to_owned(),
+            worker_protocol_version: "1".to_owned(),
+            model_id: "fixture-model".to_owned(),
+            model_profile_revision: 1,
+            checkpoint_sha256: Some(asset.model_bundle_digest.clone()),
+            capability_contract_sha256: asset.capability_contract_hash.clone(),
+            capabilities: BTreeSet::from([ModelCapability::PromptedSegmentation]),
+            model_asset: Some(asset.clone()),
+        };
+        snapshot.validate().expect("valid snapshot");
+        let mut changed = snapshot;
+        changed
+            .model_asset
+            .as_mut()
+            .expect("asset")
+            .model_file_digests = BTreeMap::from([("model".to_owned(), "z".repeat(64))]);
+        assert!(changed.validate().is_err());
+    }
     use crate::{
         CredentialReference, CredentialSource, ProviderConnectionPolicy, ProviderHealthSnapshot,
     };
