@@ -68,6 +68,33 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
   await page.route("**/api/model-instances", (route) => route.fulfill({ json: { instances: [], model_profiles: [] } }));
   const compatibilityRoute = "**/api/plugins/org.annotagent.sam-onnx/1.0.0/compatible-model-bundles";
   await page.route(compatibilityRoute, (route) => route.fulfill({ json: { plugin_runtime_status: "installed", available: [entry], installed: [], setup_blockers: [] } }));
+  let operationVisible = false;
+  const operation = {
+    id: "f641755a-a4ad-46a3-a440-dcc2948f1507",
+    catalog_id: entry.catalog_id,
+    bundle_id: entry.bundle_id,
+    bundle_version: entry.bundle_version,
+    plugin_id: manifest.id,
+    plugin_version: manifest.version,
+    status: "running",
+    stage: "running_sample_inference",
+    bytes_completed: entry.bundle_size_bytes,
+    bytes_total: entry.bundle_size_bytes,
+    detail: "Running the real image and bbox prompt through the Rust Plugin",
+    error: null,
+    suggested_action: null,
+    model_instance_ids: ["4cecf8f0-e12d-45ce-a34a-a100a252d017"],
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:01Z",
+  };
+  await page.route("**/api/model-installations", (route) => {
+    if (route.request().method() === "POST") {
+      operationVisible = true;
+      return route.fulfill({ status: 202, json: operation });
+    }
+    return route.fulfill({ json: { operations: operationVisible ? [operation] : [] } });
+  });
+  await page.route("**/api/model-bundles/*/*/license-acceptance", (route) => route.fulfill({ status: 204 }));
 
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.goto("/settings/plugins");
@@ -110,6 +137,15 @@ test("verified Model Bundle setup replaces raw ONNX provisioning and stays respo
   expect(mobileDialogBox).not.toBeNull();
   expect(mobileDialogBox!.y).toBeGreaterThanOrEqual(0);
   expect(mobileDialogBox!.y + mobileDialogBox!.height).toBeLessThanOrEqual(844);
+  await setupDialog.getByRole("button", { name: "Install model" }).click();
+  await expect(setupDialog.getByLabel("Real model installation stages")).toContainText("Run real sample inference");
+  await expect(setupDialog).toContainText("Running the real image and bbox prompt through the Rust Plugin");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "View installation" })).toBeVisible();
+  await page.getByRole("button", { name: "View installation" }).click();
+  await expect(page.getByRole("dialog", { name: "SAM Prompted Segmentation" })).toContainText("Run real sample inference");
+  await page.getByRole("button", { name: "Close model setup" }).click();
+  operationVisible = false;
   await page.reload();
   await expect(page.getByText("No compatible model installed").first()).toBeVisible();
   await expect(page.locator('input[accept*="onnx"]')).toHaveCount(0);

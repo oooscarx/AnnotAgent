@@ -1690,6 +1690,7 @@ export interface ExpertPluginManifest {
   version: string;
   display_name: string;
   description: string;
+  model_family?: string;
   publisher: string;
   plugin_api: string;
   implementation_status: "runnable" | "live_conditional" | "unsupported";
@@ -1845,6 +1846,7 @@ export interface ModelCatalogEntry {
   bundle_version: string;
   display_name: string;
   description: string;
+  model_family?: string;
   capabilities: ModelCapability[];
   compatible_plugins: ModelBundlePluginRequirement[];
   platform_requirements: {
@@ -1856,10 +1858,42 @@ export interface ModelCatalogEntry {
   bundle_url: string;
   bundle_sha256: string;
   bundle_size_bytes: number;
+  installed_size_bytes?: number;
   license_summary: ModelBundleLicenseSummary;
   publisher: { id: string; display_name: string; verified: boolean };
   fixture: boolean;
   publishable: boolean;
+}
+
+export type ModelInstallOperationStage =
+  | "resolving_model"
+  | "downloading_bundle"
+  | "verifying_bundle_digest"
+  | "verifying_model_files"
+  | "checking_onnx_contract"
+  | "starting_rust_plugin"
+  | "loading_model"
+  | "running_sample_inference"
+  | "registering_model_profile"
+  | "ready";
+
+export interface ModelInstallOperation {
+  id: string;
+  catalog_id: string;
+  bundle_id: string;
+  bundle_version: string;
+  plugin_id: string;
+  plugin_version: string;
+  status: "running" | "succeeded" | "failed";
+  stage: ModelInstallOperationStage;
+  bytes_completed: number;
+  bytes_total?: number;
+  detail: string;
+  error?: string;
+  suggested_action?: string;
+  model_instance_ids: string[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ModelBundleManifest {

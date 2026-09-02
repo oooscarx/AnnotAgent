@@ -107,6 +107,7 @@ pub fn build_builtin_fixture_catalog(
         ));
     }
     let size = std::fs::metadata(&package_path)?.len();
+    let installed_size = verified.files.values().map(|file| file.size_bytes).sum();
     let platform_requirements = plugin
         .compatibility
         .targets
@@ -115,7 +116,7 @@ pub fn build_builtin_fixture_catalog(
             target: target.clone(),
             execution_providers: BTreeSet::from(["cpu".to_owned()]),
             minimum_memory_mb: plugin.resources.minimum_memory_mb,
-            minimum_disk_bytes: size,
+            minimum_disk_bytes: installed_size,
         })
         .collect();
     let catalog = ModelCatalog {
@@ -133,6 +134,7 @@ pub fn build_builtin_fixture_catalog(
                 .description
                 .clone()
                 .unwrap_or_else(|| "Offline prompted-segmentation Fixture".to_owned()),
+            model_family: Some(verified.manifest.model_family.clone()),
             capabilities: BTreeSet::from([ModelCapability::PromptedSegmentation]),
             compatible_plugins: verified.manifest.compatible_plugins.clone(),
             platform_requirements,
@@ -144,6 +146,7 @@ pub fn build_builtin_fixture_catalog(
             .expect("built-in fixture URL is valid"),
             bundle_sha256: verified.bundle_digest,
             bundle_size_bytes: size,
+            installed_size_bytes: Some(installed_size),
             license_summary: ModelLicenseSummary {
                 name: verified.manifest.license.name.clone(),
                 license_url: verified.manifest.license.license_url.clone(),

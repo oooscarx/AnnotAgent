@@ -80,6 +80,7 @@ import type {
   InstalledModelBundle,
   InstalledModelInstance,
   ModelCatalogEntry,
+  ModelInstallOperation,
   ModelInstanceProfile,
   VerifiedExpertPluginPackage,
   VerifiedModelBundlePackage,
@@ -5109,10 +5110,21 @@ const MODEL_SETUP_STEPS = [
   "Review source",
   "Review license",
   "Check compatibility",
-  "Download",
-  "Verify",
-  "Smoke Test",
+  "Install & test",
   "Ready",
+];
+
+const MODEL_INSTALL_STAGES: { id: ModelInstallOperation["stage"]; label: string }[] = [
+  { id: "resolving_model", label: "Resolve model" },
+  { id: "downloading_bundle", label: "Download Bundle" },
+  { id: "verifying_bundle_digest", label: "Verify Bundle digest" },
+  { id: "verifying_model_files", label: "Verify model files" },
+  { id: "checking_onnx_contract", label: "Check ONNX Contract" },
+  { id: "starting_rust_plugin", label: "Start Rust Plugin" },
+  { id: "loading_model", label: "Load model" },
+  { id: "running_sample_inference", label: "Run real sample inference" },
+  { id: "registering_model_profile", label: "Register Model Profile" },
+  { id: "ready", label: "Ready" },
 ];
 
 function pluginIdentity(installation: ExpertPluginInstallation) {
@@ -5175,6 +5187,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const [bundleInventory, setBundleInventory] = useState<Record<string, PluginBundleInventory>>({});
   const [instances, setInstances] = useState<InstalledModelInstance[]>([]);
   const [instanceProfiles, setInstanceProfiles] = useState<ModelInstanceProfile[]>([]);
+  const [installOperations, setInstallOperations] = useState<ModelInstallOperation[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -5189,6 +5202,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const [setupPluginIdentity, setSetupPluginIdentity] = useState("");
   const [setupEntryIdentity, setSetupEntryIdentity] = useState("");
   const [setupStep, setSetupStep] = useState(0);
+  const [setupOperationId, setSetupOperationId] = useState("");
   const [setupLicenseAccepted, setSetupLicenseAccepted] = useState(false);
   const [setupError, setSetupError] = useState("");
   const setupDialogRef = useRef<HTMLElement>(null);
@@ -5220,7 +5234,10 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
     setLoading(true);
     try {
       const pluginRegistry = await api.expertPlugins();
-      const modelRegistry = await api.modelInstances();
+      const [modelRegistry, operationRegistry] = await Promise.all([
+        api.modelInstances(),
+        api.modelInstallOperations(),
+      ]);
       const inventories = await Promise.all(pluginRegistry.installations.map(async (installation) => {
         const identity = pluginIdentity(installation);
         return [identity, await api.compatibleModelBundles(installation.manifest.id, installation.manifest.version)] as const;
@@ -5228,6 +5245,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       setRegistry(pluginRegistry);
       setInstances(modelRegistry.instances);
       setInstanceProfiles(modelRegistry.model_profiles);
+      setInstallOperations(operationRegistry.operations);
       setBundleInventory(Object.fromEntries(inventories));
     } catch (error) {
       onError((error as Error).message);
@@ -5236,6 +5254,18 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
     }
   };
   useEffect(() => { void load(); }, []);
+
+  const hasRunningInstall = installOperations.some((operation) => operation.status === "running");
+  useEffect(() => {
+    if (!hasRunningInstall) return;
+    const timer = window.setInterval(() => {
+      void api.modelInstallOperations().then((result) => {
+        setInstallOperations(result.operations);
+        if (!result.operations.some((operation) => operation.status === "running")) void load();
+      }).catch((error) => onError((error as Error).message));
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [hasRunningInstall]);
 
   const inspectPackage = async () => {
     if (!packageFile) return;
@@ -5315,7 +5345,26 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   const setupInstallation = registry?.installations.find((installation) => pluginIdentity(installation) === setupPluginIdentity);
   const setupInventory = bundleInventory[setupPluginIdentity];
   const setupEntry = setupInventory?.available.find((entry) => catalogBundleIdentity(entry) === setupEntryIdentity);
+  const setupOperation = installOperations.find((operation) => operation.id === setupOperationId);
+  const setupFailure = setupError || setupOperation?.error || "";
+  const setupInstallStageIndex = setupOperation
+    ? Math.max(0, MODEL_INSTALL_STAGES.findIndex((stage) => stage.id === setupOperation.stage))
+    : 0;
+  const setupDownloadPercent = setupOperation?.bytes_total
+    ? Math.min(100, Math.round((setupOperation.bytes_completed / setupOperation.bytes_total) * 100))
+    : undefined;
   const legacyInstallation = registry?.installations.find((installation) => pluginIdentity(installation) === legacySetup?.pluginIdentity);
+
+  useEffect(() => {
+    if (setupOperation?.status === "succeeded") {
+      setSetupStep(5);
+      setSetupError("");
+      setMessage(`${setupEntry?.display_name ?? "The prompted-segmentation model"} is Ready and selectable by new Workflow Drafts.`);
+    } else if (setupOperation?.status === "failed") {
+      setSetupStep(4);
+      setSetupError(setupOperation.error ?? "Model installation failed.");
+    }
+  }, [setupOperation?.status, setupOperation?.error]);
 
   useEffect(() => {
     if (!setupPluginIdentity) return;
@@ -5355,11 +5404,29 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
 
   const openModelSetup = (installation: ExpertPluginInstallation, entry?: ModelCatalogEntry) => {
     setupReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setSetupPluginIdentity(pluginIdentity(installation));
-    setSetupEntryIdentity(entry ? catalogBundleIdentity(entry) : "");
-    setSetupStep(0);
+    const identity = pluginIdentity(installation);
+    const selectedEntry = entry ?? bundleInventory[identity]?.available.find((candidate) => !candidate.fixture) ?? bundleInventory[identity]?.available[0];
+    const latestOperation = installOperations.find((operation) =>
+      operation.plugin_id === installation.manifest.id
+      && operation.plugin_version === installation.manifest.version
+      && (!selectedEntry || (operation.bundle_id === selectedEntry.bundle_id && operation.bundle_version === selectedEntry.bundle_version)),
+    );
+    const matchingInstance = selectedEntry && instances.find((instance) =>
+      instance.plugin_id === installation.manifest.id
+      && instance.plugin_version === installation.manifest.version
+      && instance.model_bundle_id === selectedEntry.bundle_id
+      && instance.model_bundle_version === selectedEntry.bundle_version,
+    );
+    setSetupPluginIdentity(identity);
+    setSetupEntryIdentity(selectedEntry ? catalogBundleIdentity(selectedEntry) : "");
+    setSetupOperationId(latestOperation?.id ?? "");
+    setSetupStep(latestOperation?.status === "running" || latestOperation?.status === "failed"
+      ? 4
+      : matchingInstance?.status === "ready" || latestOperation?.status === "succeeded"
+        ? 5
+        : 0);
     setSetupLicenseAccepted(false);
-    setSetupError("");
+    setSetupError(latestOperation?.status === "failed" ? latestOperation.error ?? "Model installation failed." : "");
   };
 
   const closeModelSetup = () => setSetupPluginIdentity("");
@@ -5373,28 +5440,15 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         await api.acceptModelBundleLicense(setupEntry.bundle_id, setupEntry.bundle_version, setupEntry.license_summary.license_digest);
       }
       setSetupStep(4);
-      const installed = await api.installModelBundle(setupEntry.catalog_id, setupEntry.bundle_id, setupEntry.bundle_version);
-      setSetupStep(5);
-      if (!installed.bundle.verification.manifest_valid || !installed.bundle.verification.checksums_valid) {
-        throw new Error("The installed Model Bundle did not retain valid Manifest and checksum evidence.");
-      }
-      if (!installed.model_instances.length) {
-        setSetupStep(3);
-        throw new Error("The Bundle is valid, but the installed Plugin package does not match its immutable version, model-file roles, or Contract. Install the compatible Plugin runtime version and retry.");
-      }
-      setSetupStep(6);
-      const tested = [] as InstalledModelInstance[];
-      for (const instance of installed.model_instances) tested.push(await api.testModelInstance(instance.id));
-      const selectedPluginInstances = tested.filter((instance) => instance.plugin_id === setupInstallation.manifest.id && instance.plugin_version === setupInstallation.manifest.version);
-      if (!selectedPluginInstances.length || selectedPluginInstances.some((instance) => instance.status !== "ready")) {
-        const failure = selectedPluginInstances.flatMap((instance) => instance.smoke_test_result?.checks.filter((check) => !check.passed).map((check) => check.detail) ?? []).join(" ");
-        throw new Error(failure || "The Rust Plugin smoke test did not produce a Ready Model Instance.");
-      }
-      setSetupStep(7);
-      setMessage(setupEntry.fixture
-        ? `${setupEntry.display_name} passed the real Rust Plugin smoke test. It remains test-only and cannot be published in a Workflow.`
-        : `${setupEntry.display_name} is Ready and selectable by new Workflow Drafts.`);
-      await load();
+      const operation = await api.startModelInstallOperation({
+        catalog_id: setupEntry.catalog_id,
+        bundle_id: setupEntry.bundle_id,
+        bundle_version: setupEntry.bundle_version,
+        plugin_id: setupInstallation.manifest.id,
+        plugin_version: setupInstallation.manifest.version,
+      });
+      setSetupOperationId(operation.id);
+      setInstallOperations((current) => [operation, ...current.filter((item) => item.id !== operation.id)]);
     } catch (error) {
       setSetupError((error as Error).message);
       await load();
@@ -5574,13 +5628,14 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
             {MODEL_SETUP_STEPS.map((step, index) => <li className={index < setupStep ? "complete" : index === setupStep ? "current" : ""} key={step}><span>{index < setupStep ? "✓" : index + 1}</span><small>{step}</small></li>)}
           </ol>
           {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">Select model</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : setupInventory?.setup_blockers?.length ? <div className="model-setup-blocker" role="status"><span className="model-setup-blocker-label">Update required</span><strong>Plugin runtime update required</strong><p>{setupInventory.setup_blockers[0].message}</p><small>Model files were not downloaded again. The installed Bundle and previous Plugin version remain unchanged.</small></div> : <Empty title="No verified bundle is available for this platform" detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
-          {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>{setupEntry.fixture ? "Package size" : "Download"}</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Delivery</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div></dl></div>}
+          {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Model family</dt><dd>{setupEntry.model_family ?? "Declared by the verified Bundle"}</dd></div><div><dt>Capability</dt><dd>{setupEntry.capabilities.map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated Catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>Download size</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Installed size</dt><dd>{formatPluginBytes(setupEntry.installed_size_bytes ?? setupEntry.platform_requirements[0]?.minimum_disk_bytes ?? setupEntry.bundle_size_bytes)}</dd></div><div><dt>Delivery</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div><div><dt>Release status</dt><dd>{setupEntry.fixture ? "Fixture only · not publishable" : "Real model · production eligible"}</dd></div></dl></div>}
           {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review license</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">Read license source</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>I accept this exact model license and digest.</span></label>}</div></div>}
-          {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>File roles</strong><small>{setupEntry.compatible_plugins.flatMap((item) => item.required_file_roles).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Rust runtime</strong><small>{setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
-          {setupStep >= 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><h4>{setupStep === 4 ? (setupEntry?.fixture ? "Loading pinned offline Fixture" : "Downloading pinned Bundle") : setupStep === 5 ? "Files and ONNX Contract verified" : setupStep === 6 ? "Starting Rust Plugin and running sample inference" : setupEntry?.fixture ? "Fixture Model Instance Ready" : "Model Instance Ready"}</h4><p>{setupStep === 4 ? (setupEntry?.fixture ? "The built-in package is read from AnnotAgent's deterministic local Catalog and checked against its fixed SHA-256 identity." : "The HTTPS downloader enforces the Catalog size and SHA-256 identity before any archive content is trusted.") : setupStep === 5 ? "The installed verification report confirms the Manifest and every declared checksum." : setupStep === 6 ? "The exact installed Plugin and model files are running the Bundle's fixed test vector." : setupEntry?.fixture ? "This proves the provisioning and inference contracts offline. It is not SAM, accuracy evidence, or eligible for a publishable Workflow." : "The immutable Model Profile can now be selected by a Workflow Draft."}</p></div>}
-          {setupError && <div className="model-setup-error" role="alert"><strong>Setup stopped at {MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupError}</span><small>No Ready Model Profile was created. The existing Plugin, Model Bundles, and legacy files were left intact.</small></div>}
+          {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>Model binding</strong><small>{setupEntry.compatible_plugins.map((item) => `${item.model_id} · ${item.required_file_roles.join(" + ")}`).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Execution provider</strong><small>{setupEntry.platform_requirements.flatMap((item) => item.execution_providers).join(", ").toUpperCase()} · Rust {setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
+          {setupStep === 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><div className="model-install-live"><div><h4>{setupOperation?.status === "failed" ? "Setup stopped safely" : setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : "Ready to retry"}</h4><p>{setupOperation?.detail ?? "Review the failure below, then retry from the verified Catalog entry."}</p></div>{setupOperation?.status === "running" && <Status status="Running" />}</div>{setupDownloadPercent !== undefined && setupOperation?.status === "running" && <div className="model-install-meter" aria-label={`Model download ${setupDownloadPercent}%`}><span style={{ width: `${setupDownloadPercent}%` }} /></div>}<ol className="model-install-stage-list" aria-label="Real model installation stages">{MODEL_INSTALL_STAGES.map((stage, index) => <li className={setupOperation?.status === "failed" && index === setupInstallStageIndex ? "failed" : index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "complete" : index === setupInstallStageIndex ? "current" : "pending"} key={stage.id}><i aria-hidden="true">{index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "✓" : index === setupInstallStageIndex && setupOperation?.status === "failed" ? "!" : index + 1}</i><span>{stage.label}</span></li>)}</ol></div>}
+          {setupStep === 5 && <div className="model-setup-content install-stage ready"><span className="eyebrow">Installation evidence</span><h4>{setupEntry?.fixture ? "Fixture Model Instance Ready" : "Real Model Instance Ready"}</h4><p>{setupEntry?.fixture ? "The Fixture passed its deterministic Rust Plugin test but remains ineligible for Published Workflows." : "The exact Bundle, real ONNX graphs, Rust Plugin, bbox-prompt sample inference, mask validation, and immutable Model Profile are verified. This model is now selectable by Workflow Drafts."}</p>{setupOperation?.model_instance_ids.length ? <code>{setupOperation.model_instance_ids.join(", ")}</code> : null}</div>}
+          {setupFailure && <div className="model-setup-error" role="alert"><strong>Setup stopped at {setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupFailure}</span><small>{setupOperation?.suggested_action ?? "Review the selected Catalog entry and Plugin compatibility, then retry. Existing verified assets were preserved."}</small></div>}
         </div>
-        <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Installing verified model…" : "Install verified model"}</button>}{setupStep === 7 && <button className="primary" onClick={closeModelSetup}>Done</button>}{setupError && setupStep >= 4 && <button className="primary" onClick={() => setSetupStep(3)}>Review and retry</button>}</footer>
+        <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Starting installation…" : "Install model"}</button>}{setupStep === 5 && <button className="primary" onClick={closeModelSetup}>Done</button>}{setupFailure && setupStep === 4 && <button className="primary" onClick={() => { setSetupStep(3); setSetupOperationId(""); setSetupError(""); }}>Review and retry</button>}</footer>
       </section>
     </div>}
 
@@ -5603,7 +5658,18 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
     {!loading && !installations.length && <Empty title="No Expert Model Plugins installed" detail="Install a verified .annotplugin package above. No model becomes selectable until its real process test passes." />}
 
     {PLUGIN_STATUS_GROUPS.map((group) => {
-      const groupItems = installations.filter((installation) => group.statuses.includes(installation.status));
+      const groupItems = installations.filter((installation) => {
+        const hasReadyModel = instances.some((instance) =>
+          instance.plugin_id === installation.manifest.id
+          && instance.plugin_version === installation.manifest.version
+          && instance.status === "ready"
+          && bundleInventory[pluginIdentity(installation)]?.installed.some((bundle) =>
+            bundle.manifest.id === instance.model_bundle_id
+            && bundle.manifest.version === instance.model_bundle_version
+            && bundle.manifest.publishable),
+        );
+        return group.statuses.includes(hasReadyModel ? "ready" : installation.status);
+      });
       if (!groupItems.length) return null;
       return <section className="plugin-status-group" key={group.title} aria-labelledby={`plugin-group-${group.title.replaceAll(" ", "-")}`}>
         <header><div><h3 id={`plugin-group-${group.title.replaceAll(" ", "-")}`}>{group.title}</h3><p>{group.description}</p></div><span>{groupItems.length}</span></header>
@@ -5616,7 +5682,12 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
             const readyInstances = pluginInstances.filter((instance) => instance.status === "ready");
             const workflowReadyInstances = readyInstances.filter((instance) => inventory.installed.some((bundle) => bundle.manifest.id === instance.model_bundle_id && bundle.manifest.version === instance.model_bundle_version && bundle.manifest.publishable));
             const fixtureReadyInstances = readyInstances.filter((instance) => inventory.installed.some((bundle) => bundle.manifest.id === instance.model_bundle_id && bundle.manifest.version === instance.model_bundle_version && bundle.manifest.fixture));
-            const setupState = workflowReadyInstances.length
+            const latestInstallOperation = installOperations.find((operation) => operation.plugin_id === installation.manifest.id && operation.plugin_version === installation.manifest.version);
+            const setupState = latestInstallOperation?.status === "running"
+              ? { tone: "setup", eyebrow: "Installation in progress", title: MODEL_INSTALL_STAGES.find((stage) => stage.id === latestInstallOperation.stage)?.label ?? "Installing model", detail: latestInstallOperation.detail }
+              : latestInstallOperation?.status === "failed" && !workflowReadyInstances.length
+                ? { tone: "blocked", eyebrow: "Setup needs attention", title: `Stopped at ${MODEL_INSTALL_STAGES.find((stage) => stage.id === latestInstallOperation.stage)?.label ?? "model setup"}`, detail: latestInstallOperation.suggested_action ?? latestInstallOperation.error ?? "Review the structured failure and retry." }
+                : workflowReadyInstances.length
               ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${workflowReadyInstances.length} verified model${workflowReadyInstances.length === 1 ? "" : "s"} available`, detail: "Plugin, Bundle, Contract, and sample inference evidence are registered." }
               : fixtureReadyInstances.length
                 ? { tone: "setup", eyebrow: "Offline Fixture verified", title: "A real model is still required", detail: "The Rust provisioning path works, but the Fixture is not SAM, accuracy evidence, or publishable." }
@@ -5628,7 +5699,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
                   ? { tone: "setup", eyebrow: "Next step", title: "Finish Model Bundle verification", detail: "Run the fixed smoke test or inspect the latest structured failure." }
                   : { tone: "setup", eyebrow: "Model required", title: "No compatible model installed", detail: "This Plugin cannot run until a verified Model Bundle is installed." };
             return <article className="plugin-card" key={identity}>
-              <header><div className="registry-monogram">RS</div><div><strong>{installation.manifest.display_name}</strong><small>{installation.manifest.id} · v{installation.manifest.version}</small></div><Status status={installation.status === "needs_weights" ? "Model required" : installation.status.replaceAll("_", " ")} /></header>
+              <header><div className="registry-monogram">RS</div><div><strong>{installation.manifest.display_name}</strong><small>{installation.manifest.id} · v{installation.manifest.version}</small></div><Status status={workflowReadyInstances.length ? "Ready" : installation.status === "needs_weights" ? "Model required" : installation.status.replaceAll("_", " ")} /></header>
               <div className={`plugin-next-action ${setupState.tone}`}><span>{setupState.eyebrow}</span><strong>{setupState.title}</strong><small>{setupState.detail}</small></div>
               <p>{installation.manifest.description}</p>
               <dl className="plugin-card-facts">
@@ -5640,7 +5711,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
                 <div><dt>Used by</dt><dd>{installation.references.length} Published Workflow reference{installation.references.length === 1 ? "" : "s"}</dd></div>
               </dl>
               <div className="registry-card-actions">
-                {!workflowReadyInstances.length && <button className="primary" onClick={() => openModelSetup(installation)} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{setupBlocker ? "Review required update" : "Install compatible model"}</button>}
+                {!workflowReadyInstances.length && <button className="primary" onClick={() => openModelSetup(installation)} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{latestInstallOperation?.status === "running" ? "View installation" : latestInstallOperation?.status === "failed" ? "Review failed setup" : setupBlocker ? "Review required update" : "Install compatible model"}</button>}
                 <button onClick={() => perform(`${identity}:toggle`, () => api.setExpertPluginEnabled(installation.manifest.id, installation.manifest.version, !installation.enabled), installation.enabled ? "Plugin disabled." : "Plugin enabled; test evidence is preserved.")} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{installation.enabled ? "Disable" : "Enable"}</button>
                 <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Installed Model Bundles remain in the shared model store.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? "Published Workflow references protect this exact version" : undefined}>Uninstall</button>
               </div>
@@ -5650,7 +5721,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
               </details>
               <details className="registry-card-section" open={!inventory.installed.length}>
                 <summary><span>Compatible Models</span><small>{inventory.available.length} available</small></summary>
-                {inventory.available.length ? <div className="compatible-model-list compact">{inventory.available.map((entry) => <div key={catalogBundleIdentity(entry)}><span><strong>{entry.display_name}</strong><small>{entry.publisher.display_name} · {formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /><button onClick={() => openModelSetup(installation, entry)}>Install model</button></div>)}</div> : setupBlocker ? <div className="bundle-empty-state warning"><strong>Plugin runtime update required</strong><p>{setupBlocker.message}</p><button onClick={() => openModelSetup(installation)}>Review required update</button></div> : <div className="bundle-empty-state"><strong>No verified bundle is available for this platform</strong><p>Unpublished SAM 2 and unverified checkpoints stay in Labs; AnnotAgent will not turn them into a selectable model.</p></div>}
+                {inventory.available.length ? <div className="compatible-model-list compact">{inventory.available.map((entry) => { const installedInstance = pluginInstances.find((instance) => instance.model_bundle_id === entry.bundle_id && instance.model_bundle_version === entry.bundle_version); const entryOperation = installOperations.find((operation) => operation.plugin_id === installation.manifest.id && operation.plugin_version === installation.manifest.version && operation.bundle_id === entry.bundle_id && operation.bundle_version === entry.bundle_version); return <div key={catalogBundleIdentity(entry)}><span><strong>{entry.display_name}</strong><small>{entry.model_family ?? entry.bundle_id} · {entry.publisher.display_name} · {formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : installedInstance?.status === "ready" ? "Ready" : entryOperation?.status === "running" ? "Installing" : "Ready to install"} /><button onClick={() => openModelSetup(installation, entry)}>{entryOperation?.status === "running" ? "View progress" : installedInstance?.status === "ready" ? "View evidence" : entryOperation?.status === "failed" ? "Review failure" : "Install model"}</button></div>; })}</div> : setupBlocker ? <div className="bundle-empty-state warning"><strong>Plugin runtime update required</strong><p>{setupBlocker.message}</p><button onClick={() => openModelSetup(installation)}>Review required update</button></div> : <div className="bundle-empty-state"><strong>No verified bundle is available for this platform</strong><p>Unpublished SAM 2 and unverified checkpoints stay in Labs; AnnotAgent will not turn them into a selectable model.</p></div>}
               </details>
               <details className="registry-card-section">
                 <summary><span>Installed Models</span><small>{pluginInstances.length} instances</small></summary>

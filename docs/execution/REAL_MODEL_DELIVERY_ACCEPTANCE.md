@@ -67,7 +67,26 @@ Last updated: 2026-09-03 CST
 - [x] Relative workspace Registry roots are canonicalized and covered by regression tests.
 - [x] Active EfficientSAM Plugin process has no child process or Python descendant.
 - [x] Focused Catalog, Plugin Registry and EfficientSAM Plugin tests pass.
-- [ ] M3 committed locally.
+- [x] M3 committed locally as `3a0e50b`.
+
+## Milestone 4 evidence
+
+- [x] `Install compatible model` lists the real non-Fixture EfficientSAM-Ti entry.
+- [x] Model family, capability, source, publisher trust, license/digest, Bundle digest, download and
+  installed sizes, immutable Plugin/model binding, platforms and CPU provider are shown first.
+- [x] License acceptance remains an explicit local-user action.
+- [x] A typed server operation exposes resolving, download, Bundle digest, model files, ONNX
+  Contract, Rust Plugin start, model load, real inference, profile registration and Ready stages.
+- [x] Structured failures retain the stopped stage and a concrete remediation action.
+- [x] Browser refresh restores an active operation and exposes `View installation`.
+- [x] Server restart derives Ready from durable Registry evidence rather than transient UI state.
+- [x] Normal setup does not expose separate encoder/decoder upload controls.
+- [x] Advanced import accepts one already verified `.annotmodel` only.
+- [x] Real fresh-workspace browser install produced Ready Model Instance
+  `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`; Smoke Test passed in 4,817 ms.
+- [x] Focused Playwright E2E covers responsive setup, source/license review, live stage recovery,
+  raw-ONNX absence and an actionable compatibility failure.
+- [ ] M4 committed locally.
 
 ## Release matrix
 
@@ -82,11 +101,11 @@ Last updated: 2026-09-03 CST
 
 ### B. User installation
 
-- [ ] User needs no Python, conversion, raw ONNX search, or multi-file upload.
-- [ ] `Install compatible model` lists a clearly non-Fixture model.
-- [ ] Source, license, size, digest, platform and provider are visible before mutation.
-- [ ] Install verifies Bundle/files/graph, runs real smoke, and persists `Ready`.
-- [ ] Restart preserves the Ready Model Instance.
+- [x] User needs no Python, conversion, raw ONNX search, or multi-file upload.
+- [x] `Install compatible model` lists a clearly non-Fixture model.
+- [x] Source, license, size, digest, platform and provider are visible before mutation.
+- [x] Install verifies Bundle/files/graph, runs real smoke, and persists `Ready`.
+- [x] Restart preserves the Ready Model Instance.
 
 ### C. Pipeline
 

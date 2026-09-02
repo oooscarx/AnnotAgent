@@ -917,7 +917,7 @@ main { min-width: 0; padding-bottom: 48px; }
 .model-setup-wizard > header h3 { margin: 5px 0; font-size: 21px; }
 .model-setup-wizard > header p { margin: 0; color: var(--aa-text-muted); font-size: 11px; line-height: 1.5; }
 .model-setup-scroll { min-height: 0; display: grid; align-content: start; gap: 20px; overflow-y: auto; overscroll-behavior: contain; padding: 22px clamp(20px, 3vw, 28px); scrollbar-gutter: stable; }
-.model-setup-progress { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.model-setup-progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
 .model-setup-progress li { position: relative; display: grid; justify-items: center; gap: 7px; min-width: 0; color: var(--aa-text-muted); text-align: center; }
 .model-setup-progress li::before { content: ""; position: absolute; top: 13px; right: 50%; left: -50%; height: 1px; background: var(--aa-border); z-index: 0; }
 .model-setup-progress li:first-child::before { display: none; }
@@ -958,6 +958,23 @@ main { min-width: 0; padding-bottom: 48px; }
 .compatibility-checks strong, .compatibility-checks small { min-width: 0; overflow-wrap: anywhere; }
 .compatibility-checks small { color: var(--aa-text-muted); font-size: 9px; }
 .compatibility-checks .blocked b { background: var(--aa-danger-soft); color: var(--aa-danger-text); }
+.model-install-live { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.model-install-live > div { min-width: 0; }
+.model-install-live h4, .model-install-live p { margin: 0; }
+.model-install-live p { margin-top: 5px; color: var(--aa-text-muted); line-height: 1.5; }
+.model-install-meter { height: 7px; overflow: hidden; border-radius: var(--aa-radius-pill); background: var(--aa-surface-muted); }
+.model-install-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--aa-primary); transition: width 180ms ease; }
+.model-install-stage-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
+.model-install-stage-list li { display: grid; grid-template-columns: 23px minmax(0, 1fr); gap: 8px; align-items: center; min-width: 0; padding: 8px 10px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); color: var(--aa-text-muted); background: var(--aa-surface-muted); font-size: 9px; }
+.model-install-stage-list i { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 50%; background: var(--aa-surface); font-style: normal; font-weight: 800; }
+.model-install-stage-list li.complete { border-color: color-mix(in srgb, var(--aa-success) 35%, var(--aa-border)); color: var(--aa-success-text); }
+.model-install-stage-list li.complete i { background: var(--aa-success-soft); }
+.model-install-stage-list li.current { border-color: var(--aa-primary); color: var(--aa-text); background: var(--aa-primary-soft); font-weight: 750; }
+.model-install-stage-list li.current i { background: var(--aa-primary); color: var(--aa-on-primary); }
+.model-install-stage-list li.failed { border-color: var(--aa-danger); color: var(--aa-danger-text); background: var(--aa-danger-soft); font-weight: 750; }
+.model-install-stage-list li.failed i { background: var(--aa-danger); color: var(--aa-on-primary); }
+.install-stage.ready { border-color: color-mix(in srgb, var(--aa-success) 45%, var(--aa-border)); background: color-mix(in srgb, var(--aa-success-soft) 44%, var(--aa-surface)); }
+.install-stage.ready code { overflow-wrap: anywhere; font-size: 9px; }
 .model-setup-error { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid var(--aa-danger); border-radius: var(--aa-radius-md); background: var(--aa-danger-soft); color: var(--aa-danger-text); }
 .model-setup-error span, .model-setup-error small { line-height: 1.45; overflow-wrap: anywhere; }
 .model-setup-wizard > footer { display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: center; padding: 16px clamp(20px, 3vw, 28px); border-top: 1px solid var(--aa-border); background: color-mix(in srgb, var(--aa-surface) 94%, var(--aa-primary-soft)); }
@@ -1444,6 +1461,7 @@ main { min-width: 0; padding-bottom: 48px; }
   .model-setup-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .model-setup-progress li:nth-child(odd)::before { display: none; }
   .model-setup-progress li:nth-child(5)::before { display: none; }
+  .model-install-stage-list { grid-template-columns: 1fr; }
   .bundle-review-facts, .compatibility-checks { grid-template-columns: 1fr; }
   .compatible-model-list > label { grid-template-columns: auto minmax(0, 1fr); }
   .compatible-model-list > label > .status { grid-column: 2; justify-self: start; }

@@ -85,3 +85,12 @@ Session loading alone is insufficient. The smoke gate validates input-prompt lin
 artifacts, non-empty mask coverage, Core mask-to-bbox geometry, and consistent encoder/decoder
 timing. Cache reuse is reported explicitly as zero encoder compute rather than being confused with
 a missing encoder execution.
+
+## RMD-D014 — GUI installation progress is server-owned evidence
+
+The one-click flow starts a typed server-side installation operation instead of guessing progress
+around one long HTTP request. The operation records the exact Catalog, Bundle and Plugin identity,
+download bytes, current lifecycle stage, Model Instance IDs, structured failure and remediation.
+A browser refresh reloads the active operation from the server; a process restart reloads the
+durable Bundle, Smoke Test, Model Instance and Model Profile state from the Registries. In-memory
+operation history is diagnostic only and is not treated as the durable source of Ready status.

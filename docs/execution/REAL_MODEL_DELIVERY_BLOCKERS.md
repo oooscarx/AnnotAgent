@@ -4,9 +4,9 @@ Last updated: 2026-09-03 CST
 
 ## Current product blocker
 
-The real EfficientSAM-Ti Bundle and Rust Plugin now pass the current-platform smoke gate, but the
-normal GUI still needs M4 wiring and E2E before a fresh user can complete one-click installation.
-This is planned implementation work, not an external blocker.
+The normal-user one-click model installation path is complete on the current macOS ARM64 host.
+Pipeline Builder selection, real Published Workflow execution, Debug/Review/Replay lineage and
+version-reference protection remain M5 implementation and verification work, not external blockers.
 
 ## Candidate risks under investigation
 

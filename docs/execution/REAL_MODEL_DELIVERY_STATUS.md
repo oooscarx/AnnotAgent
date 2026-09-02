@@ -4,13 +4,13 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M3 — real Contract and real-model Smoke Test complete. M4 one-click GUI is next.
+M4 — normal-user one-click GUI complete. M5 Pipeline and Agent closure is next.
 
 ## Current candidate
 
 EfficientSAM-Ti split ONNX is a real, non-Fixture Supported model on the verified macOS ARM64 CPU
-path. Normal-user GUI installation remains an M4 release blocker; the current proof uses the same
-Registry and Bundle lifecycle through the CLI and trusted local Catalog.
+path. A fresh workspace completed the GUI Catalog → license → install → Contract → real Smoke Test
+→ Ready path and preserved the selectable Model Instance across an AnnotAgent restart.
 
 ## Candidate eliminations
 
@@ -88,16 +88,30 @@ Registry and Bundle lifecycle through the CLI and trusted local Catalog.
   geometry and internally consistent encoder/decoder timing.
 - Inspected the active Plugin process tree: one Rust EfficientSAM executable and no child process;
   install, smoke and inference used no Python or conversion process.
+- Added server-owned model installation operations with exact Catalog/Bundle/Plugin identity,
+  byte progress, ten truthful lifecycle stages, Model Instance IDs, structured errors and concrete
+  retry actions. The GUI resumes an active operation after a browser refresh.
+- Expanded the Catalog entry and install review with model family, capability, plugin binding,
+  target platforms, CPU provider, 38,577,735-byte download size and 41,834,247-byte installed size.
+- Replaced the normal raw-file path with a six-step modal and a detailed real-install checklist;
+  advanced local import remains a single verified `.annotmodel`, never separate ONNX files.
+- Ran the real browser flow against a fresh workspace containing only the immutable Plugin package
+  and trusted local Catalog. The UI copied and verified the real Bundle, inspected both graphs,
+  executed the official dog-image bbox prompt, and persisted Model Instance
+  `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` as `Ready` in 4,817 ms.
+- Reloaded the browser during sample inference and recovered `Run real sample inference` plus its
+  live action from the server. Restarted AnnotAgent and confirmed one selectable Ready model.
 
 ## In progress
 
-- Expose the real Catalog entry and complete lifecycle through the normal one-click GUI in M4.
+- Bind the Ready real Model Profile through Pipeline Builder, Published Workflow execution,
+  Geometry Safety, Run Debug, Review and Replay in M5.
 
 ## Next
 
-Show exact source/license/size/digest/platform information before mutation, execute install → verify
-→ smoke → Ready in the modal, persist progress/errors across refresh, remove raw ONNX upload from
-the normal path, and add fresh-workspace browser E2E.
+Run the real Prompted Segmentation path from a saved Draft and freeze all Plugin, Bundle, file,
+Contract, instance, profile and provider identities into an immutable Workflow Version; then prove
+mask/refined-bbox/geometry artifacts, Review, Replay and restart recovery.
 
 ## Latest verification
 
@@ -110,7 +124,7 @@ the normal path, and add fresh-workspace browser E2E.
 | Bundle verification | PASS — real non-Fixture EfficientSAM-Ti Bundle built and verified outside Git |
 | Real graph inspection | PASS — encoder and decoder loaded with ORT CPU; descriptors recorded |
 | Real inference | PASS — official dog image; box prompt → MaskSet → tight bbox through Rust ORT CPU |
-| Web E2E | PENDING for this task |
+| Web E2E | PASS — 2 focused Plugin/Bundle setup scenarios |
 | Model Recipe | PASS — 3 downloads / 41,814,211 bytes and 8 static files verified |
 | Real Bundle | PASS — 38,577,735 bytes / `3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c` |
 | Local Catalog | PASS — persisted `trusted_local_catalog`, real entry searchable after refresh |
@@ -120,11 +134,14 @@ the normal path, and add fresh-workspace browser E2E.
 | Real cold smoke | PASS — mask coverage 0.061009; bbox `[0.543843,0.384743,0.175373,0.592040]`; encoder 2238 ms; decoder 51 ms; total 4532 ms |
 | Real warm smoke | PASS — cached encoder 0 ms; decoder 50 ms; total 578 ms |
 | Rust-only process audit | PASS — Plugin executable had no child process and no Python descendant |
-| Latest commit | `2984dce` — M2; M3 commit pending |
+| Fresh-workspace GUI install | PASS — real Bundle → real smoke → Ready in 4,817 ms |
+| Browser refresh recovery | PASS — active `running_sample_inference` operation restored |
+| Server restart recovery | PASS — Ready instance and selectable profile restored |
+| Latest commit | `3a0e50b` — M3; M4 commit pending |
 
 ## Release-blocking remainder
 
-The real-model execution gate is closed on macOS ARM64 CPU. GUI installation, restart recovery,
+The real-model execution and normal-user GUI installation gates are closed on macOS ARM64 CPU.
 Published Workflow/Review/Replay lineage, release packaging and the final cross-platform/regression
 matrix remain blocking.
 

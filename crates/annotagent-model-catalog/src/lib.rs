@@ -96,12 +96,16 @@ pub struct ModelCatalogEntry {
     pub bundle_version: Version,
     pub display_name: String,
     pub description: String,
+    #[serde(default)]
+    pub model_family: Option<String>,
     pub capabilities: BTreeSet<ModelCapability>,
     pub compatible_plugins: Vec<PluginCompatibilityRequirement>,
     pub platform_requirements: Vec<PlatformRequirement>,
     pub bundle_url: Url,
     pub bundle_sha256: Sha256Digest,
     pub bundle_size_bytes: u64,
+    #[serde(default)]
+    pub installed_size_bytes: Option<u64>,
     pub license_summary: ModelLicenseSummary,
     pub publisher: PublisherIdentity,
     pub fixture: bool,
@@ -112,6 +116,9 @@ impl ModelCatalogEntry {
     pub fn validate(&self) -> Result<(), ModelCatalogError> {
         validate_text("display name", &self.display_name)?;
         validate_text("description", &self.description)?;
+        if let Some(model_family) = &self.model_family {
+            validate_text("model family", model_family)?;
+        }
         validate_https_public_url(&self.bundle_url)?;
         if self.capabilities.is_empty()
             || self.compatible_plugins.is_empty()
@@ -122,6 +129,12 @@ impl ModelCatalogEntry {
             return invalid(
                 "entry capabilities, compatibility, platform and bounded size are required",
             );
+        }
+        if self
+            .installed_size_bytes
+            .is_some_and(|size| size == 0 || size > MAX_CATALOG_BUNDLE_BYTES)
+        {
+            return invalid("installed size must be non-zero and bounded when declared");
         }
         if self.fixture == self.publishable {
             return invalid(

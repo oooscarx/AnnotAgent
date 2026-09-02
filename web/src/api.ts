@@ -57,6 +57,7 @@ import type {
   InstalledModelBundle,
   InstalledModelInstance,
   ModelCatalogEntry,
+  ModelInstallOperation,
   ModelInstanceProfile,
   VerifiedModelBundlePackage,
 } from "./types";
@@ -306,6 +307,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ catalog_id: catalogId, bundle_id: bundleId, bundle_version: version }),
     }),
+  modelInstallOperations: () =>
+    request<{ operations: ModelInstallOperation[] }>("/api/model-installations"),
+  modelInstallOperation: (operationId: string) =>
+    request<ModelInstallOperation>(`/api/model-installations/${encodeURIComponent(operationId)}`),
+  startModelInstallOperation: (value: {
+    catalog_id: string;
+    bundle_id: string;
+    bundle_version: string;
+    plugin_id: string;
+    plugin_version: string;
+  }) => request<ModelInstallOperation>("/api/model-installations", {
+    method: "POST",
+    body: JSON.stringify(value),
+  }),
   testModelInstance: (instanceId: string) =>
     request<InstalledModelInstance>(`/api/model-instances/${encodeURIComponent(instanceId)}/test`, { method: "POST" }),
   testModelBundle: (bundleId: string, version: string) =>

@@ -255,6 +255,11 @@ pub fn build_model_recipe(
             return recipe_error("built Bundle identity or publication policy changed".to_owned());
         }
         let size = std::fs::metadata(&temporary_output)?.len();
+        let installed_size = verified
+            .files
+            .values()
+            .try_fold(0_u64, |total, file| total.checked_add(file.size_bytes))
+            .ok_or_else(|| ModelCatalogError::Recipe("installed size overflow".to_owned()))?;
         if size > MAX_CATALOG_BUNDLE_BYTES {
             return recipe_error("built Bundle exceeds the Catalog size limit".to_owned());
         }
@@ -273,7 +278,7 @@ pub fn build_model_recipe(
         } else {
             std::fs::rename(&temporary_output, output)?;
         }
-        let catalog_entry = catalog_entry(&loaded, digest.clone(), size)?;
+        let catalog_entry = catalog_entry(&loaded, digest.clone(), size, installed_size)?;
         Ok(ModelRecipeBuildReport {
             output: output.to_path_buf(),
             bundle_sha256: digest,
@@ -621,6 +626,7 @@ fn catalog_entry(
     loaded: &LoadedRecipe,
     bundle_sha256: Sha256Digest,
     bundle_size_bytes: u64,
+    installed_size_bytes: u64,
 ) -> Result<ModelCatalogEntry, ModelCatalogError> {
     let manifest = &loaded.manifest;
     let entry = ModelCatalogEntry {
@@ -631,6 +637,7 @@ fn catalog_entry(
             .description
             .clone()
             .unwrap_or_else(|| manifest.model_family.clone()),
+        model_family: Some(manifest.model_family.clone()),
         capabilities: manifest.capabilities.clone(),
         compatible_plugins: manifest.compatible_plugins.clone(),
         platform_requirements: manifest
@@ -641,12 +648,13 @@ fn catalog_entry(
                 target: target.clone(),
                 execution_providers: manifest.runtime.execution_providers.clone(),
                 minimum_memory_mb: manifest.runtime.minimum_memory_mb,
-                minimum_disk_bytes: bundle_size_bytes,
+                minimum_disk_bytes: installed_size_bytes,
             })
             .collect(),
         bundle_url: loaded.value.catalog.bundle_url.clone(),
         bundle_sha256,
         bundle_size_bytes,
+        installed_size_bytes: Some(installed_size_bytes),
         license_summary: ModelLicenseSummary {
             name: manifest.license.name.clone(),
             license_url: manifest.license.license_url.clone(),

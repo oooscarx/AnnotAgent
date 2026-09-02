@@ -104,6 +104,7 @@ pub struct ServerState {
     secret_store: Arc<dyn SecretStore>,
     credential_reference: Arc<RwLock<CredentialReference>>,
     default_write_reference: Arc<CredentialReference>,
+    model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
 }
 
 impl ServerState {
@@ -207,6 +208,7 @@ impl ServerState {
             secret_store,
             credential_reference: Arc::new(RwLock::new(credential_reference)),
             default_write_reference: Arc::new(default_write_reference),
+            model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
         })
     }
 
@@ -560,6 +562,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             post(inspect_model_bundle_package),
         )
         .route("/api/model-bundles/install", post(install_model_bundle))
+        .route(
+            "/api/model-installations",
+            get(list_model_install_operations).post(start_model_install_operation),
+        )
+        .route(
+            "/api/model-installations/{operation_id}",
+            get(get_model_install_operation),
+        )
         .route("/api/model-bundles/import", post(import_model_bundle))
         .route(
             "/api/model-bundles/{bundle_id}/{version}",
@@ -6472,11 +6482,63 @@ struct ModelBundleUploadQuery {
     license_accepted: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ModelBundleInstallRequest {
     catalog_id: String,
     bundle_id: String,
     bundle_version: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelInstallOperationRequest {
+    catalog_id: String,
+    bundle_id: String,
+    bundle_version: String,
+    plugin_id: String,
+    plugin_version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ModelInstallOperationStatus {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ModelInstallStage {
+    ResolvingModel,
+    DownloadingBundle,
+    VerifyingBundleDigest,
+    VerifyingModelFiles,
+    CheckingOnnxContract,
+    StartingRustPlugin,
+    LoadingModel,
+    RunningSampleInference,
+    RegisteringModelProfile,
+    Ready,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ModelInstallOperation {
+    id: uuid::Uuid,
+    catalog_id: String,
+    bundle_id: String,
+    bundle_version: String,
+    plugin_id: String,
+    plugin_version: String,
+    status: ModelInstallOperationStatus,
+    stage: ModelInstallStage,
+    bytes_completed: u64,
+    bytes_total: Option<u64>,
+    detail: String,
+    error: Option<String>,
+    suggested_action: Option<String>,
+    model_instance_ids: Vec<String>,
+    created_at: chrono::DateTime<Utc>,
+    updated_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7080,6 +7142,539 @@ async fn accept_model_bundle_license(
         })
         .map_err(ApiError::internal)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_model_install_operations(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let operations = state.model_install_operations.read().await;
+    let mut operations = operations.values().cloned().collect::<Vec<_>>();
+    operations.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(Json(json!({ "operations": operations })))
+}
+
+async fn get_model_install_operation(
+    State(state): State<ServerState>,
+    AxumPath(operation_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let operation_id = operation_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| ApiError::bad_request("invalid model installation operation id"))?;
+    let operations = state.model_install_operations.read().await;
+    let operation = operations
+        .get(&operation_id)
+        .ok_or_else(|| ApiError::not_found("Model installation operation was not found"))?;
+    Ok(Json(json!(operation)))
+}
+
+async fn start_model_install_operation(
+    State(state): State<ServerState>,
+    Json(request): Json<ModelInstallOperationRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let bundle_id = ModelBundleId::parse(&request.bundle_id).map_err(ApiError::bad_request)?;
+    let bundle_version =
+        semver::Version::parse(&request.bundle_version).map_err(ApiError::bad_request)?;
+    let plugin_id = PluginId::parse(&request.plugin_id).map_err(ApiError::bad_request)?;
+    let plugin_version =
+        PluginVersion::parse(&request.plugin_version).map_err(ApiError::bad_request)?;
+
+    let plugin = state
+        .application
+        .plugin_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .get(&plugin_id, &plugin_version)
+        .map_err(ApiError::bad_request)?
+        .clone();
+    let entry = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .catalogs()
+        .into_iter()
+        .find(|catalog| catalog.catalog_id == request.catalog_id)
+        .and_then(|catalog| {
+            catalog.entries.into_iter().find(|entry| {
+                entry.bundle_id == bundle_id && entry.bundle_version == bundle_version
+            })
+        })
+        .ok_or_else(|| ApiError::not_found("Catalog Model Bundle was not found"))?;
+    if !matches!(
+        catalog_plugin_setup_match(&plugin, &entry),
+        CatalogPluginSetupMatch::Compatible
+    ) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": "model_plugin_incompatible",
+                "error": "The selected Model Bundle is not compatible with this immutable Plugin version.",
+                "suggested_action": "Install the compatible Plugin package version shown by the Catalog, then retry."
+            }),
+        });
+    }
+
+    let now = Utc::now();
+    let operation = ModelInstallOperation {
+        id: uuid::Uuid::new_v4(),
+        catalog_id: request.catalog_id.clone(),
+        bundle_id: request.bundle_id.clone(),
+        bundle_version: request.bundle_version.clone(),
+        plugin_id: request.plugin_id.clone(),
+        plugin_version: request.plugin_version.clone(),
+        status: ModelInstallOperationStatus::Running,
+        stage: ModelInstallStage::ResolvingModel,
+        bytes_completed: 0,
+        bytes_total: Some(entry.bundle_size_bytes),
+        detail: "Resolving the exact Catalog entry and immutable Plugin requirement".to_owned(),
+        error: None,
+        suggested_action: None,
+        model_instance_ids: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    };
+    {
+        let mut operations = state.model_install_operations.write().await;
+        if operations.values().any(|existing| {
+            existing.status == ModelInstallOperationStatus::Running
+                && existing.bundle_id == request.bundle_id
+                && existing.bundle_version == request.bundle_version
+                && existing.plugin_id == request.plugin_id
+                && existing.plugin_version == request.plugin_version
+        }) {
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({
+                    "code": "model_installation_active",
+                    "error": "This exact model installation is already running.",
+                    "suggested_action": "Open the existing installation progress instead of starting a duplicate."
+                }),
+            });
+        }
+        operations.insert(operation.id, operation.clone());
+        while operations.len() > 32 {
+            let removable = operations
+                .iter()
+                .filter(|(_, value)| value.status != ModelInstallOperationStatus::Running)
+                .min_by_key(|(_, value)| value.updated_at)
+                .map(|(id, _)| *id);
+            if let Some(id) = removable {
+                operations.remove(&id);
+            } else {
+                break;
+            }
+        }
+    }
+    let operation_id = operation.id;
+    tokio::spawn(async move {
+        if let Err((error, suggested_action)) =
+            run_model_install_operation(&state, operation_id, request).await
+        {
+            finish_model_install_operation_failure(&state, operation_id, error, suggested_action)
+                .await;
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(json!(operation))))
+}
+
+async fn update_model_install_operation(
+    state: &ServerState,
+    operation_id: uuid::Uuid,
+    stage: ModelInstallStage,
+    detail: impl Into<String>,
+    bytes_completed: Option<u64>,
+    bytes_total: Option<u64>,
+) {
+    if let Some(operation) = state
+        .model_install_operations
+        .write()
+        .await
+        .get_mut(&operation_id)
+    {
+        operation.stage = stage;
+        operation.detail = detail.into();
+        if let Some(bytes) = bytes_completed {
+            operation.bytes_completed = bytes;
+        }
+        if bytes_total.is_some() {
+            operation.bytes_total = bytes_total;
+        }
+        operation.updated_at = Utc::now();
+    }
+}
+
+async fn finish_model_install_operation_failure(
+    state: &ServerState,
+    operation_id: uuid::Uuid,
+    error: String,
+    suggested_action: String,
+) {
+    if let Some(operation) = state
+        .model_install_operations
+        .write()
+        .await
+        .get_mut(&operation_id)
+    {
+        operation.status = ModelInstallOperationStatus::Failed;
+        operation.error = Some(error);
+        operation.suggested_action = Some(suggested_action);
+        operation.updated_at = Utc::now();
+    }
+}
+
+fn api_error_message(error: ApiError) -> String {
+    error
+        .body
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("model setup failed")
+        .to_owned()
+}
+
+async fn run_model_install_operation(
+    state: &ServerState,
+    operation_id: uuid::Uuid,
+    request: ModelInstallOperationRequest,
+) -> Result<(), (String, String)> {
+    let bundle_id = ModelBundleId::parse(&request.bundle_id).map_err(|error| {
+        (
+            error.to_string(),
+            "Choose the Catalog entry again and retry.".to_owned(),
+        )
+    })?;
+    let bundle_version = semver::Version::parse(&request.bundle_version).map_err(|error| {
+        (
+            error.to_string(),
+            "Choose the Catalog entry again and retry.".to_owned(),
+        )
+    })?;
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::ResolvingModel,
+        "Resolved the pinned Catalog identity and download policy",
+        Some(0),
+        None,
+    )
+    .await;
+    let (entry, local_bundle) = {
+        let registry = state.application.model_bundle_registry();
+        let registry = registry.lock().map_err(|_| {
+            (
+                "Model Bundle Registry lock is poisoned".to_owned(),
+                "Restart AnnotAgent and retry the installation.".to_owned(),
+            )
+        })?;
+        let entry = registry
+            .catalogs()
+            .into_iter()
+            .find(|catalog| catalog.catalog_id == request.catalog_id)
+            .and_then(|catalog| {
+                catalog.entries.into_iter().find(|entry| {
+                    entry.bundle_id == bundle_id && entry.bundle_version == bundle_version
+                })
+            })
+            .ok_or_else(|| {
+                (
+                    "Catalog Model Bundle was not found".to_owned(),
+                    "Refresh the configured Catalog, then choose the model again.".to_owned(),
+                )
+            })?;
+        let local_bundle = registry.local_catalog_bundle_path(
+            &request.catalog_id,
+            &entry.bundle_id,
+            &entry.bundle_version,
+        );
+        (entry, local_bundle)
+    };
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::DownloadingBundle,
+        if local_bundle.is_some() {
+            "Copying the pinned Bundle from the trusted local Catalog"
+        } else {
+            "Downloading the pinned Bundle from its audited HTTPS source"
+        },
+        Some(0),
+        Some(entry.bundle_size_bytes),
+    )
+    .await;
+    let upload_root = model_bundle_registry_root(state)
+        .map_err(|error| {
+            (
+                api_error_message(error),
+                "Restart AnnotAgent and retry the installation.".to_owned(),
+            )
+        })?
+        .join("model-downloads");
+    tokio::fs::create_dir_all(&upload_root)
+        .await
+        .map_err(|error| {
+            (
+                error.to_string(),
+                "Check that the workspace is writable and has enough free disk space.".to_owned(),
+            )
+        })?;
+    let download = upload_root.join(format!("{}.annotmodel", uuid::Uuid::new_v4()));
+    let download_result = if let Some(source) = local_bundle {
+        tokio::fs::copy(source, &download)
+            .await
+            .map(|_| ())
+            .map_err(annotagent_model_catalog::ModelCatalogError::Io)
+    } else {
+        let client = ModelCatalogClient::new().map_err(|error| {
+            (
+                error.to_string(),
+                "Check network access to the audited Catalog source and retry.".to_owned(),
+            )
+        })?;
+        let (sender, mut receiver) =
+            tokio::sync::mpsc::unbounded_channel::<annotagent_model_catalog::ProvisionProgress>();
+        let progress_state = state.clone();
+        let progress_task = tokio::spawn(async move {
+            while let Some(progress) = receiver.recv().await {
+                let stage = match progress.stage {
+                    annotagent_model_catalog::ProvisionStage::Resolving => {
+                        ModelInstallStage::ResolvingModel
+                    }
+                    annotagent_model_catalog::ProvisionStage::Downloading => {
+                        ModelInstallStage::DownloadingBundle
+                    }
+                    annotagent_model_catalog::ProvisionStage::Verifying
+                    | annotagent_model_catalog::ProvisionStage::Installing
+                    | annotagent_model_catalog::ProvisionStage::Complete => {
+                        ModelInstallStage::VerifyingBundleDigest
+                    }
+                };
+                update_model_install_operation(
+                    &progress_state,
+                    operation_id,
+                    stage,
+                    progress.detail,
+                    Some(progress.bytes_completed),
+                    progress.bytes_total,
+                )
+                .await;
+            }
+        });
+        let result = client
+            .download_bundle(&entry, &download, &CancellationToken::new(), Some(&sender))
+            .await;
+        drop(sender);
+        let _ = progress_task.await;
+        result
+    };
+    if let Err(error) = download_result {
+        let _ = tokio::fs::remove_file(&download).await;
+        return Err((
+            error.to_string(),
+            "Check network access, free disk space, and the exact Catalog digest, then retry. A partial download was removed.".to_owned(),
+        ));
+    }
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::VerifyingBundleDigest,
+        "Checking the complete Bundle against the Catalog SHA-256 identity",
+        Some(entry.bundle_size_bytes),
+        Some(entry.bundle_size_bytes),
+    )
+    .await;
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::VerifyingModelFiles,
+        "Verifying the Manifest, every model file, Contract, license, and test vector",
+        None,
+        None,
+    )
+    .await;
+    let path = download.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_model_bundle(&path))
+        .await
+        .map_err(|error| {
+            (
+                error.to_string(),
+                "Retry the installation. If it repeats, refresh the Catalog or choose a newer Bundle version.".to_owned(),
+            )
+        })?
+        .map_err(|error| {
+            (
+                error.to_string(),
+                "Refresh the Catalog and download the exact verified Bundle again.".to_owned(),
+            )
+        });
+    let verified = match verified {
+        Ok(verified) => verified,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&download).await;
+            return Err(error);
+        }
+    };
+    if verified.manifest.id != entry.bundle_id
+        || verified.manifest.version != entry.bundle_version
+        || verified.bundle_digest != entry.bundle_sha256
+        || verified.manifest.license.license_digest != entry.license_summary.license_digest
+    {
+        let _ = tokio::fs::remove_file(&download).await;
+        return Err((
+            "Downloaded Bundle identity or license does not match the curated Catalog".to_owned(),
+            "Refresh the Catalog and retry. Do not import or rename the mismatched file."
+                .to_owned(),
+        ));
+    }
+    let installed = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| {
+            (
+                "Model Bundle Registry lock is poisoned".to_owned(),
+                "Restart AnnotAgent and retry the installation.".to_owned(),
+            )
+        })?
+        .install_verified(
+            verified,
+            ModelBundleInstallSource::CuratedCatalog {
+                catalog_id: request.catalog_id,
+            },
+        )
+        .map_err(|error| {
+            (
+                error.to_string(),
+                "Accept the exact license if requested, verify workspace permissions, then retry."
+                    .to_owned(),
+            )
+        })?;
+    let _ = tokio::fs::remove_file(download).await;
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::CheckingOnnxContract,
+        "Inspecting real ONNX graph inputs, outputs, dtypes, shapes, and graph connections",
+        None,
+        None,
+    )
+    .await;
+    let instances = bind_compatible_installed_plugins(state, &installed).map_err(|error| {
+        (
+            api_error_message(error),
+            "Install the immutable compatible Plugin runtime and retry from the installed Bundle."
+                .to_owned(),
+        )
+    })?;
+    let selected = instances
+        .into_iter()
+        .filter(|instance| {
+            instance.plugin_id.as_str() == request.plugin_id
+                && instance.plugin_version.to_string() == request.plugin_version
+        })
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err((
+            "The Bundle is valid, but no Model Instance matched the selected Plugin version and Contract".to_owned(),
+            "Install the compatible immutable Plugin package shown by the Catalog, then retry the Smoke Test.".to_owned(),
+        ));
+    }
+    {
+        let mut operations = state.model_install_operations.write().await;
+        if let Some(operation) = operations.get_mut(&operation_id) {
+            operation.model_instance_ids = selected
+                .iter()
+                .map(|instance| instance.id.to_string())
+                .collect();
+            operation.updated_at = Utc::now();
+        }
+    }
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::StartingRustPlugin,
+        "Starting the exact installed Rust Plugin package in its constrained process",
+        None,
+        None,
+    )
+    .await;
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::LoadingModel,
+        "Loading the verified encoder and decoder into the Rust ONNX Runtime",
+        None,
+        None,
+    )
+    .await;
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::RunningSampleInference,
+        "Running the Bundle's real image and bbox prompt through encoder, decoder, and mask validation",
+        None,
+        None,
+    )
+    .await;
+    let mut tested = Vec::new();
+    for instance in selected {
+        tested.push(
+            execute_model_instance_test(state, instance.id)
+                .await
+                .map_err(|error| {
+                    (
+                        api_error_message(error),
+                        "Open Model Setup to inspect the failed Smoke Test check, then retry. The verified Bundle remains installed.".to_owned(),
+                    )
+                })?,
+        );
+    }
+    if tested
+        .iter()
+        .any(|instance| instance.status != annotagent_model_bundle::ModelInstanceStatus::Ready)
+    {
+        let failure = tested
+            .iter()
+            .flat_map(|instance| {
+                instance
+                    .smoke_test_result
+                    .iter()
+                    .flat_map(|result| result.checks.iter())
+            })
+            .filter(|check| !check.passed)
+            .map(|check| check.detail.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Err((
+            if failure.is_empty() {
+                "The real sample inference did not produce a Ready Model Instance".to_owned()
+            } else {
+                failure
+            },
+            "Inspect the failed Smoke Test evidence and retry after correcting the Plugin, Bundle, or platform issue.".to_owned(),
+        ));
+    }
+    update_model_install_operation(
+        state,
+        operation_id,
+        ModelInstallStage::RegisteringModelProfile,
+        "Persisting the immutable Model Instance and selectable Model Profile revision",
+        None,
+        None,
+    )
+    .await;
+    if let Some(operation) = state
+        .model_install_operations
+        .write()
+        .await
+        .get_mut(&operation_id)
+    {
+        operation.status = ModelInstallOperationStatus::Succeeded;
+        operation.stage = ModelInstallStage::Ready;
+        operation.detail =
+            "Real sample inference passed; the Model Profile is Ready for Workflow Drafts"
+                .to_owned();
+        operation.error = None;
+        operation.suggested_action = None;
+        operation.updated_at = Utc::now();
+    }
+    Ok(())
 }
 
 async fn install_model_bundle(
@@ -8588,6 +9183,89 @@ mod tests {
                 .get("installation_root")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn model_install_operation_exposes_recoverable_stage_and_actionable_failure() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let catalog = application
+            .model_bundle_registry()
+            .lock()
+            .expect("registry")
+            .catalogs()[0]
+            .clone();
+        let entry = catalog.entries[0].clone();
+        let state = test_state(application, Arc::new(InMemorySecretStore::default())).await;
+        let service = router(state, None);
+        let package = sam_plugin_package(&temp);
+        let (status, installed) = call_bytes(
+            &service,
+            axum::http::Method::POST,
+            "/api/plugins/packages/install?filename=sam.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
+            package,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
+
+        let request = json!({
+            "catalog_id": catalog.catalog_id,
+            "bundle_id": entry.bundle_id,
+            "bundle_version": entry.bundle_version,
+            "plugin_id": "org.annotagent.sam-onnx",
+            "plugin_version": "1.1.0"
+        });
+        let (status, started) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/model-installations",
+            request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{started:#?}");
+        assert_eq!(started["status"], json!("running"));
+        assert_eq!(started["stage"], json!("resolving_model"));
+        let operation_id = started["id"].as_str().expect("operation id");
+
+        let mut terminal = Value::Null;
+        for _ in 0..100 {
+            let (status, current) = call_json(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/model-installations/{operation_id}"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{current:#?}");
+            if current["status"] != json!("running") {
+                terminal = current;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(terminal["status"], json!("failed"), "{terminal:#?}");
+        assert!(
+            terminal["error"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(
+            terminal["suggested_action"]
+                .as_str()
+                .is_some_and(|value| value.contains("retry")),
+            "{terminal:#?}"
+        );
+
+        let (status, recovered) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/model-installations",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{recovered:#?}");
+        assert_eq!(recovered["operations"][0]["id"], json!(operation_id));
+        assert_eq!(recovered["operations"][0]["status"], json!("failed"));
     }
 
     #[test]
