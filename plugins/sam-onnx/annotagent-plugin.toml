@@ -45,6 +45,7 @@ input_contracts = [
   { name = "point_prompts", data_type = { artifact = "point_prompt_set" }, required = false, multiple = false },
 ]
 output_contracts = [{ name = "masks", data_type = { artifact = "mask_set" }, required = true, multiple = false }]
+required_file_roles = ["image_encoder", "mask_decoder"]
 score_semantics = "relative_confidence"
 geometry_semantics = "refined_geometry"
 

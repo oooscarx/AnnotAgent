@@ -854,6 +854,7 @@ mod tests {
                     true,
                     false,
                 )],
+                required_file_roles: std::collections::BTreeSet::new(),
                 score_semantics: ScoreSemantics::DetectionConfidence,
                 geometry_semantics: GeometrySemantics::PredictedGeometry,
                 runtime_requirements: RuntimeRequirements {

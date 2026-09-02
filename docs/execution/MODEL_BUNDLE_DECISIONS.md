@@ -77,3 +77,16 @@ SSRF paths.
 M3 installation proves archive, identity, license and storage integrity and therefore produces only
 `ModelBundleStatus::Installed`. It does not create an Available Model Profile; compatibility,
 runtime contract inspection and smoke evidence are M4/M5 gates.
+
+## D014 — A Model Instance profile is setup-only before smoke evidence
+
+Compatibility and actual ONNX descriptor inspection create a deterministic Model Instance and a
+stable Model Profile identity, but its status is `Preparing`, availability is `Unknown` and it is
+not selectable. M5 is the only transition to `Ready`/`Available`; neither archive installation nor
+matching filenames can bypass that gate.
+
+## D015 — Inspect ONNX through the existing Rust runtime
+
+Contract verification opens each declared role with `annotagent-model-runtime-onnx` and compares
+the returned tensor descriptors. No Python exporter, filename convention or parallel ONNX parser is
+used in the user installation path.

@@ -42,6 +42,7 @@ display_name = "RF-DETR Detection ONNX v1"
 capabilities = ["object_detection"]
 input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
 output_contracts = [{ name = "detections", data_type = { artifact = "detection_set" }, required = true, multiple = false }]
+required_file_roles = ["model"]
 score_semantics = "detection_confidence"
 geometry_semantics = "predicted_geometry"
 

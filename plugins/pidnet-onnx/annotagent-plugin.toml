@@ -41,6 +41,7 @@ display_name = "PIDNet Semantic ONNX"
 capabilities = ["semantic_segmentation"]
 input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
 output_contracts = [{ name = "semantic_mask", data_type = { artifact = "semantic_mask" }, required = true, multiple = false }]
+required_file_roles = ["model"]
 score_semantics = "not_provided"
 geometry_semantics = "predicted_geometry"
 

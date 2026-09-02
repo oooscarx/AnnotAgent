@@ -24,7 +24,7 @@ Last updated: 2026-09-03 CST
       built-in Fixture entry is added in M7.
 - [x] Safe download and atomic content-addressed installation are implemented; external HTTPS live
       transfer remains live-conditional while URL, cancellation and local install paths are tested.
-- [ ] Plugin required roles, versions, capabilities, contracts, platform and provider are resolved.
+- [x] Plugin required roles, versions, capabilities, contracts, platform and provider are resolved.
 - [ ] Only a smoke-tested Ready Model Instance produces an available Model Profile.
 - [ ] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
 - [ ] Referenced bundles are protected and unreferenced content can be garbage-collected.
@@ -79,3 +79,24 @@ Last updated: 2026-09-03 CST
 - [x] Duplicate content is idempotent; conflicting bytes cannot replace an immutable ID/version.
 - [x] API omits absolute content paths and exposes separate installed versus available resources.
 - [x] Migration 14 creates the complete relational audit schema in one transaction.
+
+## M4 evidence
+
+- [x] Every official weighted Plugin model declares generic required file roles; SAM's two roles are
+      manifest data rather than Core variants.
+- [x] `PluginRuntimeStatus` maps an installed executable separately from legacy weight readiness.
+- [x] Resolver outcomes distinguish missing/unavailable Plugin, version, file role, Contract,
+      format/opset, platform, execution provider and exact license acceptance failures.
+- [x] Compatibility validates the Bundle requirement against the installed Plugin model and hashes
+      the complete Plugin model contract rather than trusting filenames.
+- [x] Versioned JSON Model Contracts support aliases, dtype, static/dynamic dimensions and
+      cross-role tensor connections.
+- [x] A generated but real ONNX Identity graph is opened by the Rust ONNX Runtime; its actual input
+      and output metadata passes the correct Contract and rejects an incorrect tensor name.
+- [x] Binding persists deterministic Plugin, Bundle, role digest, execution-provider, Contract,
+      Model Instance and Model Profile identities.
+- [x] Contract-valid instances stop at `Preparing`; the derived Model Profile is unavailable and
+      non-selectable until the M5 smoke-test gate marks the instance Ready.
+- [x] Model Instance and compatible-Bundle APIs expose exact identities and structured evidence but
+      omit local content paths.
+- [x] Focused strict Clippy passes for Bundle, Catalog, Plugin API/Registry and Server.

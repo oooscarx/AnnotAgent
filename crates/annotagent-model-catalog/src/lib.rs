@@ -1,5 +1,6 @@
 //! Trusted curated catalog metadata and content-addressed model provisioning.
 
+mod compatibility;
 mod download;
 mod registry;
 
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
 
+pub use compatibility::*;
 pub use download::*;
 pub use registry::*;
 

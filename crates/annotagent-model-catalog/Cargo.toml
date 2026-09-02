@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 annotagent-core = { path = "../annotagent-core" }
 annotagent-model-bundle = { path = "../annotagent-model-bundle" }
+annotagent-model-runtime-onnx = { path = "../annotagent-model-runtime-onnx" }
 annotagent-plugin-api = { path = "../annotagent-plugin-api" }
 chrono.workspace = true
 futures.workspace = true
@@ -25,6 +26,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+prost = "0.14"
 
 [lints]
 workspace = true

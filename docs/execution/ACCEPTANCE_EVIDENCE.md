@@ -1614,3 +1614,20 @@ Product Mock removal status: `PASS`.
 
 Pipeline Builder Progress-Safety offline release status: `PASS`. No push or remote mutation was
 performed.
+
+## Model Bundle Provisioning M4 — 2026-09-03
+
+1. Weighted Plugin model manifests declare generic roles; SAM requires `image_encoder` and
+   `mask_decoder`, while single-file ONNX plugins require `model`. Core has no SAM-specific role.
+2. `ModelBundleCompatibilityResolver` returns typed failures for Plugin availability/version,
+   role, Contract, format, platform, execution provider and license acceptance.
+3. A generated ONNX Identity graph is loaded by the existing Rust ORT wrapper. Its real descriptor
+   passes an exact Contract and rejects a wrong input tensor name.
+4. Compatible bindings persist exact Plugin package, Bundle, per-file, Contract, provider,
+   Model Instance and stable Model Profile identities. They remain `Preparing` and non-selectable;
+   only M5 smoke evidence may transition them to Ready.
+5. `cargo test -p annotagent-plugin-registry -p annotagent-plugin-sam-onnx -p
+   annotagent-plugin-yolo-onnx`, `cargo test -p annotagent-model-catalog`,
+   `cargo check -p annotagent-server`, Rustfmt and strict focused Clippy pass.
+
+No model weights, credential, Python process, push or remote mutation was used.

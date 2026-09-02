@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::Url;
+use uuid::Uuid;
 
 mod package;
 
@@ -65,6 +66,34 @@ impl ModelBundleId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ModelInstanceId(Uuid);
+
+impl ModelInstanceId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    #[must_use]
+    pub fn from_identity(identity: &str) -> Self {
+        Self(Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes()))
+    }
+}
+
+impl Default for ModelInstanceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for ModelInstanceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
     }
 }
 
@@ -258,6 +287,107 @@ pub struct ModelContractReference {
     pub path: String,
     pub sha256: Sha256Digest,
     pub file_roles: BTreeSet<ModelFileRole>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTensorContract {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: BTreeSet<String>,
+    pub dtype: String,
+    /// A negative value represents a dynamic dimension.
+    pub shape: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFileTensorContract {
+    pub inputs: Vec<ModelTensorContract>,
+    pub outputs: Vec<ModelTensorContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTensorConnection {
+    pub source_role: ModelFileRole,
+    pub source_output: String,
+    pub target_role: ModelFileRole,
+    pub target_input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelContractDocument {
+    pub contract_version: String,
+    pub roles: std::collections::BTreeMap<ModelFileRole, ModelFileTensorContract>,
+    #[serde(default)]
+    pub connections: Vec<ModelTensorConnection>,
+}
+
+impl ModelContractDocument {
+    pub fn from_json(bytes: &[u8]) -> Result<Self, ModelBundleError> {
+        let contract = serde_json::from_slice::<Self>(bytes)
+            .map_err(|error| ModelBundleError::Serialization(error.to_string()))?;
+        contract.validate()?;
+        Ok(contract)
+    }
+
+    pub fn validate(&self) -> Result<(), ModelBundleError> {
+        if self.contract_version != "1" || self.roles.is_empty() {
+            return invalid("contract must use version 1 and declare roles".to_owned());
+        }
+        for (role, contract) in &self.roles {
+            validate_tensors(role, "input", &contract.inputs)?;
+            validate_tensors(role, "output", &contract.outputs)?;
+        }
+        for connection in &self.connections {
+            let source = self.roles.get(&connection.source_role).ok_or_else(|| {
+                ModelBundleError::InvalidManifest("connection source role is missing".to_owned())
+            })?;
+            let target = self.roles.get(&connection.target_role).ok_or_else(|| {
+                ModelBundleError::InvalidManifest("connection target role is missing".to_owned())
+            })?;
+            if !source
+                .outputs
+                .iter()
+                .any(|tensor| tensor.name == connection.source_output)
+                || !target
+                    .inputs
+                    .iter()
+                    .any(|tensor| tensor.name == connection.target_input)
+            {
+                return invalid("connection references an unknown tensor".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_tensors(
+    role: &ModelFileRole,
+    kind: &str,
+    tensors: &[ModelTensorContract],
+) -> Result<(), ModelBundleError> {
+    if tensors.is_empty() {
+        return invalid(format!("role {role} must declare {kind} tensors"));
+    }
+    let mut names = BTreeSet::new();
+    for tensor in tensors {
+        validate_text("tensor name", &tensor.name, 160)?;
+        validate_text("tensor dtype", &tensor.dtype, 40)?;
+        if tensor.shape.is_empty() || tensor.shape.contains(&0) || !names.insert(&tensor.name) {
+            return invalid(format!(
+                "role {role} has an invalid or duplicate {kind} tensor"
+            ));
+        }
+        if tensor.aliases.contains(&tensor.name) {
+            return invalid(format!(
+                "role {role} repeats a canonical tensor name as an alias"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

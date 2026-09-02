@@ -902,3 +902,18 @@ Product Mock removal status: `PASS`.
   desktop/mobile Chromium accessibility journey pass. M9 release migration remains in progress.
 
 Rust Expert Model Plugin M8 status: `PASS`.
+
+## Model Bundle Provisioning M4 — compatibility and Model Instances — 2026-09-03
+
+- Official weighted Plugin manifests now declare model-neutral file roles. Plugin Runtime,
+  installed Bundle and Model Instance readiness are independent states.
+- The compatibility resolver checks Plugin/model version, target, execution provider, ONNX
+  format/opset, capabilities, file roles, exact Plugin contract hash and license acceptance.
+- Versioned Contract documents and the existing Rust ONNX Runtime validate real tensor names,
+  aliases, dtypes, dimensions and multi-file connections before binding.
+- A deterministic Model Instance and Model Profile identity are persisted after compatibility and
+  Contract validation, but remain `Preparing` and non-selectable until a real M5 smoke test passes.
+- Focused Catalog/Plugin/Server tests and strict focused Clippy pass. No Python, external weights,
+  credential, download, push or remote mutation was used.
+
+Model Bundle Provisioning M4 status: `PASS`.

@@ -299,6 +299,9 @@ pub struct PluginModelManifest {
     pub capabilities: Vec<ModelCapability>,
     pub input_contracts: Vec<ArtifactContract>,
     pub output_contracts: Vec<ArtifactContract>,
+    /// Model-neutral roles required from a compatible `.annotmodel` Bundle.
+    #[serde(default)]
+    pub required_file_roles: std::collections::BTreeSet<String>,
     pub score_semantics: ScoreSemantics,
     pub geometry_semantics: GeometrySemantics,
     #[serde(default)]
@@ -326,6 +329,19 @@ impl PluginModelManifest {
             if !capabilities.insert(*capability) {
                 return Err(PluginApiError::InvalidContract(format!(
                     "model {} declares duplicate capabilities",
+                    self.id
+                )));
+            }
+        }
+        for role in &self.required_file_roles {
+            let valid = !role.is_empty()
+                && role.len() <= 80
+                && role.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte)
+                });
+            if !valid {
+                return Err(PluginApiError::InvalidContract(format!(
+                    "model {} declares invalid model file role {role}",
                     self.id
                 )));
             }
@@ -469,6 +485,36 @@ impl PluginManifest {
             return Err(PluginApiError::InvalidManifest(
                 "every weighted model requires at least one declared component".to_owned(),
             ));
+        }
+        if self.weights.required
+            && self
+                .models
+                .iter()
+                .any(|model| model.required_file_roles.is_empty())
+        {
+            return Err(PluginApiError::InvalidManifest(
+                "every weighted model must declare required_file_roles".to_owned(),
+            ));
+        }
+        for model in &self.models {
+            let components = self
+                .weights
+                .components
+                .iter()
+                .filter(|component| component.model_id == model.id)
+                .map(|component| component.id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let roles = model
+                .required_file_roles
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>();
+            if !components.is_empty() && roles != components {
+                return Err(PluginApiError::InvalidManifest(format!(
+                    "model {} file roles must match its declared weight components",
+                    model.id
+                )));
+            }
         }
         for recipe in &self.weight_recipes {
             validate_identity("weight recipe id", &recipe.id, 160)?;
@@ -814,6 +860,7 @@ mod tests {
                     true,
                     false,
                 )],
+                required_file_roles: std::collections::BTreeSet::new(),
                 score_semantics: ScoreSemantics::DetectionConfidence,
                 geometry_semantics: GeometrySemantics::PredictedGeometry,
                 runtime_requirements: RuntimeRequirements::default(),

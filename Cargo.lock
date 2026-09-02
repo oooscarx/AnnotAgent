@@ -215,9 +215,11 @@ version = "0.1.0"
 dependencies = [
  "annotagent-core",
  "annotagent-model-bundle",
+ "annotagent-model-runtime-onnx",
  "annotagent-plugin-api",
  "chrono",
  "futures",
+ "prost",
  "reqwest",
  "semver",
  "serde",

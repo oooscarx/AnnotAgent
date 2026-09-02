@@ -16,7 +16,8 @@ use annotagent_core::{
 };
 use annotagent_plugin_api::{
     CommercialUseDeclaration, PluginId, PluginImplementationStatus, PluginManifest,
-    PluginModelReference, PluginStatus, PluginTestReport, PluginVersion, Sha256Digest,
+    PluginModelReference, PluginRuntimeStatus, PluginStatus, PluginTestReport, PluginVersion,
+    Sha256Digest,
 };
 use annotagent_plugin_host::{
     HostedPlugin, PackageSignatureState, PluginHostError, PluginPackageError, PluginProcessConfig,
@@ -192,6 +193,31 @@ impl PluginInstallation {
                     })
                 }
             })
+    }
+
+    /// Returns executable-runtime health only. Missing model assets deliberately do not make an
+    /// installed Rust package disappear or overload this status with Bundle readiness.
+    #[must_use]
+    pub const fn runtime_status(&self) -> PluginRuntimeStatus {
+        match self.status {
+            PluginStatus::Discovered | PluginStatus::Installing => {
+                PluginRuntimeStatus::NotInstalled
+            }
+            PluginStatus::Disabled => PluginRuntimeStatus::Disabled,
+            PluginStatus::Starting => PluginRuntimeStatus::Starting,
+            PluginStatus::Ready => PluginRuntimeStatus::Ready,
+            PluginStatus::Unhealthy | PluginStatus::FailedSmokeTest => {
+                PluginRuntimeStatus::Unhealthy
+            }
+            PluginStatus::Crashed => PluginRuntimeStatus::Crashed,
+            PluginStatus::IncompatibleApi
+            | PluginStatus::InvalidManifest
+            | PluginStatus::InvalidContract
+            | PluginStatus::UnsupportedPlatform => PluginRuntimeStatus::Incompatible,
+            PluginStatus::Installed
+            | PluginStatus::NeedsWeights
+            | PluginStatus::UpdateAvailable => PluginRuntimeStatus::Installed,
+        }
     }
 }
 
@@ -1209,6 +1235,11 @@ mod tests {
             },
             checkpoint_sha256_required: weights_required,
             components: Vec::new(),
+        };
+        manifest.models[0].required_file_roles = if weights_required {
+            std::collections::BTreeSet::from(["model".to_owned()])
+        } else {
+            std::collections::BTreeSet::new()
         };
         manifest.license.commercial_use = CommercialUseDeclaration::Allowed;
         std::fs::write(

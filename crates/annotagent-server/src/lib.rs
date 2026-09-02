@@ -563,6 +563,15 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/model-bundles/{bundle_id}/{version}/license-acceptance",
             post(accept_model_bundle_license),
         )
+        .route("/api/model-instances", get(list_model_instances))
+        .route(
+            "/api/model-instances/{instance_id}",
+            get(get_model_instance),
+        )
+        .route(
+            "/api/plugins/{plugin_id}/{version}/compatible-model-bundles",
+            get(list_plugin_compatible_model_bundles),
+        )
         .route(
             "/api/plugins/packages/inspect",
             post(inspect_expert_model_plugin_package),
@@ -6499,6 +6508,171 @@ fn installed_model_bundle_view(
     })
 }
 
+fn installed_model_instance_view(
+    instance: &annotagent_model_catalog::InstalledModelInstance,
+) -> Value {
+    json!({
+        "id": instance.id,
+        "plugin_id": instance.plugin_id,
+        "plugin_version": instance.plugin_version,
+        "plugin_package_sha256": instance.plugin_package_digest,
+        "model_id": instance.model_id,
+        "model_bundle_id": instance.model_bundle_id,
+        "model_bundle_version": instance.model_bundle_version,
+        "model_bundle_sha256": instance.model_bundle_digest,
+        "model_variant": instance.model_variant,
+        "model_file_digests": instance.model_file_digests,
+        "execution_provider": instance.execution_provider,
+        "capability_contract_sha256": instance.capability_contract_hash,
+        "status": instance.status,
+        "contract_inspection": instance.contract_inspection,
+        "smoke_test_id": instance.smoke_test_id,
+        "smoke_test_result": instance.smoke_test_result,
+        "model_profile_id": instance.model_profile_id,
+        "model_profile_revision": instance.model_profile_revision,
+        "created_at": instance.created_at,
+        "updated_at": instance.updated_at,
+    })
+}
+
+fn bind_compatible_installed_plugins(
+    state: &ServerState,
+    installed: &annotagent_model_catalog::InstalledModelBundle,
+) -> ApiResult<Vec<annotagent_model_catalog::InstalledModelInstance>> {
+    let plugins = state.application.plugin_registry();
+    let plugins = plugins
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .list();
+    let mut instances = Vec::new();
+    let registry = state.application.model_bundle_registry();
+    let mut registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    for requirement in &installed.manifest.compatible_plugins {
+        for plugin in plugins.iter().filter(|plugin| {
+            requirement.accepts(
+                &plugin.manifest.id,
+                &plugin.manifest.version,
+                &requirement.model_id,
+            )
+        }) {
+            let execution_provider = installed
+                .manifest
+                .runtime
+                .execution_providers
+                .iter()
+                .find(|provider| {
+                    plugin
+                        .manifest
+                        .models
+                        .iter()
+                        .find(|model| model.id == requirement.model_id)
+                        .is_some_and(|model| model.runtime_requirements.devices.contains(provider))
+                })
+                .cloned()
+                .unwrap_or_else(|| "cpu".to_owned());
+            if let Ok(instance) =
+                registry.bind_model_instance(annotagent_model_catalog::BindModelInstanceRequest {
+                    plugin: &plugin.manifest,
+                    plugin_package_digest: plugin.package_digest.clone(),
+                    runtime_status: plugin.runtime_status(),
+                    bundle_id: &installed.manifest.id,
+                    bundle_version: &installed.manifest.version,
+                    model_id: &requirement.model_id,
+                    target: &annotagent_plugin_host::current_target(),
+                    execution_provider: &execution_provider,
+                })
+            {
+                instances.push(instance);
+            }
+        }
+    }
+    Ok(instances)
+}
+
+async fn list_model_instances(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    Ok(Json(json!({
+        "instances": registry.model_instances().iter().map(installed_model_instance_view).collect::<Vec<_>>(),
+        "model_profiles": registry.model_profiles(),
+    })))
+}
+
+async fn get_model_instance(
+    State(state): State<ServerState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let instance = registry
+        .model_instances()
+        .into_iter()
+        .find(|instance| instance.id.to_string() == instance_id)
+        .ok_or_else(|| ApiError::not_found("Model Instance was not found"))?;
+    Ok(Json(installed_model_instance_view(&instance)))
+}
+
+async fn list_plugin_compatible_model_bundles(
+    State(state): State<ServerState>,
+    AxumPath((plugin_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let plugin_id = PluginId::parse(plugin_id).map_err(ApiError::bad_request)?;
+    let version = PluginVersion::parse(&version).map_err(ApiError::bad_request)?;
+    let plugins = state.application.plugin_registry();
+    let plugin = plugins
+        .lock()
+        .map_err(|_| ApiError::internal("Rust plugin Registry lock is poisoned"))?
+        .get(&plugin_id, &version)
+        .map_err(ApiError::not_found)?
+        .clone();
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let available = registry
+        .available()
+        .into_iter()
+        .filter(|entry| {
+            entry.compatible_plugins.iter().any(|requirement| {
+                requirement.accepts(
+                    &plugin.manifest.id,
+                    &plugin.manifest.version,
+                    &requirement.model_id,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let installed = registry
+        .list()
+        .into_iter()
+        .filter(|bundle| {
+            bundle
+                .manifest
+                .compatible_plugins
+                .iter()
+                .any(|requirement| {
+                    requirement.accepts(
+                        &plugin.manifest.id,
+                        &plugin.manifest.version,
+                        &requirement.model_id,
+                    )
+                })
+        })
+        .map(|bundle| installed_model_bundle_view(&bundle))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "plugin_runtime_status": plugin.runtime_status(),
+        "available": available,
+        "installed": installed,
+    })))
+}
+
 async fn list_model_catalogs(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
     let registry = state.application.model_bundle_registry();
     let registry = registry
@@ -6648,9 +6822,13 @@ async fn import_model_bundle(
             .map_err(ApiError::bad_request)?
     };
     let _ = tokio::fs::remove_file(upload).await;
+    let instances = bind_compatible_installed_plugins(&state, &installed)?;
     Ok((
         StatusCode::CREATED,
-        Json(installed_model_bundle_view(&installed)),
+        Json(json!({
+            "bundle": installed_model_bundle_view(&installed),
+            "model_instances": instances.iter().map(installed_model_instance_view).collect::<Vec<_>>(),
+        })),
     ))
 }
 
@@ -6747,9 +6925,13 @@ async fn install_model_bundle(
         )
         .map_err(ApiError::bad_request)?;
     let _ = tokio::fs::remove_file(download).await;
+    let instances = bind_compatible_installed_plugins(&state, &installed)?;
     Ok((
         StatusCode::CREATED,
-        Json(installed_model_bundle_view(&installed)),
+        Json(json!({
+            "bundle": installed_model_bundle_view(&installed),
+            "model_instances": instances.iter().map(installed_model_instance_view).collect::<Vec<_>>(),
+        })),
     ))
 }
 
