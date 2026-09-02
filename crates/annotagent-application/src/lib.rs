@@ -16,6 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use annotagent_core::LicensePermission;
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
     AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationFailureClass,
@@ -28,26 +30,25 @@ use annotagent_core::{
     FullRunEstimate, GenerationDefaults, GeometryCalibrationKey, GeometryCalibrationReport,
     GeometryCalibrationStaleness, GeometryCalibrationStatus, GeometryCorrectionReason, ImageId,
     ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
-    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, LicensePermission,
-    ModelAvailability, ModelAvailabilityEvidence, ModelAvailabilityStatus,
-    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
-    ModelBindingSource, ModelCapability, ModelConnection, ModelInputContract, ModelLimits,
-    ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
-    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
-    NodeSideEffect, NormalizedRect, ObjectSizeBucket, PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
-    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
-    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
-    PipelineDraftTools, PipelineGeometryMetrics, PipelineGeometrySizeMetrics,
-    PipelineGrammarValidator, PipelineImprovementDiagnosis, PipelineImprovementId,
-    PipelineImprovementPolicy, PipelineImprovementSession, PipelineImprovementStatus,
-    PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality, PortDefinition,
-    PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId, ProjectModelBinding,
-    ProjectSchema, ProjectSnapshot, PromptContract, PromptKind, ProtocolFeatures,
-    ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus,
-    ProviderId, ProviderProfile, PublishedWorkflowVersion, RegistryWorkflowAdvisor,
-    ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind,
-    RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, ModelAvailability,
+    ModelAvailabilityEvidence, ModelAvailabilityStatus, ModelBinding as PipelineModelBinding,
+    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability,
+    ModelConnection, ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract,
+    ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot, ModelProfileStatus,
+    ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory,
+    NodeDefinition, NodePort, NodeRegistry, NodeSideEffect, NormalizedRect, ObjectSizeBucket,
+    PIPELINE_IMPROVEMENT_SCHEMA_VERSION, PipelineArtifact, PipelineBuilderConstraints,
+    PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
+    PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGeometryMetrics,
+    PipelineGeometrySizeMetrics, PipelineGrammarValidator, PipelineImprovementDiagnosis,
+    PipelineImprovementId, PipelineImprovementPolicy, PipelineImprovementSession,
+    PipelineImprovementStatus, PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality,
+    PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
+    ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
+    ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedWorkflowVersion,
+    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
     RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
     ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
     TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
@@ -502,6 +503,12 @@ impl DetectionWorkerSettings {
     }
 }
 
+#[cfg(not(test))]
+fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
+    Vec::new()
+}
+
+#[cfg(test)]
 fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
     vec![
         DetectionWorkerSettings {
@@ -587,7 +594,7 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
                 devices: vec!["cuda".to_owned()],
                 minimum_gpu_memory_mb: None,
                 dependencies: vec![
-                    "rfdetr Python package compatible with the configured checkpoint".to_owned(),
+                    "RF-DETR external runtime compatible with the configured checkpoint".to_owned(),
                     "PyTorch CUDA".to_owned(),
                 ],
                 supports_batch: false,
@@ -639,7 +646,7 @@ fn default_detection_workers() -> Vec<DetectionWorkerSettings> {
                 devices: vec!["cuda".to_owned()],
                 minimum_gpu_memory_mb: None,
                 dependencies: vec![
-                    "SAM 2 compatible Python package".to_owned(),
+                    "SAM 2 compatible external runtime".to_owned(),
                     "PyTorch CUDA".to_owned(),
                 ],
                 supports_batch: false,
@@ -6181,7 +6188,7 @@ impl LocalApplication {
                     .issue_codes
                     .contains(&annotagent_core::GeometryIssueCode::InsufficientEvidence)
                 || !matches!(
-                    evidence.reason,
+                    &evidence.reason,
                     GeometryCorrectionReason::TooLoose
                         | GeometryCorrectionReason::TooTight
                         | GeometryCorrectionReason::Shifted
@@ -6430,8 +6437,10 @@ impl LocalApplication {
                     {
                         continue;
                     }
-                    *correction_reason_counts.entry(evidence.reason).or_default() += 1;
-                    let class = match evidence.reason {
+                    *correction_reason_counts
+                        .entry(evidence.reason.clone())
+                        .or_default() += 1;
+                    let class = match &evidence.reason {
                         GeometryCorrectionReason::TooLoose
                         | GeometryCorrectionReason::TooTight
                         | GeometryCorrectionReason::Shifted
@@ -6444,10 +6453,7 @@ impl LocalApplication {
                         GeometryCorrectionReason::MissedObject => {
                             AnnotationFailureClass::NoCandidate
                         }
-                        GeometryCorrectionReason::WhiteShoe
-                        | GeometryCorrectionReason::WhiteSock
-                        | GeometryCorrectionReason::PenaltyMark
-                        | GeometryCorrectionReason::FieldLineIntersection => {
+                        GeometryCorrectionReason::DomainRisk(_) => {
                             AnnotationFailureClass::DomainRisk
                         }
                         GeometryCorrectionReason::WrongObject
@@ -11025,22 +11031,12 @@ impl LocalApplication {
                             }
                             summary.add_correction(&report, &evidence);
                         }
-                        let wrong_object_count = [
-                            GeometryCorrectionReason::WrongObject,
-                            GeometryCorrectionReason::WhiteShoe,
-                            GeometryCorrectionReason::WhiteSock,
-                            GeometryCorrectionReason::PenaltyMark,
-                            GeometryCorrectionReason::FieldLineIntersection,
-                        ]
-                        .iter()
-                        .map(|reason| {
-                            summary
-                                .correction_reasons
-                                .get(reason)
-                                .copied()
-                                .unwrap_or_default()
-                        })
-                        .sum::<u32>();
+                        let wrong_object_count = summary
+                            .correction_reasons
+                            .iter()
+                            .filter(|(reason, _)| matches!(reason, GeometryCorrectionReason::WrongObject | GeometryCorrectionReason::DomainRisk(_)))
+                            .map(|(_, count)| *count)
+                            .sum::<u32>();
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Inspected bounded structured geometry correction summary",
                             json!({

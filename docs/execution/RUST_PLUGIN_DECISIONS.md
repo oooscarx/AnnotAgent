@@ -82,3 +82,16 @@ The official 2026 release uses a custom MoonViT/Qwen/PBD Python inference stack 
 complete ONNX, Candle, Burn or stable Rust runtime. A third-party C++ port is not silently adopted.
 The production package fails closed; a separately named Rust fixture proves only protocol transport
 and is excluded from the `.annotplugin` package and readiness evidence.
+
+## D014 — External endpoint support is compatibility-only
+
+New workspaces contain no default HTTP Vision endpoint models. Existing serialized bindings remain
+readable and executable as external legacy profiles, but are never relabelled as installed plugins.
+Migration creates a new Draft and requires a Ready Rust plugin plus selected-image Dry Run; immutable
+history is not rewritten.
+
+## D015 — Domain correction reasons are extensible data
+
+Core stores generic geometry reasons plus an exact `DomainRisk(code)` string instead of enumerating
+one Skill's hard negatives. This preserves old serialized codes while leaving their interpretation
+in the Application/Skill layer and keeping Core domain-neutral.

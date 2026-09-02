@@ -81,3 +81,9 @@ quality reports, correction evidence, typed conversion lineage and improvement c
 branch names YOLO, SAM, RoboCup or a concrete Label to decide whether geometry is accepted. Domain
 Skills may add validators and Review reasons; they cannot reinterpret semantic confidence as IoU or
 bypass the Project policy.
+## Expert model plugins
+
+Plugins provide model capabilities; Skills provide task knowledge; Workflows compose both. Core and
+generic Skills never dispatch on YOLO, SAM, PIDNet, RF-DETR, LocateAnything or RoboCup names. A
+Skill requests a capability and typed input/output contract, while publication freezes the exact
+Ready plugin model. See [Rust Model Plugins](RUST_MODEL_PLUGINS.md).

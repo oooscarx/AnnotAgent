@@ -66,17 +66,19 @@ A Workflow is a typed graph of model, tool, validator/refiner, review, and outpu
 ## 4. Model
 
 Model bindings connect Workflow nodes to reusable Provider and Model Profiles. Settings offers
-Provider presets, capability-aware Model Profiles and separate optional local Vision Workers.
+Provider presets, capability-aware Model Profiles and installable Rust Expert Model Plugins.
 The default GUI credential path is an owner-only file under the Git-ignored workspace so a saved
 Provider survives restarts without using the OS Keychain. Environment-variable, session-only and
 native system credential references remain available. Worker health and capabilities are
 discovered live, and an unavailable Provider or Worker never blocks AnnotAgent startup.
 
-Expert Vision Workers are added through **Settings → Vision Workers**. Registration verifies
-health, protocol, typed contracts, immutable model/checkpoint identity and one selected-image
-Artifact conversion. SAM and other refiners are composed through Capabilities and typed Artifact
-conversions rather than model-branded Core nodes. See [Expert Model Onboarding](docs/EXPERT_MODEL_ONBOARDING.md)
-and [SAM Pipeline](docs/SAM_PIPELINE.md).
+Native expert models are installed through **Settings → Expert Model Plugins** as deterministic
+`.annotplugin` packages. AnnotAgent reviews permissions and licenses, verifies checksums, provisions
+checkpoint files, starts an isolated Rust process and requires protocol/contract/conformance evidence
+before a model becomes Ready. Existing manually configured HTTP Vision v1 endpoints remain under
+**Legacy HTTP** for historical compatibility, but new Workflows should use native plugins. See
+[Rust Model Plugins](docs/RUST_MODEL_PLUGINS.md), [Writing a Rust Plugin](docs/WRITING_A_RUST_MODEL_PLUGIN.md)
+and [SAM Rust Plugin](docs/SAM_RUST_PLUGIN.md).
 
 ## 5. Skill
 
@@ -89,13 +91,13 @@ is a Model Backend. Classification covers whole images, Crops, candidate verific
 attributes. Segmentation declares semantic, prompted, and instance-mask contracts and remains
 unavailable until a healthy compatible backend is configured.
 
-Mock, OpenAI-compatible VLM, YOLO, RF-DETR, LocateAnything, and SAM are Model Backends rather than
-top-level Skills. The optional local Workers live in Settings → Vision Workers and remain
-unavailable until live discovery and a selected-image conversion pass. Pre-Lean Skill IDs remain hidden compatibility aliases so
+OpenAI-compatible VLM, YOLO, RF-DETR, LocateAnything, PIDNet and SAM are Model Backends rather than
+top-level Skills. Native backends live in Settings → Expert Model Plugins and remain unavailable
+until exact package, checkpoint, contract and smoke evidence is complete. Pre-Lean Skill IDs remain hidden compatibility aliases so
 stored Projects and immutable versions can still be loaded. See
 [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md),
-[Object Detection](docs/OBJECT_DETECTION.md), [LocateAnything Backend](docs/LOCATE_ANYTHING_BACKEND.md),
-and [RF-DETR Backend](docs/RFDETR_BACKEND.md).
+[Object Detection](docs/OBJECT_DETECTION.md), [LocateAnything Rust Plugin](docs/LOCATE_ANYTHING_RUST_PLUGIN.md),
+and [RF-DETR Rust Plugin](docs/RFDETR_RUST_PLUGIN.md).
 
 Detector outputs can be joined with the generic `core.match_detection_sets` node and routed by
 `core.evidence_gate`. The persisted decision report explains agreement, conflicts, missing scores,
@@ -140,10 +142,10 @@ backend, selects football candidates, applies Domain Validators, and routes thro
 Commit or Human Review. The explicit specialist/fallback template remains a compatibility and
 advanced-deployment option, not a default recommendation.
 
-SAM, RF-DETR, LocateAnything and YOLO remain Model Backends in Labs until their separate Worker,
-weights, health and capabilities are configured. They are not RoboCup Skill actions and are never
-injected into the default Draft. See the [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md)
-for the current course path.
+SAM, RF-DETR, LocateAnything, PIDNet and YOLO remain Model Backends until their separate Rust plugin,
+weights, health and capabilities are Ready. They are not RoboCup Skill actions and are never
+injected into the default Draft. See the [Rust Plugin Alpha demo](docs/DEMO_RUST_PLUGIN_ALPHA.md)
+or the [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md).
 
 Run the ground-truth-backed synthetic evaluation (no key or external weights required):
 

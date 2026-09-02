@@ -1118,14 +1118,11 @@ export:
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
 
-test("Vision Workers exposes truthful missing-weight and discovery-failure states", async ({ page }) => {
+test("legacy HTTP compatibility exposes truthful discovery-failure states", async ({ page }) => {
   await page.goto("/settings/vision-workers");
-  const sam = page.locator("article", { hasText: "sam2.1-hiera-tiny" });
-  await expect(sam).toContainText("Availability · missing weights");
-  await expect(sam).toContainText("Expected contract · prompted_segmentation");
-  await expect(sam.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
+  await expect(page.getByText("No legacy HTTP models configured")).toBeVisible();
 
-  await page.getByRole("button", { name: "Add expert model" }).click();
+  await page.getByRole("button", { name: "Add HTTP compatibility model" }).click();
   const choose = page.getByRole("dialog", { name: "Choose an integration" });
   await choose.getByRole("radio", { name: /Generic HTTP Worker/ }).check();
   await choose.getByRole("button", { name: "Continue" }).click();

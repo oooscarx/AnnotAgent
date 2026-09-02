@@ -1,5 +1,26 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin Alpha M9 — 2026-09-02
+
+1. All former external-worker source, SDK, setup/start scripts and browser fixture moved to
+   `docs/legacy/python-workers/`; production defaults contain no legacy endpoint model and the active
+   browser fixture is a Rust binary.
+2. Static release checks reject scripting-runtime files and launchers in active application,
+   plugin, example, script and E2E paths. The observed Rust fixture process had zero child processes.
+3. Legacy HTTP settings remain readable under an explicitly labelled compatibility route. New
+   migration clones an immutable version, binds an installed Ready plugin, Dry Runs selected images
+   and publishes a new version without rewriting history.
+4. Core no longer contains a brand-specific detector alias or domain-specific correction enum;
+   generic `DomainRisk(code)` preserves serialized reason strings and both boundary scans pass.
+5. `scripts/acceptance.sh` passed Rustfmt, strict workspace/all-target/all-feature Clippy, 385 active
+   Rust tests (five explicit external/billable ignores), all-feature build, 44 Web unit tests,
+   TypeScript, production build and offline demos.
+6. The four required focused plugin/runtime suites passed: Plugin API 4, SDK 2, Host 2 and native
+   ONNX Runtime 3 tests. Full Chromium E2E passed 37/37.
+7. Documentation now covers install/use, writing a Rust plugin, Rust-only security boundary,
+   migration, exact model truth and a five-minute course demo. No key, weight, push or remote change
+   occurred.
+
 ## Rust Expert Model Plugin M8 — 2026-09-02
 
 1. The shared Application-owned Registry now drives Server, runtime, CLI-adjacent and TUI views.

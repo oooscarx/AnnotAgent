@@ -2575,7 +2575,7 @@ impl SqliteStore {
                     evidence
                         .source_model_revision
                         .map(|revision| i64::try_from(revision).unwrap_or(i64::MAX)),
-                    enum_string(evidence.reason)?,
+                    enum_string(evidence.reason.clone())?,
                     serde_json::to_string(evidence)?,
                     evidence.created_at.to_rfc3339(),
                 ],

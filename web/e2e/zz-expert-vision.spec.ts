@@ -117,11 +117,9 @@ test.afterAll(async ({ request }) => {
 
 test("guided SAM registration requires discovery, immutable identity, and a typed Artifact conversion", async ({ page, request }) => {
   await page.goto("/settings/vision-workers");
-  const originalSam = page.locator("article", { hasText: "sam2.1-hiera-tiny" });
-  await expect(originalSam).toContainText("Availability · missing weights");
-  await expect(originalSam.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "Legacy HTTP models" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Add expert model" }).click();
+  await page.getByRole("button", { name: "Add HTTP compatibility model" }).click();
   const dialog = page.getByRole("dialog", { name: "Choose an integration" });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator("label", { hasText: /^Preset/ }).locator("select")).toHaveValue("sam");
@@ -217,7 +215,7 @@ test("generic, YOLO, RF-DETR, and LocateAnything Workers share one discovery and
   }
 });
 
-test("Vision Workers product surface exposes status and score semantics without claiming fixture accuracy", async ({ page }) => {
+test("legacy HTTP compatibility exposes status and score semantics without claiming fixture accuracy", async ({ page }) => {
   await page.goto("/settings/vision-workers");
   const locate = page.locator("article", { hasText: "LocateAnything Contract Fixture" });
   await expect(locate).toContainText("Availability · available");

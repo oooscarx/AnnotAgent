@@ -31,7 +31,7 @@ Technical capability is preserved through progressive disclosure:
 - Advanced Project Details retains schemas, bindings, versions, Skill configuration, records, and usage.
 - Settings owns Provider, Models, and Capabilities.
 
-Expert Vision setup lives in **Settings → Vision Workers**. Guided setup shows endpoint trust,
+Native expert-model setup lives in **Settings → Expert Model Plugins**. Guided setup shows package trust,
 discovery, model identity, selected-image conversion and the final registration checklist. Raw
 contracts remain under expandable details; unavailable presets are setup choices, not executable
 models. Run Results remain outcome-first while Debug/Expert retains the complete Prompt, Mask and
@@ -73,3 +73,10 @@ would be accepted from score alone. **Require human review** creates a safe Draf
 refiner** opens evidence-driven improvement; **Run geometry calibration** opens the exact calibration
 workflow. Expert details retain contract revisions, config hashes, quality reports and Artifact
 lineage.
+## Native expert-model setup
+
+New local expert models are installed under **Settings → Expert Model Plugins**. A model is offered
+to Automation only after exact weights and installed-process conformance make it Ready. **Legacy
+HTTP** remains visible only for existing endpoint bindings. A historical Workflow migration clones
+to a Draft, binds a Ready Rust plugin, Dry Runs selected images and then publishes a new immutable
+version; it never rewrites the original.

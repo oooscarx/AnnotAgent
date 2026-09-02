@@ -149,6 +149,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-e2e-fixture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "annotagent-export"
 version = "0.1.0"
 dependencies = [

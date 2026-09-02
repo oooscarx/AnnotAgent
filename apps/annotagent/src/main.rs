@@ -2,7 +2,6 @@ mod demo;
 mod plugin_cli;
 mod runner;
 mod tui;
-mod worker_scaffold;
 
 use std::{
     path::{Path, PathBuf},
@@ -78,10 +77,6 @@ enum Command {
         #[command(subcommand)]
         command: SkillsCommand,
     },
-    Worker {
-        #[command(subcommand)]
-        command: WorkerCommand,
-    },
     Plugin {
         #[arg(long)]
         data_dir: Option<PathBuf>,
@@ -142,12 +137,10 @@ enum SkillsCommand {
 }
 
 #[derive(Subcommand)]
-enum WorkerCommand {
-    Scaffold(WorkerScaffoldArgs),
-}
-
-#[derive(Subcommand)]
 enum PluginCommand {
+    Dev {
+        directory: PathBuf,
+    },
     Inspect {
         package: PathBuf,
     },
@@ -238,20 +231,6 @@ enum PluginCommand {
     },
 }
 
-#[derive(Debug, Clone, Args)]
-struct WorkerScaffoldArgs {
-    #[arg(long)]
-    name: Option<String>,
-    #[arg(long)]
-    capability: Option<String>,
-    #[arg(long)]
-    preset: Option<String>,
-    #[arg(long, default_value = "python")]
-    language: String,
-    #[arg(long, default_value = "workers")]
-    output: PathBuf,
-}
-
 #[derive(Subcommand)]
 enum HistoryCommand {
     List,
@@ -301,7 +280,6 @@ async fn main() -> Result<()> {
             port,
         } => serve_command(&workspace, port, open).await,
         Command::Skills { command } => skills_command(command),
-        Command::Worker { command } => worker_command(command),
         Command::Plugin { data_dir, command } => plugin_cli::run(command, data_dir).await,
         Command::History { command } => history_command(command),
         Command::Export {
@@ -324,23 +302,6 @@ async fn main() -> Result<()> {
         ),
         Command::Doctor => doctor(),
         Command::Demo { name } => demo::run(&name).await,
-    }
-}
-
-fn worker_command(command: WorkerCommand) -> Result<()> {
-    match command {
-        WorkerCommand::Scaffold(arguments) => {
-            let target = worker_scaffold::scaffold(&worker_scaffold::ScaffoldRequest {
-                output_root: &arguments.output,
-                name: arguments.name.as_deref(),
-                capability: arguments.capability.as_deref(),
-                preset: arguments.preset.as_deref(),
-                language: &arguments.language,
-            })?;
-            println!("created AnnotAgent Vision Worker at {}", target.display());
-            println!("next: install sdk/python[test], then run python -m pytest");
-            Ok(())
-        }
     }
 }
 

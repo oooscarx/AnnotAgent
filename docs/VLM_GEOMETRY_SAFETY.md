@@ -23,3 +23,10 @@ If the Provider failed, no candidate exists, or the object is semantically wrong
 not the primary repair.
 
 See [Geometry Quality Model](GEOMETRY_QUALITY_MODEL.md), [Safe VLM Detection Pipelines](SAFE_VLM_DETECTION_PIPELINES.md), and [Geometry Calibration](GEOMETRY_CALIBRATION.md).
+## Plugin-backed refinement
+
+A Ready PromptedSegmentation plugin may provide MaskSet evidence after coarse VLM geometry, but its
+semantic score is not box-quality proof. The path must still convert prompts and masks with lineage,
+run Geometry Evaluation/Decision, and retain Review when calibration or stability evidence is
+insufficient. Missing weights or smoke evidence blocks the Draft rather than falling back to an
+external worker.

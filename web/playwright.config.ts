@@ -30,9 +30,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "python3 e2e/fixtures/expert_vision_worker.py",
+      command: "cd .. && cargo run -p annotagent-e2e-fixture",
       url: "http://127.0.0.1:8796/health",
-      timeout: 30_000,
+      timeout: 120_000,
       reuseExistingServer: true,
     },
     {

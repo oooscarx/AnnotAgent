@@ -1799,14 +1799,13 @@ fn legacy_operation_quality(
         | "capability.ground"
         | "object_detection.detect"
         | "open_vocabulary.detect"
-        | "phrase_grounding.detect"
-        | "yolo.detect" => Some((
+        | "phrase_grounding.detect" => Some((
             crate::GeometrySemantics::PredictedGeometry,
             crate::ScoreSemantics::DetectionConfidence,
             crate::AutoAcceptEligibility::RequiresProjectCalibration,
             true,
         )),
-        "capability.segment" | "sam_prompted_refiner" => Some((
+        "capability.segment" => Some((
             crate::GeometrySemantics::RefinedGeometry,
             crate::ScoreSemantics::NotProvided,
             crate::AutoAcceptEligibility::RequiresProjectCalibration,

@@ -5,15 +5,18 @@ These are current implementation boundaries, not hidden release claims:
 - The local server is a trusted loopback, single-user application. It has permissive development CORS and no login, authorization, multi-user isolation, cloud object storage, or distributed scheduler.
 - The product Runtime executes an exact selected Published Workflow for image and Dataset Batch starts. Starting without a selected version retains the legacy single-Skill AgentRuntime for compatibility; zero- or multi-Skill Projects must select a Published Workflow.
 - Executor-level HumanReview checkpoints can be approved and resumed without rerunning completed nodes. In the product image path, review candidates are currently persisted as `NeedsReview` and the image Run becomes terminal `CompletedWithReview`; a later Review decision does not resume that same Run to its Commit node.
-- The Model Registry, capability checks, OpenAI-compatible/HTTP/mock/deterministic adapters, and
-  external Worker contract are implemented. Settings can discover, sample and register an
-  arbitrary collection of versioned Expert Vision Workers; the compatibility Settings field is
-  still named `detection_workers`. General ONNX inference and model training are not bundled.
+- The Model Registry, capability checks, OpenAI-compatible/HTTP/deterministic adapters and native
+  Rust plugin lifecycle are implemented. The compatibility Settings field is still serialized as
+  `detection_workers` so historical HTTP Vision v1 bindings load unchanged, but a new workspace has
+  none. Native ONNX inference is bundled; model training is not.
 - Published product DAG nodes can bind separate registered specialist, open-vocabulary and
   classifier Backends. The reference LocateAnything/RF-DETR adapters require external legal weights
   and supported environments; their disabled/unavailable states remain visible without blocking
   startup.
-- A real Qwen-compatible smoke is live-conditional. No credential from conversation history is read or reused. External detector/segmenter inference is also conditional on configured endpoints or model weights; the reference worker reports `weights_unavailable` rather than fabricating success.
+- A real Qwen-compatible smoke is live-conditional. No credential from conversation history is read
+  or reused. Expert detector/segmenter inference is conditional on exact installed checkpoint and
+  smoke evidence; missing evidence remains NeedsWeights or unavailable rather than fabricating
+  success.
 - Official Rust SAM and PIDNet process implementations now exist with strict ONNX contracts,
   component/checkpoint identities, typed Artifacts and opt-in real-process tests. Their real-weight
   smoke and accuracy remain live-conditional because the repository contains no accepted
@@ -38,3 +41,10 @@ These are current implementation boundaries, not hidden release claims:
 - Improve Automation compares only Runs whose Project image identities can be proven disjoint from
   diagnosis evidence. Sparse demonstrations may create a Patch Draft but remain provisional or
   insufficient and are not recommended.
+## Rust plugin Alpha
+
+Native plugins provide process isolation, not a universal per-platform OS sandbox. Production
+checkpoints are not bundled. SAM, PIDNet and RF-DETR real-weight smoke tests require user-supplied
+compatible files and hardware; LocateAnything is explicitly unsupported until a complete audited
+Rust-callable runtime exists. See
+[Rust Plugin Known Limitations](execution/RUST_PLUGIN_KNOWN_LIMITATIONS.md).

@@ -10,6 +10,30 @@ for candidate in crates/annotagent-plugin-api crates/annotagent-plugin-sdk \
   fi
 done
 
+active_release_roots=(apps crates plugins examples scripts web/e2e)
+
+tracked_script_files="$(
+  git ls-files "${active_release_roots[@]}" \
+    | rg -i '(^|/)([^/]+\.py|requirements[^/]*\.txt|pyproject\.toml|uv\.lock)$' \
+    || true
+)"
+if [[ -n "$tracked_script_files" ]]; then
+  printf '%s\n' "$tracked_script_files"
+  echo 'Official install, Run, test, and release paths must not contain scripting-runtime files.' >&2
+  exit 1
+fi
+
+if rg -n 'Command::new\("(python|python3|pip|pip3|uv|conda)"\)' apps crates plugins; then
+  echo 'Official Rust processes may not launch scripting runtimes or package managers.' >&2
+  exit 1
+fi
+
+if rg -n -i '(^|[[:space:]/])(python3?|pip3?|uv|conda|venv)([[:space:]/]|$)' scripts \
+  --glob '!check-rust-plugin-boundary.sh'; then
+  echo 'Official release scripts may not start or install a scripting runtime.' >&2
+  exit 1
+fi
+
 if [[ ${#roots[@]} -eq 0 ]]; then
   exit 0
 fi

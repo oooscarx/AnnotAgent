@@ -1227,7 +1227,7 @@ function SettingsWorkspace({
             ["providers", "Providers"],
             ["models", "Models"],
             ["plugins", "Expert Model Plugins"],
-            ["vision-workers", "Vision Workers"],
+            ["vision-workers", "Legacy HTTP"],
             ["storage", "Storage"],
             ["usage", "Usage"],
           ] as const
@@ -5924,7 +5924,7 @@ function VisionWorkersRegistryPage({
     setTesting(worker.id);
     void api.testModel(worker.id).then((result) => setResults((current) => ({ ...current, [worker.id]: result }))).catch((error: Error) => onError(error.message)).finally(() => setTesting(""));
   };
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Specialist CV processes</span><h2>Vision Workers</h2><p>YOLO, SAM, RF-DETR, and other HTTP Vision Protocol workers are managed separately from credentialed LLM/VLM Providers.</p></div><button onClick={onOpenSettings}>Configure Workers</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Discovering…" : "Refresh discovery"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? "Discovery passed" : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No Vision Workers configured" detail="Add a versioned Expert Model from Settings → Vision Workers." />}</section>;
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Read-only migration compatibility</span><h2>Legacy HTTP models</h2><p>Existing versioned HTTP Vision Protocol bindings remain inspectable. New native expert models should be installed as isolated Rust packages.</p></div><button onClick={onOpenSettings}>Open compatibility settings</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Discovering…" : "Refresh discovery"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? "Discovery passed" : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No legacy HTTP models configured" detail="Install a native Rust Expert Model Plugin for new Workflows." />}</section>;
 }
 
 function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
@@ -8357,11 +8357,12 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
   const dirty = JSON.stringify(settings) !== savedSignature;
   return (
     <section className="settings-grid">
-      {view === "workers" && <Panel title="Vision Workers" eyebrow="Expert models with verified capabilities">
+      {view === "workers" && <Panel title="Legacy HTTP models" eyebrow="Compatibility for existing external endpoints">
         <div className="worker-collection-actions">
-          <p>Add SAM, YOLO, RF-DETR, LocateAnything, PIDNet, Grounding DINO, or another protocol v1 Worker. Only actively verified models become Available.</p>
-          <button className="primary" onClick={() => setShowExpertWizard(true)}>Add expert model</button>
+          <p>Existing protocol v1 endpoints remain supported for historical bindings. Use Expert Model Plugins for every new native model installation.</p>
+          <button onClick={() => setShowExpertWizard(true)}>Add HTTP compatibility model</button>
         </div>
+        {!detectionWorkers.length && <Empty title="No legacy HTTP models configured" detail="Install a native Rust Expert Model Plugin for new Workflows, or add an endpoint only to preserve an existing HTTP Vision v1 deployment." />}
         {detectionWorkers.length ? <div className="detection-worker-settings">
           {detectionWorkers.map((worker: Record<string, any>, index: number) => {
             const evidence = worker.availability_evidence ?? {};
@@ -8413,7 +8414,7 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
             <label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setDetectionWorker(index, "allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label>
             <small>Loopback is the default trust boundary. Live capabilities are read from the Worker on the Models page; expected values here are validation constraints.</small>
           </article>})}
-        </div> : <Empty title="No Detection Workers" detail="Add a versioned HTTP Detection Worker to use a local model process." />}
+        </div> : null}
       </Panel>}
       {view === "workers" && showExpertWizard && <ExpertModelSetupWizard settings={settings} onSaved={finish} onClose={() => setShowExpertWizard(false)} onError={onError} />}
       {view === "storage" && <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">

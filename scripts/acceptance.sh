@@ -11,6 +11,7 @@ run() {
 cd "$repo_root"
 
 run "$repo_root/scripts/check-agent-skill-boundaries.sh"
+run "$repo_root/scripts/check-rust-plugin-boundary.sh"
 
 core_production_sources() {
   local source
@@ -40,10 +41,11 @@ run cargo build --workspace --all-features
 run npm --prefix "$repo_root/web" run typecheck
 run npm --prefix "$repo_root/web" run test
 run npm --prefix "$repo_root/web" run build
+run npm --prefix "$repo_root/web" run test:e2e
 run cargo run -p annotagent -- doctor
 run cargo run -p annotagent -- demo generic-classification
 run cargo run -p annotagent -- demo generic-detection-crop
 run cargo run -p annotagent -- demo robocup-ball
 run cargo run -p annotagent -- demo lean-agent-robocup
 
-printf '\nAnnotAgent Lean Agent Alpha acceptance checks completed successfully.\n'
+printf '\nAnnotAgent Rust Expert Model Plugin Alpha acceptance checks completed successfully.\n'

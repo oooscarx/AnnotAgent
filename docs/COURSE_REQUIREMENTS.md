@@ -143,3 +143,9 @@ cargo test -p annotagent-core usage
 cargo test -p annotagent-storage budget
 cargo test -p annotagent-server project_sse_review_revision_and_budget_flow_works_over_http
 ```
+## Rust Expert Model Plugin Alpha exercise
+
+The offline course path requires a Rust toolchain plus Node/npm for the GUI. It packages, verifies,
+installs and tests the Dummy Detector Rust process, then demonstrates Ready model discovery,
+immutable Workflow identity, crash containment and uninstall protection. It requires no Provider
+key, external checkpoint or scripting runtime. Follow [the five-minute demo](DEMO_RUST_PLUGIN_ALPHA.md).

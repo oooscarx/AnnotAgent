@@ -1101,7 +1101,7 @@ mod tests {
             .expect("test worker");
         });
         let backend = HttpJsonVisionBackend::new(HttpJsonVisionBackendConfig {
-            id: "python-worker".to_owned(),
+            id: "legacy-http-worker".to_owned(),
             endpoint: format!("http://{address}/v1/infer"),
             capabilities: vec![VisionCapability::Classification],
             request_timeout: Duration::from_secs(2),

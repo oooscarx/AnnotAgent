@@ -77,3 +77,9 @@ Draft, run bounded Dry Runs and compare a persisted improvement session, but it 
 start a full dataset Run. Provider failures, no-candidate results and semantic errors are classified
 before considering segmentation; SAM is only a candidate repair for geometry errors with a valid
 prompt and healthy compatible backend.
+## Plugin authority
+
+Pipeline Builder may inspect installed plugin manifests, Ready models, contracts and health. It may
+save unresolved capability requirements and setup alternatives, but it cannot install/update/remove
+a package, accept a license, provision weights or start an arbitrary executable. Those remain
+explicit human actions under Settings → Expert Model Plugins.

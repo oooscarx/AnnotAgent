@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
-use annotagent_plugin_api::{PluginId, PluginStatus, PluginVersion, Sha256Digest};
-use annotagent_plugin_host::{HostedPlugin, pack_directory, verify_package};
+use annotagent_plugin_api::{
+    PLUGIN_MANIFEST_FILE, PluginId, PluginManifest, PluginStatus, PluginVersion, Sha256Digest,
+};
+use annotagent_plugin_host::{
+    HostedPlugin, PluginProcessConfig, current_target, pack_directory, verify_package,
+};
 use annotagent_plugin_registry::{
     InstallApproval, PluginInstallation, PluginRegistry, default_plugin_data_root,
 };
@@ -12,6 +16,9 @@ use crate::PluginCommand;
 pub async fn run(command: PluginCommand, data_dir: Option<PathBuf>) -> Result<()> {
     let data_root = data_dir.unwrap_or_else(default_plugin_data_root);
     match command {
+        PluginCommand::Dev { directory } => {
+            run_development_plugin(&directory, &data_root).await?;
+        }
         PluginCommand::Inspect { package } | PluginCommand::Verify { package } => {
             let verified = verify_package(&package)?;
             println!("{}", verified.manifest.to_toml()?);
@@ -161,6 +168,76 @@ pub async fn run(command: PluginCommand, data_dir: Option<PathBuf>) -> Result<()
             println!("{}", serde_json::to_string_pretty(&references)?);
         }
     }
+    Ok(())
+}
+
+async fn run_development_plugin(
+    directory: &std::path::Path,
+    data_root: &std::path::Path,
+) -> Result<()> {
+    let root = directory
+        .canonicalize()
+        .with_context(|| format!("cannot access development plugin {}", directory.display()))?;
+    let manifest =
+        PluginManifest::from_toml(&std::fs::read_to_string(root.join(PLUGIN_MANIFEST_FILE))?)?;
+    let target = current_target();
+    if !manifest
+        .compatibility
+        .targets
+        .iter()
+        .any(|item| item == &target)
+    {
+        bail!("development plugin does not declare support for {target}");
+    }
+    let executable = root.join(manifest.runtime.entrypoint.replace("{target}", &target));
+    let executable = executable.canonicalize().with_context(|| {
+        format!(
+            "development executable is missing: {}",
+            executable.display()
+        )
+    })?;
+    if !executable.starts_with(&root) || !executable.is_file() {
+        bail!("development executable must be a regular file inside the plugin directory");
+    }
+    let session_root = data_root
+        .join("development")
+        .join(uuid::Uuid::new_v4().to_string());
+    let state_dir = session_root.join("state");
+    let weights_dir = session_root.join("weights");
+    let cache_dir = session_root.join("cache");
+    let temporary_dir = session_root.join("temporary");
+    std::fs::create_dir_all(&weights_dir)?;
+    let maximum_response_bytes = usize::try_from(manifest.resources.maximum_response_mb)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(1024 * 1024);
+    let host = HostedPlugin::start(
+        manifest.clone(),
+        PluginProcessConfig {
+            executable,
+            installation_root: root,
+            state_dir,
+            weights_dir,
+            cache_dir,
+            temporary_dir,
+            max_request_bytes: 64 * 1024 * 1024,
+            max_response_bytes: maximum_response_bytes,
+        },
+    )
+    .await?;
+    let report = host.test(None).await?;
+    println!("development plugin: {} {}", manifest.id, manifest.version);
+    println!("status: Development");
+    println!("endpoint: {}", host.endpoint());
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.passed {
+        host.stop().await?;
+        let _ = std::fs::remove_dir_all(&session_root);
+        bail!("development plugin failed conformance");
+    }
+    println!("press Ctrl-C to stop; development processes cannot be used by Published Workflows");
+    tokio::signal::ctrl_c().await?;
+    host.stop().await?;
+    let _ = std::fs::remove_dir_all(session_root);
     Ok(())
 }
 

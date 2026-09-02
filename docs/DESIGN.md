@@ -98,3 +98,10 @@ quality, Rust validation blocks unsafe candidate-to-Commit paths, and reviewed D
 measured evidence. The GUI projects those same persisted contracts as Model score, Box quality and
 Geometry verification. Improve Automation patches an immutable baseline and requires a separate
 holdout comparison plus human-selected Draft application; publication remains outside the Agent.
+## Rust model plugin boundary
+
+Expert vision implementations run outside Core as versioned native Rust processes. Core owns only
+capabilities, typed Artifact contracts, geometry safety and immutable Workflow identity. The Host,
+SDK, Registry, package lifecycle and official plugins are described in
+[Rust Model Plugins](RUST_MODEL_PLUGINS.md); legacy HTTP Vision v1 bindings are compatibility data,
+not installed plugins.

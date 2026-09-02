@@ -678,9 +678,14 @@ impl TuiState {
         Ok(())
     }
 
-    fn plugins(&mut self, action: Option<&str>) -> Result<()> {
+    fn plugins(
+        &mut self,
+        action: Option<&str>,
+        plugin_id: Option<&str>,
+        version: Option<&str>,
+    ) -> Result<()> {
         let registry = self.application.plugin_registry();
-        let registry = registry
+        let mut registry = registry
             .lock()
             .map_err(|_| anyhow::anyhow!("Rust plugin Registry lock is poisoned"))?;
         match action {
@@ -737,7 +742,36 @@ impl TuiState {
                 }
                 Ok(())
             }
-            Some(_) => anyhow::bail!("usage: /plugins | /plugins models"),
+            Some("enable" | "disable" | "references") => {
+                let action = action.expect("matched action");
+                let plugin_id = annotagent_plugin_api::PluginId::parse(plugin_id.context(
+                    "usage: /plugins <enable|disable|references> <plugin-id> <version>",
+                )?)?;
+                let version = annotagent_plugin_api::PluginVersion::parse(version.context(
+                    "usage: /plugins <enable|disable|references> <plugin-id> <version>",
+                )?)?;
+                let message = match action {
+                    "enable" => format!(
+                        "plugin · {plugin_id}@{version} · {:?}",
+                        registry.enable(&plugin_id, &version)?,
+                    ),
+                    "disable" => {
+                        registry.disable(&plugin_id, &version)?;
+                        format!("plugin · {plugin_id}@{version} · Disabled")
+                    }
+                    "references" => format!(
+                        "plugin · {plugin_id}@{version} · references {}",
+                        registry.references(&plugin_id, &version).len(),
+                    ),
+                    _ => unreachable!(),
+                };
+                drop(registry);
+                self.push(message);
+                Ok(())
+            }
+            Some(_) => anyhow::bail!(
+                "usage: /plugins | /plugins models | /plugins <enable|disable|references> <plugin-id> <version>"
+            ),
         }
     }
 
@@ -975,7 +1009,7 @@ impl TuiState {
             "/replay" => self.replay(parts.next()).await,
             "/providers" => self.providers(parts.next(), parts.next()),
             "/models" => self.models(parts.next(), parts.next()).await,
-            "/plugins" => self.plugins(parts.next()),
+            "/plugins" => self.plugins(parts.next(), parts.next(), parts.next()),
             "/bindings" => self.bindings(),
             "/bind" => self.bind(parts.next(), parts.next()),
             "/geometry" => {
@@ -1163,7 +1197,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /plugins <enable|disable|references> <plugin-id> <version> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -1756,19 +1790,10 @@ mod tests {
     }
 
     #[test]
-    fn models_panel_explains_capability_availability_and_missing_scores() {
+    fn models_panel_starts_without_legacy_http_defaults() {
         let settings = load_settings(None).expect("default Settings");
-        let lines = model_lines(&settings);
-        assert!(lines.iter().any(|line| {
-            line.contains("LocateAnything")
-                && line.contains("open_vocabulary_detection")
-                && line.contains("No confidence score")
-        }));
-        assert!(
-            lines
-                .iter()
-                .any(|line| { line.contains("RF-DETR") && line.contains("object_detection") })
-        );
+        assert!(settings.detection_workers.is_empty());
+        assert!(model_lines(&settings).is_empty());
     }
 
     #[tokio::test]

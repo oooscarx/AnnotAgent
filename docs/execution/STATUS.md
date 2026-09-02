@@ -2,6 +2,30 @@
 
 Last updated: 2026-09-02 CST
 
+## Rust Expert Model Plugin M9 — 2026-09-02
+
+- Replaced the active Python worker/E2E path with a Rust-only deterministic fixture and archived the
+  former scripting examples, SDK and setup helpers under `docs/legacy/python-workers/`; the release
+  boundary check now rejects active script runtimes and script-process launch paths.
+- Added local `plugin dev` conformance, completed the Rust plugin migration path, removed production
+  legacy-worker defaults and kept HTTP Vision v1 as an explicit read-only compatibility route.
+- The complete release gate passes: Rustfmt, strict workspace Clippy, build, 385 active Rust tests
+  (5 explicit external/billable tests ignored), 44 Web unit tests, 37 Chromium E2E tests, boundary
+  scans, doctor and four offline demos. The E2E server and provider fixture are Rust processes.
+- No credential, model weight, push or remote mutation was used. SAM, PIDNet and RF-DETR remain
+  live-conditional until their declared external checkpoints pass an installed-process smoke test;
+  LocateAnything remains explicitly unsupported.
+
+## Rust Expert Model Plugin M8 — 2026-09-02
+
+- Connected the shared installable-plugin Registry to streamed package and weight installation,
+  lifecycle controls, model bindings, Agent discovery, exact workflow publication identities and
+  Run execution through the isolated Rust Host.
+- Added Expert Model Plugins management in GUI/TUI, immutable package references, availability and
+  conformance diagnostics, uninstall impact checks and an actual plugin-backed inference path.
+- Full workspace, Web and focused E2E checks passed before the milestone commit; no external weight,
+  API key, push or remote mutation was used.
+
 ## Rust Expert Model Plugin M7 — 2026-09-02
 
 - Added the RF-DETR Rust ONNX process for the official detection export tensor/postprocess contract.

@@ -11,8 +11,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(test)]
-use annotagent_application::load_settings;
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, ApplyPipelineImprovementRequest,
     CreatePipelineImprovementRequest, DatasetCoordinator, DetectionWorkerSettings,
@@ -6877,6 +6875,60 @@ mod tests {
         std::fs::read(package).expect("package bytes")
     }
 
+    fn legacy_http_sam_fixture() -> DetectionWorkerSettings {
+        serde_json::from_value(json!({
+            "id": "legacy-e2e-sam",
+            "display_name": "Legacy HTTP SAM fixture",
+            "model_id": "sam2.1-hiera-tiny",
+            "base_url": "http://127.0.0.1:8796",
+            "authentication_reference": null,
+            "enabled": false,
+            "allow_remote": false,
+            "requires_checkpoint_metadata": true,
+            "expected_capabilities": ["prompted_segmentation"],
+            "score_semantics": "not_provided",
+            "version": {
+                "architecture": "sam2.1-hiera-tiny",
+                "model_version": "unconfigured",
+                "checkpoint_sha256": null,
+                "training_dataset_version": null,
+                "backend_protocol_version": "1"
+            },
+            "label_space": [],
+            "runtime_requirements": {
+                "devices": ["cpu"],
+                "minimum_gpu_memory_mb": null,
+                "dependencies": [],
+                "supports_batch": false
+            },
+            "license": {
+                "code_license": null,
+                "weight_license": null,
+                "source_url": null,
+                "commercial_use": "unknown",
+                "redistribution": "unknown",
+                "usage_notes": [],
+                "verified_from_official_source": false
+            },
+            "timeout_seconds": 10,
+            "max_request_bytes": 20_000_000,
+            "max_response_bytes": 4_000_000,
+            "max_retries": 0,
+            "cost_per_request": "0",
+            "availability": "missing_weights",
+            "availability_evidence": {
+                "health_passed": false,
+                "protocol_compatible": false,
+                "contracts_validated": false,
+                "sample_conversion_passed": false,
+                "weights_ready": false,
+                "checked_at": null,
+                "detail": null
+            }
+        }))
+        .expect("legacy HTTP Worker fixture")
+    }
+
     #[tokio::test]
     async fn plugin_install_wizard_uses_real_package_validation_and_explicit_approval() {
         let temp = tempfile::tempdir().expect("temp");
@@ -7090,12 +7142,7 @@ export:
 
     #[test]
     fn discovered_worker_identity_is_authoritative_for_registration() {
-        let settings = load_settings(None).expect("default Settings");
-        let mut worker = settings
-            .detection_workers
-            .into_iter()
-            .find(|worker| worker.model_id == "sam2.1-hiera-tiny")
-            .expect("SAM Worker");
+        let mut worker = legacy_http_sam_fixture();
         let mut manifest = worker.expert_manifest().expect("SAM Manifest");
         manifest.model_version = "sam2.1-test-v1".to_owned();
         manifest.checkpoint = Some(annotagent_core::CheckpointIdentity {
@@ -8259,38 +8306,7 @@ export:
         assert_eq!(models["models"][0]["provider"], json!("mock"));
         assert_eq!(models["models"][0]["health_status"], json!("healthy"));
         assert_eq!(models["models"][0]["availability_group"], json!("ready"));
-        assert_eq!(models["models"][1]["id"], json!("locate-anything-local"));
-        assert_eq!(models["models"][1]["enabled"], json!(false));
-        assert_eq!(models["models"][1]["availability_group"], json!("labs"));
-        assert_eq!(
-            models["models"][1]["score_semantics"],
-            json!("not_provided")
-        );
-        assert_eq!(models["models"][2]["id"], json!("rfdetr-specialist-local"));
-        assert_eq!(models["models"][2]["enabled"], json!(false));
-        assert_eq!(models["models"][2]["availability_group"], json!("labs"));
-        assert_eq!(
-            models["models"][2]["score_semantics"],
-            json!("relative_confidence")
-        );
-        assert_eq!(models["models"][3]["id"], json!("sam2.1-hiera-tiny"));
-        assert_eq!(models["models"][3]["role"], json!("segmentation"));
-        assert_eq!(models["models"][3]["availability_group"], json!("labs"));
-        assert_eq!(models["models"][4]["id"], json!("yolo-http-worker"));
-        assert_eq!(models["models"][4]["availability_group"], json!("labs"));
-        let setup_probe = response_json(
-            request(
-                &service,
-                axum::http::Method::POST,
-                "/api/models/locate-anything-local/test",
-                None,
-            )
-            .await,
-        )
-        .await;
-        assert_eq!(setup_probe["model_id"], json!("locate-anything-local"));
-        assert!(setup_probe["passed"].is_boolean());
-        assert_ne!(setup_probe["availability"], json!("available"));
+        assert_eq!(models["models"].as_array().map(Vec::len), Some(1));
 
         let sse = request(&service, axum::http::Method::GET, "/api/events", None).await;
         assert_eq!(sse.status(), StatusCode::OK);

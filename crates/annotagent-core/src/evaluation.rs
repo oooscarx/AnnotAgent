@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     AnnotationId, AnnotationSnapshot, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
@@ -440,8 +440,7 @@ pub enum GeometryIssueCode {
     InsufficientEvidence,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GeometryCorrectionReason {
     TooLoose,
     TooTight,
@@ -450,10 +449,7 @@ pub enum GeometryCorrectionReason {
     MissedObject,
     Duplicate,
     WrongLabel,
-    WhiteShoe,
-    WhiteSock,
-    PenaltyMark,
-    FieldLineIntersection,
+    DomainRisk(String),
     Other,
 }
 
@@ -465,15 +461,46 @@ impl GeometryCorrectionReason {
             "too_tight" => Self::TooTight,
             "shifted" => Self::Shifted,
             "wrong_object" | "not_target" => Self::WrongObject,
-            "missed_object" | "missed_small_ball" => Self::MissedObject,
-            "duplicate" | "duplicate_ball" => Self::Duplicate,
+            "missed_object" => Self::MissedObject,
+            "duplicate" => Self::Duplicate,
             "wrong_label" => Self::WrongLabel,
-            "white_shoe" | "white_shoe_as_ball" => Self::WhiteShoe,
-            "white_sock" | "white_sock_as_ball" => Self::WhiteSock,
-            "penalty_mark" | "penalty_mark_as_ball" => Self::PenaltyMark,
-            "field_line_intersection" | "line_intersection_as_ball" => Self::FieldLineIntersection,
-            _ => Self::Other,
+            "other" | "" => Self::Other,
+            domain_code => Self::DomainRisk(domain_code.to_owned()),
         }
+    }
+
+    #[must_use]
+    pub fn as_code(&self) -> &str {
+        match self {
+            Self::TooLoose => "too_loose",
+            Self::TooTight => "too_tight",
+            Self::Shifted => "shifted",
+            Self::WrongObject => "wrong_object",
+            Self::MissedObject => "missed_object",
+            Self::Duplicate => "duplicate",
+            Self::WrongLabel => "wrong_label",
+            Self::DomainRisk(code) => code,
+            Self::Other => "other",
+        }
+    }
+}
+
+impl Serialize for GeometryCorrectionReason {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_code())
+    }
+}
+
+impl<'de> Deserialize<'de> for GeometryCorrectionReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let code = String::deserialize(deserializer)?;
+        Ok(Self::from_code(&code))
     }
 }
 
@@ -894,7 +921,7 @@ pub fn build_geometry_correction_evidence(
         width_ratio,
         height_ratio,
         normalized_center_shift,
-        input.reason,
+        &input.reason,
     );
     if input.source_model_profile_id.is_none()
         || input.source_model_revision.is_none()
@@ -952,22 +979,22 @@ fn geometry_issue_codes(
     width_ratio: f32,
     height_ratio: f32,
     center_shift: f32,
-    reason: GeometryCorrectionReason,
+    reason: &GeometryCorrectionReason,
 ) -> Vec<GeometryIssueCode> {
     let mut issues = Vec::new();
-    if area_ratio > 1.2 || reason == GeometryCorrectionReason::TooLoose {
+    if area_ratio > 1.2 || reason == &GeometryCorrectionReason::TooLoose {
         issues.extend([
             GeometryIssueCode::TooLoose,
             GeometryIssueCode::IncludesBackground,
         ]);
     }
-    if area_ratio < 0.8 || reason == GeometryCorrectionReason::TooTight {
+    if area_ratio < 0.8 || reason == &GeometryCorrectionReason::TooTight {
         issues.extend([
             GeometryIssueCode::TooTight,
             GeometryIssueCode::PartialObject,
         ]);
     }
-    if center_shift > 0.05 || reason == GeometryCorrectionReason::Shifted {
+    if center_shift > 0.05 || reason == &GeometryCorrectionReason::Shifted {
         issues.push(GeometryIssueCode::CenterShift);
     }
     if !(0.85..=1.15).contains(&width_ratio) {
@@ -1037,7 +1064,10 @@ impl GeometryQualitySummary {
     ) {
         self.human_adjustment_count = self.human_adjustment_count.saturating_add(1);
         self.inaccurate_bbox_reason_count = self.inaccurate_bbox_reason_count.saturating_add(1);
-        *self.correction_reasons.entry(evidence.reason).or_default() += 1;
+        *self
+            .correction_reasons
+            .entry(evidence.reason.clone())
+            .or_default() += 1;
         if let Some(bucket) = report.size_bucket {
             let summary = self.size_buckets.entry(bucket).or_default();
             summary.sample_count = summary.sample_count.saturating_add(1);
@@ -1510,5 +1540,17 @@ mod tests {
         );
         assert_eq!(report.status, GeometryCalibrationStatus::Uncalibrated);
         assert!(!report.status.permits_calibrated_acceptance());
+    }
+
+    #[test]
+    fn domain_correction_reason_round_trips_without_core_taxonomy() {
+        let reason = GeometryCorrectionReason::from_code("custom_domain_risk");
+        assert_eq!(reason.as_code(), "custom_domain_risk");
+        let encoded = serde_json::to_string(&reason).expect("serialize reason");
+        assert_eq!(encoded, "\"custom_domain_risk\"");
+        assert_eq!(
+            serde_json::from_str::<GeometryCorrectionReason>(&encoded).expect("restore reason"),
+            reason,
+        );
     }
 }

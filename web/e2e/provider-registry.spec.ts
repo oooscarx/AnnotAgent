@@ -281,7 +281,7 @@ test("Settings registry remains reachable without horizontal page overflow on a 
   expect(await page.evaluate(() => document.body.scrollWidth)).toBeLessThanOrEqual(1024);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/settings");
-  for (const section of ["Providers", "Models", "Vision Workers", "Storage", "Usage"]) {
+  for (const section of ["Providers", "Models", "Expert Model Plugins", "Legacy HTTP", "Storage", "Usage"]) {
     await expect(page.getByRole("button", { name: section, exact: true })).toBeVisible();
   }
   const remoteCard = page.locator(".registry-provider-card").filter({ hasText: "Remote lifecycle fixture" });

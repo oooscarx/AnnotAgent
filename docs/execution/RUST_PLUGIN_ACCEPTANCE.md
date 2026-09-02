@@ -2,6 +2,93 @@
 
 Only commands actually executed are recorded here.
 
+## Release-blocking matrix — M9
+
+All checked items are backed by source inspection plus the commands in the M9 evidence below.
+
+### A. Rust-only
+
+- [x] Host, SDK, protocol implementation, official reference plugins and browser protocol fixture are Rust.
+- [x] Official install, Run and test paths do not require or launch a scripting runtime or package manager.
+- [x] `check-rust-plugin-boundary.sh` rejects active scripting files, launch sites and release setup commands.
+- [x] Release inputs contain no active external worker; archived sources live only under `docs/legacy/python-workers/`.
+
+### B. Plugin boundary
+
+- [x] Plugins are separate Rust processes; there is no dynamic-library ABI.
+- [x] Crash/timeout/cancel are contained and structured without terminating Core.
+- [x] Plugin API and process protocol are independently versioned.
+- [x] One-use nonce plus session-token authentication is enforced on loopback.
+- [x] Provider secrets, database connections and arbitrary workspace/project paths are not supplied.
+
+### C. Installation
+
+- [x] `.annotplugin` verify checks deterministic contents, checksums, target and executable.
+- [x] Traversal, links, duplicate paths, excessive expansion/file count and tampering are rejected.
+- [x] Permissions and licenses require review before atomic side-by-side installation.
+- [x] Missing checkpoint components produce NeedsWeights; only passed installed-process conformance can produce Ready.
+
+### D. Versions and reproduction
+
+- [x] Versions coexist and an update does not overwrite the version referenced by an old Workflow.
+- [x] Publication freezes version, package digest, model revision, checkpoint and contract hashes.
+- [x] Referenced versions cannot be uninstalled; historical Run/Workflow records remain inspectable when execution is unavailable.
+
+### E. Model Registry
+
+- [x] Installed packages project capability-based Model Profiles without model-brand Core nodes.
+- [x] `robocup.ball` depends on capabilities and contains no plugin ID.
+- [x] Only enabled Ready models enter runnable Drafts; setup-only models remain explicit alternatives.
+- [x] Runtime discovery and worker contracts are cross-checked against the immutable manifest.
+
+### F. Reference plugins
+
+- [x] Dummy Rust detector and generic native ONNX identity fixture pass.
+- [x] YOLOX Nano completed real Rust process inference and returned DetectionSet.
+- [x] SAM, RF-DETR and PIDNet express and implement their typed Rust contracts; their external real-weight smokes remain explicitly live-conditional.
+- [x] LocateAnything is UnsupportedPlatform and cannot use its archived external implementation as fallback.
+
+### G. Workflow
+
+- [x] Plugin Artifacts enter the typed DAG with lineage and capability/contract static validation.
+- [x] cache/replay identity includes exact plugin/model/checkpoint state; cancellation and timeout reach the Host boundary.
+- [x] Commit remains idempotent and validated; geometry safety blocks score-only or unevaluated refinement paths.
+
+### H. Product
+
+- [x] GUI performs package review/install, checkpoint provisioning, test, status/model/capability inspection, enable/disable and protected uninstall.
+- [x] TUI inspects plugins/models and performs basic enable/disable/reference lifecycle control; CLI exposes the full administrative lifecycle and isolated development mode.
+- [x] Pipeline Builder discovers credential-free manifests but cannot install, accept terms, provision files or start arbitrary executables.
+- [x] Generic Projects can use plugins; RoboCup appears only as Skill context.
+
+## M9 migration and release validation — 2026-09-02
+
+- Moved the former external-worker examples, setup/start scripts, SDK and browser fixture under
+  `docs/legacy/python-workers/`. Removed the CLI worker scaffold. Production defaults no longer add
+  endpoint workers; persisted HTTP Vision v1 settings still deserialize under **Legacy HTTP**.
+- Replaced the browser protocol service with `annotagent-e2e-fixture`, a deterministic Rust Axum
+  binary. The complete Chromium run started that executable and the current Rust server and passed
+  all 37 scenarios. A separate process-tree observation recorded the fixture executable with zero
+  child processes.
+- Added active-release enforcement across `apps`, `crates`, `plugins`, `examples`, `scripts` and
+  `web/e2e`; archived migration material is not compiled, packaged, started or tested.
+- Added `plugin dev` for non-installed, non-publishable local Rust conformance and TUI enable,
+  disable and reference controls. Legacy binding migration is an explicit Clone → Ready plugin
+  binding → selected-image Dry Run → Publish sequence; historical Published versions are unchanged.
+- Removed a stale brand-specific operation alias and replaced Core's domain-specific correction
+  variants with a generic, exact-string-preserving `DomainRisk(code)`. Both model and Skill domain
+  boundary scans pass without exclusions.
+- `scripts/acceptance.sh`: PASS through boundary/secret checks, Rustfmt, strict workspace Clippy,
+  workspace tests/build, Web typecheck/unit/build and four offline demos. Workspace result: 385
+  active tests passed; five external/billable tests were explicitly ignored.
+- `cargo test -p annotagent-plugin-api`, `-p annotagent-plugin-sdk`,
+  `-p annotagent-plugin-host`, and `-p annotagent-model-runtime-onnx`: PASS (4, 2, 2 and 3 tests).
+- `npm --prefix web run test:e2e`: PASS — 37/37 Chromium tests. `npm --prefix web run test`: PASS
+  — 44/44; TypeScript and production Vite build: PASS.
+- No Provider credential, production checkpoint, remote mutation or push was used. The earlier
+  explicit YOLOX Nano real-model evidence remains the Alpha's real-model release gate; SAM,
+  PIDNet and RF-DETR real checkpoints were not run during M9.
+
 ## M8 product lifecycle and Agent discovery — 2026-09-02
 
 - Added real streaming package/weight HTTP endpoints over the shared durable Registry, with upload
