@@ -18,5 +18,9 @@ async-trait.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }
+tempfile = "3"
+
 [lints]
 workspace = true

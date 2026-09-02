@@ -16,6 +16,9 @@ annotagent-core = { path = "../../crates/annotagent-core" }
 annotagent-export = { path = "../../crates/annotagent-export" }
 annotagent-image-tools = { path = "../../crates/annotagent-image-tools" }
 annotagent-provider = { path = "../../crates/annotagent-provider" }
+annotagent-plugin-api = { path = "../../crates/annotagent-plugin-api" }
+annotagent-plugin-host = { path = "../../crates/annotagent-plugin-host" }
+annotagent-plugin-registry = { path = "../../crates/annotagent-plugin-registry" }
 annotagent-runtime = { path = "../../crates/annotagent-runtime" }
 annotagent-server = { path = "../../crates/annotagent-server" }
 annotagent-skill-robocup = { path = "../../crates/annotagent-skill-robocup" }

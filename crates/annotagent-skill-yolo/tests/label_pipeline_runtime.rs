@@ -126,6 +126,7 @@ fn workflow(
         enabled_skills: BTreeMap::new(),
         models: Vec::new(),
         model_profiles: Vec::new(),
+        plugin_models: Vec::new(),
         prompt_resources: BTreeMap::new(),
         safety_compatibility: annotagent_core::WorkflowSafetyCompatibility::Safe,
     };

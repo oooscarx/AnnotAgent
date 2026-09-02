@@ -39,3 +39,22 @@ Milestone evidence will be appended after the corresponding tests pass.
 - Strict Clippy for both packages: PASS.
 - Standalone executable smoke: PASS — process handshake, authenticated health and graceful shutdown.
 - Rust-only boundary scan: PASS.
+
+## M3 Host, Registry and lifecycle — 2026-09-02
+
+- Added deterministic `.annotplugin` pack/verify/extract with exact SHA-256 file list, expansion and
+  file-count limits, target executable checks, duplicate/link/path-traversal rejection and atomic
+  side-by-side installation.
+- Added a least-privilege Host with cleared environment, private directories, one-use token/nonce,
+  bounded handshake/logs/responses, authenticated calls, graceful/forced stop and crash detection.
+- Added a durable registry for versions, install state, explicit license approval, copied checkpoint
+  identities, tests, events, model projections and reference-protected uninstall.
+- Published Workflow snapshots now include exact generic plugin/package/protocol/model/checkpoint/
+  contract identity in semantic content hashing.
+- Added migration 13 with all plugin lifecycle, permission, model, weight, health, test, reference,
+  license and event tables; no token, credential or image-byte column exists.
+- Added `annotagent plugin` pack, inspect, verify, install/update, list/show/versions, provision,
+  test/doctor, foreground start/restart, enable/disable, references and uninstall surfaces.
+- Package/registry tests: PASS — 4 tests. Dummy process Host E2E: PASS — handshake, health, typed
+  inference, conformance, forced crash and Core survival.
+- Core/storage/plugin/app strict Clippy: PASS. Rust-only boundary scan: PASS.

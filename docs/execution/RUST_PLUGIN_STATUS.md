@@ -1,11 +1,11 @@
 # Rust Expert Model Plugin Alpha — Status
 
-- Current milestone: M3 — Host, Registry and lifecycle
-- Completed: M0 baseline; M1 Plugin API; M2 authenticated SDK server, standalone Dummy Rust process and shared conformance
-- In progress: deterministic package verification, isolated process Host, installations, versions, weights, references, persistence and CLI
-- Next: M4 common model helpers and Rust ONNX runtime
+- Current milestone: M4 — common model helpers and Rust ONNX runtime
+- Completed: M0 baseline; M1 Plugin API; M2 Rust SDK/Dummy; M3 deterministic package, isolated Host, durable Registry, database migration, exact Workflow identity and CLI lifecycle
+- In progress: reusable image/tensor helpers, execution-provider/session abstraction and tiny model fixture
+- Next: M5 YOLO Rust plugin and Workflow E2E
 - Latest Rust tests: `cargo test --workspace --all-features` — PASS, 339 passed, 1 explicitly billable test ignored
-- Latest plugin conformance: Dummy process authentication/discovery/typed inference suite PASS
+- Latest plugin conformance: installed-process Dummy authentication/discovery/typed inference/crash suite PASS
 - Latest real-model test: none in this task; existing external model claims are not inherited
 - Latest Web tests: pending M8 baseline
 - Latest E2E: pending M2/M3

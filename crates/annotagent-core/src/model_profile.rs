@@ -361,6 +361,8 @@ pub enum ModelProfileValidationError {
     DuplicateQualityContract,
     #[error("enabled state and Model Profile status disagree")]
     DisabledStatusMismatch,
+    #[error("plugin-backed model identity is incomplete or invalid")]
+    InvalidPluginIdentity,
 }
 
 /// Frozen semantic identity embedded in a published Workflow. Price is snapshotted per call and
@@ -381,6 +383,49 @@ pub struct ModelProfileSnapshot {
     pub generation_defaults: GenerationDefaults,
     #[serde(default)]
     pub quality_contracts: Vec<crate::ModelCapabilityQualityContract>,
+}
+
+/// Exact, brand-neutral plugin model identity frozen into a published Workflow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginModelSnapshot {
+    pub plugin_id: String,
+    pub plugin_version: String,
+    pub plugin_package_sha256: String,
+    pub plugin_api_version: String,
+    pub worker_protocol_version: String,
+    pub model_id: String,
+    pub model_profile_revision: u64,
+    pub checkpoint_sha256: Option<String>,
+    pub capability_contract_sha256: String,
+    pub capabilities: BTreeSet<ModelCapability>,
+}
+
+impl PluginModelSnapshot {
+    pub fn validate(&self) -> Result<(), ModelProfileValidationError> {
+        for value in [
+            &self.plugin_package_sha256,
+            &self.capability_contract_sha256,
+        ]
+        .into_iter()
+        .chain(self.checkpoint_sha256.iter())
+        {
+            if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(ModelProfileValidationError::InvalidPluginIdentity);
+            }
+        }
+        if self.plugin_id.trim().is_empty()
+            || self.plugin_version.trim().is_empty()
+            || self.plugin_api_version.trim().is_empty()
+            || self.worker_protocol_version.trim().is_empty()
+            || self.model_id.trim().is_empty()
+            || self.model_profile_revision == 0
+            || self.capabilities.is_empty()
+        {
+            return Err(ModelProfileValidationError::InvalidPluginIdentity);
+        }
+        Ok(())
+    }
 }
 
 impl ModelProfileSnapshot {

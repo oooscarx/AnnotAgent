@@ -1,4 +1,5 @@
 mod demo;
+mod plugin_cli;
 mod runner;
 mod tui;
 mod worker_scaffold;
@@ -81,6 +82,12 @@ enum Command {
         #[command(subcommand)]
         command: WorkerCommand,
     },
+    Plugin {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
     History {
         #[command(subcommand)]
         command: HistoryCommand,
@@ -137,6 +144,96 @@ enum SkillsCommand {
 #[derive(Subcommand)]
 enum WorkerCommand {
     Scaffold(WorkerScaffoldArgs),
+}
+
+#[derive(Subcommand)]
+enum PluginCommand {
+    Inspect {
+        package: PathBuf,
+    },
+    Pack {
+        directory: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Verify {
+        package: PathBuf,
+    },
+    Install {
+        package: PathBuf,
+        #[arg(long)]
+        accept: bool,
+    },
+    Update {
+        package: PathBuf,
+        #[arg(long)]
+        accept: bool,
+    },
+    List,
+    Show {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Versions {
+        plugin_id: String,
+    },
+    Provision {
+        plugin_id: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        weights: PathBuf,
+        #[arg(long)]
+        sha256: Option<String>,
+    },
+    Test {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Doctor {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Start {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Stop {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Restart {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Enable {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Disable {
+        plugin_id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    Uninstall {
+        plugin_id: String,
+        #[arg(long)]
+        version: String,
+    },
+    References {
+        plugin_id: String,
+        #[arg(long)]
+        version: String,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -203,6 +300,7 @@ async fn main() -> Result<()> {
         } => serve_command(&workspace, port, open).await,
         Command::Skills { command } => skills_command(command),
         Command::Worker { command } => worker_command(command),
+        Command::Plugin { data_dir, command } => plugin_cli::run(command, data_dir).await,
         Command::History { command } => history_command(command),
         Command::Export {
             project,

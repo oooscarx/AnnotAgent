@@ -49,6 +49,7 @@ const GEOMETRY_CALIBRATION_MIGRATION: &str =
     include_str!("../../../migrations/0011_geometry_calibration.sql");
 const PIPELINE_IMPROVEMENT_MIGRATION: &str =
     include_str!("../../../migrations/0012_pipeline_improvements.sql");
+const RUST_PLUGIN_MIGRATION: &str = include_str!("../../../migrations/0013_rust_plugins.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -381,6 +382,13 @@ impl SqliteStore {
             transaction.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (12, ?1, ?2)",
                 params!["pipeline_improvements", Utc::now().to_rfc3339()],
+            )?;
+            transaction.commit()?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(RUST_PLUGIN_MIGRATION)?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (13, ?1, ?2)",
+                params!["rust_model_plugins", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
             Ok(())
@@ -3752,6 +3760,17 @@ mod tests {
             "project_geometry_policies",
             "geometry_calibration_reports",
             "pipeline_improvement_sessions",
+            "plugins",
+            "plugin_versions",
+            "plugin_installations",
+            "plugin_permissions",
+            "plugin_models",
+            "plugin_weight_sets",
+            "plugin_health_checks",
+            "plugin_test_runs",
+            "plugin_references",
+            "plugin_license_acceptances",
+            "plugin_events",
         ] {
             assert!(
                 tables.iter().any(|table| table == required),

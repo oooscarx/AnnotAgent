@@ -1,0 +1,27 @@
+[package]
+name = "annotagent-plugin-host"
+description = "Package verification and isolated process lifecycle for AnnotAgent model plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+annotagent-plugin-api = { path = "../annotagent-plugin-api" }
+annotagent-plugin-sdk = { path = "../annotagent-plugin-sdk" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

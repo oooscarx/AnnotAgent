@@ -578,6 +578,8 @@ pub struct WorkflowSnapshot {
     #[serde(default)]
     pub model_profiles: Vec<crate::ModelProfileSnapshot>,
     #[serde(default)]
+    pub plugin_models: Vec<crate::PluginModelSnapshot>,
+    #[serde(default)]
     pub prompt_resources: BTreeMap<String, String>,
     /// Old snapshots deserialize conservatively as `RequiresMigration`; new publication records
     /// the result of geometry-aware static validation without rewriting historical versions.
@@ -609,6 +611,7 @@ impl WorkflowSnapshot {
             enabled_skills,
             models: model_snapshots,
             model_profiles: Vec::new(),
+            plugin_models: Vec::new(),
             prompt_resources: draft.resource_versions.clone(),
             safety_compatibility: WorkflowSafetyCompatibility::RequiresMigration,
         }
@@ -623,6 +626,28 @@ impl WorkflowSnapshot {
         });
         profiles.dedup_by_key(|profile| (profile.model_profile_id, profile.revision));
         self.model_profiles = profiles;
+        self
+    }
+
+    #[must_use]
+    pub fn with_plugin_models(mut self, mut profiles: Vec<crate::PluginModelSnapshot>) -> Self {
+        profiles.sort_by(|left, right| {
+            left.plugin_id
+                .cmp(&right.plugin_id)
+                .then_with(|| left.plugin_version.cmp(&right.plugin_version))
+                .then_with(|| left.model_id.cmp(&right.model_id))
+                .then_with(|| {
+                    left.model_profile_revision
+                        .cmp(&right.model_profile_revision)
+                })
+        });
+        profiles.dedup_by(|left, right| {
+            left.plugin_id == right.plugin_id
+                && left.plugin_version == right.plugin_version
+                && left.model_id == right.model_id
+                && left.model_profile_revision == right.model_profile_revision
+        });
+        self.plugin_models = profiles;
         self
     }
 
@@ -656,6 +681,7 @@ impl WorkflowSnapshot {
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
             model_profiles: &'a [crate::ModelProfileSnapshot],
+            plugin_models: &'a [crate::PluginModelSnapshot],
             prompt_resources: &'a BTreeMap<String, String>,
             safety_compatibility: WorkflowSafetyCompatibility,
         }
@@ -675,6 +701,7 @@ impl WorkflowSnapshot {
             label_pipeline: &draft.label_pipeline,
             models: &self.models,
             model_profiles: &self.model_profiles,
+            plugin_models: &self.plugin_models,
             prompt_resources: &self.prompt_resources,
             safety_compatibility: self.safety_compatibility,
         })

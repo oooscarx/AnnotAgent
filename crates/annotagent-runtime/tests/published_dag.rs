@@ -109,6 +109,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         enabled_skills: draft.enabled_skills.clone(),
         models: Vec::new(),
         model_profiles: Vec::new(),
+        plugin_models: Vec::new(),
         prompt_resources: draft.resource_versions.clone(),
         safety_compatibility: annotagent_core::WorkflowSafetyCompatibility::Safe,
     };
