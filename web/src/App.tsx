@@ -5073,12 +5073,12 @@ const REGISTRY_MODEL_CAPABILITIES: { id: ModelCapability; label: string }[] = [
   { id: "keypoint_detection", label: "Keypoint detection" },
 ];
 
-const PLUGIN_STATUS_GROUPS: { title: string; statuses: string[] }[] = [
-  { title: "Ready", statuses: ["ready"] },
-  { title: "Needs setup", statuses: ["installed", "needs_weights", "unsupported_platform"] },
-  { title: "Disabled", statuses: ["disabled"] },
-  { title: "Unhealthy", statuses: ["unhealthy", "crashed", "failed_smoke_test", "incompatible_api", "invalid_manifest", "invalid_contract"] },
-  { title: "Updates", statuses: ["update_available"] },
+const PLUGIN_STATUS_GROUPS: { title: string; description: string; statuses: string[] }[] = [
+  { title: "Ready to use", description: "Enabled models that passed their isolated process test.", statuses: ["ready"] },
+  { title: "Finish setup", description: "Installed packages that still need checkpoints, testing, or platform support.", statuses: ["installed", "needs_weights", "unsupported_platform"] },
+  { title: "Disabled", description: "Verified installations hidden from new Workflow bindings.", statuses: ["disabled"] },
+  { title: "Needs attention", description: "A process, API, Manifest, or Contract check did not pass.", statuses: ["unhealthy", "crashed", "failed_smoke_test", "incompatible_api", "invalid_manifest", "invalid_contract"] },
+  { title: "Updates available", description: "New versions install alongside versions used by published Workflows.", statuses: ["update_available"] },
 ];
 
 function pluginWeightTargets(installation: ExpertPluginInstallation) {
@@ -5179,22 +5179,49 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   };
 
   const installations = registry?.installations ?? [];
+  const readyModels = registry?.models.filter((model) => model.selectable).length ?? 0;
+  const setupInstallations = installations.filter((installation) =>
+    ["installed", "needs_weights", "unsupported_platform"].includes(installation.status),
+  ).length;
+  const attentionInstallations = installations.filter((installation) =>
+    ["unhealthy", "crashed", "failed_smoke_test", "incompatible_api", "invalid_manifest", "invalid_contract"].includes(installation.status),
+  ).length;
   return <section className="registry-page expert-plugin-page">
-    <header className="registry-page-header">
-      <div><span className="eyebrow">Rust process boundary</span><h2>Expert Model Plugins</h2><p>Install signed or locally packed <code>.annotplugin</code> packages, provision checkpoint files, test the isolated process, and expose only Ready models to Automation Drafts.</p></div>
-      <Status status={`${registry?.models.filter((model) => model.selectable).length ?? 0} ready models`} />
+    <header className="plugin-page-hero">
+      <div className="plugin-page-heading">
+        <span className="eyebrow">Local model runtime</span>
+        <h2>Expert Model Plugins</h2>
+        <p>Install native Rust model packages, add their local checkpoints, and verify the exact process before a model can enter an Automation.</p>
+        <div className="plugin-trust-line" aria-label="Plugin runtime properties"><span>Isolated process</span><span>Local checkpoints</span><span>Immutable versions</span></div>
+      </div>
+      <dl className="plugin-registry-summary" aria-label="Plugin Registry summary">
+        <div><dt>Ready models</dt><dd>{readyModels}</dd><small>selectable now</small></div>
+        <div><dt>Finish setup</dt><dd>{setupInstallations}</dd><small>installed packages</small></div>
+        <div className={attentionInstallations ? "attention" : ""}><dt>Needs attention</dt><dd>{attentionInstallations}</dd><small>failed checks</small></div>
+      </dl>
     </header>
 
-    <article className="plugin-agent-policy" aria-label="Agent plugin permissions">
-      <strong>Agent discovery is read only</strong>
-      <p>Pipeline Builder may inspect installed contracts and recommend compatible Ready models. It cannot install packages, accept licenses, provision weights, or start arbitrary binaries.</p>
-    </article>
+    <section className="plugin-page-guidance" aria-label="Plugin setup overview">
+      <article className="plugin-setup-roadmap">
+        <div><span className="eyebrow">How setup works</span><strong>From local package to selectable model</strong></div>
+        <ol>
+          <li><span>1</span><small>Install package</small></li>
+          <li><span>2</span><small>Add weights</small></li>
+          <li><span>3</span><small>Test process</small></li>
+          <li><span>4</span><small>Use in Workflow</small></li>
+        </ol>
+      </article>
+      <article className="plugin-agent-policy" aria-label="Agent plugin permissions">
+        <span className="plugin-policy-mark" aria-hidden="true">A</span>
+        <div><strong>Agent discovery is read only</strong><p>Pipeline Builder can recommend compatible Ready models. Installation, licenses, checkpoints, and executables always remain manual actions.</p></div>
+      </article>
+    </section>
 
     <details className="plugin-install-wizard" open={!installations.length}>
-      <summary><span><strong>Install Expert Model Plugin</strong><small>Select → Verify → Review publisher and permissions → Accept licenses → Install</small></span><b>Manual action</b></summary>
+      <summary><span className="plugin-install-summary"><i aria-hidden="true">+</i><span><strong>Add a plugin package</strong><small>Choose a local .annotplugin, verify its identity, then review permissions and licenses.</small></span></span><b>Local install</b></summary>
       <div className="plugin-install-body">
         <ol className="plugin-install-steps" aria-label="Installation steps">
-          {['Select package', 'Verify package', 'Review permissions', 'Review licenses', 'Install', 'Add weights', 'Test'].map((step, index) => <li className={verified && index < 4 ? "complete" : ""} key={step}>{step}</li>)}
+          {['Select package', 'Verify package', 'Review & install', 'Add weights', 'Test & enable'].map((step, index) => <li className={verified && index < 2 ? "complete" : ""} key={step}><span>{index + 1}</span>{step}</li>)}
         </ol>
         <div className="plugin-package-picker">
           <label htmlFor="expert-plugin-package">Plugin package</label>
@@ -5240,14 +5267,29 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       const groupItems = installations.filter((installation) => group.statuses.includes(installation.status));
       if (!groupItems.length) return null;
       return <section className="plugin-status-group" key={group.title} aria-labelledby={`plugin-group-${group.title.replaceAll(" ", "-")}`}>
-        <header><h3 id={`plugin-group-${group.title.replaceAll(" ", "-")}`}>{group.title}</h3><span>{groupItems.length}</span></header>
+        <header><div><h3 id={`plugin-group-${group.title.replaceAll(" ", "-")}`}>{group.title}</h3><p>{group.description}</p></div><span>{groupItems.length}</span></header>
         <div className="plugin-card-grid">
           {groupItems.map((installation) => {
             const identity = `${installation.manifest.id}@${installation.manifest.version}`;
             const modelProfiles = registry?.models.filter((model) => model.reference.plugin_id === installation.manifest.id && model.reference.plugin_version === installation.manifest.version) ?? [];
             const firstCheckpoint = installation.weights[0]?.checkpoint_sha256;
+            const weightTargets = installation.manifest.weights.required ? pluginWeightTargets(installation) : [];
+            const missingWeightCount = weightTargets.filter(({ model, component }) => !installation.weights.some((weight) => weight.model_id === model.id && weight.component_id === component.id)).length;
+            const selectableModels = modelProfiles.filter((model) => model.selectable).length;
+            const setupState = installation.status === "ready" && installation.enabled
+              ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${selectableModels} model${selectableModels === 1 ? "" : "s"} available`, detail: "Package, checkpoint, Contract, and process evidence are registered." }
+              : installation.status === "unsupported_platform"
+                ? { tone: "blocked", eyebrow: "Unavailable on this platform", title: "No compatible native runtime", detail: "This package remains visible but cannot be enabled or selected." }
+                : missingWeightCount > 0
+                  ? { tone: "setup", eyebrow: "Next step", title: `Add ${missingWeightCount} checkpoint file${missingWeightCount === 1 ? "" : "s"}`, detail: "Files stay in the owner-only local model cache and receive an exact SHA-256 identity." }
+                  : !installation.last_test?.passed
+                    ? { tone: "setup", eyebrow: "Next step", title: "Run the isolated process test", detail: "Verify discovery, Contracts, authentication, and typed sample inference." }
+                    : !installation.enabled
+                      ? { tone: "setup", eyebrow: "Next step", title: "Enable this verified version", detail: "Its Ready models will then become selectable in new Automation Drafts." }
+                      : { tone: "blocked", eyebrow: "Needs attention", title: "Review the latest test evidence", detail: "Resolve the failed check before this model is used by a Workflow." };
             return <article className="plugin-card" key={identity}>
               <header><div className="registry-monogram">RS</div><div><strong>{installation.manifest.display_name}</strong><small>{installation.manifest.id} · v{installation.manifest.version}</small></div><Status status={installation.status.replaceAll("_", " ")} /></header>
+              <div className={`plugin-next-action ${setupState.tone}`}><span>{setupState.eyebrow}</span><strong>{setupState.title}</strong><small>{setupState.detail}</small></div>
               <p>{installation.manifest.description}</p>
               <dl className="plugin-card-facts">
                 <div><dt>Capabilities</dt><dd>{installation.manifest.models.flatMap((model) => model.capabilities).map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div>
@@ -5258,30 +5300,30 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
                 <div><dt>Used by</dt><dd>{installation.references.length} Published Workflow reference{installation.references.length === 1 ? "" : "s"}</dd></div>
               </dl>
               <div className="registry-card-actions">
-                <button onClick={() => perform(`${identity}:test`, () => api.testExpertPlugin(installation.manifest.id, installation.manifest.version), "Process conformance and typed sample inference completed." )} disabled={Boolean(busy) || installation.status === "needs_weights" || installation.status === "unsupported_platform"}>{busy === `${identity}:test` ? "Testing…" : "Test"}</button>
+                <button className={missingWeightCount === 0 && !installation.last_test?.passed ? "primary" : ""} onClick={() => perform(`${identity}:test`, () => api.testExpertPlugin(installation.manifest.id, installation.manifest.version), "Process conformance and typed sample inference completed." )} disabled={Boolean(busy) || missingWeightCount > 0 || installation.status === "unsupported_platform"}>{busy === `${identity}:test` ? "Testing…" : installation.last_test ? "Test again" : "Run test"}</button>
                 <button onClick={() => perform(`${identity}:toggle`, () => api.setExpertPluginEnabled(installation.manifest.id, installation.manifest.version, !installation.enabled), installation.enabled ? "Plugin disabled." : "Plugin enabled; test evidence is preserved.")} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{installation.enabled ? "Disable" : "Enable"}</button>
                 <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Checkpoint cache for this exact version will also be removed.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? "Published Workflow references protect this exact version" : undefined}>Uninstall</button>
               </div>
               {installation.manifest.weights.required && <details className="registry-card-section" open={installation.status === "needs_weights"}>
-                <summary>Weights</summary>
+                <summary><span>Checkpoint files</span><small>{weightTargets.length - missingWeightCount} of {weightTargets.length} added</small></summary>
                 <div className="plugin-weight-list">
-                  {pluginWeightTargets(installation).map(({ model, component }) => {
+                  {weightTargets.map(({ model, component }) => {
                     const key = `${identity}:${model.id}:${component.id}`;
                     const current = installation.weights.find((weight) => weight.model_id === model.id && weight.component_id === component.id);
                     return <div className="plugin-weight-row" key={key}>
-                      <div><strong>{model.display_name} · {component.id}</strong><small>{current ? `${current.original_filename} · ${formatPluginBytes(current.size_bytes)} · ${current.checkpoint_sha256.slice(0, 12)}…` : `Expected file: ${component.filename}${component.sha256 ? ` · SHA-256 ${component.sha256.slice(0, 12)}…` : ""}`}</small></div>
+                      <div><span className={`plugin-file-state ${current ? "added" : "required"}`}>{current ? "Added" : "Required"}</span><strong>{component.id.replaceAll("_", " ")}</strong><small>{current ? `${current.original_filename} · ${formatPluginBytes(current.size_bytes)} · ${current.checkpoint_sha256.slice(0, 12)}…` : `Expected: ${component.filename}${component.sha256 ? ` · SHA-256 ${component.sha256.slice(0, 12)}…` : ""}`}</small></div>
                       <input aria-label={`${model.display_name} ${component.id} checkpoint file`} type="file" onChange={(event) => setWeightFiles((currentFiles) => ({ ...currentFiles, [key]: event.target.files?.[0] }))} />
-                      <button onClick={() => { const file = weightFiles[key]; if (file) void perform(`${key}:upload`, () => api.provisionExpertPluginWeights(installation.manifest.id, installation.manifest.version, model.id, file, component.id === "default" ? undefined : component.id, component.sha256), "Checkpoint copied into the owner-only local model cache and hash verified."); }} disabled={!weightFiles[key] || Boolean(busy)}>{busy === `${key}:upload` ? "Adding…" : current ? "Replace" : "Add weights"}</button>
+                      <button onClick={() => { const file = weightFiles[key]; if (file) void perform(`${key}:upload`, () => api.provisionExpertPluginWeights(installation.manifest.id, installation.manifest.version, model.id, file, component.id === "default" ? undefined : component.id, component.sha256), "Checkpoint copied into the owner-only local model cache and hash verified."); }} disabled={!weightFiles[key] || Boolean(busy)}>{busy === `${key}:upload` ? "Adding…" : current ? "Replace" : "Add file"}</button>
                     </div>;
                   })}
                 </div>
               </details>}
               <details className="registry-card-section">
-                <summary>Models and exact identities</summary>
+                <summary><span>Models and exact identities</span><small>{modelProfiles.length} registered</small></summary>
                 <div className="plugin-model-list">{modelProfiles.map((model) => <div key={model.selection_id}><span><strong>{model.display_name}</strong><small>{model.capabilities.map((value) => value.replaceAll("_", " ")).join(", ")}</small></span><Status status={model.selectable ? "Available" : model.availability.replaceAll("_", " ")} /><code>{model.selection_id}</code></div>)}</div>
               </details>
               <details className="registry-card-section">
-                <summary>Details and test evidence</summary>
+                <summary><span>Security and test evidence</span><small>{installation.last_test ? installation.last_test.passed ? "Last test passed" : "Last test failed" : "Not tested"}</small></summary>
                 <dl className="plugin-detail-list"><div><dt>Package SHA-256</dt><dd>{installation.package_sha256}</dd></div><div><dt>Code license</dt><dd>{installation.manifest.license.code}</dd></div><div><dt>Weight license</dt><dd>{installation.manifest.license.weights}</dd></div><div><dt>Signature</dt><dd>{installation.signature.replaceAll("_", " ")}</dd></div></dl>
                 {installation.last_test ? <ul className="plugin-test-checks">{installation.last_test.checks.map((check) => <li className={check.passed ? "passed" : "failed"} key={check.name}><strong>{check.passed ? "Pass" : "Fail"} · {check.name}</strong><span>{check.detail}</span></li>)}</ul> : <p>No process test recorded. This version is not selectable.</p>}
               </details>
@@ -8855,6 +8897,16 @@ function Status({ status }: { status: string }) {
                 ? "Waiting for human"
                 : "Completed with review",
           }
+        : normalized === "needs_weights" || normalized === "installed"
+          ? { tone: "needs-review", label: normalized === "needs_weights" ? "Needs weights" : "Needs test" }
+        : normalized === "unsupported_platform"
+          ? { tone: "failed", label: "Unsupported" }
+        : normalized === "update_available"
+          ? { tone: "running", label: "Update available" }
+        : normalized === "discovered" || normalized === "installing" || normalized === "starting"
+          ? { tone: "running", label: normalized.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()) }
+        : normalized === "unhealthy" || normalized === "crashed" || normalized === "failed_smoke_test" || normalized === "incompatible_api" || normalized === "invalid_manifest" || normalized === "invalid_contract"
+          ? { tone: "failed", label: normalized.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()) }
         : normalized === "configured" || normalized === "unverified" || normalized === "unknown"
           ? { tone: "draft", label: normalized === "configured" ? "Configured" : normalized === "unverified" ? "Unverified" : "Unknown" }
         : normalized === "disabled"
