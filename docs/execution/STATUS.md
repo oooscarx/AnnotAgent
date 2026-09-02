@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-02 CST
 
+## Rust Expert Model Plugin M4 — 2026-09-02
+
+- Added model-neutral Rust image/tensor/geometry helpers and a native ONNX Runtime session layer
+  with CPU plus explicit optional CUDA/TensorRT selection, typed input/output discovery, exact model
+  SHA, cache, warmup and cancellation boundaries.
+- A generated, legal ONNX Identity graph executes through the real native CPU provider and returns
+  its input tensor. Seven focused tests and strict Clippy pass; the weight-free fixture is not
+  represented as an expert-model accuracy result.
+- M0–M3 already provide the versioned API, SDK, isolated Dummy process, deterministic package,
+  Host, durable Registry, database lifecycle, CLI and exact Published Workflow plugin identity.
+- No remote was changed. Accelerator validation and the first expert vision checkpoint are tracked
+  honestly as later live/release gates.
+
 ## Geometry-Safe Pipeline Builder M8 — 2026-09-02
 
 - Run, Review and Model Registry now separate declared model-score semantics from geometry

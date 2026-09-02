@@ -1,5 +1,21 @@
 # AnnotAgent Acceptance Evidence
 
+## Rust Expert Model Plugin M4 — 2026-09-02
+
+1. annotagent-model-runtime-common tests cover reversible letterbox geometry, deterministic
+   normalization/layout conversion, class-aware NMS and connected mask operations.
+2. annotagent-model-runtime-onnx loads an actual ONNX Identity graph using the native CPU provider,
+   discovers float32[1,2], runs inference and returns [2.5, -4.0].
+3. The runtime also proves exact checkpoint SHA-256, provider/thread-sensitive cache reuse and
+   eviction, typed tensor validation and cancellation before native entry.
+4. Focused tests pass all seven cases. Strict all-target/all-feature Clippy for both packages
+   passes.
+5. Full workspace/all-feature tests pass 346 cases with one explicitly billable Provider smoke
+   ignored.
+6. The fixture is weight-free runtime evidence, not an expert-model or accuracy claim. CUDA,
+   TensorRT and the first real vision model remain separately gated. No credential, push or remote
+   mutation was used.
+
 ## Geometry-Safe Pipeline Builder M8 — 2026-09-02
 
 1. Run/Review UI tests prove semantic or detector confidence is labelled by its declared

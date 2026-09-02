@@ -1,0 +1,20 @@
+[package]
+name = "annotagent-model-runtime-onnx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-model-runtime-common = { path = "../annotagent-model-runtime-common" }
+ort.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+prost = "0.14"
+tempfile = "3"
+
+[lints]
+workspace = true

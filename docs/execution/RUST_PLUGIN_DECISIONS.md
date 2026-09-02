@@ -26,3 +26,10 @@ security sandbox on every target.
 
 `.annotplugin` uses a deterministic ZIP profile: sorted paths, fixed timestamps, normalized modes,
 manifest/checksum validation and traversal rejection. Large weights are provisioned separately.
+
+## D006 — Shared runtime stays model-neutral
+
+Common image/geometry operations and native ONNX session mechanics are reusable crates. Tensor-name
+selection, model-family preprocessing/postprocessing, class semantics and Artifact construction
+remain in each plugin. Explicit accelerators fail setup if unavailable; the Registry must not
+describe an unverified CPU fallback as CUDA or TensorRT.

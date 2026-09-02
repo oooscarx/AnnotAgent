@@ -1,16 +1,16 @@
 # Rust Expert Model Plugin Alpha — Status
 
-- Current milestone: M4 — common model helpers and Rust ONNX runtime
-- Completed: M0 baseline; M1 Plugin API; M2 Rust SDK/Dummy; M3 deterministic package, isolated Host, durable Registry, database migration, exact Workflow identity and CLI lifecycle
-- In progress: reusable image/tensor helpers, execution-provider/session abstraction and tiny model fixture
+- Current milestone: M5 — official YOLO ONNX plugin
+- Completed: M0 baseline; M1 Plugin API; M2 Rust SDK/Dummy; M3 deterministic package, isolated Host, durable Registry, database migration, exact Workflow identity and CLI lifecycle; M4 model-neutral image/geometry tools and native ONNX Runtime
+- In progress: official YOLO package, preprocessing/postprocessing, typed DetectionSet and Workflow E2E
 - Next: M5 YOLO Rust plugin and Workflow E2E
-- Latest Rust tests: `cargo test --workspace --all-features` — PASS, 339 passed, 1 explicitly billable test ignored
+- Latest Rust tests: cargo test --workspace --all-features — PASS, 346 passed, 1 explicitly billable test ignored
 - Latest plugin conformance: installed-process Dummy authentication/discovery/typed inference/crash suite PASS
-- Latest real-model test: none in this task; existing external model claims are not inherited
+- Latest native runtime test: real ONNX Identity graph on CPU PASS; this is a runtime fixture, not an expert-model accuracy claim
 - Latest Web tests: pending M8 baseline
-- Latest E2E: pending M2/M3
-- Latest local commit: `cb17d7b` before this task
-- Release-blocking remaining: M0–M9 acceptance work
+- Latest E2E: isolated Dummy process handshake/infer/crash PASS
+- Latest local milestone commit: 6cafaf2 (M3); M4 commit is created after this evidence update
+- Release-blocking remaining: M5–M9 acceptance work
 - Live-conditional: accelerator providers and production weights for complex expert models
 - Real blocker: none for architecture work
 

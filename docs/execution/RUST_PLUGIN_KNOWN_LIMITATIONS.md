@@ -7,3 +7,7 @@
   drafts.
 - Historical external HTTP Workers remain readable during migration but are not represented as
   installed Rust plugins.
+- M4 validates the native ONNX CPU provider. CUDA and TensorRT remain live-conditional on compatible
+  hardware, drivers and native provider libraries.
+- Portable inference cancellation is enforced at native-call boundaries. Host process termination
+  is the hard boundary if one native operator does not return.

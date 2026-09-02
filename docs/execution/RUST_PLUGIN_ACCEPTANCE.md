@@ -58,3 +58,19 @@ Milestone evidence will be appended after the corresponding tests pass.
 - Package/registry tests: PASS — 4 tests. Dummy process Host E2E: PASS — handshake, health, typed
   inference, conformance, forced crash and Core survival.
 - Core/storage/plugin/app strict Clippy: PASS. Rust-only boundary scan: PASS.
+
+## M4 Rust ONNX Runtime — 2026-09-02
+
+- Added a model-neutral Common crate for deterministic resize/letterbox, normalization,
+  NCHW/NHWC conversion, bbox transforms, NMS, masks, connected components, contours, polygon
+  simplification and numeric validation.
+- Added a native ONNX Runtime crate with explicit CPU/CUDA/TensorRT selection, strict accelerator
+  registration, graph input/output shape and dtype discovery, typed tensors, thread configuration,
+  warmup, cancellation boundaries, model SHA-256 and exact session caching.
+- The real CPU runtime loaded a generated legal ONNX Identity graph and returned the actual
+  [2.5, -4.0] tensor. Shape/type discovery, cache reuse/eviction and cancellation also pass.
+- Focused tests for both new packages: PASS — 7 tests.
+- Full workspace/all-feature tests: PASS — 346 tests, 1 explicitly billable Provider test ignored.
+- Strict all-target/all-feature Clippy for both packages: PASS.
+- The fixture contains no learned weight and is not claimed as an expert model. The first real
+  expert-model release gate remains M5.

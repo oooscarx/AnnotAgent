@@ -5,6 +5,8 @@ members = [
     "crates/annotagent-core",
     "crates/annotagent-export",
     "crates/annotagent-image-tools",
+    "crates/annotagent-model-runtime-common",
+    "crates/annotagent-model-runtime-onnx",
     "crates/annotagent-provider",
     "crates/annotagent-plugin-api",
     "crates/annotagent-plugin-host",
@@ -40,6 +42,7 @@ clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "copy-dylibs"] }
 keyring = "4.1"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
