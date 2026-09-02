@@ -68,6 +68,7 @@ use annotagent_export::{
     YoloSegmentationImporter,
 };
 use annotagent_image_tools::{generate_synthetic_robocup, load_image, sha256, to_model_image};
+use annotagent_model_catalog::ModelBundleRegistry;
 use annotagent_plugin_registry::{PluginReference, PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
@@ -5264,6 +5265,7 @@ pub struct LocalApplication {
     skills: Arc<SkillRegistry>,
     layered_skills: Arc<LayeredSkillRegistry>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
+    model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
@@ -5377,6 +5379,7 @@ impl LocalApplication {
         layered_skills.register(pack)?;
         let (event_sender, _) = broadcast::channel(1024);
         let plugin_registry = PluginRegistry::open(workspace.join(".annotagent/plugins"))?;
+        let model_bundle_registry = ModelBundleRegistry::open(workspace.join(".annotagent"))?;
         Ok(Self {
             workspace,
             database_path,
@@ -5384,6 +5387,7 @@ impl LocalApplication {
             skills: Arc::new(registry),
             layered_skills: Arc::new(layered_skills),
             plugin_registry: Arc::new(Mutex::new(plugin_registry)),
+            model_bundle_registry: Arc::new(Mutex::new(model_bundle_registry)),
             event_sender,
             active: Mutex::new(HashMap::new()),
             agent_cancellations: Mutex::new(HashMap::new()),
@@ -5411,6 +5415,13 @@ impl LocalApplication {
     #[must_use]
     pub fn plugin_registry(&self) -> Arc<Mutex<PluginRegistry>> {
         self.plugin_registry.clone()
+    }
+
+    /// Shared durable model-asset Registry. It owns catalogs, license evidence and immutable
+    /// content-addressed Bundle installations; model execution still belongs to the Plugin Host.
+    #[must_use]
+    pub fn model_bundle_registry(&self) -> Arc<Mutex<ModelBundleRegistry>> {
+        self.model_bundle_registry.clone()
     }
 
     fn workflow_catalog(&self, settings: &Settings) -> Result<(NodeRegistry, ModelRegistry)> {

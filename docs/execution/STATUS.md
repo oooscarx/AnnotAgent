@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-02 CST
 
+## Model Bundle Provisioning Alpha M3 — 2026-09-03
+
+- Added persisted local and configurable HTTPS Curated Catalogs with immutable Bundle identity,
+  Plugin/platform compatibility, source, publisher, license, size and SHA-256 metadata.
+- Added a Rust-only, redirect-denying and cancellation-aware streaming downloader that rejects
+  credentials, local/private targets, oversize responses and size/hash mismatches without leaving
+  partial Ready state.
+- Added exact-license acceptance and atomic content-addressed Bundle installation. Verified files
+  stage under a unique directory and activate at `models/sha256/<prefix>/<digest>` only after all
+  checks pass; same content is shared and immutable identity collisions fail.
+- Added Application-owned Registry integration, the Model Catalog/Bundle REST surface and SQLite
+  migration 14. API views omit absolute paths and still do not claim a Ready Model Instance.
+
 ## Model Bundle Provisioning Alpha M2 — 2026-09-03
 
 - Implemented deterministic, streaming `.annotmodel` ZIP packing and verification. The archive

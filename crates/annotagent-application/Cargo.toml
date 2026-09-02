@@ -10,6 +10,7 @@ rust-version.workspace = true
 annotagent-core = { path = "../annotagent-core" }
 annotagent-export = { path = "../annotagent-export" }
 annotagent-image-tools = { path = "../annotagent-image-tools" }
+annotagent-model-catalog = { path = "../annotagent-model-catalog" }
 annotagent-provider = { path = "../annotagent-provider" }
 annotagent-plugin-api = { path = "../annotagent-plugin-api" }
 annotagent-plugin-host = { path = "../annotagent-plugin-host" }

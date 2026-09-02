@@ -4,7 +4,7 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M2 — Bundle verifier and safe deterministic archive.
+M3 — Catalog and content-addressed provisioner.
 
 ## Completed
 
@@ -35,14 +35,27 @@ M2 — Bundle verifier and safe deterministic archive.
   bundles remain explicit; a trusted official policy can require a valid signature.
 - Added `annotagent models bundle pack|inspect|verify`; none of these commands install or convert a
   model.
+- Added a curated Catalog crate with strict JSON, unique immutable entries, publisher/license/
+  platform/Plugin metadata and persisted local catalogs. Configured refresh accepts only public
+  credential-free HTTPS endpoints.
+- Added a redirect-denying Rust downloader with DNS/IP private-network checks, bounded streaming,
+  cancellation, structured progress, exact size and SHA-256 checks and partial-file cleanup.
+- Added durable exact-license acceptance and atomic local/Catalog installation into shared
+  `models/sha256/<prefix>/<bundle-digest>` storage. Reinstalling identical bytes is idempotent;
+  reusing an ID/version for different bytes fails.
+- Application and Server now expose Catalog list/refresh/detail, Bundle installed/available/detail,
+  package inspect, local import, curated install, license acceptance and static verification APIs.
+  Responses intentionally omit content roots.
+- SQLite migration 14 creates all Catalog, Bundle, file, contract, installation, verification,
+  smoke, license, instance, health, reference and event tables for the audit boundary.
 
 ## In progress
 
-- Focused M2 gate and milestone commit.
+- Focused M3 gate and milestone commit.
 
 ## Next
 
-M3 — Curated Catalog, safe download/import and content-addressed installation.
+M4 — Plugin compatibility, ONNX contract inspection, Model Instances and available Model Profiles.
 
 ## Latest verification
 
@@ -51,11 +64,12 @@ M3 — Curated Catalog, safe download/import and content-addressed installation.
 | Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle tests | PASS — 9 manifest/package/signature/security tests |
+| Catalog/provisioning tests | PASS — 3 catalog/URL/license/content-store tests |
 | Plugin conformance | Existing SAM registry component regression passes after M0 assertions |
 | Real model smoke | Not run; no legally verified SAM assets are installed |
 | Web tests | Last established release baseline: 44 unit, 37 Chromium E2E |
 | E2E | M0 records the current route; installation UX changes begin in M6 |
-| Local commit | `77e3acb` — M0; `399d89b` — M1; M2 pending |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; M3 pending |
 
 ## Release-blocking remainder
 

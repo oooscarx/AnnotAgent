@@ -64,3 +64,16 @@ for parsing.
 The Ed25519 payload is the versioned concatenation of the exact Manifest bytes and exact checksum
 document bytes. The signature file is outside the checksum set, avoiding recursive identity while
 authenticating the complete payload list and every payload digest.
+
+## D012 — Deny redirects and private DNS answers
+
+Curated downloads trade convenience for a narrow trust boundary: the Catalog URL and Bundle URL
+must be public HTTPS, every resolved address must be public, and HTTP redirects are rejected rather
+than recursively re-evaluated. This closes local-file, loopback, private-network and redirect-based
+SSRF paths.
+
+## D013 — Installed is not Ready
+
+M3 installation proves archive, identity, license and storage integrity and therefore produces only
+`ModelBundleStatus::Installed`. It does not create an Available Model Profile; compatibility,
+runtime contract inspection and smoke evidence are M4/M5 gates.

@@ -42,6 +42,12 @@ use annotagent_core::{
     check_model_compatibility, effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
+use annotagent_model_bundle::{
+    ModelBundleId, Sha256Digest as ModelBundleSha256Digest, verify_model_bundle,
+};
+use annotagent_model_catalog::{
+    LicenseAcceptanceActor, ModelBundleInstallSource, ModelCatalogClient, ModelLicenseAcceptance,
+};
 use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
 use annotagent_plugin_host::verify_package;
 use annotagent_plugin_registry::{InstallApproval, PluginRegistryError, plugin_model_selection_id};
@@ -531,6 +537,32 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(get_model_profile_quality_contracts),
         )
         .route("/api/plugins", get(list_expert_model_plugins))
+        .route("/api/model-catalogs", get(list_model_catalogs))
+        .route("/api/model-catalogs/refresh", post(refresh_model_catalog))
+        .route("/api/model-catalogs/{catalog_id}", get(get_model_catalog))
+        .route("/api/model-bundles", get(list_model_bundles))
+        .route(
+            "/api/model-bundles/available",
+            get(list_available_model_bundles),
+        )
+        .route(
+            "/api/model-bundles/packages/inspect",
+            post(inspect_model_bundle_package),
+        )
+        .route("/api/model-bundles/install", post(install_model_bundle))
+        .route("/api/model-bundles/import", post(import_model_bundle))
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}",
+            get(get_model_bundle),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/verify",
+            post(verify_installed_model_bundle),
+        )
+        .route(
+            "/api/model-bundles/{bundle_id}/{version}/license-acceptance",
+            post(accept_model_bundle_license),
+        )
         .route(
             "/api/plugins/packages/inspect",
             post(inspect_expert_model_plugin_package),
@@ -6378,6 +6410,364 @@ async fn events(
 
 const MAX_PLUGIN_PACKAGE_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_PLUGIN_WEIGHT_UPLOAD_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+const MAX_MODEL_BUNDLE_UPLOAD_BYTES: u64 = annotagent_model_bundle::MAX_MODEL_BUNDLE_BYTES;
+
+#[derive(Debug, Deserialize)]
+struct ModelCatalogRefreshRequest {
+    url: url::Url,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelBundleUploadQuery {
+    filename: String,
+    #[serde(default)]
+    license_accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelBundleInstallRequest {
+    catalog_id: String,
+    bundle_id: String,
+    bundle_version: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelBundleLicenseRequest {
+    license_digest: String,
+}
+
+fn model_bundle_registry_root(state: &ServerState) -> ApiResult<PathBuf> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    Ok(registry.data_root().to_owned())
+}
+
+async fn receive_model_bundle_upload(
+    state: &ServerState,
+    filename: &str,
+    body: Body,
+) -> ApiResult<PathBuf> {
+    let filename = safe_upload_filename(filename)?;
+    let upload_root = model_bundle_registry_root(state)?.join("model-uploads");
+    tokio::fs::create_dir_all(&upload_root)
+        .await
+        .map_err(ApiError::internal)?;
+    let path = upload_root.join(format!("{}-{filename}", uuid::Uuid::new_v4()));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut stream = body.into_data_stream();
+    let mut written = 0_u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(ApiError::bad_request)?;
+        written = written.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+        if written > MAX_MODEL_BUNDLE_UPLOAD_BYTES {
+            drop(file);
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(ApiError::bad_request(
+                "Model Bundle upload exceeds the safety limit",
+            ));
+        }
+        file.write_all(&chunk).await.map_err(ApiError::internal)?;
+    }
+    file.flush().await.map_err(ApiError::internal)?;
+    if written == 0 {
+        drop(file);
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(ApiError::bad_request("Model Bundle upload cannot be empty"));
+    }
+    Ok(path)
+}
+
+fn installed_model_bundle_view(
+    installed: &annotagent_model_catalog::InstalledModelBundle,
+) -> Value {
+    json!({
+        "manifest": installed.manifest,
+        "bundle_sha256": installed.bundle_digest,
+        "status": installed.status,
+        "source": installed.source,
+        "installed_at": installed.installed_at,
+        "updated_at": installed.updated_at,
+        "verification": installed.verification,
+        "enabled": installed.enabled,
+    })
+}
+
+async fn list_model_catalogs(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    Ok(Json(json!({ "catalogs": registry.catalogs() })))
+}
+
+async fn get_model_catalog(
+    State(state): State<ServerState>,
+    AxumPath(catalog_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let catalog = registry
+        .catalogs()
+        .into_iter()
+        .find(|catalog| catalog.catalog_id == catalog_id)
+        .ok_or_else(|| ApiError::not_found("Model Catalog was not found"))?;
+    Ok(Json(json!(catalog)))
+}
+
+async fn refresh_model_catalog(
+    State(state): State<ServerState>,
+    Json(request): Json<ModelCatalogRefreshRequest>,
+) -> ApiResult<Json<Value>> {
+    let client = ModelCatalogClient::new().map_err(ApiError::bad_request)?;
+    let catalog = client
+        .fetch_catalog(&request.url)
+        .await
+        .map_err(ApiError::bad_request)?;
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .save_catalog(catalog.clone())
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "catalog": catalog })))
+}
+
+async fn list_model_bundles(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    Ok(Json(json!({
+        "bundles": registry.list().iter().map(installed_model_bundle_view).collect::<Vec<_>>(),
+    })))
+}
+
+async fn list_available_model_bundles(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    Ok(Json(json!({ "bundles": registry.available() })))
+}
+
+async fn get_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let installed = registry
+        .get(&bundle_id, &version)
+        .ok_or_else(|| ApiError::not_found("Model Bundle was not found"))?;
+    Ok(Json(installed_model_bundle_view(installed)))
+}
+
+async fn inspect_model_bundle_package(
+    State(state): State<ServerState>,
+    Query(query): Query<ModelBundleUploadQuery>,
+    body: Body,
+) -> ApiResult<Json<Value>> {
+    if !query.filename.ends_with(".annotmodel") {
+        return Err(ApiError::bad_request(
+            "Model Bundles must use the .annotmodel extension",
+        ));
+    }
+    let upload = receive_model_bundle_upload(&state, &query.filename, body).await?;
+    let path = upload.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_model_bundle(&path))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::bad_request);
+    let _ = tokio::fs::remove_file(upload).await;
+    let verified = verified?;
+    Ok(Json(json!({
+        "manifest": verified.manifest,
+        "bundle_sha256": verified.bundle_digest,
+        "signature": verified.signature,
+        "file_count": verified.files.len(),
+        "verified": true,
+        "installed": false,
+    })))
+}
+
+async fn import_model_bundle(
+    State(state): State<ServerState>,
+    Query(query): Query<ModelBundleUploadQuery>,
+    body: Body,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    if !query.filename.ends_with(".annotmodel") {
+        return Err(ApiError::bad_request(
+            "Model Bundles must use the .annotmodel extension",
+        ));
+    }
+    let upload = receive_model_bundle_upload(&state, &query.filename, body).await?;
+    let path = upload.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_model_bundle(&path))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::bad_request);
+    let verified = match verified {
+        Ok(verified) => verified,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(upload).await;
+            return Err(error);
+        }
+    };
+    let installed = {
+        let registry = state.application.model_bundle_registry();
+        let mut registry = registry
+            .lock()
+            .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+        if query.license_accepted {
+            registry
+                .accept_license(ModelLicenseAcceptance {
+                    bundle_id: verified.manifest.id.clone(),
+                    bundle_version: verified.manifest.version.clone(),
+                    license_digest: verified.manifest.license.license_digest.clone(),
+                    accepted_at: Utc::now(),
+                    accepted_by: LicenseAcceptanceActor::LocalUser,
+                })
+                .map_err(ApiError::internal)?;
+        }
+        registry
+            .install_verified(verified, ModelBundleInstallSource::LocalImport)
+            .map_err(ApiError::bad_request)?
+    };
+    let _ = tokio::fs::remove_file(upload).await;
+    Ok((
+        StatusCode::CREATED,
+        Json(installed_model_bundle_view(&installed)),
+    ))
+}
+
+async fn accept_model_bundle_license(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+    Json(request): Json<ModelBundleLicenseRequest>,
+) -> ApiResult<StatusCode> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let bundle_version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let license_digest =
+        ModelBundleSha256Digest::parse(request.license_digest).map_err(ApiError::bad_request)?;
+    state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .accept_license(ModelLicenseAcceptance {
+            bundle_id,
+            bundle_version,
+            license_digest,
+            accepted_at: Utc::now(),
+            accepted_by: LicenseAcceptanceActor::LocalUser,
+        })
+        .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn install_model_bundle(
+    State(state): State<ServerState>,
+    Json(request): Json<ModelBundleInstallRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let bundle_id = ModelBundleId::parse(&request.bundle_id).map_err(ApiError::bad_request)?;
+    let bundle_version =
+        semver::Version::parse(&request.bundle_version).map_err(ApiError::bad_request)?;
+    let entry = {
+        let registry = state.application.model_bundle_registry();
+        let registry = registry
+            .lock()
+            .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+        registry
+            .catalogs()
+            .into_iter()
+            .find(|catalog| catalog.catalog_id == request.catalog_id)
+            .and_then(|catalog| {
+                catalog.entries.into_iter().find(|entry| {
+                    entry.bundle_id == bundle_id && entry.bundle_version == bundle_version
+                })
+            })
+            .ok_or_else(|| ApiError::not_found("Catalog Model Bundle was not found"))?
+    };
+    let upload_root = model_bundle_registry_root(&state)?.join("model-downloads");
+    tokio::fs::create_dir_all(&upload_root)
+        .await
+        .map_err(ApiError::internal)?;
+    let download = upload_root.join(format!("{}.annotmodel", uuid::Uuid::new_v4()));
+    let client = ModelCatalogClient::new().map_err(ApiError::bad_request)?;
+    client
+        .download_bundle(&entry, &download, &CancellationToken::new(), None)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let path = download.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_model_bundle(&path))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::bad_request);
+    let verified = match verified {
+        Ok(verified) => verified,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(download).await;
+            return Err(error);
+        }
+    };
+    if verified.manifest.id != entry.bundle_id
+        || verified.manifest.version != entry.bundle_version
+        || verified.bundle_digest != entry.bundle_sha256
+        || verified.manifest.license.license_digest != entry.license_summary.license_digest
+    {
+        let _ = tokio::fs::remove_file(download).await;
+        return Err(ApiError::bad_request(
+            "downloaded Bundle identity or license does not match the curated Catalog",
+        ));
+    }
+    let installed = state
+        .application
+        .model_bundle_registry()
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?
+        .install_verified(
+            verified,
+            ModelBundleInstallSource::CuratedCatalog {
+                catalog_id: request.catalog_id,
+            },
+        )
+        .map_err(ApiError::bad_request)?;
+    let _ = tokio::fs::remove_file(download).await;
+    Ok((
+        StatusCode::CREATED,
+        Json(installed_model_bundle_view(&installed)),
+    ))
+}
+
+async fn verify_installed_model_bundle(
+    State(state): State<ServerState>,
+    AxumPath((bundle_id, version)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let bundle_id = ModelBundleId::parse(bundle_id).map_err(ApiError::bad_request)?;
+    let version = semver::Version::parse(&version).map_err(ApiError::bad_request)?;
+    let registry = state.application.model_bundle_registry();
+    let registry = registry
+        .lock()
+        .map_err(|_| ApiError::internal("Model Bundle Registry lock is poisoned"))?;
+    let installed = registry
+        .get(&bundle_id, &version)
+        .ok_or_else(|| ApiError::not_found("Model Bundle was not found"))?;
+    Ok(Json(json!({ "verification": installed.verification })))
+}
 
 #[derive(Debug, Deserialize)]
 struct PluginUploadQuery {

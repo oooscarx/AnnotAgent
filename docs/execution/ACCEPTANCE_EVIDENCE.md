@@ -1,5 +1,17 @@
 # AnnotAgent Acceptance Evidence
 
+## Model Bundle Provisioning Alpha M3 — 2026-09-03
+
+1. Three Catalog/Registry tests pass: unsafe URL classes are rejected, exact license evidence
+   persists, and a real packed Fixture Bundle fails before acceptance then installs idempotently into
+   the digest-derived directory with verification evidence and restart recovery.
+2. Storage tests pass all 32 unit/integration cases, including migration 14's thirteen new Model
+   Bundle tables. Server tests pass 20/20 after registering the new API surface.
+3. Focused strict Clippy passes for Catalog, Application, Server and Storage; `cargo check` composes
+   the entire Server path.
+4. The remote client is implemented but no external Catalog or model bytes were contacted during
+   this milestone. No script runtime, key, model weight, push or remote mutation occurred.
+
 ## Model Bundle Provisioning Alpha M2 — 2026-09-03
 
 1. Nine Bundle tests pass, including deterministic two-pack identity, streamed verify/extract,

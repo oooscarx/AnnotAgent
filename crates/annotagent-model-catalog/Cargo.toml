@@ -1,0 +1,30 @@
+[package]
+name = "annotagent-model-catalog"
+description = "Curated model catalogs and atomic content-addressed provisioning for AnnotAgent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+annotagent-model-bundle = { path = "../annotagent-model-bundle" }
+annotagent-plugin-api = { path = "../annotagent-plugin-api" }
+chrono.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

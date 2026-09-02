@@ -20,8 +20,10 @@ Last updated: 2026-09-03 CST
 - [x] Model file roles are generic validated manifest strings.
 - [x] `.annotmodel` pack, inspect and verify are deterministic and safe.
 - [x] Bundle contains source, license, contracts, checksums and test vectors.
-- [ ] Local fixture and HTTPS curated catalogs work without executable content.
-- [ ] Safe download and atomic content-addressed installation pass failure/cancel tests.
+- [x] Local persisted and HTTPS curated catalogs work without executable content; the actual
+      built-in Fixture entry is added in M7.
+- [x] Safe download and atomic content-addressed installation are implemented; external HTTPS live
+      transfer remains live-conditional while URL, cancellation and local install paths are tested.
 - [ ] Plugin required roles, versions, capabilities, contracts, platform and provider are resolved.
 - [ ] Only a smoke-tested Ready Model Instance produces an available Model Profile.
 - [ ] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
@@ -62,3 +64,18 @@ Last updated: 2026-09-03 CST
 - [x] Extraction repeats hash/size checks and removes a partial destination after failure.
 - [x] CLI provides Bundle pack/inspect/verify only; no conversion, script execution or installation
       side effect exists in M2.
+
+## M3 evidence
+
+- [x] Catalog entry fixes Bundle ID/version/digest/size/URL, capabilities, compatible Plugins,
+      platform resources, license summary and Publisher identity.
+- [x] HTTPS validation rejects credentials, HTTP/file schemes, localhost, `.local`, literal private,
+      loopback, link-local and unspecified IPs; DNS results are rechecked before a request.
+- [x] Reqwest follows no redirects and writes a bounded stream to a unique partial path while
+      calculating SHA-256. Cancellation/error/hash/size failure removes the partial file.
+- [x] Exact license digest, Bundle ID/version/digest and Catalog metadata must agree before install.
+- [x] Installation extracts into unique staging, writes `verification.json`, atomically renames to a
+      digest-derived directory and persists Registry state only after activation.
+- [x] Duplicate content is idempotent; conflicting bytes cannot replace an immutable ID/version.
+- [x] API omits absolute content paths and exposes separate installed versus available resources.
+- [x] Migration 14 creates the complete relational audit schema in one transaction.

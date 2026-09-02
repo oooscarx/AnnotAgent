@@ -100,6 +100,7 @@ dependencies = [
  "annotagent-core",
  "annotagent-export",
  "annotagent-image-tools",
+ "annotagent-model-catalog",
  "annotagent-plugin-api",
  "annotagent-plugin-host",
  "annotagent-plugin-registry",
@@ -206,6 +207,28 @@ dependencies = [
  "uuid",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "annotagent-model-catalog"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-model-bundle",
+ "annotagent-plugin-api",
+ "chrono",
+ "futures",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -487,6 +510,8 @@ dependencies = [
  "annotagent-core",
  "annotagent-export",
  "annotagent-image-tools",
+ "annotagent-model-bundle",
+ "annotagent-model-catalog",
  "annotagent-plugin-api",
  "annotagent-plugin-host",
  "annotagent-plugin-registry",
@@ -498,6 +523,7 @@ dependencies = [
  "chrono",
  "futures",
  "rust_decimal",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

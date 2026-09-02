@@ -8,6 +8,7 @@ members = [
     "crates/annotagent-model-runtime-common",
     "crates/annotagent-model-runtime-onnx",
     "crates/annotagent-model-bundle",
+    "crates/annotagent-model-catalog",
     "crates/annotagent-provider",
     "crates/annotagent-plugin-api",
     "crates/annotagent-plugin-host",
