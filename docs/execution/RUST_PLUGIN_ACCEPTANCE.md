@@ -26,3 +26,16 @@ Milestone evidence will be appended after the corresponding tests pass.
 - `bash scripts/check-rust-plugin-boundary.sh`: PASS.
 - Manifest TOML round trip and semantic digest stability, unsafe entrypoints, forbidden permissions,
   invalid contracts and path traversal are covered.
+
+## M2 Rust SDK and dummy process — 2026-09-02
+
+- Added an async Rust Plugin Server with one-time standard-input startup, dynamic loopback binding,
+  nonce handshake and session-token authentication on every endpoint.
+- Added health, capability, model, contract, warmup, infer, cancel and shutdown routes; bounded body
+  and response sizes; typed request/Artifact validation; panic mapping; cancellation tracking; and
+  bounded PNG/JPEG decoding.
+- Added shared conformance runner and `org.annotagent.dummy-detector` as a standalone Rust binary.
+- `cargo test -p annotagent-plugin-sdk -p annotagent-plugin-dummy-detector`: PASS — 2 SDK tests.
+- Strict Clippy for both packages: PASS.
+- Standalone executable smoke: PASS — process handshake, authenticated health and graceful shutdown.
+- Rust-only boundary scan: PASS.

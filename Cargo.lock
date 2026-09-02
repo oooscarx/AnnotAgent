@@ -181,6 +181,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-plugin-dummy-detector"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-plugin-api",
+ "annotagent-plugin-sdk",
+ "async-trait",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "annotagent-plugin-sdk"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-plugin-api",
+ "async-trait",
+ "axum",
+ "base64",
+ "chrono",
+ "futures",
+ "image",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "annotagent-provider"
 version = "0.1.0"
 dependencies = [

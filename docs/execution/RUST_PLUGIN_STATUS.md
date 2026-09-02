@@ -1,11 +1,11 @@
 # Rust Expert Model Plugin Alpha — Status
 
-- Current milestone: M2 — Rust SDK and isolated dummy detector
-- Completed: M0 baseline; M1 stable Plugin identity, manifest, contract, package digest, permissions, weights, licenses and lifecycle types
-- In progress: authenticated SDK server, process handshake, inference/cancel/warmup/shutdown and conformance
-- Next: M3 Host, package/registry lifecycle and persistence
+- Current milestone: M3 — Host, Registry and lifecycle
+- Completed: M0 baseline; M1 Plugin API; M2 authenticated SDK server, standalone Dummy Rust process and shared conformance
+- In progress: deterministic package verification, isolated process Host, installations, versions, weights, references, persistence and CLI
+- Next: M4 common model helpers and Rust ONNX runtime
 - Latest Rust tests: `cargo test --workspace --all-features` — PASS, 339 passed, 1 explicitly billable test ignored
-- Latest plugin conformance: API contract unit tests pass; live process suite is in progress
+- Latest plugin conformance: Dummy process authentication/discovery/typed inference suite PASS
 - Latest real-model test: none in this task; existing external model claims are not inherited
 - Latest Web tests: pending M8 baseline
 - Latest E2E: pending M2/M3

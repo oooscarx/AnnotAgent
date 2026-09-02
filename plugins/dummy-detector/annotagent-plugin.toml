@@ -1,0 +1,60 @@
+schema_version = "1"
+id = "org.annotagent.dummy-detector"
+version = "1.0.0"
+display_name = "Dummy Detector"
+description = "Deterministic Rust process used only for plugin protocol conformance"
+publisher = "AnnotAgent"
+plugin_api = "1"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-dummy-detector"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 10
+shutdown_timeout_seconds = 5
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
+accelerators = ["cpu"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 64
+recommended_memory_mb = 128
+minimum_vram_mb = 0
+recommended_vram_mb = 0
+maximum_response_mb = 8
+maximum_concurrency = 1
+maximum_requests_per_process = 1000
+
+[[models]]
+id = "dummy-detector-v1"
+display_name = "Dummy Detector v1"
+capabilities = ["object_detection"]
+input_contracts = [{ name = "image", data_type = { artifact = "image" }, required = true, multiple = false }]
+output_contracts = [{ name = "detections", data_type = { artifact = "detection_set" }, required = true, multiple = false }]
+score_semantics = "detection_confidence"
+geometry_semantics = "predicted_geometry"
+
+[models.runtime_requirements]
+devices = ["cpu"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = false
+provisioning = "none"
+checkpoint_sha256_required = false
+
+[license]
+code = "MIT"
+weights = "not_applicable"
+commercial_use = "allowed"

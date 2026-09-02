@@ -7,6 +7,7 @@ members = [
     "crates/annotagent-image-tools",
     "crates/annotagent-provider",
     "crates/annotagent-plugin-api",
+    "crates/annotagent-plugin-sdk",
     "crates/annotagent-runtime",
     "crates/annotagent-server",
     "crates/annotagent-skill-classification",
@@ -17,6 +18,7 @@ members = [
     "crates/annotagent-skill-vlm-detection",
     "crates/annotagent-skill-yolo",
     "crates/annotagent-storage",
+    "plugins/dummy-detector",
 ]
 resolver = "2"
 
