@@ -1,0 +1,25 @@
+[package]
+name = "annotagent-model-bundle"
+description = "Versioned model asset bundles and contracts for AnnotAgent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+annotagent-core = { path = "../annotagent-core" }
+annotagent-plugin-api = { path = "../annotagent-plugin-api" }
+chrono.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

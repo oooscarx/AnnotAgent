@@ -46,3 +46,9 @@ inspect availability and create an unresolved setup requirement, never perform t
 
 The tiny offline fixture is marked Fixture and non-publishable. It validates mechanics and cannot be
 presented as SAM or as accuracy evidence.
+
+## D009 — Strict typed TOML before archive work
+
+Manifest parsing denies unknown fields and validates every semantic reference before M2 accepts any
+archive bytes. This makes a package checksum proof necessary but not sufficient: a perfectly hashed
+archive with an incoherent model role, license or test contract is still invalid.

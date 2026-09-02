@@ -1,5 +1,16 @@
 # AnnotAgent Acceptance Evidence
 
+## Model Bundle Provisioning Alpha M1 — 2026-09-02
+
+1. The new package API round-trips a two-file prompted-segmentation Manifest while preserving
+   generic `ModelFileRole` values and semantic plugin version matching.
+2. Five focused tests cover deterministic manifest serialization, arbitrary safe roles, duplicate
+   and missing role rejection, unsafe path/Fixture claims and unknown-field denial.
+3. `cargo test -p annotagent-model-bundle -p annotagent-plugin-api` passes 9 tests. Strict focused
+   Clippy is part of the milestone gate.
+4. No installer, downloader, Model Profile mutation, runtime shortcut or model weight was added in
+   this API milestone.
+
 ## Model Bundle Provisioning Alpha M0 — 2026-09-02
 
 1. The SAM registry component test now explicitly asserts the installed plugin requires exactly two

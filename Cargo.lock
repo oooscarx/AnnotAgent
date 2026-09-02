@@ -185,6 +185,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotagent-model-bundle"
+version = "0.1.0"
+dependencies = [
+ "annotagent-core",
+ "annotagent-plugin-api",
+ "chrono",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "url",
+]
+
+[[package]]
 name = "annotagent-model-runtime-common"
 version = "0.1.0"
 dependencies = [

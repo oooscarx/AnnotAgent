@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-02 CST
 
+## Model Bundle Provisioning Alpha M1 — 2026-09-02
+
+- Added a dedicated `annotagent-model-bundle` crate and the versioned `.annotmodel` Manifest with
+  identity, multi-file assets, capabilities, plugin ranges, contracts, source/export provenance,
+  runtime requirements, licenses and fixed smoke-test references.
+- File roles are validated strings rather than SAM/YOLO/Core variants. Strict TOML validation
+  rejects unknown fields, duplicate/missing roles, unsafe paths, invalid version requirements and
+  dishonest Fixture/publishable combinations.
+- Bundle installation and Model Instance readiness now have their own status vocabularies; a new
+  Plugin Runtime status type expresses code lifecycle independently while legacy serialized status
+  remains compatible during migration.
+
 ## Model Bundle Provisioning Alpha M0 — 2026-09-02
 
 - Reproduced the installed-but-unprovisioned SAM state and strengthened its regression to require

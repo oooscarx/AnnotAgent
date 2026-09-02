@@ -585,6 +585,20 @@ pub enum PluginStatus {
     UpdateAvailable,
 }
 
+/// Runtime-only lifecycle status. Model asset and Model Instance readiness are independent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginRuntimeStatus {
+    NotInstalled,
+    Installed,
+    Disabled,
+    Starting,
+    Ready,
+    Unhealthy,
+    Crashed,
+    Incompatible,
+}
+
 impl PluginStatus {
     #[must_use]
     pub const fn selectable(self) -> bool {

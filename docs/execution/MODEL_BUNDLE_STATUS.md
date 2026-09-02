@@ -4,7 +4,7 @@ Last updated: 2026-09-02 CST
 
 ## Current Milestone
 
-M0 — baseline and current SAM provisioning gap.
+M1 — versioned Model Bundle API and Manifest.
 
 ## Completed
 
@@ -20,14 +20,19 @@ M0 — baseline and current SAM provisioning gap.
   snapshots use the existing SQLite model/workflow schema.
 - Added an explicit regression assertion for both required SAM components and the unprovisioned
   state. Root `dist/` remains on disk but is ignored as generated package output.
+- Added the `annotagent-model-bundle` crate with the `.annotmodel` identity, full versioned
+  Manifest, model-neutral roles, source/export/runtime/license/contract/test metadata, strict TOML
+  validation and independent Bundle/Model Instance status enums.
+- Added an explicit runtime-only status enum to the Plugin API. The existing combined legacy status
+  remains temporarily for backward compatibility and is migrated by the compatibility milestone.
 
 ## In progress
 
-- None. M0 is ready for its focused verification and commit.
+- Focused M1 test and strict Clippy verification.
 
 ## Next
 
-M1 — introduce the model-bundle API and manifest without changing Plugin Host or Provider Registry.
+M2 — deterministic Bundle pack/inspect/verify and safe archive staging.
 
 ## Latest verification
 
@@ -35,12 +40,12 @@ M1 — introduce the model-bundle API and manifest without changing Plugin Host 
 | --- | --- |
 | Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
-| Bundle tests | Not applicable in M0; no Bundle API existed |
+| Bundle tests | PASS — 5 manifest/role/validation tests |
 | Plugin conformance | Existing SAM registry component regression passes after M0 assertions |
 | Real model smoke | Not run; no legally verified SAM assets are installed |
 | Web tests | Last established release baseline: 44 unit, 37 Chromium E2E |
 | E2E | M0 records the current route; installation UX changes begin in M6 |
-| Local commit | Pending M0 commit |
+| Local commit | `77e3acb` — M0; M1 pending |
 
 ## Release-blocking remainder
 

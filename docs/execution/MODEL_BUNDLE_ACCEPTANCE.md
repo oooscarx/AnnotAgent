@@ -16,8 +16,8 @@ Last updated: 2026-09-02 CST
 
 ## Release matrix
 
-- [ ] Plugin Package and Model Bundle are independent entities.
-- [ ] Model file roles are generic manifest strings.
+- [x] Plugin Package and Model Bundle are independent entities at the package API boundary.
+- [x] Model file roles are generic validated manifest strings.
 - [ ] `.annotmodel` pack, inspect and verify are deterministic and safe.
 - [ ] Bundle contains source, license, contracts, checksums and test vectors.
 - [ ] Local fixture and HTTPS curated catalogs work without executable content.
@@ -34,3 +34,15 @@ Last updated: 2026-09-02 CST
 - [ ] Geometry Safety, workflow validation, lineage, replay, batch, review, export and Providers do
       not regress.
 - [ ] Active installation/inference paths contain no Python, pip, uv, conda or venv process launch.
+
+## M1 evidence
+
+- [x] `.annotmodel` extension and versioned schema constants exist in a dedicated model-asset crate.
+- [x] Manifest covers identity, version, model format/variant, capabilities, compatible plugins,
+      multi-file roles, file hashes/sizes, contracts, source, export, runtime, license and smoke suite.
+- [x] TOML rejects unknown fields, unsafe paths, invalid version constraints, duplicate roles,
+      missing roles and contradictory Fixture/publishable claims.
+- [x] ONNX bundles require an opset; publishable bundles cannot prohibit redistribution.
+- [x] Generic roles prove that a new `depth_auxiliary_2` role does not require a Core enum change.
+- [x] Independent Bundle and Model Instance states no longer depend on the legacy `NeedsWeights`
+      vocabulary.
