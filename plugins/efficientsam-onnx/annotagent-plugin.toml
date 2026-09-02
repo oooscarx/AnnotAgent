@@ -1,0 +1,69 @@
+schema_version = "1"
+id = "org.annotagent.efficientsam-onnx"
+version = "1.0.0"
+display_name = "EfficientSAM-Ti ONNX"
+description = "Rust-native EfficientSAM-Ti box- and point-prompted segmentation with exact split-graph contracts"
+publisher = "AnnotAgent"
+plugin_api = "1"
+
+[runtime]
+kind = "native_rust_process"
+entrypoint = "bin/{target}/annotagent-plugin-efficientsam-onnx"
+protocol = "http-vision-v1"
+startup_timeout_seconds = 60
+shutdown_timeout_seconds = 10
+
+[compatibility]
+annotagent = ">=0.1.0,<0.2.0"
+targets = ["linux-x86_64", "macos-aarch64"]
+accelerators = ["cpu"]
+
+[permissions]
+network = "loopback_only"
+provider_secrets = false
+project_files = false
+temporary_images = true
+plugin_cache = true
+subprocesses = false
+
+[resources]
+minimum_memory_mb = 2048
+recommended_memory_mb = 4096
+minimum_vram_mb = 0
+recommended_vram_mb = 0
+maximum_response_mb = 256
+maximum_concurrency = 1
+maximum_requests_per_process = 10000
+
+[[models]]
+id = "efficientsam-ti-onnx"
+display_name = "EfficientSAM-Ti ONNX"
+capabilities = ["prompted_segmentation"]
+input_contracts = [
+  { name = "image", data_type = { artifact = "image" }, required = true, multiple = false },
+  { name = "box_prompts", data_type = { artifact = "box_prompt_set" }, required = false, multiple = false },
+  { name = "point_prompts", data_type = { artifact = "point_prompt_set" }, required = false, multiple = false },
+]
+output_contracts = [{ name = "masks", data_type = { artifact = "mask_set" }, required = true, multiple = false }]
+required_file_roles = ["image_encoder", "mask_decoder"]
+score_semantics = "relative_confidence"
+geometry_semantics = "mask_refined_geometry"
+
+[models.runtime_requirements]
+devices = ["cpu"]
+supports_batch = false
+
+[weights]
+bundled = false
+required = true
+provisioning = "local_path"
+checkpoint_sha256_required = true
+components = [
+  { id = "image_encoder", model_id = "efficientsam-ti-onnx", filename = "efficientsam_ti_encoder.onnx" },
+  { id = "mask_decoder", model_id = "efficientsam-ti-onnx", filename = "efficientsam_ti_decoder.onnx" },
+]
+
+[license]
+code = "MIT"
+weights = "Apache-2.0 acceptance required by Model Bundle"
+commercial_use = "allowed"

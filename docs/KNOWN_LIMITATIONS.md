@@ -23,9 +23,10 @@ These are current implementation boundaries, not hidden release claims:
   checkpoints. Offline tensor/contract tests prove implementation behavior, not model accuracy.
 - The built-in Prompted Segmentation Model Bundle is an AnnotAgent-generated, non-publishable
   protocol Fixture. It executes through the real Rust SAM Plugin and ONNX Runtime but is not SAM,
-  is not selectable by Published Workflows, and provides no quality claim. EfficientSAM and SAM 2
-  remain live-conditional/Labs until a legally verified, contract-compatible, reproducibly hosted
-  `.annotmodel` passes real smoke evidence. See [SAM Model Provisioning](SAM_MODEL_PROVISIONING.md).
+  is not selectable by Published Workflows, and provides no quality claim. EfficientSAM-Ti now has
+  a legally audited, contract-compatible, reproducible real Bundle and passed macOS ARM64 CPU smoke;
+  one-click GUI, remote publication and additional-platform evidence are still pending. SAM 2
+  remains Labs. See [SAM Model Provisioning](SAM_MODEL_PROVISIONING.md).
 - RF-DETR has a Rust implementation for the official detection ONNX contract but no accepted export
   was real-smoke tested in this repository, so its package is live-conditional. LocateAnything's
   official release has no audited complete Rust-callable runtime; its contract package is explicitly

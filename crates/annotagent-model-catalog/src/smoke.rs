@@ -3,7 +3,7 @@ use std::path::Path;
 use annotagent_core::{
     ArtifactKind, ArtifactRef, ImageArtifact, ImageId, MaskEncoding, ModelImage,
     PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
-    PipelineInferenceResponse, RunId,
+    PipelineInferenceResponse, RunId, mask_tight_bbox,
 };
 use annotagent_model_bundle::{
     ExpectedOutputSummary, ModelBundleSmokeRequest, ModelBundleSmokeTest, OutputTolerances,
@@ -212,12 +212,84 @@ pub fn evaluate_bundle_smoke_response(
         })
         .flatten()
         .collect::<Vec<_>>();
+    let prompt_refs = request
+        .input_artifacts
+        .iter()
+        .flat_map(|artifact| match artifact {
+            PipelineArtifact::BoxPromptSet(set) => set
+                .prompts
+                .iter()
+                .map(|prompt| set.reference.item(&prompt.id))
+                .collect::<Vec<_>>(),
+            PipelineArtifact::PointPromptSet(set) => set
+                .prompts
+                .iter()
+                .map(|prompt| set.reference.item(&prompt.id))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let mask_prompt_refs = response
+        .artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::MaskSet(set) => Some(
+                set.masks
+                    .iter()
+                    .map(|item| item.prompt.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    if !mask_prompt_refs.is_empty() && !prompt_refs.is_empty() {
+        checks.push(check(
+            "prompt lineage",
+            mask_prompt_refs
+                .iter()
+                .all(|reference| prompt_refs.contains(reference)),
+            "every output mask references an exact input prompt item",
+        ));
+    }
     if test.expected.require_non_empty_mask {
+        let maximum_coverage = coverages.iter().copied().reduce(f64::max).unwrap_or(0.0);
+        let coverage_detail = format!("maximum observed mask coverage={maximum_coverage:.6}");
         checks.push(check(
             "non-empty mask",
             coverages.iter().any(|coverage| *coverage > 0.0),
-            "at least one prompted mask has positive area",
+            &coverage_detail,
         ));
+        let tight_boxes = response
+            .artifacts
+            .iter()
+            .filter_map(|artifact| match artifact {
+                PipelineArtifact::MaskSet(set) => Some(
+                    set.masks
+                        .iter()
+                        .filter_map(|item| mask_tight_bbox(&item.mask).ok())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        let tight_box = tight_boxes
+            .iter()
+            .find(|bbox| bbox.width() > 0.0 && bbox.height() > 0.0);
+        let bbox_detail = tight_box.map_or_else(
+            || "no non-degenerate bbox was derived".to_owned(),
+            |bbox| {
+                format!(
+                    "normalized xywh=[{:.6},{:.6},{:.6},{:.6}]",
+                    bbox.x(),
+                    bbox.y(),
+                    bbox.width(),
+                    bbox.height()
+                )
+            },
+        );
+        checks.push(check("mask tight bbox", tight_box.is_some(), &bbox_detail));
     }
     if let Some(minimum) = test.tolerances.minimum_mask_coverage {
         checks.push(check(
@@ -231,6 +303,27 @@ pub fn evaluate_bundle_smoke_response(
             "maximum mask coverage",
             !coverages.is_empty() && coverages.iter().all(|coverage| *coverage <= maximum),
             "every mask remains within the broad maximum coverage tolerance",
+        ));
+    }
+    if let Some((encoder_ms, decoder_ms)) = response.artifacts.iter().find_map(|artifact| {
+        let PipelineArtifact::MaskSet(set) = artifact else {
+            return None;
+        };
+        Some((
+            set.metadata.get("encoder_inference_ms")?.as_u64()?,
+            set.metadata.get("decoder_inference_ms")?.as_u64()?,
+        ))
+    }) {
+        let reported_inference = response.timings.inference_ms;
+        let split_total = encoder_ms.saturating_add(decoder_ms);
+        let detail = format!(
+            "encoder={encoder_ms} ms, decoder={decoder_ms} ms, reported inference={} ms",
+            reported_inference.unwrap_or(u64::MAX)
+        );
+        checks.push(check(
+            "split inference timing",
+            reported_inference == Some(split_total),
+            &detail,
         ));
     }
     checks.push(check(

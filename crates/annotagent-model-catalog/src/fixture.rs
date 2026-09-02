@@ -714,7 +714,7 @@ mod tests {
                 &verified.manifest.id,
                 &verified.manifest.version,
             ),
-            Some(second.package_path)
+            Some(second.package_path.canonicalize().expect("fixture path"))
         );
     }
 

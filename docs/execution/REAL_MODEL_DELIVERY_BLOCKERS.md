@@ -4,13 +4,14 @@ Last updated: 2026-09-03 CST
 
 ## Current product blocker
 
-The only configured Catalog entry is a non-publishable Fixture. A normal user cannot install a real
-prompted-segmentation model. This is an implementation gap, not an accepted external blocker.
+The real EfficientSAM-Ti Bundle and Rust Plugin now pass the current-platform smoke gate, but the
+normal GUI still needs M4 wiring and E2E before a fresh user can complete one-click installation.
+This is planned implementation work, not an external blocker.
 
 ## Candidate risks under investigation
 
-- EfficientSAM-Ti assets are revision-pinned and hashable, but their graph must be inspected and a
-  dedicated Rust Plugin must pass real inference before acceptance.
+- EfficientSAM-Ti is proven on macOS ARM64 CPU. Linux x86_64 is a declared build target but cannot
+  receive real execution evidence from this host; M6 must label that distinction truthfully.
 - Hugging Face revision URLs currently redirect to content storage. A safe bounded redirect policy
   or a separately hosted release Bundle is required for remote one-click delivery.
 - The repository has no project-owned remote release endpoint or signing key. M2 uses an explicitly
@@ -24,5 +25,4 @@ prompted-segmentation model. This is an implementation gap, not an accepted exte
 - The lack of a SAM 2 ONNX export does not block the capability because other candidates must be
   audited.
 - The absence of Python on the user machine is a requirement, not a blocker.
-- The need to implement a dedicated EfficientSAM Plugin or Recipe is planned work, not a blocker.
-
+- The dedicated EfficientSAM Plugin, Recipe, Bundle and real smoke are complete.

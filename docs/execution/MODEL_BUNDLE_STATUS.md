@@ -1,5 +1,10 @@
 # Model Bundle Provisioning Alpha Status
 
+> Current update (2026-09-03): the follow-on Real Prompted-Segmentation Delivery work has now
+> produced and smoke-tested the dedicated EfficientSAM-Ti Plugin and real Bundle on macOS ARM64
+> CPU. Historical milestone text below records the earlier Fixture-only state; current evidence is
+> in `REAL_MODEL_DELIVERY_STATUS.md`.
+
 Last updated: 2026-09-03 CST
 
 ## Current Milestone
@@ -143,7 +148,7 @@ Bundle and additional platform execution evidence can pass the same immutable ve
 | Catalog/provisioning tests | PASS — 9 tests including deterministic built-in Fixture, real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
 | Plugin conformance | PASS — Registry, SAM and YOLO tests; 15 active and 2 explicit external-weight ignores in the focused command |
 | Fixture model smoke | PASS — real Rust Plugin/ORT process plus Mask→BBox and Geometry Quality lifecycle |
-| Real model smoke | LIVE-CONDITIONAL — EfficientSAM source/hash/Contract audited; no compatible published `.annotmodel` |
+| Real model smoke | PASS on macOS ARM64 CPU — EfficientSAM-Ti real Bundle, Rust Plugin, MaskSet and mask-to-bbox |
 | Server tests | PASS — 21, including legacy migration failure/preservation |
 | Web tests | PASS — 44 unit plus production TypeScript/Vite build |
 | E2E | PASS — 38 Chromium scenarios, including verified Bundle setup and responsive recovery |
@@ -158,8 +163,8 @@ does not justify a false real-model support claim.
 
 ## Live-conditional
 
-- An EfficientSAM-specific Rust Plugin Contract, fixed real-image smoke vector and hosted,
-  reproducible `.annotmodel` built from the audited official ONNX identities.
+- Remote hosting of the completed EfficientSAM-specific Rust Plugin package and reproducible real
+  `.annotmodel`; the trusted local Catalog and real-image smoke path are complete.
 - External HTTPS curated-catalog hosting and signatures.
 - GPU execution-provider coverage and non-macOS real-model smoke.
 - SAM 2 remains Labs until a complete verified Rust ONNX package exists.

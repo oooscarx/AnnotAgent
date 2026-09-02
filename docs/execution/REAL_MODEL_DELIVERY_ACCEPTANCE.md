@@ -45,7 +45,29 @@ Last updated: 2026-09-03 CST
 - [x] Local Catalog validates every Bundle and confines lookup to its explicit `bundles/` root.
 - [x] Tampered local Bundle causes refresh to fail without replacing stored metadata.
 - [x] Generated Catalog search exposes the real publishable model separately from Fixture.
-- [ ] M2 committed locally.
+- [x] M2 committed locally as `2984dce`.
+
+## Milestone 3 evidence
+
+- [x] Dedicated `org.annotagent.efficientsam-onnx@1.0.0` Rust Plugin implemented.
+- [x] Plugin and Recipe model Contracts are byte-serialization compatible at SHA-256
+  `ad3f23abcadb04561dcced33bae9cbfccbce4c13910a715fc964f1281c8f56ee`.
+- [x] Real encoder and decoder descriptors are checked exactly at Plugin setup.
+- [x] Real official dog image and fixed box prompt execute through the installed Plugin process.
+- [x] Real MaskSet is non-empty, finite, Core-valid and references the exact input prompt item.
+- [x] Real mask coverage is `0.061009`.
+- [x] Core mask-to-bbox succeeds with normalized
+  `xywh=[0.543843,0.384743,0.175373,0.592040]`.
+- [x] Cold timing recorded: encoder 2,238 ms, decoder 51 ms, full smoke 4,532 ms.
+- [x] Warm cache reuse recorded: encoder 0 ms, decoder 50 ms, full smoke 578 ms.
+- [x] Exact Plugin package, Bundle, component, Contract, Model Instance and provider identities are
+  present in the persisted smoke/doctor report.
+- [x] Model Instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` is persisted `Ready` and diagnosed
+  `workflow_ready`.
+- [x] Relative workspace Registry roots are canonicalized and covered by regression tests.
+- [x] Active EfficientSAM Plugin process has no child process or Python descendant.
+- [x] Focused Catalog, Plugin Registry and EfficientSAM Plugin tests pass.
+- [ ] M3 committed locally.
 
 ## Release matrix
 
@@ -54,9 +76,9 @@ Last updated: 2026-09-03 CST
 - [x] A non-Fixture prompted-segmentation Bundle exists outside Git.
 - [x] Official/audited source and exact licenses are recorded.
 - [x] Rust Runtime loads the real graph on macOS ARM64.
-- [ ] Real box-prompt inference produces a non-empty finite mask.
-- [ ] Mask-to-BBox produces valid refined geometry.
-- [ ] Report records all identities, digests, platform, provider, prompt, mask and duration.
+- [x] Real box-prompt inference produces a non-empty finite mask.
+- [x] Mask-to-BBox produces valid refined geometry.
+- [x] Report records all identities, digests, platform, provider, prompt, mask and duration.
 
 ### B. User installation
 

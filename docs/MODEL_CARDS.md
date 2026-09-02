@@ -39,8 +39,8 @@ in force.
 
 ## EfficientSAM-Ti ONNX
 
-**Status:** `live-conditional`; source and license audited, not published as a supported AnnotAgent
-Bundle.
+**Status:** `Supported` on the verified macOS ARM64 CPU path through the trusted local Catalog;
+remote release publication and additional-platform evidence remain pending.
 
 The official [EfficientSAM repository](https://github.com/yformer/EfficientSAM) is Apache-2.0 and
 states that its checkpoints are in the repository. Its README links the ONNX encoder/decoder Space
@@ -53,18 +53,19 @@ publishes these immutable file identities at revision
 | image encoder | `efficientsam_ti_encoder.onnx` | 24.8 MB | `84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951` |
 | mask decoder | `efficientsam_ti_decoder.onnx` | 16.6 MB | `a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11` |
 
-The upstream ONNX exporter uses opset 17. Its split Contract is not the current SAM ViT-B Plugin
-Contract: the encoder accepts dynamic `batched_images`; the decoder accepts `image_embeddings`,
+The upstream ONNX exporter uses opset 17. Its split Contract is intentionally handled by the
+dedicated `org.annotagent.efficientsam-onnx@1.0.0` Plugin rather than the SAM ViT-B Plugin: the
+encoder accepts dynamic `batched_images`; the decoder accepts `image_embeddings`,
 `batched_point_coords`, `batched_point_labels` and an `int64 orig_im_size`, and returns
-`output_masks` plus `iou_predictions`. The current Plugin expects SAM-specific preprocessing,
-`input_image`, `point_coords`, `point_labels`, `mask_input`, `has_mask_input`, float
-`orig_im_size`, and `masks`.
+`output_masks` plus `iou_predictions`.
 
-AnnotAgent therefore does not rename or force these files into the SAM ViT-B Bundle. Shipping
-EfficientSAM requires a versioned EfficientSAM Plugin Contract, a reproducible `.annotmodel`
-published from those exact bytes, a fixed real-image Smoke Test, numerical validation and hosted
-Catalog identity. Until those artifacts exist, no install button or Ready Model Profile claims
-EfficientSAM support.
+The reproducible non-Fixture Bundle is
+`org.annotagent.models.efficientsam-ti-onnx@1.0.0`, SHA-256
+`3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c`. Its fixed official dog
+image smoke passed box prompt → non-empty MaskSet → Core tight bbox through the Rust Plugin/ORT
+process. The evidenced cold run reported encoder 2,207 ms, decoder 49 ms and normalized bbox
+`[0.543843,0.384743,0.175373,0.592040]`. This is execution/contract evidence, not a general
+accuracy guarantee; Geometry Safety and Human Review remain required.
 
 ## SAM 2 / SAM 2.1
 

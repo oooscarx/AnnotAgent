@@ -1718,3 +1718,35 @@ No external model, credential, download, push or remote mutation was used.
    scenarios, Rustfmt, `git diff --check` and strict focused Clippy.
 
 No third-party model weights, credential, Python process, push or remote mutation was used.
+
+## Real Prompted-Segmentation Delivery M3 — 2026-09-03
+
+1. `org.annotagent.efficientsam-onnx@1.0.0` is a dedicated Rust Plugin whose serialized model
+   Contract SHA-256 is
+   `ad3f23abcadb04561dcced33bae9cbfccbce4c13910a715fc964f1281c8f56ee`, exactly matching the
+   real Bundle compatibility declaration.
+2. The verified macOS ARM64 Plugin package SHA-256 is
+   `283a9486edaa7b25ae3cf111cd859ca90fa38de488cd3a8c9196d297d10099cd`. The real Bundle
+   remains outside Git at SHA-256
+   `3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c`.
+3. The two real files were loaded through Rust ORT CPU at exact SHA-256 values
+   `84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951` (encoder) and
+   `a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11` (decoder).
+4. Fixed test `efficientsam-ti-box-prompt-v1` used the official 1072×603 repository dog image and
+   its Bundle-declared right-dog box prompt. The installed process returned a Core-valid MaskSet,
+   exact prompt-item lineage, coverage `0.061009`, and normalized tight bbox
+   `xywh=[0.543843,0.384743,0.175373,0.592040]`.
+5. Cold execution reported encoder 2,238 ms and decoder 51 ms; full Plugin startup, conformance and
+   sample smoke took 4,532 ms. A separate warm run reported encoder 0 ms, decoder 50 ms and 578 ms
+   full smoke, proving persisted embedding reuse.
+6. Model Instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` persisted `Ready`; `models doctor`
+   returned `workflow_ready`, `fixture=false`, `publishable=true`, `license_accepted=true`, exact
+   graph descriptors and no Contract errors.
+7. `PluginRegistry` and `ModelBundleRegistry` now canonicalize relative data roots and reconstruct
+   owned paths from immutable identity. Focused regression counts are 4 Plugin Registry, 15 Model
+   Catalog and 5 EfficientSAM Plugin tests, all passing.
+8. A live process-tree audit showed the Rust EfficientSAM executable with no child process. Model
+   install, graph load, smoke and inference started no Python or conversion worker.
+
+Real Prompted-Segmentation Delivery M3 status: `PASS ON MACOS ARM64 CPU`; GUI, Workflow and release
+milestones remain pending.

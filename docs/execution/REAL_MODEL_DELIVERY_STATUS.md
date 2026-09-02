@@ -4,11 +4,13 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M2 — controlled Model Supply Recipe and trusted local Catalog complete.
+M3 — real Contract and real-model Smoke Test complete. M4 one-click GUI is next.
 
 ## Current candidate
 
-EfficientSAM-Ti split ONNX, accepted for delivery but not yet Supported.
+EfficientSAM-Ti split ONNX is a real, non-Fixture Supported model on the verified macOS ARM64 CPU
+path. Normal-user GUI installation remains an M4 release blocker; the current proof uses the same
+Registry and Bundle lifecycle through the CLI and trusted local Catalog.
 
 ## Candidate eliminations
 
@@ -64,16 +66,38 @@ EfficientSAM-Ti split ONNX, accepted for delivery but not yet Supported.
 - Generated `dist/model-catalog/catalog.json`, Catalog entry and verification report, then added
   `org.annotagent.catalog.local-models` to the current workspace. Search now returns the real
   `fixture=false`, `publishable=true` model as well as the clearly separate Fixture.
+- Added the dedicated `org.annotagent.efficientsam-onnx@1.0.0` Rust Plugin. Its manifest and Recipe
+  share the exact capability Contract hash
+  `ad3f23abcadb04561dcced33bae9cbfccbce4c13910a715fc964f1281c8f56ee`.
+- Implemented the audited EfficientSAM preprocessing and split graph protocol: dynamic RGB NCHW
+  float input, original-pixel box/point prompts, `int64` original size, finite IoU candidate
+  selection, zero-logit threshold, source-size restoration, COCO RLE and prompt lineage.
+- Packaged and verified the current macOS ARM64 Plugin outside Git. Package SHA-256:
+  `283a9486edaa7b25ae3cf111cd859ca90fa38de488cd3a8c9196d297d10099cd`.
+- Installed the real Bundle as Model Instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`, ran the fixed
+  official dog-image box prompt and reached persisted `Ready` / `workflow_ready` status.
+- The cold smoke produced a valid MaskSet with prompt lineage, mask coverage `0.061009`, and Core
+  tight bbox `xywh=[0.543843,0.384743,0.175373,0.592040]`. Encoder inference was 2,238 ms,
+  decoder inference 51 ms and full process/conformance smoke 4,532 ms on this host.
+- A warm repeat reused the persisted image embedding: encoder 0 ms, decoder 50 ms, full smoke
+  578 ms. The cache identity includes exact encoder SHA-256 plus input image digest.
+- Hardened both Plugin and Model Bundle Registries so a relative workspace argument is canonicalized
+  and persisted model/process roots are reconstructed under the trusted Registry root. This fixed
+  a real one-millisecond Plugin child launch failure after CLI installation.
+- Extended smoke evidence with exact prompt lineage, observed coverage, non-degenerate mask-to-bbox
+  geometry and internally consistent encoder/decoder timing.
+- Inspected the active Plugin process tree: one Rust EfficientSAM executable and no child process;
+  install, smoke and inference used no Python or conversion process.
 
 ## In progress
 
-- Implement the dedicated EfficientSAM Rust Plugin and real box-prompt smoke inference in M3.
+- Expose the real Catalog entry and complete lifecycle through the normal one-click GUI in M4.
 
 ## Next
 
-Package and install `org.annotagent.efficientsam-onnx@1.0.0`, bind the real Bundle, inspect its
-graphs, run the Bundle smoke request, require a non-empty finite mask, derive a valid tight bbox,
-and record execution identity and timing.
+Show exact source/license/size/digest/platform information before mutation, execute install → verify
+→ smoke → Ready in the modal, persist progress/errors across refresh, remove raw ONNX upload from
+the normal path, and add fresh-workspace browser E2E.
 
 ## Latest verification
 
@@ -85,20 +109,24 @@ and record execution identity and timing.
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle verification | PASS — real non-Fixture EfficientSAM-Ti Bundle built and verified outside Git |
 | Real graph inspection | PASS — encoder and decoder loaded with ORT CPU; descriptors recorded |
-| Real inference | NOT RUN |
+| Real inference | PASS — official dog image; box prompt → MaskSet → tight bbox through Rust ORT CPU |
 | Web E2E | PENDING for this task |
 | Model Recipe | PASS — 3 downloads / 41,814,211 bytes and 8 static files verified |
 | Real Bundle | PASS — 38,577,735 bytes / `3c9004b3f69ce3d48af9f46231fa0cec65b510d4adc05bb5679513a9d5556d6c` |
 | Local Catalog | PASS — persisted `trusted_local_catalog`, real entry searchable after refresh |
-| Latest focused tests | PASS — 14 model-catalog tests and strict Clippy for Catalog/CLI |
+| Latest focused tests | PASS — 15 Catalog, 4 Plugin Registry and 5 EfficientSAM Plugin tests |
 | Latest Rust workspace tests | PASS — all runnable tests; only explicitly external/billable tests ignored |
 | Latest Rust workspace build | PASS — `cargo build --workspace --all-features` |
-| Latest commit | `fb22f8d` — M1; M2 commit pending |
+| Real cold smoke | PASS — mask coverage 0.061009; bbox `[0.543843,0.384743,0.175373,0.592040]`; encoder 2238 ms; decoder 51 ms; total 4532 ms |
+| Real warm smoke | PASS — cached encoder 0 ms; decoder 50 ms; total 578 ms |
+| Rust-only process audit | PASS — Plugin executable had no child process and no Python descendant |
+| Latest commit | `2984dce` — M2; M3 commit pending |
 
 ## Release-blocking remainder
 
-Every real-model acceptance item remains blocking until a non-Fixture Bundle is built, installed,
-smoke-tested, selectable, exercised by a real Workflow, and recovered across restart.
+The real-model execution gate is closed on macOS ARM64 CPU. GUI installation, restart recovery,
+Published Workflow/Review/Replay lineage, release packaging and the final cross-platform/regression
+matrix remain blocking.
 
 ## Real blocker
 

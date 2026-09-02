@@ -204,8 +204,9 @@ impl ModelBundleRegistry {
     pub fn open(data_root: impl Into<PathBuf>) -> Result<Self, ModelCatalogError> {
         let data_root = data_root.into();
         std::fs::create_dir_all(&data_root)?;
+        let data_root = std::fs::canonicalize(data_root)?;
         let state_path = data_root.join("model-bundle-registry.json");
-        let state = if state_path.is_file() {
+        let mut state = if state_path.is_file() {
             let mut value: ModelBundleRegistryState =
                 serde_json::from_slice(&std::fs::read(state_path)?)?;
             if value.schema_version > MODEL_REGISTRY_SCHEMA_VERSION {
@@ -219,6 +220,12 @@ impl ModelBundleRegistry {
         } else {
             ModelBundleRegistryState::default()
         };
+        // Registry roots are movable and callers may pass a relative workspace path. Never
+        // persist or reuse a process-CWD-relative weight root: reconstruct the content-addressed
+        // location from trusted registry identity on every open.
+        for installation in state.installations.values_mut() {
+            installation.content_root = model_content_root(&data_root, &installation.bundle_digest);
+        }
         let mut registry = Self { data_root, state };
         let fixture = crate::build_builtin_fixture_catalog(&registry.data_root)?;
         registry
@@ -870,6 +877,13 @@ impl ModelBundleRegistry {
     }
 }
 
+fn model_content_root(data_root: &Path, digest: &Sha256Digest) -> PathBuf {
+    data_root
+        .join("models/sha256")
+        .join(&digest.as_str()[..2])
+        .join(digest.as_str())
+}
+
 fn load_trusted_local_catalog(
     root: &Path,
 ) -> Result<(ModelCatalog, TrustedLocalCatalogSource), ModelCatalogError> {
@@ -972,6 +986,25 @@ mod tests {
     use annotagent_plugin_api::PluginId;
 
     use super::*;
+
+    #[test]
+    fn relative_data_root_becomes_an_absolute_content_root() {
+        let current = std::env::current_dir()
+            .expect("current directory")
+            .canonicalize()
+            .expect("canonical current directory");
+        let temp = tempfile::Builder::new()
+            .prefix("model-registry-relative-")
+            .tempdir_in(&current)
+            .expect("temp");
+        let relative = temp
+            .path()
+            .strip_prefix(&current)
+            .expect("relative temp")
+            .join("data");
+        let registry = ModelBundleRegistry::open(relative).expect("registry");
+        assert!(registry.data_root().is_absolute());
+    }
 
     #[test]
     fn exact_license_digest_is_required_before_activation() {
@@ -1143,9 +1176,12 @@ mod tests {
         assert_eq!(installed.bundle_digest, package_digest);
         assert_eq!(installed.status, ModelBundleStatus::Installed);
         assert!(
-            installed
-                .content_root
-                .starts_with(registry_root.join("models/sha256"))
+            installed.content_root.starts_with(
+                registry_root
+                    .canonicalize()
+                    .expect("registry root")
+                    .join("models/sha256")
+            )
         );
         assert!(installed.content_root.join("files/model.onnx").is_file());
         assert!(installed.content_root.join("verification.json").is_file());

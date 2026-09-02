@@ -337,8 +337,9 @@ impl PluginRegistry {
     pub fn open(data_root: impl Into<PathBuf>) -> Result<Self, PluginRegistryError> {
         let data_root = data_root.into();
         std::fs::create_dir_all(&data_root)?;
+        let data_root = std::fs::canonicalize(data_root)?;
         let state_path = data_root.join("plugin-registry.json");
-        let state = if state_path.is_file() {
+        let mut state = if state_path.is_file() {
             let state: RegistryState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
             if state.schema_version != REGISTRY_SCHEMA_VERSION {
                 return Err(PluginRegistryError::InvalidTransition(format!(
@@ -350,7 +351,29 @@ impl PluginRegistry {
         } else {
             RegistryState::default()
         };
-        Ok(Self { data_root, state })
+        for installation in state.installations.values_mut() {
+            installation.installation_root = installation_root(
+                &data_root,
+                &installation.manifest.id,
+                &installation.manifest.version,
+            );
+        }
+        for weights in &mut state.weight_sets {
+            let filename = weights.stored_path.file_name().map_or_else(
+                || std::ffi::OsString::from(&weights.original_filename),
+                std::ffi::OsStr::to_owned,
+            );
+            weights.stored_path = data_root
+                .join("model-cache")
+                .join(weights.plugin_id.as_str())
+                .join(weights.plugin_version.to_string())
+                .join(&weights.model_id)
+                .join(weights.checkpoint_sha256.as_str())
+                .join(filename);
+        }
+        let registry = Self { data_root, state };
+        registry.persist()?;
+        Ok(registry)
     }
 
     #[must_use]
@@ -1352,6 +1375,25 @@ mod tests {
             code_license_accepted: true,
             weight_license_accepted: true,
         }
+    }
+
+    #[test]
+    fn relative_data_root_is_persisted_as_an_absolute_process_root() {
+        let current = std::env::current_dir()
+            .expect("current directory")
+            .canonicalize()
+            .expect("canonical current directory");
+        let temp = tempfile::Builder::new()
+            .prefix("plugin-registry-relative-")
+            .tempdir_in(&current)
+            .expect("temp");
+        let relative = temp
+            .path()
+            .strip_prefix(&current)
+            .expect("relative temp")
+            .join("data");
+        let registry = PluginRegistry::open(relative).expect("registry");
+        assert!(registry.data_root().is_absolute());
     }
 
     #[test]

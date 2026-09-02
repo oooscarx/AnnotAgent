@@ -64,3 +64,24 @@ The generated Developer Preview Bundle is deterministically hashed and fully ver
 local build has no release signing key. Its Catalog card therefore records
 `publisher_verified=false`. A future remote release may change this only when signature
 verification is implemented and evidenced; local trust never masquerades as publisher signing.
+
+## RMD-D011 — EfficientSAM-Ti becomes Supported only on evidenced targets
+
+The installed real Bundle passed its fixed official-image smoke through
+`org.annotagent.efficientsam-onnx@1.0.0` and Rust ORT CPU, so it is Supported on macOS ARM64. The
+Linux x86_64 manifest target remains build-compatible rather than run-verified until M6 has a real
+Linux host result. SAM 1 and SAM 2 identities are not attributed to this EfficientSAM model.
+
+## RMD-D012 — Registry paths are identity-derived absolute paths
+
+CLI callers are allowed to pass a relative workspace, but persisted Plugin installation and Model
+Bundle content roots must never depend on a later process working directory. Both Registries
+canonicalize their data root and reconstruct owned paths from immutable IDs/digests when opened.
+This is also a confinement rule: stored state cannot redirect a model process to arbitrary paths.
+
+## RMD-D013 — A real smoke report includes semantic and performance evidence
+
+Session loading alone is insufficient. The smoke gate validates input-prompt lineage, finite typed
+artifacts, non-empty mask coverage, Core mask-to-bbox geometry, and consistent encoder/decoder
+timing. Cache reuse is reported explicitly as zero encoder compute rather than being confused with
+a missing encoder execution.

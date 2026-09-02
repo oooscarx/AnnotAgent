@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-03 CST
 
+## Real Prompted-Segmentation Delivery M3 — 2026-09-03
+
+- Added a dedicated Rust-native EfficientSAM-Ti Plugin with exact dynamic encoder and four-input
+  decoder Contracts, audited preprocessing/postprocessing, prompt lineage and embedding cache.
+- Installed the real non-Fixture Bundle from the trusted local Catalog and passed fixed official
+  dog-image box-prompt inference. Persisted Model Instance
+  `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` is `Ready` / `workflow_ready`.
+- Cold smoke: coverage `0.061009`, tight bbox
+  `[0.543843,0.384743,0.175373,0.592040]`, encoder 2,238 ms, decoder 51 ms, full smoke 4,532 ms.
+- Canonicalized Plugin/Bundle Registry roots so relative workspace CLI usage survives child-process
+  working-directory changes. The active Plugin process has no child process or Python descendant.
+- M4 GUI installation, M5 Workflow/Replay, M6 release/cross-platform and final regression gates
+  remain open. No model bytes were added to Git and no push or credential use occurred.
+
 ## Model Bundle Provisioning Alpha M8 — 2026-09-03
 
 - Added the full workspace-scoped Model CLI and TUI projections over the same Catalog, Bundle and
