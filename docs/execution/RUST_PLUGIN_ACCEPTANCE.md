@@ -16,3 +16,13 @@ Only commands actually executed are recorded here.
 - Existing geometry safety and typed Artifact lineage tests pass.
 
 Milestone evidence will be appended after the corresponding tests pass.
+
+## M1 Plugin API — 2026-09-02
+
+- Added `annotagent-plugin-api` with validated IDs, semantic versions, SHA-256 identities,
+  capability-oriented model contracts, least-privilege permissions, weights/licenses, lifecycle
+  states and authenticated process protocol DTOs.
+- `cargo test -p annotagent-plugin-api`: PASS — 4 tests.
+- `bash scripts/check-rust-plugin-boundary.sh`: PASS.
+- Manifest TOML round trip and semantic digest stability, unsafe entrypoints, forbidden permissions,
+  invalid contracts and path traversal are covered.

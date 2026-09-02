@@ -14,7 +14,7 @@ if [[ ${#roots[@]} -eq 0 ]]; then
   exit 0
 fi
 
-if rg -n -i 'python3?|pip|(^|[^a-z])uv([^a-z]|$)|conda|venv|requirements\.txt|fastapi|pydantic' "${roots[@]}"; then
+if rg -n -i '(^|[^a-z])(python3?|pip|uv|conda|venv|fastapi|pydantic)([^a-z]|$)|requirements\.txt' "${roots[@]}"; then
   echo 'Active Rust plugin paths must not depend on the legacy scripting runtime.' >&2
   exit 1
 fi
