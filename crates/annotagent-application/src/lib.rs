@@ -20905,7 +20905,7 @@ export:
                     "inspect_model_bundle_summary",
                     json!({
                         "bundle_id": annotagent_model_catalog::PROMPTED_SEGMENTATION_FIXTURE_BUNDLE_ID,
-                        "version": "1.0.0",
+                        "version": "1.1.0",
                     }),
                 ),
                 step("resolve_pipeline_feasibility", json!({})),

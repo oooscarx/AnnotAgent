@@ -717,4 +717,36 @@ mod tests {
             Some(second.package_path)
         );
     }
+
+    #[test]
+    fn fixture_catalog_cannot_satisfy_real_model_delivery() {
+        let temporary = tempfile::tempdir().expect("tempdir");
+        let fixture = build_builtin_fixture_catalog(temporary.path()).expect("fixture catalog");
+        let prompted = fixture
+            .catalog
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .capabilities
+                    .contains(&ModelCapability::PromptedSegmentation)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(prompted.len(), 1);
+        assert!(prompted[0].fixture);
+        assert!(!prompted[0].publishable);
+        assert!(
+            prompted
+                .iter()
+                .all(|entry| entry.fixture || !entry.publishable),
+            "the built-in Catalog must never make a Fixture look like a production model"
+        );
+        assert!(
+            !prompted
+                .iter()
+                .any(|entry| !entry.fixture && entry.publishable),
+            "M0 regression: the built-in Catalog alone has no real prompted-segmentation model"
+        );
+    }
 }
