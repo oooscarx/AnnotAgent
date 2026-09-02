@@ -1,6 +1,6 @@
 # Model Bundle Provisioning Blockers
 
-Last updated: 2026-09-02 CST
+Last updated: 2026-09-03 CST
 
 ## External model publication
 
@@ -20,5 +20,5 @@ external hosting remains conditional on publishing infrastructure outside this r
 CPU on the development macOS aarch64 host is the available release environment. CUDA, TensorRT,
 Windows and Linux real-model results require those systems and are not inferred from compilation.
 
-There is no blocker to implementing the format, verifier, fixture, local catalog, content store,
-compatibility resolver, workflow pins, GUI, CLI/TUI or offline release tests.
+There is no blocker to the local Alpha format, verifier, Fixture, Catalog, content store,
+compatibility resolver, workflow pins, GUI, CLI/TUI, Agent recovery, migration, or offline tests.

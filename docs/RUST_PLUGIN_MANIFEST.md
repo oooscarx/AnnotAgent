@@ -33,3 +33,9 @@ discovery, checkpoint identity, conformance and smoke testing still determine `P
 The stable Rust definitions live in `annotagent-plugin-api`. A `PluginModelReference` freezes the
 plugin ID/version, package digest, API/protocol versions, model/revision, checkpoint digest and
 capability-contract digest for publication and replay.
+
+For new installations, `weights.components` is the Plugin-side declaration of generic required
+file roles, not a license to upload arbitrary raw files. A `.annotmodel` supplies those roles with
+exact per-file hashes, source/export/license evidence, tensor Contracts, and a smoke suite. Binding
+also hashes the complete Plugin model Contract, so a same-named role cannot satisfy a changed model
+API accidentally. See [Model Bundle Contracts](MODEL_BUNDLE_CONTRACTS.md).

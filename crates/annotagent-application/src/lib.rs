@@ -742,7 +742,10 @@ missing compatible model is a setup requirement, not a reason to continue discov
 unresolved binding and finish_with_setup_requirements. Never spend the finalization reserve on broad \
 inspection, and always terminate with an explicit typed outcome. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
 fixture backend, or test-only fallback. If a real binding is unavailable, leave it explicitly unresolved \
-and explain the required Provider or Vision Worker setup. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
+and explain the required Provider or Vision Worker setup. Use list_ready_models, \
+list_compatible_model_bundles, and inspect_model_bundle_summary for model-asset evidence; a Catalog \
+Bundle is only an unapplied human setup choice, and the Agent has no install, download, import, license, \
+delete, or billable-probe tool. VLM semantic confidence is not geometry accuracy: a VLM bounding box is an \
 uncalibrated CoarseHypothesis even when confidence is high. Never route it to Commit using semantic or \
 relative confidence alone. Training-quality bounding boxes require mandatory human Review, an available \
 prompted-segmentation refinement plus geometry evaluation, exact Project calibration consumed by a \
@@ -878,6 +881,11 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             json!({"type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":{"type":"string"}}}),
         ),
         mutate(
+            PipelineBuilderTool::CreateUnresolvedModelRequirement,
+            "Persist one typed missing-model requirement on an existing Draft node. This never installs, downloads, imports, or accepts a license.",
+            json!({"type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":{"type":"string"}}}),
+        ),
+        mutate(
             PipelineBuilderTool::FinishWithSetupRequirements,
             "Finish with the persisted blocked Draft and concrete Provider or Model setup actions.",
             no_arguments(),
@@ -969,6 +977,21 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             PipelineBuilderTool::ListCompatibleModels,
             "List available Provider and expert Worker models compatible with an optional Node Definition; setup-only alternatives are never applied.",
             json!({"type":"object","additionalProperties":false,"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
+        ),
+        read(
+            PipelineBuilderTool::ListReadyModels,
+            "List only Model Instances whose exact Bundle, Contract and fixed smoke evidence make them selectable. Fixture and setup-only instances remain separate.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ListCompatibleModelBundles,
+            "List Catalog Bundles compatible with an optional Node Definition as unapplied setup choices. Never installs or downloads them.",
+            json!({"type":"object","additionalProperties":false,"properties":{"node_type":{"type":"string","enum":node_definition_ids.clone()}}}),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelBundleSummary,
+            "Inspect bounded source, publisher, license, platform, digest and installation evidence for one exact Catalog Bundle. Local paths are excluded.",
+            json!({"type":"object","additionalProperties":false,"required":["bundle_id","version"],"properties":{"bundle_id":{"type":"string"},"version":{"type":"string"}}}),
         ),
         read(
             PipelineBuilderTool::InspectModelProfile,
@@ -1257,6 +1280,7 @@ fn pipeline_builder_visible_tools(
                 tool,
                 PipelineBuilderTool::CreateBlockedDraft
                     | PipelineBuilderTool::SetUnresolvedBinding
+                    | PipelineBuilderTool::CreateUnresolvedModelRequirement
                     | PipelineBuilderTool::FinishWithSetupRequirements
                     | PipelineBuilderTool::SubmitDraftForHumanApproval
                     | PipelineBuilderTool::FinishAgentSession
@@ -1275,6 +1299,9 @@ fn pipeline_builder_visible_tools(
                 PipelineBuilderTool::InspectNodesBatch
                     | PipelineBuilderTool::InspectModelsBatch
                     | PipelineBuilderTool::InspectContractsBatch
+                    | PipelineBuilderTool::ListReadyModels
+                    | PipelineBuilderTool::ListCompatibleModelBundles
+                    | PipelineBuilderTool::InspectModelBundleSummary
                     | PipelineBuilderTool::LoadSkillResource
                     | PipelineBuilderTool::FindArtifactConversionPath
                     | PipelineBuilderTool::InspectModelQualityContract
@@ -1294,6 +1321,9 @@ fn pipeline_builder_visible_tools(
                         | PipelineBuilderTool::InspectNodesBatch
                         | PipelineBuilderTool::InspectModelsBatch
                         | PipelineBuilderTool::InspectContractsBatch
+                        | PipelineBuilderTool::ListReadyModels
+                        | PipelineBuilderTool::ListCompatibleModelBundles
+                        | PipelineBuilderTool::InspectModelBundleSummary
                         | PipelineBuilderTool::LoadSkillResource
                         | PipelineBuilderTool::FindArtifactConversionPath
                         | PipelineBuilderTool::InspectModelQualityContract
@@ -1740,6 +1770,99 @@ fn materialize_feasibility_draft(
             bail!("unsupported Pipeline request: {}", reasons.join("; "))
         }
     }
+}
+
+/// Re-evaluates only unresolved bindings on a persisted Draft after the human has completed a
+/// setup action. Manual node/configuration edits and the Draft identity are preserved. The Agent
+/// remains read-only with respect to installation: it can observe newly Available profiles and
+/// bind them, but it cannot download or accept a model license itself.
+fn reconcile_persisted_setup_draft(
+    suggestion: &mut WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+    feasibility: &annotagent_core::BuildFeasibility,
+) -> bool {
+    let annotagent_core::BuildFeasibility::Runnable {
+        compatible_bindings,
+        ..
+    } = feasibility
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for node in &mut suggestion.draft.nodes {
+        if node.unresolved_model_requirement.is_none() {
+            continue;
+        }
+        let binding_model_id = compatible_bindings.iter().find_map(|binding| {
+            let (node_type, model_id) = binding.split_once(':')?;
+            (node_type == node.node_type).then_some((node_type, model_id))
+        });
+        let model = binding_model_id
+            .and_then(|(_, model_id)| {
+                input
+                    .model_profiles
+                    .iter()
+                    .find(|model| model.id.to_string() == model_id)
+            })
+            .or_else(|| {
+                let definition = input
+                    .node_catalog
+                    .iter()
+                    .find(|definition| definition.id == node.node_type)?;
+                compatible_builder_models(input, None)
+                    .into_iter()
+                    .find(|model| {
+                        annotagent_core::model_profile_satisfies_node_contract(definition, model)
+                    })
+            });
+        let Some(model) = model else {
+            continue;
+        };
+        node.model_binding = Some(
+            input
+                .model_registry
+                .iter()
+                .find(|runtime| {
+                    runtime.id == model.remote_model_id || runtime.model == model.remote_model_id
+                })
+                .map_or_else(
+                    || model.remote_model_id.clone(),
+                    |runtime| runtime.id.clone(),
+                ),
+        );
+        node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+            model_profile_id: model.id,
+            locked: true,
+        });
+        node.unresolved_model_requirement = None;
+        changed = true;
+    }
+    if !changed {
+        return false;
+    }
+    suggestion.unresolved_model_bindings = suggestion
+        .draft
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.unresolved_model_requirement
+                .as_ref()
+                .map(|requirement| format!("{}: {}", node.id, requirement.reason))
+        })
+        .collect();
+    suggestion.draft.status = if suggestion.unresolved_model_bindings.is_empty() {
+        suggestion.warnings.retain(|warning| {
+            !warning.contains("Dry Run and Publish remain blocked until every required Model")
+        });
+        suggestion
+            .rationale
+            .push("Previously unresolved bindings were resolved from newly Available Registry evidence; manual Draft edits were preserved.".to_owned());
+        WorkflowDraftStatus::ReadyForHumanReview
+    } else {
+        WorkflowDraftStatus::BlockedBySetup
+    };
+    suggestion.draft.updated_at = chrono::Utc::now();
+    true
 }
 
 fn append_unresolved_binding_issues(draft: &WorkflowDraft, report: &mut WorkflowValidationReport) {
@@ -9810,6 +9933,11 @@ impl LocalApplication {
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
         let mut current = resume_existing_draft.then(|| safe_suggestion.clone());
+        if let Some(suggestion) = current.as_mut()
+            && reconcile_persisted_setup_draft(suggestion, &input, &feasibility)
+        {
+            self.store.save_workflow_draft(&suggestion.draft)?;
+        }
         if let Some(suggestion) = current.as_ref() {
             session.set_builder_draft(suggestion.draft.id.clone());
             session.unresolved_bindings = suggestion.unresolved_model_bindings.clone();
@@ -10370,7 +10498,10 @@ impl LocalApplication {
                             }),
                         ))
                     }
-                    Ok(PipelineBuilderTool::SetUnresolvedBinding) => {
+                    Ok(
+                        PipelineBuilderTool::SetUnresolvedBinding
+                        | PipelineBuilderTool::CreateUnresolvedModelRequirement,
+                    ) => {
                         let node_id = required_string_argument(&call.arguments, "node_id")?;
                         let annotagent_core::BuildFeasibility::BlockedByBindings {
                             requirements,
@@ -10730,6 +10861,215 @@ impl LocalApplication {
                                 "expert_models": expert_models,
                                 "setup_only_alternatives": alternatives,
                                 "required_capability": required_capability,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ListReadyModels) => {
+                        inspected_models = true;
+                        let registry = self
+                            .model_bundle_registry
+                            .lock()
+                            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+                        let profiles = registry.model_profiles();
+                        let instances = registry.model_instances();
+                        let ready = profiles
+                            .iter()
+                            .filter(|profile| profile.selectable)
+                            .map(|profile| {
+                                let instance = instances
+                                    .iter()
+                                    .find(|instance| instance.id == profile.model_instance_id);
+                                json!({
+                                    "model_profile_id": profile.model_profile_id,
+                                    "model_profile_revision": profile.model_profile_revision,
+                                    "model_instance_id": profile.model_instance_id,
+                                    "display_name": profile.display_name,
+                                    "capabilities": profile.capabilities,
+                                    "availability": profile.availability,
+                                    "selectable": profile.selectable,
+                                    "bundle_id": instance.map(|value| value.model_bundle_id.to_string()),
+                                    "bundle_version": instance.map(|value| value.model_bundle_version.to_string()),
+                                    "bundle_digest": instance.map(|value| value.model_bundle_digest.to_string()),
+                                    "execution_provider": instance.map(|value| value.execution_provider.clone()),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let setup_only = profiles
+                            .iter()
+                            .filter(|profile| !profile.selectable)
+                            .map(|profile| {
+                                json!({
+                                    "model_instance_id": profile.model_instance_id,
+                                    "display_name": profile.display_name,
+                                    "availability": profile.availability,
+                                    "requires_setup": true,
+                                    "applied_to_draft": false,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed Ready Model Instances from verified Bundle evidence",
+                            json!({"ready_models": ready, "setup_only_instances": setup_only}),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::ListCompatibleModelBundles) => {
+                        inspected_models = true;
+                        let requested_definition = call
+                            .arguments
+                            .get("node_type")
+                            .and_then(serde_json::Value::as_str)
+                            .map(|node_type| {
+                                input
+                                    .node_catalog
+                                    .iter()
+                                    .find(|node| node.id == node_type)
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                            "node definition {node_type:?} is not registered"
+                                        )
+                                    })
+                            })
+                            .transpose()?;
+                        let required_capability = requested_definition
+                            .and_then(|definition| definition.required_model_capability);
+                        let plugins = self
+                            .plugin_registry
+                            .lock()
+                            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
+                            .list();
+                        let registry = self
+                            .model_bundle_registry
+                            .lock()
+                            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+                        let installed = registry.list();
+                        let current_target = annotagent_plugin_host::current_target();
+                        let bundles = registry
+                            .catalogs()
+                            .into_iter()
+                            .flat_map(|catalog| {
+                                let catalog_id = catalog.catalog_id;
+                                catalog
+                                    .entries
+                                    .into_iter()
+                                    .map(move |entry| (catalog_id.clone(), entry))
+                            })
+                            .filter(|(_, entry)| {
+                                required_capability.is_none_or(|capability| {
+                                    entry.capabilities.contains(&capability)
+                                })
+                            })
+                            .map(|(catalog_id, entry)| {
+                                let plugin_installed =
+                                    entry.compatible_plugins.iter().any(|requirement| {
+                                        plugins.iter().any(|plugin| {
+                                            requirement.accepts(
+                                                &plugin.manifest.id,
+                                                &plugin.manifest.version,
+                                                &requirement.model_id,
+                                            )
+                                        })
+                                    });
+                                let platform_supported = entry
+                                    .platform_requirements
+                                    .iter()
+                                    .any(|platform| platform.target == current_target);
+                                let installation = installed.iter().find(|bundle| {
+                                    bundle.manifest.id == entry.bundle_id
+                                        && bundle.manifest.version == entry.bundle_version
+                                });
+                                json!({
+                                    "catalog_id": catalog_id,
+                                    "bundle_id": entry.bundle_id,
+                                    "version": entry.bundle_version,
+                                    "display_name": entry.display_name,
+                                    "description": entry.description,
+                                    "capabilities": entry.capabilities,
+                                    "publisher": entry.publisher,
+                                    "license": entry.license_summary,
+                                    "bundle_digest": entry.bundle_sha256,
+                                    "bundle_size_bytes": entry.bundle_size_bytes,
+                                    "fixture": entry.fixture,
+                                    "publishable": entry.publishable,
+                                    "compatible_plugin_installed": plugin_installed,
+                                    "platform_supported": platform_supported,
+                                    "installed": installation.is_some(),
+                                    "enabled": installation.map(|bundle| bundle.enabled),
+                                    "requires_human_install": installation.is_none(),
+                                    "applied_to_draft": false,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Listed compatible Catalog Bundles as human-controlled setup choices",
+                            json!({
+                                "required_capability": required_capability,
+                                "bundles": bundles,
+                                "agent_can_install": false,
+                                "agent_can_accept_license": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModelBundleSummary) => {
+                        let bundle_id = annotagent_model_bundle::ModelBundleId::parse(
+                            required_string_argument(&call.arguments, "bundle_id")?,
+                        )?;
+                        let version_value =
+                            required_string_argument(&call.arguments, "version")?;
+                        let version = semver::Version::parse(&version_value)?;
+                        let registry = self
+                            .model_bundle_registry
+                            .lock()
+                            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+                        let catalog_entry = registry.catalogs().into_iter().find_map(|catalog| {
+                            catalog
+                                .entries
+                                .into_iter()
+                                .find(|entry| {
+                                    entry.bundle_id == bundle_id
+                                        && entry.bundle_version == version
+                                })
+                                .map(|entry| (catalog.catalog_id, entry))
+                        });
+                        let installed = registry.get(&bundle_id, &version);
+                        if catalog_entry.is_none() && installed.is_none() {
+                            bail!("Model Bundle {bundle_id}@{version} is not registered");
+                        }
+                        let instances = registry
+                            .model_instances()
+                            .into_iter()
+                            .filter(|instance| {
+                                instance.model_bundle_id == bundle_id
+                                    && instance.model_bundle_version == version
+                            })
+                            .map(|instance| {
+                                json!({
+                                    "id": instance.id,
+                                    "plugin_id": instance.plugin_id,
+                                    "plugin_version": instance.plugin_version,
+                                    "model_id": instance.model_id,
+                                    "execution_provider": instance.execution_provider,
+                                    "status": instance.status,
+                                    "contract_valid": instance.contract_inspection.valid,
+                                    "smoke_test": instance.smoke_test_result,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            format!("Inspected Model Bundle {bundle_id}@{version}"),
+                            json!({
+                                "catalog_id": catalog_entry.as_ref().map(|value| value.0.clone()),
+                                "catalog_entry": catalog_entry.map(|value| value.1),
+                                "installation": installed.map(|bundle| json!({
+                                    "digest": bundle.bundle_digest,
+                                    "status": bundle.status,
+                                    "source": bundle.source,
+                                    "verification": bundle.verification,
+                                    "enabled": bundle.enabled,
+                                    "fixture": bundle.manifest.fixture,
+                                    "publishable": bundle.manifest.publishable,
+                                })),
+                                "model_instances": instances,
+                                "local_paths_exposed": false,
                             }),
                         ))
                     }
@@ -17219,7 +17559,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 65);
+        assert_eq!(names.len(), 69);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -17236,6 +17576,12 @@ export:
             "execute_shell",
             "execute_python",
             "download_model",
+            "install_model_bundle",
+            "download_model_bundle",
+            "accept_model_license",
+            "import_local_bundle",
+            "delete_model_bundle",
+            "run_billable_probe",
             "open_arbitrary_url",
         ] {
             assert!(!names.contains(forbidden), "{forbidden}");
@@ -17286,6 +17632,13 @@ export:
             feasibility_tools.contains(PipelineBuilderTool::ResolvePipelineFeasibility.as_str())
         );
         assert!(feasibility_tools.contains(PipelineBuilderTool::InspectModelsBatch.as_str()));
+        assert!(feasibility_tools.contains(PipelineBuilderTool::ListReadyModels.as_str()));
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::ListCompatibleModelBundles.as_str())
+        );
+        assert!(
+            feasibility_tools.contains(PipelineBuilderTool::InspectModelBundleSummary.as_str())
+        );
         assert!(
             feasibility_tools.contains(PipelineBuilderTool::InspectModelQualityContract.as_str())
         );
@@ -20313,6 +20666,8 @@ export:
                 include_str!("../../../examples/robocup/project.yaml"),
             )
             .expect("RoboCup Project");
+        generate_synthetic_robocup(&temporary.path().join("blocked-detection/images/sample.png"))
+            .expect("sample image");
         let selected_model =
             register_pipeline_builder_model(&application, "scripted-blocked-detection");
         let step = |name: &str| MockStep {
@@ -20427,6 +20782,199 @@ export:
         assert_eq!(
             retry.session.outcome,
             Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+        );
+
+        let detector = register_available_vision_model(
+            &application,
+            &selected_model,
+            "installed-specialist-detector",
+            [ModelCapability::ObjectDetection],
+        );
+        let retry_input = application
+            .workflow_advisor_input_for_label(
+                "blocked-detection",
+                &load_settings(None).expect("settings"),
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("retry input");
+        let retry_context = application
+            .pipeline_builder_context_snapshot(&retry_input)
+            .expect("retry context");
+        let retry_feasibility =
+            LocalApplication::resolve_pipeline_feasibility(&retry_input, &retry_context);
+        let mut reconciled_preview = suggestion.clone();
+        assert!(
+            reconcile_persisted_setup_draft(
+                &mut reconciled_preview,
+                &retry_input,
+                &retry_feasibility
+            ),
+            "feasibility={retry_feasibility:#?} nodes={:#?}",
+            suggestion.draft.nodes
+        );
+        assert!(reconciled_preview.unresolved_model_bindings.is_empty());
+        let ready_step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 500,
+                output_tokens: 50,
+            },
+        };
+        let installed_retry_provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                ready_step("get_pipeline_builder_context", json!({})),
+                ready_step("resolve_pipeline_feasibility", json!({})),
+                ready_step("validate_pipeline", json!({})),
+                ready_step("dry_run_pipeline", json!({"image_indices": [0]})),
+                ready_step("inspect_dry_run_summary", json!({})),
+                ready_step("submit_draft_for_human_approval", json!({})),
+            ],
+        });
+        let installed_retry = application
+            .run_workflow_advisor_with_selected_model_from_draft(
+                "blocked-detection",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &installed_retry_provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                Some(&suggestion.draft.id),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("retry after installing a compatible detector");
+        assert_eq!(installed_retry_provider.remaining_steps(), 0);
+        assert_eq!(
+            installed_retry.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview),
+            "{:#?}",
+            installed_retry.session.steps
+        );
+        let installed_suggestion = installed_retry.suggestion.expect("reconciled Draft");
+        assert_eq!(installed_suggestion.draft.id, suggestion.draft.id);
+        assert!(installed_suggestion.unresolved_model_bindings.is_empty());
+        assert!(installed_suggestion.draft.nodes.iter().any(|node| {
+            node.model_profile_binding
+                .as_ref()
+                .is_some_and(|binding| binding.model_profile_id == detector.id)
+                && node.unresolved_model_requirement.is_none()
+        }));
+    }
+
+    #[tokio::test]
+    async fn pipeline_builder_inspects_bundle_setup_without_asset_mutation_authority() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "bundle-aware-builder",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-bundle-aware-builder");
+        let step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 300,
+                output_tokens: 30,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                step("get_pipeline_builder_context", json!({})),
+                step("list_ready_models", json!({})),
+                step(
+                    "list_compatible_model_bundles",
+                    json!({"node_type": "capability.segment"}),
+                ),
+                step(
+                    "inspect_model_bundle_summary",
+                    json!({
+                        "bundle_id": annotagent_model_catalog::PROMPTED_SEGMENTATION_FIXTURE_BUNDLE_ID,
+                        "version": "1.0.0",
+                    }),
+                ),
+                step("resolve_pipeline_feasibility", json!({})),
+                step("create_blocked_draft", json!({})),
+                step(
+                    "create_unresolved_model_requirement",
+                    json!({"node_id": "shared.detector"}),
+                ),
+                step("finish_with_setup_requirements", json!({})),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "bundle-aware-builder",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Bundle-aware setup result");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+        );
+        let payload = |name: &str| {
+            &report
+                .session
+                .steps
+                .iter()
+                .find(|step| step.tool_name == name)
+                .unwrap_or_else(|| panic!("missing {name} Tool result"))
+                .result["model_payload"]
+        };
+        assert_eq!(payload("list_ready_models")["ready_models"], json!([]));
+        assert_eq!(
+            payload("list_compatible_model_bundles")["agent_can_install"],
+            false
+        );
+        assert_eq!(
+            payload("list_compatible_model_bundles")["agent_can_accept_license"],
+            false
+        );
+        assert_eq!(
+            payload("inspect_model_bundle_summary")["catalog_entry"]["fixture"],
+            true
+        );
+        assert_eq!(
+            payload("inspect_model_bundle_summary")["catalog_entry"]["publishable"],
+            false
+        );
+        assert_eq!(
+            payload("inspect_model_bundle_summary")["local_paths_exposed"],
+            false
+        );
+        assert!(
+            report
+                .suggestion
+                .expect("blocked Draft")
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.unresolved_model_requirement.is_some())
         );
     }
 

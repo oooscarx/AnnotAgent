@@ -960,6 +960,9 @@ pub enum PipelineBuilderTool {
     ListProviderProfiles,
     ListAvailableCapabilities,
     ListCompatibleModels,
+    ListReadyModels,
+    ListCompatibleModelBundles,
+    InspectModelBundleSummary,
     InspectModelProfile,
     InspectWorkerHealth,
     InspectModelContracts,
@@ -976,6 +979,7 @@ pub enum PipelineBuilderTool {
     EstimateModelCost,
     CreatePipelineDraft,
     CreateDraftFromTemplate,
+    CreateUnresolvedModelRequirement,
     AddPipelineNode,
     RemovePipelineNode,
     ConnectPipelineNodes,
@@ -1004,7 +1008,7 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 65] = [
+    pub const ALL: [Self; 69] = [
         Self::GetPipelineBuilderContext,
         Self::ResolvePipelineFeasibility,
         Self::InspectNodesBatch,
@@ -1029,6 +1033,9 @@ impl PipelineBuilderTool {
         Self::ListProviderProfiles,
         Self::ListAvailableCapabilities,
         Self::ListCompatibleModels,
+        Self::ListReadyModels,
+        Self::ListCompatibleModelBundles,
+        Self::InspectModelBundleSummary,
         Self::InspectModelProfile,
         Self::InspectWorkerHealth,
         Self::InspectModelContracts,
@@ -1045,6 +1052,7 @@ impl PipelineBuilderTool {
         Self::EstimateModelCost,
         Self::CreatePipelineDraft,
         Self::CreateDraftFromTemplate,
+        Self::CreateUnresolvedModelRequirement,
         Self::AddPipelineNode,
         Self::RemovePipelineNode,
         Self::ConnectPipelineNodes,
@@ -1099,6 +1107,9 @@ impl PipelineBuilderTool {
             Self::ListProviderProfiles => "list_provider_profiles",
             Self::ListAvailableCapabilities => "list_available_capabilities",
             Self::ListCompatibleModels => "list_compatible_models",
+            Self::ListReadyModels => "list_ready_models",
+            Self::ListCompatibleModelBundles => "list_compatible_model_bundles",
+            Self::InspectModelBundleSummary => "inspect_model_bundle_summary",
             Self::InspectModelProfile => "inspect_model_profile",
             Self::InspectWorkerHealth => "inspect_worker_health",
             Self::InspectModelContracts => "inspect_model_contracts",
@@ -1115,6 +1126,7 @@ impl PipelineBuilderTool {
             Self::EstimateModelCost => "estimate_model_cost",
             Self::CreatePipelineDraft => "create_pipeline_draft",
             Self::CreateDraftFromTemplate => "create_draft_from_template",
+            Self::CreateUnresolvedModelRequirement => "create_unresolved_model_requirement",
             Self::AddPipelineNode => "add_pipeline_node",
             Self::RemovePipelineNode => "remove_pipeline_node",
             Self::ConnectPipelineNodes => "connect_pipeline_nodes",
@@ -1151,6 +1163,7 @@ impl PipelineBuilderTool {
                 | Self::CreatePipelineDraft
                 | Self::CreateBlockedDraft
                 | Self::SetUnresolvedBinding
+                | Self::CreateUnresolvedModelRequirement
                 | Self::AddPipelineNode
                 | Self::RemovePipelineNode
                 | Self::ConnectPipelineNodes
@@ -1176,6 +1189,9 @@ impl PipelineBuilderTool {
                 | Self::InspectContractsBatch
                 | Self::InspectNodeDefinition
                 | Self::ListCompatibleModels
+                | Self::ListReadyModels
+                | Self::ListCompatibleModelBundles
+                | Self::InspectModelBundleSummary
                 | Self::InspectModelProfile
                 | Self::InspectModelContracts
                 | Self::InspectLabelSpace
@@ -1218,6 +1234,9 @@ impl PipelineBuilderTool {
             | Self::ListProviderProfiles
             | Self::ListAvailableCapabilities
             | Self::ListCompatibleModels
+            | Self::ListReadyModels
+            | Self::ListCompatibleModelBundles
+            | Self::InspectModelBundleSummary
             | Self::InspectModelProfile
             | Self::InspectWorkerHealth
             | Self::InspectModelContracts
@@ -1242,6 +1261,7 @@ impl PipelineBuilderTool {
             | Self::SetDecisionPolicy
             | Self::SetRuntimePolicy
             | Self::SetUnresolvedBinding
+            | Self::CreateUnresolvedModelRequirement
             | Self::UndoLastDraftChange => PipelineBuilderPermission::MutateDraft,
             Self::ComparePipelineDrafts | Self::ValidatePipeline | Self::EstimatePipelineCost => {
                 PipelineBuilderPermission::ReadDraft
@@ -2507,7 +2527,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 65);
+        assert_eq!(tools.len(), 69);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",

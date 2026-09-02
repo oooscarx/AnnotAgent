@@ -105,3 +105,10 @@ capabilities, typed Artifact contracts, geometry safety and immutable Workflow i
 SDK, Registry, package lifecycle and official plugins are described in
 [Rust Model Plugins](RUST_MODEL_PLUGINS.md); legacy HTTP Vision v1 bindings are compatibility data,
 not installed plugins.
+
+Executable Plugins and data-only Model Bundles have independent immutable identities. A Catalog may
+offer a Bundle, but a Workflow can select it only after license acceptance, content-addressed
+installation, Plugin/Contract/platform resolution and a fixed real-process smoke test produce a
+Ready, publishable Model Instance. Pipeline Builder can observe that evidence and preserve an
+unresolved binding, but installation and license acceptance remain explicit human actions. See
+[Model Bundles](MODEL_BUNDLES.md) and [Model Asset Versioning](MODEL_ASSET_VERSIONING.md).

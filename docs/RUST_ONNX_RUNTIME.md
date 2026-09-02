@@ -44,13 +44,15 @@ immediately before the native call and after it returns. The current portable co
 preempt every operator in the middle of one native call; plugin process termination remains the
 hard containment boundary for a stuck native runtime.
 
-## Test fixture
+## Test fixtures
 
 The M4 test constructs a legal, weight-free ONNX Identity graph from the published protobuf wire
 contract, writes it to an isolated temporary directory, loads it through the native CPU provider
 and verifies that [2.5, -4.0] is returned unchanged. It also verifies graph input shape/type
 discovery, SHA-256 identity, session cache reuse/eviction and cancellation before native entry.
 
-This is genuine ONNX graph execution, but it is intentionally not advertised as an expert model or
-registered in the product Model Registry. M5 supplies the first release-blocking expert vision
-model plugin.
+This is genuine ONNX graph execution, but it is intentionally not accuracy evidence. Model Bundle
+Provisioning additionally ships a data-only prompted-segmentation Fixture whose two tiny graphs are
+loaded and inferred through the real SAM Plugin/Host/ORT path. Its Model Instance can retain Ready
+smoke evidence, while `fixture=true` and `publishable=false` keep its Profile unavailable to
+Published Workflows. See [Bundle Smoke Tests](MODEL_BUNDLE_SMOKE_TESTS.md).

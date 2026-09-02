@@ -30,3 +30,7 @@ semantic score is not box-quality proof. The path must still convert prompts and
 run Geometry Evaluation/Decision, and retain Review when calibration or stability evidence is
 insufficient. Missing weights or smoke evidence blocks the Draft rather than falling back to an
 external worker.
+
+“Installed” is not sufficient evidence. The refiner must resolve to an enabled, publishable Model
+Bundle and a Contract-valid, fixed-smoke-tested Ready Model Instance. The built-in non-publishable
+Fixture never satisfies this Workflow gate.

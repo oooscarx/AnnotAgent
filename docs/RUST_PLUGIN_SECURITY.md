@@ -15,3 +15,8 @@ graceful shutdown and forced termination are bounded. A failed plugin cannot ter
 
 This is process isolation, not a universal strong sandbox. Target-specific namespaces, resource
 control groups and syscall filters are future optional features and are never implied when absent.
+
+Model bytes enter this boundary only from a verified content-addressed Bundle root. The Host checks
+that every role path is a regular descendant and re-hashes frozen files before startup. Bundle ZIP,
+Catalog download, license and supply-chain protections are documented separately in
+[Model Bundle Security](MODEL_BUNDLE_SECURITY.md).

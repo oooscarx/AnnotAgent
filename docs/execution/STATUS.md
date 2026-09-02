@@ -1,6 +1,47 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-09-02 CST
+Last updated: 2026-09-03 CST
+
+## Model Bundle Provisioning Alpha M8 — 2026-09-03
+
+- Added the full workspace-scoped Model CLI and TUI projections over the same Catalog, Bundle and
+  Model Instance Registry used by the GUI.
+- Pipeline Builder remains unable to install/accept assets. After a human completes setup, Retry
+  resolves compatible bindings on the same persisted Draft without discarding manual edits.
+- Added format, Catalog, security, Contract, smoke, versioning, publishing, SAM, migration and demo
+  documentation.
+- Release acceptance passes both architecture scans, Rustfmt, strict workspace Clippy, 407 active
+  Rust tests (five explicit external/billable ignores), all-feature build, 44 Web tests, production
+  build, 38 Chromium E2E scenarios, doctor and four offline demos. The prompted-segmentation Fixture
+  lifecycle separately passes through the real Rust Plugin/ORT process and geometry chain.
+- Every locally reproducible Model Bundle release gate is closed. EfficientSAM/SAM 2, external
+  Catalog hosting, GPU and additional-platform evidence remain explicitly live-conditional.
+
+## Model Bundle Provisioning Alpha M7 — 2026-09-03
+
+- Added a Rust-generated two-file prompted-segmentation Fixture Bundle and built-in local Catalog.
+  It executes through the real SAM Plugin/ONNX Runtime smoke path and geometry chain, while its
+  Profile remains non-selectable because the Bundle is explicitly Fixture/non-publishable.
+- Audited the official EfficientSAM source/exporter and author-owned ONNX assets at fixed hashes.
+  Their incompatible Contract is recorded; no real SAM Bundle or quality claim was fabricated.
+
+## Model Bundle Provisioning Alpha M6 — 2026-09-03
+
+- Replaced normal raw ONNX uploads with a responsive eight-stage verified model installation
+  journey and Advanced `.annotmodel` inspect/import.
+- Legacy raw files remain preserved and can become a local Bundle only after explicit source,
+  exporter, license, complete tensor Contract and fixed-smoke evidence.
+
+## Model Bundle Provisioning Alpha M5 — 2026-09-03
+
+- Added fixed Bundle smoke suites through the real Plugin Host, Ready Model Instances, immutable
+  Published Model Asset snapshots, runtime re-hashing, references, disable/enable/remove and GC.
+
+## Model Bundle Provisioning Alpha M4 — 2026-09-03
+
+- Added generic Plugin file-role compatibility, versioned tensor Contracts, real Rust ONNX
+  descriptor inspection and deterministic Model Instance/Profile identities. Contract-valid state
+  stops at Preparing until runtime smoke evidence exists.
 
 ## Model Bundle Provisioning Alpha M3 — 2026-09-03
 

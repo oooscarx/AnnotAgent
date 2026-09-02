@@ -73,12 +73,14 @@ native system credential references remain available. Worker health and capabili
 discovered live, and an unavailable Provider or Worker never blocks AnnotAgent startup.
 
 Native expert models are installed through **Settings → Expert Model Plugins** as deterministic
-`.annotplugin` packages. AnnotAgent reviews permissions and licenses, verifies checksums, provisions
-checkpoint files, starts an isolated Rust process and requires protocol/contract/conformance evidence
-before a model becomes Ready. Existing manually configured HTTP Vision v1 endpoints remain under
+`.annotplugin` code packages plus independent, data-only `.annotmodel` Bundles. AnnotAgent reviews
+permissions and exact licenses, verifies Catalog-pinned checksums, binds generic model-file roles,
+starts an isolated Rust process and requires ONNX Contract plus fixed smoke evidence before a
+publishable model becomes Ready. Existing manually configured HTTP Vision v1 endpoints remain under
 **Legacy HTTP** for historical compatibility, but new Workflows should use native plugins. See
 [Rust Model Plugins](docs/RUST_MODEL_PLUGINS.md), [Writing a Rust Plugin](docs/WRITING_A_RUST_MODEL_PLUGIN.md)
-and [SAM Rust Plugin](docs/SAM_RUST_PLUGIN.md).
+and [Model Bundles](docs/MODEL_BUNDLES.md). The repository ships no third-party weights; the built-in
+prompted-segmentation Fixture is non-publishable protocol evidence, not SAM or accuracy evidence.
 
 ## 5. Skill
 

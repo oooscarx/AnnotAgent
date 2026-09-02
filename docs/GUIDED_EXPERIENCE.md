@@ -75,8 +75,11 @@ workflow. Expert details retain contract revisions, config hashes, quality repor
 lineage.
 ## Native expert-model setup
 
-New local expert models are installed under **Settings → Expert Model Plugins**. A model is offered
-to Automation only after exact weights and installed-process conformance make it Ready. **Legacy
+New local expert models are installed under **Settings → Expert Model Plugins**. Plugin code and
+data-only Model Bundles are reviewed independently. A model is offered to Automation only after the
+exact Bundle license, hashes, tensor Contract and installed-process smoke make a publishable Model
+Instance Ready. A missing model saves a blocked editable Draft; after setup, Retry preserves manual
+edits and resolves only compatible bindings. **Legacy
 HTTP** remains visible only for existing endpoint bindings. A historical Workflow migration clones
 to a Draft, binds a Ready Rust plugin, Dry Runs selected images and then publishes a new immutable
 version; it never rewrites the original.

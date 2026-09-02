@@ -4,7 +4,7 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M6 — Compatible-model installation, legacy raw-file migration and responsive GUI.
+M8 — Completed locally; Agent/CLI/TUI provisioning, migration and release evidence are closed.
 
 ## Completed
 
@@ -111,20 +111,33 @@ M6 — Compatible-model installation, legacy raw-file migration and responsive G
   author-owned ONNX Space. Exact Ti encoder/decoder SHA-256 values are recorded in the model card.
   The assets remain live-conditional because their Contract is not the SAM ViT-B Plugin Contract
   and no reproducible hosted AnnotAgent Bundle exists. SAM 2 remains Labs.
+- Added the complete `annotagent models` user lifecycle for Catalog discovery/search/show,
+  install/import/list/test, instance enable/disable/doctor, Bundle references/remove/GC, plus
+  developer Catalog build/verify. All commands use the same workspace Registry as the GUI.
+- Added TUI Catalog, Bundle, Model Instance, reference and doctor projections without creating a
+  second model state store or moving license/download authority into the Agent.
+- Pipeline Builder Retry now re-evaluates unresolved nodes against newly Available model evidence,
+  preserves the existing Draft identity and manual edits, and proceeds through validation/Dry Run
+  when setup is complete. A focused integration test covers missing model → blocked Draft → setup →
+  Retry from the same Draft.
+- Added the complete operator/developer documentation set for format, Catalog, provisioning,
+  security, Contracts, smoke tests, versioning, publishing, SAM status, legacy migration and the
+  offline Fixture demonstration.
 
 ## In progress
 
-- Final M7 release checks and milestone commit.
+- None. Only the explicitly recorded external real-model/platform conditions remain.
 
 ## Next
 
-M8 — Agent/CLI/TUI model provisioning, migration, full regression and release evidence.
+Provide a separately versioned release only after a legal, compatible real EfficientSAM/SAM 2
+Bundle and additional platform execution evidence can pass the same immutable verification gates.
 
 ## Latest verification
 
 | Gate | Result |
 | --- | --- |
-| Rust workspace tests | PASS — `cargo test --workspace --all-features`; 385 active, 5 explicit external/billable ignores in the established baseline |
+| Rust workspace tests | PASS — `cargo test --workspace --all-features`; 407 active, 5 explicit external/billable ignores |
 | Rust workspace build | PASS — `cargo build --workspace --all-features` |
 | Bundle tests | PASS — 9 manifest/package/signature/security tests |
 | Catalog/provisioning tests | PASS — 9 tests including deterministic built-in Fixture, real ORT Contract, smoke tolerance/Ready gate and referenced-GC protection |
@@ -133,13 +146,15 @@ M8 — Agent/CLI/TUI model provisioning, migration, full regression and release 
 | Real model smoke | LIVE-CONDITIONAL — EfficientSAM source/hash/Contract audited; no compatible published `.annotmodel` |
 | Server tests | PASS — 21, including legacy migration failure/preservation |
 | Web tests | PASS — 44 unit plus production TypeScript/Vite build |
-| E2E | PASS — focused desktop/mobile verified-Bundle installation journey, 2 scenarios |
-| Focused Clippy | PASS — Server, Bundle and Catalog, all targets/features, warnings denied |
-| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; `045a9e5` — M5; `3a1bb64` — M6; M7 pending |
+| E2E | PASS — 38 Chromium scenarios, including verified Bundle setup and responsive recovery |
+| Strict Clippy | PASS — workspace, all targets/features, warnings denied |
+| Fixture lifecycle | PASS — Bundle → Plugin process → Rust ORT → Mask → BBox → Geometry → removal |
+| Local commit | `77e3acb` — M0; `399d89b` — M1; `8adb8b4` — M2; `3994af0` — M3; `e8f6ae4` — M4; `045a9e5` — M5; `3a1bb64` — M6; `f8f653e` — M7; M8 — this milestone commit |
 
 ## Release-blocking remainder
 
-M8 and every unchecked item in `MODEL_BUNDLE_ACCEPTANCE.md`.
+No locally reproducible release blocker remains. The remaining work below is live-conditional and
+does not justify a false real-model support claim.
 
 ## Live-conditional
 

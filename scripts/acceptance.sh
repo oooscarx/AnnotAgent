@@ -48,4 +48,4 @@ run cargo run -p annotagent -- demo generic-detection-crop
 run cargo run -p annotagent -- demo robocup-ball
 run cargo run -p annotagent -- demo lean-agent-robocup
 
-printf '\nAnnotAgent Rust Expert Model Plugin Alpha acceptance checks completed successfully.\n'
+printf '\nAnnotAgent acceptance checks completed successfully.\n'

@@ -24,15 +24,19 @@ Workflow node
 | `org.annotagent.rfdetr-onnx` | Object detection | Rust official-export path; real external export live-conditional |
 | `org.annotagent.locate-anything-rust` | Open vocabulary / phrase grounding | Unsupported until a complete audited Rust-callable runtime exists |
 
-Weights are not committed. A contract-complete package is not Ready until the exact files are
-provisioned and its installed-process smoke/conformance report passes.
+Weights are not committed. New setup uses an independent verified `.annotmodel` Bundle rather than
+raw weight upload. A contract-complete Plugin is not Ready for a Workflow until the exact Bundle
+files, license, ONNX tensor Contract and installed-process smoke/conformance report pass. See
+[Model Bundles](MODEL_BUNDLES.md) and [Model Provisioning](MODEL_PROVISIONING.md).
 
 ## Install in the product
 
 Open **Settings → Expert Model Plugins** and choose **Install package**. The wizard streams a local
 `.annotplugin`, verifies its deterministic archive and checksums, shows publisher, target,
-permissions and licenses, and installs only after explicit approval. Add every requested weight
-component and run **Test**. The model selector includes only enabled, Ready models.
+permissions and licenses, and installs only after explicit approval. Then choose **Install
+compatible model**, review the Catalog-pinned Bundle and license, and run its fixed test. The model
+selector includes only enabled, publishable, Ready instances. Raw components remain a labelled
+legacy migration surface only.
 
 The Registry reports these states without guessing:
 

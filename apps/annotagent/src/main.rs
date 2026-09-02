@@ -85,6 +85,8 @@ enum Command {
         command: PluginCommand,
     },
     Models {
+        #[arg(long, default_value = "./workspace")]
+        workspace: PathBuf,
         #[command(subcommand)]
         command: ModelsCommand,
     },
@@ -238,9 +240,63 @@ enum PluginCommand {
 
 #[derive(Subcommand)]
 enum ModelsCommand {
+    Catalog {
+        #[command(subcommand)]
+        command: Option<ModelCatalogCommand>,
+    },
+    Search {
+        query: String,
+    },
+    Show {
+        bundle_id: String,
+    },
+    Install {
+        bundle: String,
+        #[arg(long)]
+        accept: bool,
+    },
+    Import {
+        package: PathBuf,
+        #[arg(long)]
+        accept: bool,
+    },
+    List,
+    Test {
+        model_instance_id: String,
+    },
+    Disable {
+        model_instance_id: String,
+    },
+    Enable {
+        model_instance_id: String,
+    },
+    Remove {
+        bundle: String,
+    },
+    References {
+        bundle: String,
+    },
+    Doctor {
+        model_instance_id: String,
+    },
+    Gc,
     Bundle {
         #[command(subcommand)]
         command: ModelBundleCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelCatalogCommand {
+    Build {
+        directory: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        catalog_id: Option<String>,
+    },
+    Verify {
+        catalog_file: PathBuf,
     },
 }
 
@@ -309,7 +365,7 @@ async fn main() -> Result<()> {
         } => serve_command(&workspace, port, open).await,
         Command::Skills { command } => skills_command(command),
         Command::Plugin { data_dir, command } => plugin_cli::run(command, data_dir).await,
-        Command::Models { command } => model_cli::run(command),
+        Command::Models { workspace, command } => model_cli::run(&workspace, command).await,
         Command::History { command } => history_command(command),
         Command::Export {
             project,

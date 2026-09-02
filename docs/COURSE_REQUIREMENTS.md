@@ -117,10 +117,12 @@ cargo run -p annotagent -- demo robocup-ball
 
 Manual: start the TUI or GUI, begin a run, use pause/resume/cancel, and inspect persisted `/api/runs/{id}/events`.
 
-Expert Vision extension evidence includes a model-brand-neutral Manifest, Python Worker SDK,
-health/capability/model/contract discovery, explicit Detection→Prompt→Mask→BBox Runtime execution,
-selected-image onboarding and evidence-driven Advisor revision. Deterministic fixtures are labelled
-as fixtures; real model accuracy without legal configured weights remains live-conditional.
+Expert Vision extension evidence includes a model-brand-neutral Rust Plugin Manifest, data-only
+Model Bundle/Catalog, health/capability/model/tensor-Contract discovery, explicit
+Detection→Prompt→Mask→BBox Runtime execution, fixed smoke testing and evidence-driven Advisor
+revision. No active Python model runtime or conversion path exists. Deterministic fixtures are
+labelled non-publishable; real model accuracy without legal configured weights remains
+live-conditional.
 
 ## R5 — Context and history
 

@@ -29,13 +29,15 @@ Last updated: 2026-09-03 CST
 - [x] Published Workflows freeze exact plugin, bundle, file, instance and profile identity.
 - [x] Referenced bundles are protected and unreferenced content can be garbage-collected.
 - [x] Primary GUI path installs a compatible Bundle rather than raw ONNX components.
-- [ ] Pipeline Builder discovers readiness/setup requirements but cannot mutate model assets.
+- [x] Pipeline Builder discovers readiness/setup requirements but cannot mutate model assets; Retry
+      reuses the persisted Draft after a separately authorized setup action.
 - [x] Fixture end-to-end lifecycle passes offline and is visibly non-publishable.
 - [x] One real prompted-segmentation bundle passes legal, contract and Rust inference evidence, or is
       recorded as an explicit external blocker without a false supported claim.
-- [ ] Geometry Safety, workflow validation, lineage, replay, batch, review, export and Providers do
-      not regress.
-- [ ] Active installation/inference paths contain no Python, pip, uv, conda or venv process launch.
+- [x] Geometry Safety, workflow validation, lineage, replay, batch, review, export and Providers do
+      not regress; the full Rust/Web/E2E acceptance suite passes.
+- [x] Active installation/inference paths contain no Python, pip, uv, conda or venv process launch;
+      both enforced boundary scans pass.
 
 ## M1 evidence
 
@@ -176,3 +178,25 @@ Last updated: 2026-09-03 CST
 - [x] Verification passes 9 Catalog tests, 7 active SAM Plugin tests with one legal-weight test
       explicitly ignored, 21 Server tests, 44 Web tests, production build, two responsive Chromium
       tests, Rustfmt and strict focused Clippy.
+
+## M8 evidence
+
+- [x] `annotagent models` covers Catalog discovery/search/detail, exact-license install/import,
+      installed-model listing/testing, instance enable/disable/doctor, references/remove/GC and
+      developer Bundle/Catalog inspection without creating another Registry.
+- [x] TUI model commands are read-only projections over the same Registry; mutations remain
+      explicit CLI/GUI operator actions.
+- [x] Pipeline Builder exposes four bounded model-readiness tools and no install, download,
+      license-acceptance, import, delete or billable-probe authority.
+- [x] The setup recovery integration proves missing model → persisted blocked Draft → separately
+      authorized setup → Retry of the same Draft → validation → Dry Run → human submission, while
+      preserving manual nodes and configuration.
+- [x] `scripts/acceptance.sh` passes both architecture boundary scans, Rustfmt, strict all-target/
+      all-feature Clippy, 407 active Rust tests with five explicit external/billable ignores, the
+      all-feature workspace build, 44 Web tests, TypeScript, production build, 38 Chromium E2E
+      scenarios, doctor and four offline demos.
+- [x] `cargo test -p annotagent-plugin-sam-onnx --test fixture_bundle_workflow --all-features --
+      --nocapture` separately passes the real Bundle → Plugin process → Rust ORT → Mask → BBox →
+      Geometry lifecycle.
+- [x] The active source boundary contains no Python, pip, uv, conda or venv launcher; no external
+      model asset, credential, remote mutation or push was used.

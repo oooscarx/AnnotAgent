@@ -540,6 +540,127 @@ impl TuiState {
                 }
                 return Ok(());
             }
+            Some("catalogs") => {
+                let catalogs = self
+                    .application
+                    .model_bundle_registry()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Model Bundle Registry lock is poisoned"))?
+                    .catalogs();
+                for catalog in catalogs {
+                    self.push(format!(
+                        "model catalog · {} · {} Bundles · generated {}",
+                        catalog.catalog_id,
+                        catalog.entries.len(),
+                        catalog.generated_at
+                    ));
+                }
+                return Ok(());
+            }
+            Some("bundles") => {
+                let bundles = self
+                    .application
+                    .model_bundle_registry()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Model Bundle Registry lock is poisoned"))?
+                    .list();
+                if bundles.is_empty() {
+                    self.push(
+                        "No verified Model Bundles are installed. Use Settings → Expert Model Plugins or `annotagent models install <id>@<version>`.",
+                    );
+                }
+                for bundle in bundles {
+                    self.push(format!(
+                        "model Bundle · {}@{} · {:?} · enabled {} · fixture {} · publishable {}",
+                        bundle.manifest.id,
+                        bundle.manifest.version,
+                        bundle.status,
+                        bundle.enabled,
+                        bundle.manifest.fixture,
+                        bundle.manifest.publishable
+                    ));
+                }
+                return Ok(());
+            }
+            Some("instances") => {
+                let instances = self
+                    .application
+                    .model_bundle_registry()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Model Bundle Registry lock is poisoned"))?
+                    .model_instances();
+                if instances.is_empty() {
+                    self.push("No Model Instances are bound to installed Rust Plugins.");
+                }
+                for instance in instances {
+                    self.push(format!(
+                        "model instance · {} · {} · {:?} · {} · {}@{}",
+                        instance.id,
+                        instance.model_id,
+                        instance.status,
+                        instance.execution_provider,
+                        instance.model_bundle_id,
+                        instance.model_bundle_version
+                    ));
+                }
+                return Ok(());
+            }
+            Some("references") => {
+                let value = id.context("usage: /models references <bundle-id>@<version>")?;
+                let (bundle_id, version) = value
+                    .rsplit_once('@')
+                    .context("usage: /models references <bundle-id>@<version>")?;
+                let bundle_id = annotagent_model_bundle::ModelBundleId::parse(bundle_id)?;
+                let version = semver::Version::parse(version)?;
+                let references = self
+                    .application
+                    .model_bundle_registry()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Model Bundle Registry lock is poisoned"))?
+                    .references(&bundle_id, &version);
+                if references.is_empty() {
+                    self.push(format!("model Bundle · {value} · no durable references"));
+                }
+                for reference in references {
+                    self.push(format!(
+                        "model Bundle reference · {} · {} · {}",
+                        reference.kind, reference.location, reference.bundle_digest
+                    ));
+                }
+                return Ok(());
+            }
+            Some("doctor") => {
+                let instance_id = id
+                    .context("usage: /models doctor <model-instance-id>")?
+                    .parse::<annotagent_model_bundle::ModelInstanceId>()?;
+                let registry = self.application.model_bundle_registry();
+                let registry = registry
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Model Bundle Registry lock is poisoned"))?;
+                let instance = registry
+                    .model_instance(instance_id)
+                    .context("Model Instance was not found")?;
+                let bundle = registry
+                    .get(&instance.model_bundle_id, &instance.model_bundle_version)
+                    .context("Model Bundle was not found")?;
+                self.push(format!(
+                    "model doctor · {} · {:?} · contract {} · smoke {} · enabled {} · publishable {}",
+                    instance.id,
+                    instance.status,
+                    if instance.contract_inspection.valid { "valid" } else { "invalid" },
+                    instance.smoke_test_result.as_ref().map_or("not run", |result| match result.status {
+                        annotagent_model_bundle::SmokeTestStatus::Passed => "passed",
+                        annotagent_model_bundle::SmokeTestStatus::Failed => "failed",
+                        annotagent_model_bundle::SmokeTestStatus::Crashed => "crashed",
+                    }),
+                    bundle.enabled,
+                    bundle.manifest.publishable
+                ));
+                if bundle.manifest.fixture {
+                    self.push("Fixture-only evidence: this Model Instance is never selectable for a Published Workflow.");
+                }
+                return Ok(());
+            }
             Some("workers") => {
                 let lines = model_lines(&workspace_settings(self.application.as_ref())?);
                 for line in lines {
@@ -632,7 +753,7 @@ impl TuiState {
             }
             Some("test") => {}
             Some(_) => anyhow::bail!(
-                "usage: /models | /models show <id> | /models compatible <capability> | /models workers | /models test <worker-id>"
+                "usage: /models | /models catalogs | /models bundles | /models instances | /models references <bundle-id>@<version> | /models doctor <model-instance-id> | /models show <profile-id> | /models compatible <capability> | /models workers | /models test <worker-id>"
             ),
         }
         let settings = workspace_settings(self.application.as_ref())?;
@@ -1197,7 +1318,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models show <id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /plugins <enable|disable|references> <plugin-id> <version> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models catalogs /models bundles /models instances /models references <bundle@version> /models doctor <instance-id> /models show <profile-id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /plugins <enable|disable|references> <plugin-id> <version> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {

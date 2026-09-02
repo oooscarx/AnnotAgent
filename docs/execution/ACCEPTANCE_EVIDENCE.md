@@ -1,5 +1,25 @@
 # AnnotAgent Acceptance Evidence
 
+## Model Bundle Provisioning Alpha M8 — 2026-09-03
+
+1. The complete Model CLI and read-only TUI projections use the same workspace Catalog, Bundle,
+   Model Instance and reference Registry as the GUI. Exact license acceptance remains an explicit
+   human operation; no Agent model-asset mutation surface was added.
+2. Pipeline Builder now inspects Ready models, compatible Bundles and exact Bundle summaries, and
+   records unresolved model requirements. A focused integration proves the same persisted Draft
+   resumes after separately authorized setup, preserves manual edits, validates, Dry Runs and waits
+   for human approval without installing or accepting anything itself.
+3. `scripts/acceptance.sh` passes both enforced Rust/Agent boundary scans, Rustfmt, strict workspace
+   Clippy, 407 active Rust tests with five explicit external/billable ignores, all-feature workspace
+   build, 44 Web tests, TypeScript, production build, 38 Chromium E2E scenarios, doctor and four
+   offline demos.
+4. `cargo test -p annotagent-plugin-sam-onnx --test fixture_bundle_workflow --all-features --
+   --nocapture` passes the separately audited Pack → Verify → Install → Contract → Bind → real
+   Plugin/ORT → Smoke → Mask → BBox → Geometry → disable/remove lifecycle.
+5. Active model installation/inference source scans contain no Python, pip, uv, conda or venv
+   launcher. No external model bytes, credential, remote mutation or push occurred. EfficientSAM,
+   SAM 2, external Catalog hosting, GPU and additional platforms remain explicitly live-conditional.
+
 ## Model Bundle Provisioning Alpha M3 — 2026-09-03
 
 1. Three Catalog/Registry tests pass: unsafe URL classes are rejected, exact license evidence
