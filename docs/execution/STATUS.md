@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-02 CST
 
+## Model Bundle Provisioning Alpha M0 — 2026-09-02
+
+- Reproduced the installed-but-unprovisioned SAM state and strengthened its regression to require
+  both `image_encoder` and `mask_decoder` before the current plugin leaves `NeedsWeights`.
+- Audited the actual Plugin ZIP/Host/Registry, Model Profile, Published Workflow, SQLite migration,
+  CLI and GUI boundaries. The current primary GUI still asks for two raw ONNX files; there is no
+  `.annotmodel`, catalog, Model Instance or Bundle smoke lifecycle yet.
+- Preserved the complete governing prompt and created the Model Bundle plan, decision, status,
+  blocker, limitation and acceptance ledgers. Workspace Rust test/build baselines pass.
+- Root `dist/` remains untouched and is now ignored as generated package output. No credential,
+  external weight, push or remote change occurred.
+
 ## Rust Expert Model Plugin M9 — 2026-09-02
 
 - Replaced the active Python worker/E2E path with a Rust-only deterministic fixture and archived the

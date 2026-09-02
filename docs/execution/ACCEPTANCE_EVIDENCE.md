@@ -1,5 +1,20 @@
 # AnnotAgent Acceptance Evidence
 
+## Model Bundle Provisioning Alpha M0 — 2026-09-02
+
+1. The SAM registry component test now explicitly asserts the installed plugin requires exactly two
+   components (`image_encoder`, `mask_decoder`), remains `NeedsWeights` with neither installed and
+   projects a non-selectable `MissingWeights` model.
+2. The existing deterministic `.annotplugin` ZIP verifier, Application-owned JSON Registry, SQLite
+   plugin/model/workflow tables, Model Profile snapshots and raw-weight Server/GUI routes were
+   inspected from implementation rather than inferred from filenames.
+3. `cargo test --workspace --all-features` and `cargo build --workspace --all-features` passed at
+   the baseline. No Bundle test is claimed because the Bundle API starts in M1.
+4. Six durable Model Bundle execution ledgers and the verbatim master prompt now record milestones,
+   decisions, blockers, limitations and the release matrix.
+5. No external checkpoint, secret, push or remote mutation occurred; the existing generated
+   `dist/` artifacts remain untouched.
+
 ## Rust Expert Model Plugin Alpha M9 — 2026-09-02
 
 1. All former external-worker source, SDK, setup/start scripts and browser fixture moved to

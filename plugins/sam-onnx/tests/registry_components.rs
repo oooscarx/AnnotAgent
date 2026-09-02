@@ -36,6 +36,15 @@ fn sam_requires_both_hashed_components_before_leaving_needs_weights() {
         )
         .expect("install");
     assert_eq!(installation.status, PluginStatus::NeedsWeights);
+    assert!(!installation.weights_ready(&[]));
+    let required_roles = installation
+        .manifest
+        .weights
+        .components
+        .iter()
+        .map(|component| component.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(required_roles, ["image_encoder", "mask_decoder"]);
     assert_eq!(
         registry.ready_models()[0].availability,
         ModelAvailability::MissingWeights
