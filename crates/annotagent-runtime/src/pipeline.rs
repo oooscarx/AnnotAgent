@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 
 pub const CORE_CROP: &str = "core.crop";
+pub const CORE_EXISTING_ANNOTATIONS: &str = "core.existing_annotations";
 pub const CORE_DETECTIONS_TO_BOX_PROMPTS: &str = "core.detections_to_box_prompts";
 pub const CORE_MASK_TO_BBOX: &str = "core.mask_to_bbox";
 pub const CORE_GEOMETRY_QUALITY_EVALUATION: &str = "core.geometry_quality_evaluation";

@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-03 CST
 
+## Real Prompted-Segmentation Delivery M5 — 2026-09-03
+
+- Ready EfficientSAM Model Instances are now selectable in Pipeline Builder as exact
+  `model-instance:<uuid>` bindings and require no unrelated Provider credential.
+- A real Published Workflow executed Existing BBox → Box Prompt → EfficientSAM Mask → Mask-to-BBox
+  → Geometry Safety → Review → Commit. Run `b0dd0e50-3698-4cd5-a65d-28e6d881293b` completed after
+  human acceptance with one annotation and no duplicate Commit.
+- Run Debug displays the decoded COCO RLE mask overlay, refined geometry and the immutable
+  Plugin/Bundle/file/Contract/Instance/Profile/provider identity. Typed checkpoint outputs now
+  contribute to the visible Artifact count.
+- Replay from the segment node preserves all upstream artifacts and re-executes the real local
+  model plus downstream nodes. Restart recovery and referenced-Bundle deletion protection pass.
+- The active real replay process contained one Rust EfficientSAM executable and no Python worker.
+  Focused Rust checks and Web typecheck/45 tests/build pass. M6 full release validation remains.
+
+Real Prompted-Segmentation Delivery M5 status: `PASS ON MACOS ARM64 CPU`.
+
 ## Real Prompted-Segmentation Delivery M3 — 2026-09-03
 
 - Added a dedicated Rust-native EfficientSAM-Ti Plugin with exact dynamic encoder and four-input

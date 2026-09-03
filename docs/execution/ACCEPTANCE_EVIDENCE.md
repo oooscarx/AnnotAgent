@@ -1750,3 +1750,50 @@ No third-party model weights, credential, Python process, push or remote mutatio
 
 Real Prompted-Segmentation Delivery M3 status: `PASS ON MACOS ARM64 CPU`; GUI, Workflow and release
 milestones remain pending.
+
+## Real Prompted-Segmentation Delivery M4 — 2026-09-03
+
+1. A normal user can select `Install compatible model`, review the exact real EfficientSAM source,
+   Apache-2.0 license, fixed Bundle digest, sizes, platform and CPU provider, and explicitly accept
+   the license before starting installation.
+2. One server-owned operation reports ten durable stages from Catalog resolution through real
+   inference and Model Profile registration. Browser refresh reconnects to the current stage and
+   structured failure results retain a concrete retry action.
+3. A fresh-workspace browser run installed Bundle
+   `org.annotagent.models.efficientsam-ti-onnx@1.0.0`, ran real sample inference in 4,817 ms and
+   persisted Model Instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` as Ready/selectable.
+4. Restarting AnnotAgent reconstructed that Ready state from durable Bundle, Plugin, Contract and
+   smoke evidence. The ordinary path has no raw encoder/decoder file controls; verified
+   `.annotmodel` import remains Advanced.
+
+Real Prompted-Segmentation Delivery M4 status: `PASS ON MACOS ARM64 CPU` in local commit `aad5066`.
+
+## Real Prompted-Segmentation Delivery M5 — 2026-09-03
+
+1. The Workflow Catalog projects the persisted Ready instance as
+   `model-instance:ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`. Pipeline Builder visibly selects
+   `EfficientSAM-Ti ONNX · Ready local model`; a local Plugin-only Workflow does not request a
+   Provider API key.
+2. Published Workflow `fc7d41b9-bba0-4214-b8f2-544b36e4d67f@v1` freezes the real Plugin/package,
+   Bundle, encoder/decoder files, capability Contract, Instance/Profile revision and CPU provider.
+   Removing the referenced Bundle returns HTTP 400 naming that exact Workflow reference.
+3. Run `b0dd0e50-3698-4cd5-a65d-28e6d881293b` executed nine real nodes on the official 1072×603
+   dog image. The EfficientSAM node took 1,444 ms and produced one valid uncompressed COCO RLE mask
+   with score `0.916484`; Core derived bbox `[0.543843,0.384743,0.175373,0.592040]`.
+4. Geometry evaluation persisted original and refined boxes, exact Detection→Prompt→Mask lineage,
+   IoU `0.774835`, center shift `0.035796`, area/width/height ratios and a conservative Review
+   decision. Human acceptance resumed Review/Commit and left exactly one accepted annotation.
+5. Replay from `segment` preserved `image`, `coarse_bbox` and `box_prompts`, re-executed only the
+   real segment and downstream geometry/review nodes, and returned a non-empty real mask in
+   1,482 ms with unchanged frozen model identity.
+6. Run Debug exposes the typed inputs/outputs, translucent decoded Mask overlay, refined bbox,
+   geometry evidence and Frozen Model identity. Typed checkpoint Artifact counts are included in
+   Run summaries instead of incorrectly showing zero.
+7. AnnotAgent restart preserved the Ready instance, Published Workflow, completed Run, Debug
+   lineage and Replay. The active Replay process tree contained the Rust EfficientSAM executable,
+   no child process and no Python worker.
+8. Focused validation passed Image Tools tests, the exact Project/Run annotation-source regression,
+   Application/Server checks, Web typecheck, 45 Web unit tests and the production Web build.
+
+Real Prompted-Segmentation Delivery M5 status: `PASS ON MACOS ARM64 CPU`; release matrix validation
+and packaging remain M6.

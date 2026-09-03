@@ -6,13 +6,15 @@ use std::{
 use annotagent_core::{
     AdditionalUsage, Annotation, AnnotationId, AnnotationProvenance, AnnotationRefiner,
     AnnotationSource, AnnotationValidator, ArtifactId, ArtifactKind, ArtifactProvenance,
-    ArtifactRole, ArtifactValidationState, AttributeValue, CorrectionRisk, DetectionRecoveryReport,
-    ImageArtifact, ImageId, IssueSeverity, Keypoint, LabelId, MaskEncoding, ModelProfileId,
-    NormalizedPoint, NormalizedRect, PipelineArtifact, ProviderAdapterKind,
-    PublishedWorkflowVersion, RefinementContext, RelationEndpoint, RelationValue, ReviewStatus,
-    RunEvent, RunEventKind, RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind,
-    TaskRunStatus, TokenUsage, UsageRecord, UsageSource, UsageTotals, ValidationContext,
-    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionBackendKind,
+    ArtifactRef, ArtifactRole, ArtifactValidationState, AttributeValue, CorrectionRisk,
+    DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionRecoveryReport, DetectionScore,
+    DetectionSetArtifact, DetectionSource, GeometrySemantics, ImageArtifact, ImageId,
+    IssueSeverity, Keypoint, LabelId, MaskEncoding, ModelProfileId, NormalizedPoint,
+    NormalizedRect, PipelineArtifact, ProviderAdapterKind, PublishedWorkflowVersion,
+    RefinementContext, RelationEndpoint, RelationValue, ReviewStatus, RunEvent, RunEventKind,
+    RunEventPayload, RunStatus, SuggestedAction, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    UsageRecord, UsageSource, UsageTotals, ValidationContext, ValidationEvidence, ValidationIssue,
+    VisionArtifact, VisionArtifactValue, VisionBackendKind, VisionCapability,
     VisionInferenceRequest, VisionModelBackend, VisionModelProvider, WorkflowDraftNode,
     WorkflowNodeKind,
 };
@@ -27,13 +29,14 @@ use annotagent_provider::{
 use annotagent_runtime::{
     AgentRuntime, CORE_ARTIFACT_CACHE, CORE_ATTACH_ATTRIBUTE, CORE_ATTACH_RESULT,
     CORE_CANDIDATE_MATCH, CORE_COMBINE_EVIDENCE, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_DECISION,
-    CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_FILTER, CORE_GEOMETRY_DECISION,
-    CORE_GEOMETRY_QUALITY_EVALUATION, CORE_IMAGE_STATISTICS, CORE_MAP_LABEL, CORE_MASK_TO_BBOX,
-    CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES, CORE_PROJECT_COORDINATES, CORE_REJECT,
-    CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
-    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
-    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
-    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_EXISTING_ANNOTATIONS, CORE_FILTER,
+    CORE_GEOMETRY_DECISION, CORE_GEOMETRY_QUALITY_EVALUATION, CORE_IMAGE_STATISTICS,
+    CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES,
+    CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE,
+    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
+    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
+    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
+    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -340,6 +343,15 @@ impl PublishedWorkflowRuntime {
                 continue;
             }
             match node.node_type.as_str() {
+                CORE_EXISTING_ANNOTATIONS => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ExistingAnnotationsRunner {
+                            store: self.store.clone(),
+                        }),
+                        true,
+                    )?;
+                }
                 CORE_ARTIFACT_CACHE
                 | CORE_RESIZE
                 | CORE_TILE
@@ -1048,6 +1060,15 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 continue;
             }
             match node.node_type.as_str() {
+                CORE_EXISTING_ANNOTATIONS => {
+                    executor.register_runner(
+                        node.node_type.clone(),
+                        Arc::new(ExistingAnnotationsRunner {
+                            store: self.store.clone(),
+                        }),
+                        true,
+                    )?;
+                }
                 CORE_ARTIFACT_CACHE
                 | CORE_RESIZE
                 | CORE_TILE
@@ -1351,11 +1372,49 @@ fn add_execution_metadata(output: &mut DagNodeOutput, execution: &ModelExecution
         .insert("model".to_owned(), json!(execution.model_name));
 }
 
-fn add_plugin_execution_metadata(output: &mut DagNodeOutput, model_id: &str) {
+fn add_plugin_execution_metadata(
+    output: &mut DagNodeOutput,
+    model_id: &str,
+    frozen_models: &[annotagent_core::PluginModelSnapshot],
+) {
     output
         .metadata
         .insert("provider".to_owned(), json!("rust_plugin"));
     output.metadata.insert("model".to_owned(), json!(model_id));
+    let frozen = frozen_models.iter().find(|frozen| {
+        parse_model_instance_selection_id(model_id).map_or_else(
+            || {
+                format!(
+                    "plugin:{}@{}:{}",
+                    frozen.plugin_id, frozen.plugin_version, frozen.model_id
+                ) == model_id
+            },
+            |instance_id| {
+                frozen
+                    .model_asset
+                    .as_ref()
+                    .is_some_and(|asset| asset.model_instance_id == instance_id.to_string())
+            },
+        )
+    });
+    if let Some(frozen) = frozen {
+        output.metadata.insert(
+            "plugin_identity".to_owned(),
+            json!({
+                "plugin_id": frozen.plugin_id,
+                "plugin_version": frozen.plugin_version,
+                "plugin_package_sha256": frozen.plugin_package_sha256,
+                "model_id": frozen.model_id,
+                "capability_contract_sha256": frozen.capability_contract_sha256,
+            }),
+        );
+        if let Some(asset) = &frozen.model_asset {
+            output.metadata.insert(
+                "model_asset".to_owned(),
+                serde_json::to_value(asset).expect("Published model identity always serializes"),
+            );
+        }
+    }
 }
 
 async fn start_plugin_pipeline_backend(
@@ -1498,6 +1557,153 @@ async fn start_plugin_pipeline_backend(
     )))
 }
 
+struct ExistingAnnotationsRunner {
+    store: Arc<SqliteStore>,
+}
+
+#[async_trait]
+impl DagNodeRunner for ExistingAnnotationsRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let source_run_id = context
+            .node
+            .parameters
+            .get("source_run_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                DagNodeFailure::terminal(
+                    "existing_annotation_source_missing",
+                    "Existing annotations requires an immutable source_run_id",
+                )
+            })?
+            .parse()
+            .map_err(|error| {
+                DagNodeFailure::terminal(
+                    "existing_annotation_source_invalid",
+                    format!("source_run_id is not a valid Run ID: {error}"),
+                )
+            })?;
+        let task_id = context
+            .node
+            .parameters
+            .get("task_id")
+            .and_then(serde_json::Value::as_str);
+        let labels = context
+            .node
+            .parameters
+            .get("labels")
+            .and_then(serde_json::Value::as_array)
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        let annotations = self
+            .store
+            .list_project_annotations_for_run(context.project_id, source_run_id)
+            .map_err(|error| {
+                DagNodeFailure::terminal("existing_annotation_lookup_failed", error.to_string())
+            })?;
+        let reference = ArtifactRef {
+            artifact_id: format!(
+                "{}:{}:{}",
+                context.node.id,
+                context.image_id,
+                uuid::Uuid::new_v4()
+            ),
+            source_node: context.node.id.clone(),
+            port: context
+                .node
+                .outputs
+                .first()
+                .map_or_else(|| "detections".to_owned(), |port| port.id.clone()),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let mut source_annotation_ids = Vec::new();
+        let mut detections = Vec::new();
+        for annotation in annotations {
+            if annotation.review_status == ReviewStatus::Rejected
+                || task_id.is_some_and(|task_id| annotation.task_id.as_str() != task_id)
+                || (!labels.is_empty()
+                    && annotation
+                        .label
+                        .as_ref()
+                        .is_none_or(|label| !labels.contains(label.as_str())))
+            {
+                continue;
+            }
+            let annotagent_core::AnnotationValue::BoundingBox { rect } = annotation.value else {
+                continue;
+            };
+            let score = match annotation.confidence {
+                Some(confidence) => DetectionScore::relative(confidence).map_err(|error| {
+                    DagNodeFailure::terminal("existing_annotation_score_invalid", error)
+                })?,
+                None => DetectionScore::not_provided(),
+            };
+            let source_artifact_id = format!("annotation:{}", annotation.id);
+            let mut detection = Detection::from_source(
+                annotation.id.to_string(),
+                None,
+                annotation.label.as_ref().map(ToString::to_string),
+                annotation.label.clone(),
+                rect,
+                score,
+                DetectionSource {
+                    model_id: "existing-annotation".to_owned(),
+                    capability: VisionCapability::ObjectDetection,
+                    artifact_id: source_artifact_id,
+                },
+            )
+            .map_err(|error| {
+                DagNodeFailure::terminal("existing_annotation_conversion_failed", error)
+            })?;
+            detection.geometry_semantics = GeometrySemantics::CoarseHypothesis;
+            source_annotation_ids.push(annotation.id);
+            detections.push(detection);
+        }
+        if detections.is_empty() {
+            return Err(DagNodeFailure::terminal(
+                "existing_annotation_missing",
+                "No matching persisted bounding-box annotation exists for this image",
+            ));
+        }
+        let set = DetectionSetArtifact {
+            schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+            reference,
+            image_id: context.image_id,
+            model_binding: "existing-annotation".to_owned(),
+            validation_state: ArtifactValidationState::Unvalidated,
+            detections,
+            metadata: BTreeMap::from([
+                (
+                    "source_run_id".to_owned(),
+                    serde_json::to_value(source_run_id).unwrap_or(serde_json::Value::Null),
+                ),
+                (
+                    "source_annotation_ids".to_owned(),
+                    serde_json::to_value(&source_annotation_ids)
+                        .unwrap_or_else(|_| serde_json::json!([])),
+                ),
+            ]),
+        };
+        set.validate().map_err(|error| {
+            DagNodeFailure::terminal("existing_annotation_conversion_failed", error)
+        })?;
+        Ok(DagNodeOutput {
+            pipeline_artifacts: vec![PipelineArtifact::DetectionSet(set)],
+            metadata: BTreeMap::from([(
+                "source_annotation_ids".to_owned(),
+                serde_json::to_value(source_annotation_ids)
+                    .unwrap_or_else(|_| serde_json::json!([])),
+            )]),
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
 struct BoundClassificationRunner {
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
@@ -1555,7 +1761,7 @@ impl DagNodeRunner for BoundClassificationRunner {
         .map_err(|error| DagNodeFailure::terminal("classification_binding", error.to_string()))?;
         let mut output = runner.run(context).await?;
         if let Some(model_id) = plugin_model_id {
-            add_plugin_execution_metadata(&mut output, model_id);
+            add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         } else {
             add_execution_metadata(&mut output, execution);
         }
@@ -1676,7 +1882,7 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 .run(context)
                 .await?;
         if plugin_bound {
-            add_plugin_execution_metadata(&mut output, model_id);
+            add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         }
         Ok(output)
     }
@@ -1790,7 +1996,7 @@ impl DagNodeRunner for BoundDetectionRunner {
             }
         };
         if let Some(model_id) = plugin_model_id {
-            add_plugin_execution_metadata(&mut output, model_id);
+            add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         } else {
             add_execution_metadata(&mut output, execution);
         }

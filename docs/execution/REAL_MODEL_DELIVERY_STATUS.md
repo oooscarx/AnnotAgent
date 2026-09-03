@@ -4,7 +4,8 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M4 — normal-user one-click GUI complete. M5 Pipeline and Agent closure is next.
+M5 — Pipeline, Geometry Safety, Debug, Review, Replay and restart closure complete. M6 release
+artifacts and complete regression validation are next.
 
 ## Current candidate
 
@@ -101,17 +102,46 @@ path. A fresh workspace completed the GUI Catalog → license → install → Co
   `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` as `Ready` in 4,817 ms.
 - Reloaded the browser during sample inference and recovered `Run real sample inference` plus its
   live action from the server. Restarted AnnotAgent and confirmed one selectable Ready model.
+- Project Workflow Catalog now projects each selectable Ready Model Instance as a concrete
+  `model-instance:<uuid>` specialist model. Pipeline Builder exposes
+  `EfficientSAM-Ti ONNX · Ready local model`, while Provider credential resolution is skipped for
+  this immutable local Rust model.
+- Published Workflow version `fc7d41b9-bba0-4214-b8f2-544b36e4d67f@v1` freezes the exact Plugin,
+  Plugin package, Bundle, component files, capability Contract, Model Instance, Model Profile
+  revision and CPU execution provider.
+- Executed the real nine-node Workflow on the official 1072×603 dog image:
+  Image → Existing Bounding Box → Box Prompt → EfficientSAM → Mask → Mask-to-BBox → Geometry
+  Evaluation → Geometry Decision → Human Review → Commit. Run
+  `b0dd0e50-3698-4cd5-a65d-28e6d881293b` reached `CompletedWithReview`, then completed after one
+  explicit human acceptance without a duplicate annotation.
+- The real Run persisted one non-empty COCO RLE MaskSet, score `0.916484`, refined bbox
+  `[0.543843,0.384743,0.175373,0.592040]`, coarse/refined IoU `0.774835`, normalized center shift
+  `0.035796`, and the exact Detection → Prompt → Mask → refined Detection lineage. Segment runtime
+  was 1,444 ms on Rust ONNX CPU.
+- Replay from `segment` preserved `image`, `coarse_bbox`, and `box_prompts`; only `segment` and its
+  downstream geometry/review nodes re-executed. The replay returned a non-empty real mask in
+  1,482 ms and retained the same immutable Model Instance identity.
+- Run Debug now displays a Frozen Model identity panel and renders uncompressed COCO RLE masks as
+  a bounded translucent overlay instead of exposing the mask only as plain JSON. Pipeline
+  Artifact counts include typed checkpoint outputs.
+- Fixed hidden model-image resizing: thumbnails no longer upscale small images, and Workflows with
+  local Plugin/Model Instance bindings preserve original pixels so the Plugin request and Image
+  Artifact dimensions cannot diverge.
+- Restarted AnnotAgent after publication and Review. The Ready Model Instance, Published Workflow,
+  completed Run, Frozen Model identity and Replay all remained available.
+- Attempting to remove the referenced Bundle was rejected with the exact protecting Workflow
+  reference. Active Replay process inspection showed only the Rust EfficientSAM executable and no
+  child process or Python worker.
 
 ## In progress
 
-- Bind the Ready real Model Profile through Pipeline Builder, Published Workflow execution,
-  Geometry Safety, Run Debug, Review and Replay in M5.
+- Build release metadata/assets and execute the complete Rust/Web/cross-platform truth matrix in
+  M6.
 
 ## Next
 
-Run the real Prompted Segmentation path from a saved Draft and freeze all Plugin, Bundle, file,
-Contract, instance, profile and provider identities into an immutable Workflow Version; then prove
-mask/refined-bbox/geometry artifacts, Review, Replay and restart recovery.
+Run the complete release test matrix, validate the current-platform release asset list and user
+installation instructions, then record final Git and unsupported-platform truth.
 
 ## Latest verification
 
@@ -137,13 +167,21 @@ mask/refined-bbox/geometry artifacts, Review, Replay and restart recovery.
 | Fresh-workspace GUI install | PASS — real Bundle → real smoke → Ready in 4,817 ms |
 | Browser refresh recovery | PASS — active `running_sample_inference` operation restored |
 | Server restart recovery | PASS — Ready instance and selectable profile restored |
-| Latest commit | `3a0e50b` — M3; M4 commit pending |
+| Pipeline Builder selection | PASS — Ready `model-instance:ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72` is selectable |
+| Real Published Workflow | PASS — 9 nodes; real MaskSet → refined bbox → Geometry Safety → Review → Commit |
+| Run Debug | PASS — mask overlay plus frozen Plugin/Bundle/file/Contract/Instance/Profile/provider identity |
+| Replay | PASS — upstream image/coarse bbox/box prompt preserved; real segment and downstream nodes re-executed |
+| Referenced Bundle removal | PASS — rejected with exact `fc7d41b9-bba0-4214-b8f2-544b36e4d67f@v1` reference |
+| Active Replay process audit | PASS — Rust EfficientSAM process, no child and no Python worker |
+| Latest focused Web checks | PASS — typecheck, 45 unit tests and production build |
+| Latest focused Rust checks | PASS — Image Tools, exact prior Project/Run annotation source and Server/Application checks |
+| Latest commit | `aad5066` — M4; M5 commit pending |
 
 ## Release-blocking remainder
 
-The real-model execution and normal-user GUI installation gates are closed on macOS ARM64 CPU.
-Published Workflow/Review/Replay lineage, release packaging and the final cross-platform/regression
-matrix remain blocking.
+The real-model execution, normal-user GUI installation and Published Workflow/Review/Replay gates
+are closed on macOS ARM64 CPU. Release packaging and the final cross-platform/regression matrix
+remain blocking.
 
 ## Real blocker
 

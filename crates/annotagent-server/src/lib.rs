@@ -53,7 +53,7 @@ use annotagent_model_bundle::{
 use annotagent_model_catalog::{
     LicenseAcceptanceActor, ModelBundleCompatibilityResolver, ModelBundleInstallSource,
     ModelCatalogClient, ModelCatalogEntry, ModelLicenseAcceptance, evaluate_bundle_smoke_response,
-    prepare_bundle_smoke_test,
+    parse_model_instance_selection_id, prepare_bundle_smoke_test,
 };
 use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
 use annotagent_plugin_host::verify_package;
@@ -2932,6 +2932,19 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let checkpoint_present = workflow_snapshot
         .as_ref()
         .is_some_and(|snapshot| !snapshot["checkpoint"].is_null());
+    let pipeline_artifact_count = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.pointer("/checkpoint/node_outputs"))
+        .and_then(Value::as_object)
+        .map(|outputs| {
+            outputs
+                .values()
+                .filter_map(|output| output.get("pipeline_artifacts"))
+                .filter_map(Value::as_array)
+                .map(Vec::len)
+                .sum::<usize>()
+        })
+        .unwrap_or_default();
     let timed_out = run
         .terminal_reason
         .as_deref()
@@ -3025,7 +3038,7 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
         cost: totals.cost.to_string(),
         current_node,
         current_node_status,
-        artifact_count: history.artifacts.len(),
+        artifact_count: history.artifacts.len().max(pipeline_artifact_count),
         validation_issue_codes,
         retry_count,
         fallback_nodes,
@@ -4626,12 +4639,19 @@ async fn resolve_published_runtime_provider(
 
 fn workflow_uses_model(draft: &WorkflowDraft) -> bool {
     draft.nodes.iter().any(|node| {
-        matches!(
-            node.kind,
-            WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-        ) || node.model_binding.is_some()
-            || node.model_profile_binding.is_some()
+        node.model_profile_binding.is_some()
+            || (matches!(
+                node.kind,
+                WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+            ) && !node
+                .model_binding
+                .as_deref()
+                .is_some_and(plugin_model_selection))
     })
+}
+
+fn plugin_model_selection(value: &str) -> bool {
+    value.starts_with("plugin:") || parse_model_instance_selection_id(value).is_some()
 }
 
 fn reject_unresolved_registry_model_nodes(draft: &WorkflowDraft) -> ApiResult<()> {
@@ -4643,6 +4663,10 @@ fn reject_unresolved_registry_model_nodes(draft: &WorkflowDraft) -> ApiResult<()
                 node.kind,
                 WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
             ) && node.model_profile_binding.is_none()
+                && !node
+                    .model_binding
+                    .as_deref()
+                    .is_some_and(plugin_model_selection)
         })
         .map(|node| node.id.as_str())
         .collect::<Vec<_>>();
@@ -7147,7 +7171,7 @@ async fn accept_model_bundle_license(
 async fn list_model_install_operations(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
     let operations = state.model_install_operations.read().await;
     let mut operations = operations.values().cloned().collect::<Vec<_>>();
-    operations.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    operations.sort_by_key(|operation| std::cmp::Reverse(operation.updated_at));
     Ok(Json(json!({ "operations": operations })))
 }
 
@@ -7278,7 +7302,7 @@ async fn start_model_install_operation(
 async fn update_model_install_operation(
     state: &ServerState,
     operation_id: uuid::Uuid,
-    stage: ModelInstallStage,
+    installation_stage: ModelInstallStage,
     detail: impl Into<String>,
     bytes_completed: Option<u64>,
     bytes_total: Option<u64>,
@@ -7289,7 +7313,7 @@ async fn update_model_install_operation(
         .await
         .get_mut(&operation_id)
     {
-        operation.stage = stage;
+        operation.stage = installation_stage;
         operation.detail = detail.into();
         if let Some(bytes) = bytes_completed {
             operation.bytes_completed = bytes;
@@ -7320,7 +7344,7 @@ async fn finish_model_install_operation_failure(
     }
 }
 
-fn api_error_message(error: ApiError) -> String {
+fn api_error_message(error: &ApiError) -> String {
     error
         .body
         .get("error")
@@ -7401,7 +7425,7 @@ async fn run_model_install_operation(
     let upload_root = model_bundle_registry_root(state)
         .map_err(|error| {
             (
-                api_error_message(error),
+                api_error_message(&error),
                 "Restart AnnotAgent and retry the installation.".to_owned(),
             )
         })?
@@ -7432,7 +7456,7 @@ async fn run_model_install_operation(
         let progress_state = state.clone();
         let progress_task = tokio::spawn(async move {
             while let Some(progress) = receiver.recv().await {
-                let stage = match progress.stage {
+                let installation_stage = match progress.stage {
                     annotagent_model_catalog::ProvisionStage::Resolving => {
                         ModelInstallStage::ResolvingModel
                     }
@@ -7448,7 +7472,7 @@ async fn run_model_install_operation(
                 update_model_install_operation(
                     &progress_state,
                     operation_id,
-                    stage,
+                    installation_stage,
                     progress.detail,
                     Some(progress.bytes_completed),
                     progress.bytes_total,
@@ -7557,7 +7581,7 @@ async fn run_model_install_operation(
     .await;
     let instances = bind_compatible_installed_plugins(state, &installed).map_err(|error| {
         (
-            api_error_message(error),
+            api_error_message(&error),
             "Install the immutable compatible Plugin runtime and retry from the installed Bundle."
                 .to_owned(),
         )
@@ -7619,7 +7643,7 @@ async fn run_model_install_operation(
                 .await
                 .map_err(|error| {
                     (
-                        api_error_message(error),
+                        api_error_message(&error),
                         "Open Model Setup to inspect the failed Smoke Test check, then retry. The verified Bundle remains installed.".to_owned(),
                     )
                 })?,
@@ -7667,9 +7691,8 @@ async fn run_model_install_operation(
     {
         operation.status = ModelInstallOperationStatus::Succeeded;
         operation.stage = ModelInstallStage::Ready;
-        operation.detail =
-            "Real sample inference passed; the Model Profile is Ready for Workflow Drafts"
-                .to_owned();
+        "Real sample inference passed; the Model Profile is Ready for Workflow Drafts"
+            .clone_into(&mut operation.detail);
         operation.error = None;
         operation.suggested_action = None;
         operation.updated_at = Utc::now();

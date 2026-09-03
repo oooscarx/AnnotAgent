@@ -94,3 +94,31 @@ download bytes, current lifecycle stage, Model Instance IDs, structured failure 
 A browser refresh reloads the active operation from the server; a process restart reloads the
 durable Bundle, Smoke Test, Model Instance and Model Profile state from the Registries. In-memory
 operation history is diagnostic only and is not treated as the durable source of Ready status.
+
+## RMD-D015 — A Ready Model Instance is the Workflow selection boundary
+
+Plugin discovery describes executable capability, but a production Workflow binds
+`model-instance:<uuid>`. The projected model inherits the Plugin Contract while adding exact
+Bundle, component-file, smoke, profile-revision and provider evidence. Plugin-only Workflows do
+not require or recover an unrelated remote Provider credential.
+
+## RMD-D016 — Existing geometry is an explicit typed source
+
+Geometry refinement may begin from an exact prior Run's persisted bounding boxes through
+`core.existing_annotations`. The node is Project- and Run-scoped, emits a DetectionSet with coarse
+geometry semantics and source Annotation lineage, and fails if no matching box exists. It is not a
+hidden database fallback and does not add any detector-specific branch to Core.
+
+## RMD-D017 — Local model execution preserves source pixels
+
+The prior shared model thumbnail could silently resize pixels while the Image Artifact retained
+the original dimensions. This is invalid for dense mask lineage. Workflows containing an immutable
+Plugin/Model Instance binding therefore pass the original image pixels to that local runtime;
+small images are never upscaled. Remote VLM paths retain their bounded thumbnail behavior.
+
+## RMD-D018 — Local immutable Replay is credential-free but not fixture-enabled
+
+Replay and post-Review resume reuse the Run's provider mode. A `core` Run can re-execute an exact
+frozen local Model Instance because its Bundle and Plugin identities are persisted and rehashed.
+Remote Provider model nodes still refuse Replay without an explicit current credential binding;
+the implementation does not switch production history to `mock` merely to make Replay proceed.

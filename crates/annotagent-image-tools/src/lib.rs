@@ -58,9 +58,13 @@ pub fn thumbnail(frame: &ImageFrame, max_dimension: u32) -> CoreResult<ImageFram
         ));
     }
     let image = rgb_image(frame)?;
-    let resized = DynamicImage::ImageRgb8(image)
-        .thumbnail(max_dimension, max_dimension)
-        .to_rgb8();
+    let resized = if image.width().max(image.height()) <= max_dimension {
+        image
+    } else {
+        DynamicImage::ImageRgb8(image)
+            .thumbnail(max_dimension, max_dimension)
+            .to_rgb8()
+    };
     Ok(ImageFrame {
         metadata: ImageMetadata {
             width: resized.width(),
@@ -365,6 +369,28 @@ mod tests {
         let frame = load_image(&path, 1_000_000).expect("load generated image");
         assert_eq!((frame.metadata.width, frame.metadata.height), (640, 400));
         assert!(load_image(&path, 10).is_err());
+    }
+
+    #[test]
+    fn model_thumbnail_never_upscales_below_the_maximum_dimension() {
+        let frame = ImageFrame {
+            metadata: ImageMetadata {
+                width: 8,
+                height: 4,
+                mime_type: "image/png".to_owned(),
+                sha256: "fixture".to_owned(),
+            },
+            rgb: vec![64; 8 * 4 * 3],
+        };
+        let thumbnail = thumbnail(&frame, 32).expect("thumbnail");
+        assert_eq!(
+            (thumbnail.metadata.width, thumbnail.metadata.height),
+            (8, 4)
+        );
+        let encoded = to_model_image("fixture", &frame, 32).expect("ModelImage");
+        let bytes = STANDARD.decode(encoded.data_base64).expect("base64");
+        let decoded = image::load_from_memory(&bytes).expect("PNG");
+        assert_eq!((decoded.width(), decoded.height()), (8, 4));
     }
 
     #[test]

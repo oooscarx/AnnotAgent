@@ -4980,6 +4980,90 @@ function PipelineArtifactInspector({
 }
 
 type ArtifactRect = { x: number; y: number; width: number; height: number };
+type ArtifactMask = { id: string; width: number; height: number; counts: number[] };
+
+export function decodeCocoRleMask(
+  width: number,
+  height: number,
+  counts: number[],
+): Uint8Array | undefined {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0)
+    return undefined;
+  const pixelCount = width * height;
+  if (!Number.isSafeInteger(pixelCount) || pixelCount > 16_000_000) return undefined;
+  if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)) return undefined;
+  if (counts.reduce((total, count) => total + count, 0) !== pixelCount) return undefined;
+  const pixels = new Uint8Array(pixelCount);
+  let sourceIndex = 0;
+  counts.forEach((count, runIndex) => {
+    if (runIndex % 2 === 1) {
+      for (let offset = 0; offset < count; offset += 1) {
+        const columnMajorIndex = sourceIndex + offset;
+        const x = Math.floor(columnMajorIndex / height);
+        const y = columnMajorIndex % height;
+        pixels[y * width + x] = 1;
+      }
+    }
+    sourceIndex += count;
+  });
+  return pixels;
+}
+
+export function artifactMasks(artifacts: PipelineArtifact[]): ArtifactMask[] {
+  return artifacts.flatMap((artifact, artifactIndex) => {
+    if (artifact.kind !== "mask_set" || !Array.isArray(artifact.artifact.masks)) return [];
+    return artifact.artifact.masks.flatMap((item, maskIndex) => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as Record<string, unknown>;
+      if (!record.mask || typeof record.mask !== "object") return [];
+      const mask = record.mask as Record<string, unknown>;
+      if (mask.encoding !== "coco_rle"
+        || typeof mask.width !== "number"
+        || typeof mask.height !== "number"
+        || typeof mask.counts !== "string") return [];
+      const counts = mask.counts.trim().split(/\s+/).filter(Boolean).map(Number);
+      if (!decodeCocoRleMask(mask.width, mask.height, counts)) return [];
+      return [{
+        id: typeof record.mask_id === "string"
+          ? record.mask_id
+          : `mask-${artifactIndex}-${maskIndex}`,
+        width: mask.width,
+        height: mask.height,
+        counts,
+      }];
+    });
+  });
+}
+
+function ArtifactMaskLayer({ masks }: { masks: ArtifactMask[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const first = masks[0];
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !first) return;
+    canvas.width = first.width;
+    canvas.height = first.height;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const pixels = context.createImageData(first.width, first.height);
+    for (const mask of masks) {
+      if (mask.width !== first.width || mask.height !== first.height) continue;
+      const decoded = decodeCocoRleMask(mask.width, mask.height, mask.counts);
+      if (!decoded) continue;
+      decoded.forEach((active, index) => {
+        if (!active) return;
+        const offset = index * 4;
+        pixels.data[offset] = 24;
+        pixels.data[offset + 1] = 153;
+        pixels.data[offset + 2] = 171;
+        pixels.data[offset + 3] = Math.min(150, pixels.data[offset + 3] + 82);
+      });
+    }
+    context.putImageData(pixels, 0, 0);
+  }, [masks, first]);
+  if (!first) return null;
+  return <canvas ref={canvasRef} className="artifact-mask-layer" aria-hidden="true" />;
+}
 
 export function artifactRects(artifacts: PipelineArtifact[]): ArtifactRect[] {
   return artifacts.flatMap((artifact) => {
@@ -6921,6 +7005,7 @@ function RunDetailWorkspace({
           <EvidenceDecisionCard metadata={selectedNode.metadata ?? {}} route={selectedNode.route} />
           {selectedNode.error && <div className="run-repair-card"><div><strong>{selectedNode.error.code}</strong><p>{selectedNode.error.summary}</p></div><div className="button-row">{selectedNode.error.retryable && <button className="primary" disabled={busy} onClick={replayNode}>Replay failed step</button>}{project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Fix automation</button>}</div></div>}
           <div className="node-payload-sections">
+            {selectedNode.metadata?.model_asset != null && <NodePayloadSection title="Model identity" description="Immutable Plugin, Bundle, files, Contract, Model Instance, revision, and execution provider frozen by this Workflow Version" badge="Frozen" value={selectedNode.metadata.model_asset} open />}
             <NodePayloadSection title="Input" description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
             <NodePayloadSection title="Output" description="Artifacts emitted by this node" badge={selectedNode.outputs.length} value={selectedNode.outputs} open />
             <NodePayloadSection title="Configuration" description="Resolved runtime configuration" badge="JSON" value={selectedNode.configuration} />
@@ -7388,6 +7473,7 @@ function uniqueMarks(marks: ArtifactMark[]): ArtifactMark[] {
 
 function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIndex }: { projectId: string; project?: ProjectSummary; artifacts: PipelineArtifact[]; annotations: Annotation[]; imageIndex: number }) {
   const imageUrl = `/api/projects/${projectId}/images/${imageIndex}/content`;
+  const masks = artifactMasks(artifacts);
   const artifactDetections = uniqueMarks(artifactDetectionMarks(artifacts, project));
   const annotationDetections = annotationDetectionMarks(annotations, project);
   const detections = [
@@ -7411,7 +7497,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
   };
   const legend = [...new Map(detections.map((item) => [item.label, item])).values()];
   const selectedMark = detections.find((item) => item.id === selectedId);
-  const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">{detections.map((rect) => <g key={rect.id} focusable="false" className={rect.id === selectedId ? "selected" : ""} style={{ color: rect.color }} onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectedId(rect.id)}><rect x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label}</text></g>)}</svg>}</div></div>;
+  const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && masks.length > 0 && <ArtifactMaskLayer masks={masks} />}{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">{detections.map((rect) => <g key={rect.id} focusable="false" className={rect.id === selectedId ? "selected" : ""} style={{ color: rect.color }} onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectedId(rect.id)}><rect x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label}</text></g>)}</svg>}</div></div>;
   return (
     <div className="run-artifact-canvas" role="region" aria-label="Run result annotation viewer" onKeyDown={(event) => { if (event.target instanceof HTMLInputElement && event.target.type === "range") return; if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle">
@@ -7425,7 +7511,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageIn
           <output aria-live="polite">{Math.round(zoom * 100)}%</output>
         </label>
       </div>
-      {legend.length > 0 && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}</div>}
+      {(legend.length > 0 || masks.length > 0) && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}{masks.length > 0 && <span><i className="mask-overlay-swatch" />Mask overlay · {masks.length}</span>}</div>}
       {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>{artifactMarkSummary(item)}</small></span></button></li>)}</ul>}
       {selectedMark && <section className="geometry-quality-facts" aria-label="Semantic and geometry quality">
         <article><span>{scoreSemanticsLabel(selectedMark.scoreSemantics)}</span><strong>{selectedMark.confidence === undefined ? "Not provided" : selectedMark.confidence.toFixed(2)}</strong><small>This score describes model belief, not box geometry.</small></article>

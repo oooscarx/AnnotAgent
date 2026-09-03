@@ -3394,6 +3394,26 @@ fn normalize_profile_compatibility_bindings(
     Ok(())
 }
 
+fn plugin_model_selection(value: &str) -> bool {
+    value.starts_with("plugin:") || parse_model_instance_selection_id(value).is_some()
+}
+
+fn workflow_requires_original_model_image(draft: &WorkflowDraft) -> bool {
+    draft.nodes.iter().any(|node| {
+        node.model_binding
+            .as_deref()
+            .is_some_and(plugin_model_selection)
+    })
+}
+
+fn workflow_model_image_max_dimension(draft: &WorkflowDraft, width: u32, height: u32) -> u32 {
+    if workflow_requires_original_model_image(draft) {
+        width.max(height)
+    } else {
+        1280
+    }
+}
+
 fn catalog_port(
     name: &str,
     artifact_type: ArtifactKind,
@@ -3430,7 +3450,7 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             display_name: "Existing annotations".to_owned(),
             required_capabilities: Vec::new(),
             accepts: Vec::new(),
-            produces: vec![ArtifactKind::AnnotationCandidateSet],
+            produces: vec![ArtifactKind::DetectionSet],
             deterministic: true,
         },
         VisionNodeDescriptor {
@@ -3611,16 +3631,17 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
         },
         NodeDefinition {
             id: "core.existing_annotations".to_owned(),
-            display_name: "Existing annotations".to_owned(),
+            display_name: "Existing bounding boxes".to_owned(),
             category: NodeCategory::Input,
             input_ports: Vec::new(),
             output_ports: vec![catalog_port(
-                "candidates",
-                ArtifactKind::AnnotationCandidateSet,
+                "detections",
+                ArtifactKind::DetectionSet,
                 true,
                 many,
             )],
             config_schema: node_schema(json!({
+                "source_run_id": {"type": "string"},
                 "task_id": {"type": "string"},
                 "labels": {"type": "array", "items": {"type": "string"}}
             })),
@@ -5560,11 +5581,13 @@ impl LocalApplication {
         temporary_api_key: Option<&str>,
     ) -> Result<(NodeRegistry, ModelRegistry)> {
         let (nodes, mut models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
-        let manifests = self
+        let mut manifests = self
             .plugin_registry
             .lock()
             .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
             .expert_model_manifests();
+        let instance_manifests = self.model_instance_expert_manifests(&manifests)?;
+        manifests.extend(instance_manifests);
         let mut backends = BTreeMap::<String, BTreeSet<VisionCapability>>::new();
         for manifest in &manifests {
             let ModelConnection::VisionWorkerModel { worker_id, .. } = &manifest.connection else {
@@ -5588,6 +5611,120 @@ impl LocalApplication {
             models.register_expert_manifest(manifest)?;
         }
         Ok((nodes, models))
+    }
+
+    fn model_instance_expert_manifests(
+        &self,
+        plugin_manifests: &[ExpertModelManifest],
+    ) -> Result<Vec<ExpertModelManifest>> {
+        let registry = self
+            .model_bundle_registry
+            .lock()
+            .map_err(|_| anyhow!("Model Bundle Registry lock is poisoned"))?;
+        let instances = registry.model_instances();
+        let bundles = registry.list();
+        Ok(registry
+            .model_profiles()
+            .into_iter()
+            .filter(|profile| profile.selectable)
+            .filter_map(|profile| {
+                let instance = instances
+                    .iter()
+                    .find(|instance| instance.id == profile.model_instance_id)?;
+                let bundle = bundles.iter().find(|bundle| {
+                    bundle.manifest.id == instance.model_bundle_id
+                        && bundle.manifest.version == instance.model_bundle_version
+                        && bundle.bundle_digest == instance.model_bundle_digest
+                })?;
+                let mut manifest = plugin_manifests
+                    .iter()
+                    .find(|manifest| {
+                        manifest
+                            .metadata
+                            .get("plugin_id")
+                            .and_then(serde_json::Value::as_str)
+                            == Some(instance.plugin_id.as_str())
+                            && manifest
+                                .metadata
+                                .get("plugin_version")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|version| {
+                                    version == instance.plugin_version.to_string()
+                                })
+                            && matches!(
+                                &manifest.connection,
+                                ModelConnection::VisionWorkerModel {
+                                    worker_model_id,
+                                    ..
+                                } if worker_model_id == &instance.model_id
+                            )
+                    })?
+                    .clone();
+                manifest.model_id = profile.selection_id;
+                manifest.display_name = format!("{} · Ready local model", profile.display_name);
+                manifest.architecture = Some(bundle.manifest.architecture.clone());
+                manifest.model_version = bundle.manifest.version.to_string();
+                manifest.checkpoint = Some(CheckpointIdentity {
+                    sha256: bundle.bundle_digest.to_string(),
+                    source: Some(format!(
+                        "AnnotAgent Model Bundle {}@{}",
+                        bundle.manifest.id, bundle.manifest.version
+                    )),
+                    training_dataset_version: None,
+                });
+                manifest.availability = ModelAvailability::Available;
+                manifest.availability_evidence = ModelAvailabilityEvidence {
+                    health_passed: true,
+                    protocol_compatible: true,
+                    contracts_validated: true,
+                    sample_conversion_passed: true,
+                    weights_ready: true,
+                    checked_at: instance
+                        .smoke_test_result
+                        .as_ref()
+                        .map(|result| result.finished_at),
+                    detail: Some(format!(
+                        "Ready Model Instance {} passed real sample inference with immutable Bundle, file, Plugin, and Contract identity",
+                        instance.id
+                    )),
+                };
+                manifest.metadata.extend(BTreeMap::from([
+                    (
+                        "model_instance_id".to_owned(),
+                        serde_json::json!(instance.id),
+                    ),
+                    (
+                        "model_profile_id".to_owned(),
+                        serde_json::json!(instance.model_profile_id),
+                    ),
+                    (
+                        "model_profile_revision".to_owned(),
+                        serde_json::json!(instance.model_profile_revision),
+                    ),
+                    (
+                        "model_bundle_id".to_owned(),
+                        serde_json::json!(instance.model_bundle_id),
+                    ),
+                    (
+                        "model_bundle_version".to_owned(),
+                        serde_json::json!(instance.model_bundle_version),
+                    ),
+                    (
+                        "model_bundle_sha256".to_owned(),
+                        serde_json::json!(instance.model_bundle_digest),
+                    ),
+                    (
+                        "model_file_digests".to_owned(),
+                        serde_json::json!(instance.model_file_digests),
+                    ),
+                    (
+                        "execution_provider".to_owned(),
+                        serde_json::json!(instance.execution_provider),
+                    ),
+                ]));
+                manifest.validate().ok().map(|()| manifest)
+            })
+            .collect())
     }
 
     fn legacy_registry_import(&self, settings: &Settings) -> Result<LegacyRegistryImport> {
@@ -8231,7 +8368,7 @@ impl LocalApplication {
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
-            "mock",
+            &history.provider,
             settings,
             None,
             self.store.clone(),
@@ -8241,8 +8378,16 @@ impl LocalApplication {
             self.model_bundle_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
-        let model_image = to_model_image("label-pipeline-review-resume", &image, 1280)
-            .map_err(|error| anyhow!(error))?;
+        let model_image = to_model_image(
+            "label-pipeline-review-resume",
+            &image,
+            workflow_model_image_max_dimension(
+                &workflow.draft,
+                image.metadata.width,
+                image.metadata.height,
+            ),
+        )
+        .map_err(|error| anyhow!(error))?;
         let image_id = annotation.image_id;
         let project_root = project_path
             .parent()
@@ -8343,14 +8488,14 @@ impl LocalApplication {
                 break;
             }
         }
-        let has_live_model_binding = workflow.draft.nodes.iter().any(|node| {
+        let has_live_provider_model_binding = workflow.draft.nodes.iter().any(|node| {
             replayed_node_ids.contains(&node.id)
-                && node
-                    .model_binding
-                    .as_deref()
-                    .is_some_and(|model| !model.starts_with("mock-"))
+                && (node.model_profile_binding.is_some()
+                    || node.model_binding.as_deref().is_some_and(|model| {
+                        !model.starts_with("mock-") && !plugin_model_selection(model)
+                    }))
         });
-        if history.provider != "mock" && has_live_model_binding {
+        if history.provider != "mock" && has_live_provider_model_binding {
             bail!(
                 "Replay of live model nodes requires an explicit current binding; credentials are never recovered from Run history"
             );
@@ -8385,7 +8530,7 @@ impl LocalApplication {
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
-            "mock",
+            &history.provider,
             settings,
             None,
             self.store.clone(),
@@ -8395,8 +8540,16 @@ impl LocalApplication {
             self.model_bundle_registry.clone(),
         )?;
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
-        let model_image = to_model_image("label-pipeline-replay", &image, 1280)
-            .map_err(|error| anyhow!(error))?;
+        let model_image = to_model_image(
+            "label-pipeline-replay",
+            &image,
+            workflow_model_image_max_dimension(
+                &workflow.draft,
+                image.metadata.width,
+                image.metadata.height,
+            ),
+        )
+        .map_err(|error| anyhow!(error))?;
         let image_id = checkpoint
             .node_outputs
             .values()
@@ -8542,13 +8695,14 @@ impl LocalApplication {
                 }
             })
             .collect();
+        let plugin_manifests = self
+            .plugin_registry
+            .lock()
+            .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
+            .expert_model_manifests();
         let mut expert_models = models.expert_manifests();
-        expert_models.extend(
-            self.plugin_registry
-                .lock()
-                .map_err(|_| anyhow!("Rust plugin Registry lock is poisoned"))?
-                .expert_model_manifests(),
-        );
+        expert_models.extend(plugin_manifests.clone());
+        expert_models.extend(self.model_instance_expert_manifests(&plugin_manifests)?);
         expert_models.sort_by(|left, right| left.model_id.cmp(&right.model_id));
         expert_models.dedup_by(|left, right| left.model_id == right.model_id);
         Ok(WorkflowAdvisorInput {
@@ -13500,7 +13654,13 @@ impl LocalApplication {
         } else {
             image_indices.iter().copied().take(10).collect::<Vec<_>>()
         };
-        if draft.label_pipeline.is_some() && validation.valid {
+        let requires_executable_pipeline_sandbox = draft.label_pipeline.is_some()
+            || draft.nodes.iter().any(|node| {
+                node.model_binding
+                    .as_deref()
+                    .is_some_and(plugin_model_selection)
+            });
+        if requires_executable_pipeline_sandbox && validation.valid {
             let project_id = draft.project_id.clone();
             let report = self
                 .dry_run_label_pipeline_samples(
@@ -13737,6 +13897,8 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let (validators, refiners) =
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
+        let requires_original_model_image =
+            workflow_requires_original_model_image(&published.draft);
         let runtime = PublishedWorkflowRuntime::new(
             published,
             runtime_provider.kind,
@@ -13785,8 +13947,14 @@ impl LocalApplication {
                 .get(*index)
                 .ok_or_else(|| anyhow!("image index {index} was not found"))?;
             let image = Arc::new(load_image(path, 40_000_000).map_err(|error| anyhow!(error))?);
-            let model_image = to_model_image("label-pipeline-dry-run", &image, 1280)
-                .map_err(|error| anyhow!(error))?;
+            let model_image_max_dimension = if requires_original_model_image {
+                image.metadata.width.max(image.metadata.height)
+            } else {
+                1280
+            };
+            let model_image =
+                to_model_image("label-pipeline-dry-run", &image, model_image_max_dimension)
+                    .map_err(|error| anyhow!(error))?;
             let request = ImageRunRequest {
                 run_id: RunId::new(),
                 project_id: stable_project_id(&project_root),
@@ -14184,6 +14352,10 @@ impl LocalApplication {
         let mut referenced = BTreeSet::new();
         for node in &mut draft.nodes {
             if node.model_profile_binding.is_none()
+                && !node
+                    .model_binding
+                    .as_deref()
+                    .is_some_and(plugin_model_selection)
                 && let Some((capability, role)) = registry_requirement_for_node(node)
             {
                 let resolved =
@@ -15507,7 +15679,15 @@ fn prepare_run_with_settings(
         |path| Ok(path.to_path_buf()),
     )?;
     let image = Arc::new(load_image(&image_path, 40_000_000).map_err(|error| anyhow!(error))?);
-    let model_image = to_model_image("full-image", &image, 1280).map_err(|error| anyhow!(error))?;
+    let model_image_max_dimension = published_workflow.as_ref().map_or(1280, |workflow| {
+        workflow_model_image_max_dimension(
+            &workflow.draft,
+            image.metadata.width,
+            image.metadata.height,
+        )
+    });
+    let model_image = to_model_image("full-image", &image, model_image_max_dimension)
+        .map_err(|error| anyhow!(error))?;
     let runtime: Arc<dyn ApplicationImageRuntime> = if let Some(published) = published_workflow {
         let enabled_ids = project
             .project

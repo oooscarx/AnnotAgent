@@ -1569,6 +1569,36 @@ impl SqliteStore {
         })
     }
 
+    /// Returns persisted annotations from an exact prior Run that can act as an explicit,
+    /// replayable input to a published Workflow. The Project identity prevents a Draft from
+    /// reading annotation history owned by another Project.
+    pub fn list_project_annotations_for_run(
+        &self,
+        project_id: ProjectId,
+        source_run_id: RunId,
+    ) -> Result<Vec<Annotation>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT annotations.annotation_json
+                 FROM annotations
+                 INNER JOIN runs ON runs.id = annotations.run_id
+                 WHERE runs.project_id = ?1
+                   AND annotations.run_id = ?2
+                 ORDER BY annotations.created_at",
+            )?;
+            statement
+                .query_map(
+                    params![project_id.to_string(), source_run_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )?
+                .map(|row| {
+                    let json = row?;
+                    serde_json::from_str(&json).map_err(StorageError::from)
+                })
+                .collect()
+        })
+    }
+
     pub fn pending_review_count(&self) -> Result<usize, StorageError> {
         let review_status = enum_string(ReviewStatus::NeedsReview)?;
         self.with_connection(|connection| {
@@ -3709,16 +3739,16 @@ mod tests {
     use std::collections::BTreeSet;
 
     use annotagent_core::{
-        ArtifactProvenance, ArtifactRole, AttributeValue, CapabilityDeclarationSource,
-        CorrectionFeatures, CredentialReference, CredentialSource,
-        DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults, GeometryCalibrationKey,
-        GeometryCalibrationThresholds, GeometryCorrectionInput, GeometryCorrectionReason,
-        GeometrySnapshot, InputModality, IssueSeverity, ModelBindingRole, ModelCapability,
-        ModelLimits, ModelPricing, ModelProfileStatus, NodeId, NormalizedRect, PipelineArtifact,
-        PricingSource, ProjectGeometryPolicy, ProtocolFeatures, ProviderAdapterKind,
-        ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus, RunEventKind,
-        RunEventPayload, ScoreSemantics, SuggestedAction, ValidationEvidence, VisionArtifactValue,
-        WorkflowDraftNode, WorkflowNodeKind,
+        AnnotationId, AnnotationProvenance, AnnotationSource, ArtifactProvenance, ArtifactRole,
+        AttributeValue, CapabilityDeclarationSource, CorrectionFeatures, CredentialReference,
+        CredentialSource, DETECTION_ARTIFACT_SCHEMA_VERSION, GenerationDefaults,
+        GeometryCalibrationKey, GeometryCalibrationThresholds, GeometryCorrectionInput,
+        GeometryCorrectionReason, GeometrySnapshot, InputModality, IssueSeverity, ModelBindingRole,
+        ModelCapability, ModelLimits, ModelPricing, ModelProfileStatus, NodeId, NormalizedRect,
+        PipelineArtifact, PricingSource, ProjectGeometryPolicy, ProtocolFeatures,
+        ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+        ProviderHealthStatus, RunEventKind, RunEventPayload, ScoreSemantics, SuggestedAction,
+        ValidationEvidence, VisionArtifactValue, WorkflowDraftNode, WorkflowNodeKind,
     };
 
     use super::*;
@@ -4637,6 +4667,72 @@ mod tests {
         assert_eq!(
             store.list_artifacts(run_id).expect("artifacts"),
             vec![artifact]
+        );
+    }
+
+    #[tokio::test]
+    async fn prior_run_annotations_are_scoped_to_the_exact_project_and_run() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_a = ProjectId::new();
+        let project_b = ProjectId::new();
+        let run_a = RunId::new();
+        let run_b = RunId::new();
+        for (run_id, project_id, project_name) in [
+            (run_a, project_a, "project-a"),
+            (run_b, project_b, "project-b"),
+        ] {
+            store
+                .create_run(&RunRecord {
+                    id: run_id,
+                    project_id,
+                    project_name: project_name.to_owned(),
+                    skill_id: "none".to_owned(),
+                    provider: "core".to_owned(),
+                    model: "vision-model".to_owned(),
+                    status: RunStatus::Completed,
+                    project_schema_json: "{}".to_owned(),
+                    workflow_snapshot_json: None,
+                })
+                .await
+                .expect("create run");
+        }
+        let annotation = Annotation {
+            id: AnnotationId::new(),
+            image_id: ImageId::new(),
+            task_id: TaskId::from("objects"),
+            label: Some(LabelId::from("dog")),
+            value: AnnotationValue::BoundingBox {
+                rect: NormalizedRect::new(0.1, 0.2, 0.3, 0.4).expect("normalized bbox"),
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.8),
+            source: AnnotationSource::Human,
+            review_status: ReviewStatus::HumanAccepted,
+            provenance: AnnotationProvenance::default(),
+            created_at: Utc::now(),
+        };
+        store
+            .commit_annotation(run_a, &annotation)
+            .await
+            .expect("commit source annotation");
+
+        assert_eq!(
+            store
+                .list_project_annotations_for_run(project_a, run_a)
+                .expect("same Project and Run"),
+            vec![annotation]
+        );
+        assert!(
+            store
+                .list_project_annotations_for_run(project_b, run_a)
+                .expect("different Project")
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_project_annotations_for_run(project_a, run_b)
+                .expect("different Run")
+                .is_empty()
         );
     }
 

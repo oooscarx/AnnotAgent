@@ -86,7 +86,36 @@ Last updated: 2026-09-03 CST
   `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`; Smoke Test passed in 4,817 ms.
 - [x] Focused Playwright E2E covers responsive setup, source/license review, live stage recovery,
   raw-ONNX absence and an actionable compatibility failure.
-- [ ] M4 committed locally.
+- [x] M4 committed locally as `aad5066`.
+
+## Milestone 5 evidence
+
+- [x] Pipeline Builder lists the selectable Ready Model Instance, not a Fixture or MissingWeights
+  placeholder, for Prompted Segmentation.
+- [x] Saved Draft validation and Dry Run resolve the refreshed Registry and execute the real local
+  model without requiring a Provider credential.
+- [x] Published Workflow `fc7d41b9-bba0-4214-b8f2-544b36e4d67f@v1` freezes exact Plugin,
+  package, Bundle, component-file, Contract, Model Instance, Model Profile revision and CPU
+  provider identities.
+- [x] Real Run `b0dd0e50-3698-4cd5-a65d-28e6d881293b` executed Image → prior persisted bbox →
+  BoxPromptSet → real EfficientSAM MaskSet → refined DetectionSet → Geometry Evaluation/Decision
+  → Review → Commit.
+- [x] The real Segment node completed in 1,444 ms with mask score `0.916484`; Mask-to-BBox emitted
+  `[0.543843,0.384743,0.175373,0.592040]`, IoU `0.774835` and center shift `0.035796`.
+- [x] Human acceptance resumed only Review/Commit and left one accepted annotation—no duplicate
+  Commit.
+- [x] Replay from `segment` preserved image, coarse detection and box prompt, re-executed the real
+  model plus downstream nodes, and emitted one non-empty MaskSet in 1,482 ms.
+- [x] Run Debug shows original bbox, BoxPromptSet, real translucent Mask overlay, refined bbox,
+  Geometry evidence and a Frozen Model identity panel.
+- [x] Server restart preserves the Ready instance, Published Workflow, completed Run and working
+  Replay.
+- [x] Referenced Bundle removal is rejected with the exact protecting Workflow reference.
+- [x] Active Replay process audit shows the Rust EfficientSAM executable with no child process or
+  Python worker.
+- [x] Focused Rust checks and storage/image regressions pass; Web typecheck, 45 unit tests and
+  production build pass.
+- [ ] M5 committed locally.
 
 ## Release matrix
 
@@ -109,17 +138,17 @@ Last updated: 2026-09-03 CST
 
 ### C. Pipeline
 
-- [ ] Pipeline Builder initially blocks safely and can retry the same saved Draft after install.
-- [ ] Runtime executes Prompted Segmentation → Mask-to-BBox → Geometry Safety.
-- [ ] Debug, Review and Replay preserve complete real-model lineage.
-- [ ] Published Workflow freezes exact Plugin/Bundle/file/Contract/instance/provider identity.
+- [x] Pipeline Builder initially blocks safely and can retry the same saved Draft after install.
+- [x] Runtime executes Prompted Segmentation → Mask-to-BBox → Geometry Safety.
+- [x] Debug, Review and Replay preserve complete real-model lineage.
+- [x] Published Workflow freezes exact Plugin/Bundle/file/Contract/instance/provider identity.
 
 ### D. Truthfulness and Rust-only path
 
 - [x] Fixture and publishable status are separate in current schemas and selector logic.
 - [x] Accepted model and Plugin naming accurately describe the model family.
 - [x] SAM 2 remains Labs unless a verified Rust Bundle exists.
-- [ ] Active install, smoke, run and replay process trees contain no Python.
+- [x] Active install, smoke, run and replay process trees contain no Python.
 
 ### E. Regression
 

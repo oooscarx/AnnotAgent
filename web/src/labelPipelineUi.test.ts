@@ -3,8 +3,10 @@ import {
   artifactCrops,
   artifactCropMarks,
   artifactDetectionMarks,
+  artifactMasks,
   annotationDetectionMarks,
   artifactRects,
+  decodeCocoRleMask,
   evidenceGateReport,
   pipelineNodeKind,
   pipelineNodeOutput,
@@ -136,6 +138,29 @@ describe("Label Pipeline product helpers", () => {
     expect(artifactCrops([crop])).toEqual([
       { x: 0.05, y: 0.1, width: 0.5, height: 0.6 },
     ]);
+  });
+
+  it("decodes uncompressed COCO RLE masks from column-major storage", () => {
+    const mask: PipelineArtifact = {
+      kind: "mask_set",
+      artifact: {
+        masks: [{
+          mask_id: "mask-a",
+          mask: { encoding: "coco_rle", width: 3, height: 2, counts: "1 2 1 1 1" },
+        }],
+      },
+    };
+    expect(artifactMasks([mask])).toEqual([{
+      id: "mask-a",
+      width: 3,
+      height: 2,
+      counts: [1, 2, 1, 1, 1],
+    }]);
+    expect(Array.from(decodeCocoRleMask(3, 2, [1, 2, 1, 1, 1]) ?? [])).toEqual([
+      0, 1, 1,
+      1, 0, 0,
+    ]);
+    expect(decodeCocoRleMask(3, 2, [1, 1])).toBeUndefined();
   });
 
   it("previews Candidate Clusters and parses explainable Evidence Gate reports", () => {
