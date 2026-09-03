@@ -9661,6 +9661,7 @@ impl LocalApplication {
                 "Open and review the saved editable Draft",
             );
         }
+        session.builder_proposal = Some(revised.clone());
         self.store.save_agent_session(&session)?;
         Ok(WorkflowAdvisorAgentReport {
             approval_required: session.status == AgentSessionStatus::WaitingForHuman,
@@ -13308,6 +13309,7 @@ impl LocalApplication {
                 _ => {}
             }
         }
+        session.builder_proposal.clone_from(&current);
         self.store.save_agent_session(&session)?;
         self.agent_cancellations
             .lock()
@@ -20677,6 +20679,25 @@ export:
         assert_eq!(provider.remaining_steps(), 0);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
         assert!(report.approval_required);
+        assert_eq!(
+            report
+                .session
+                .builder_proposal
+                .as_ref()
+                .map(|proposal| proposal.draft.id.as_str()),
+            report
+                .suggestion
+                .as_ref()
+                .map(|proposal| proposal.draft.id.as_str())
+        );
+        let persisted_session = application
+            .store
+            .get_agent_session(report.session.id)
+            .expect("persisted Pipeline Builder Session");
+        assert_eq!(
+            persisted_session.builder_proposal, report.session.builder_proposal,
+            "refresh recovery retains the exact user-visible proposal"
+        );
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
         assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
         assert_eq!(report.session.usage.input_tokens, 110);
@@ -20831,6 +20852,7 @@ export:
         );
         assert_eq!(report.session.usage.tool_calls, 12);
         assert!(report.suggestion.is_some());
+        assert!(report.session.builder_proposal.is_some());
     }
 
     #[tokio::test]

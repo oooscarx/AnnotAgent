@@ -712,6 +712,10 @@ export interface WorkflowDraftNode {
   inputs?: WorkflowNodePort[];
   outputs?: WorkflowNodePort[];
   model_binding?: string;
+  model_profile_binding?: {
+    model_profile_id: string;
+    locked: boolean;
+  };
   required_skills?: string[];
   validators: string[];
   refiners: string[];
@@ -772,7 +776,14 @@ export interface WorkflowDraft {
   id: string;
   project_id: string;
   name: string;
-  status: "suggested" | "editing" | "validated" | "published" | "archived";
+  status:
+    | "suggested"
+    | "editing"
+    | "validated"
+    | "ready_for_human_review"
+    | "blocked_by_setup"
+    | "published"
+    | "archived";
   nodes: WorkflowDraftNode[];
   edges?: WorkflowEdge[];
   enabled_skills?: Record<string, string>;
@@ -903,6 +914,10 @@ export interface AgentSession {
   duplicate_tool_calls?: number;
   cache_hits?: number;
   draft_id?: string;
+  builder_proposal?: Omit<
+    WorkflowSuggestion,
+    "agent_session" | "agent_validation" | "agent_dry_run" | "approval_required"
+  >;
   unresolved_bindings?: string[];
   next_action?: string;
   total_tool_calls?: number;

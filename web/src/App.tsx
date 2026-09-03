@@ -2533,6 +2533,7 @@ function WorkflowsPage({
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [comparison, setComparison] = useState<WorkflowVersionComparison>();
   const [advisorProposal, setAdvisorProposal] = useState<WorkflowSuggestion>();
+  const [advisorProposalRecovered, setAdvisorProposalRecovered] = useState(false);
   const [proposalDiff, setProposalDiff] = useState<PipelineDraftDiff>();
   const [selectedProposalChanges, setSelectedProposalChanges] = useState<string[]>([]);
   const [undoDraft, setUndoDraft] = useState<WorkflowDraft>();
@@ -2646,6 +2647,41 @@ function WorkflowsPage({
       .catch((error: Error) => onError(`Model Registry: ${error.message}`))
       .finally(() => setRegistryLoading(false));
   };
+  const recoverAdvisorProposal = async (session: AgentSession) => {
+    if (!activeProjectId || session.status === "running" || !session.draft_id) return;
+    const [{ drafts: latestDrafts }, sample] = await Promise.all([
+      api.workflowDrafts(activeProjectId),
+      api.workflowSampleTest(session.draft_id).catch(() => ({ sample_test: null, current: false })),
+    ]);
+    const savedDraft = latestDrafts.find((candidate) => candidate.id === session.draft_id);
+    if (!savedDraft || ["published", "archived"].includes(savedDraft.status)) return;
+    for (const item of latestDrafts)
+      persistedDrafts.current.set(item.id, JSON.stringify(item));
+    setDrafts(latestDrafts);
+    setDraft(savedDraft);
+    const persisted = session.builder_proposal;
+    const dryRun = sample.current ? sample.sample_test?.report : undefined;
+    setAdvisorProposal({
+      draft: savedDraft,
+      rationale: persisted?.rationale ?? ["Recovered from the persisted Pipeline Builder result."],
+      estimated_model_calls_per_image:
+        persisted?.estimated_model_calls_per_image
+        ?? savedDraft.nodes.filter((node) => node.model_binding || node.model_profile_binding).length,
+      estimated_latency_ms: persisted?.estimated_latency_ms,
+      estimated_cost_tier: persisted?.estimated_cost_tier ?? "unresolved",
+      unresolved_model_bindings:
+        persisted?.unresolved_model_bindings ?? session.unresolved_bindings ?? [],
+      warnings: persisted?.warnings ?? [],
+      alternatives: persisted?.alternatives ?? [],
+      agent_session: session,
+      agent_validation: dryRun?.validation,
+      agent_dry_run: dryRun,
+      approval_required: session.status === "waiting_for_human",
+    });
+    setAdvisorProposalRecovered(true);
+    setProposalDiff(undefined);
+    setSelectedProposalChanges([]);
+  };
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
@@ -2670,6 +2706,8 @@ function WorkflowsPage({
     };
   }, [draft]);
   useEffect(() => {
+    setAdvisorProposal(undefined);
+    setAdvisorProposalRecovered(false);
     void refreshDrafts();
     void refreshModelChoices();
     if (activeProjectId) {
@@ -2687,6 +2725,10 @@ function WorkflowsPage({
           ) ?? sessions.find((session) => session.kind === "pipeline_builder");
           setActiveAgentSession(latest);
           setAdvisorRunning(latest?.status === "running");
+          if (latest && latest.status !== "running")
+            void recoverAdvisorProposal(latest).catch((error: Error) =>
+              onError(`Agent result recovery: ${error.message}`),
+            );
         })
         .catch((error: Error) => onError(`Agent recovery: ${error.message}`));
     } else {
@@ -2716,8 +2758,12 @@ function WorkflowsPage({
           if (
             !advisorRequestActive.current &&
             latest.status !== "running"
-          )
+          ) {
             setAdvisorRunning(false);
+            void recoverAdvisorProposal(latest).catch((error: Error) =>
+              onError(`Agent result recovery: ${error.message}`),
+            );
+          }
         }
       }).catch(() => undefined);
     void poll();
@@ -2770,6 +2816,7 @@ function WorkflowsPage({
     setAdvisorRunning(true);
     advisorRequestActive.current = true;
     setActiveAgentSession(undefined);
+    setAdvisorProposalRecovered(false);
     setProposalDiff(undefined);
     setSelectedProposalChanges([]);
     const editableBase = draft && !["published", "archived"].includes(draft.status)
@@ -2795,6 +2842,7 @@ function WorkflowsPage({
           retry,
         );
         setAdvisorProposal(proposal);
+        setAdvisorProposalRecovered(false);
         setActiveAgentSession(proposal.agent_session);
         setShowProposalComparison(true);
         if (baseDraft.id !== proposal.draft.id) {
@@ -2855,6 +2903,7 @@ function WorkflowsPage({
         setUndoDraft(report.previous_draft);
         setDraft(report.draft);
         setAdvisorProposal(undefined);
+        setAdvisorProposalRecovered(false);
         setProposalDiff(undefined);
         setSelectedProposalChanges([]);
         setReport(undefined);
@@ -3354,7 +3403,10 @@ function WorkflowsPage({
         </Panel>
       )}
       {advisorProposal && (
-        <Panel title="Proposed Changes" eyebrow="Advisor preview · Draft only · never activated automatically">
+        <Panel
+          title={advisorProposalRecovered ? "Saved Agent Result" : "Proposed Changes"}
+          eyebrow={advisorProposalRecovered ? "Recovered from server · editable Draft · not activated" : "Advisor preview · Draft only · never activated automatically"}
+        >
           <div className="advisor-proposal-grid">
             <div>
               <h3>Automation Recipe</h3>
@@ -3367,7 +3419,7 @@ function WorkflowsPage({
               <Fact label="Estimated latency" value={advisorProposal.estimated_latency_ms ? `${advisorProposal.estimated_latency_ms} ms` : "Unresolved"} />
               <Fact label="Cost tier" value={advisorProposal.estimated_cost_tier} />
               <Fact label="Expected Review workload" value={advisorProposal.agent_dry_run ? `${advisorProposal.agent_dry_run.summary.needs_review_count} of ${advisorProposal.agent_dry_run.summary.image_count} samples` : "Test required"} />
-              <Fact label="Compared with current" value={draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
+              <Fact label={advisorProposalRecovered ? "Persistence" : "Compared with current"} value={advisorProposalRecovered ? "Saved on server" : draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
             </div>
           </div>
           {showProposalComparison && proposalDiff && (
@@ -3416,10 +3468,15 @@ function WorkflowsPage({
             />
           )}
           <div className="button-row">
-            <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>
-            <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>Apply all</button>
-            <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
-            <button onClick={() => { setAdvisorProposal(undefined); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>Reject proposal</button>
+            {advisorProposalRecovered ? <>
+              <button className="primary" onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
+              <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>Dismiss result</button>
+            </> : <>
+              <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>
+              <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>Apply all</button>
+              <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
+              <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>Reject proposal</button>
+            </>}
           </div>
         </Panel>
       )}

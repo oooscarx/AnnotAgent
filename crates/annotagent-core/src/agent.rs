@@ -342,6 +342,11 @@ pub struct AgentSession {
     pub cache_hits: u32,
     #[serde(default)]
     pub draft_id: Option<String>,
+    /// Exact user-visible Pipeline Builder proposal persisted with the Session. The Draft is also
+    /// stored independently; this snapshot preserves rationale, warnings and estimates so a page
+    /// refresh can reconstruct the result instead of showing only the execution trace.
+    #[serde(default)]
+    pub builder_proposal: Option<crate::WorkflowSuggestion>,
     #[serde(default)]
     pub unresolved_bindings: Vec<String>,
     #[serde(default)]
@@ -387,6 +392,7 @@ impl AgentSession {
             duplicate_tool_calls: 0,
             cache_hits: 0,
             draft_id: None,
+            builder_proposal: None,
             unresolved_bindings: Vec::new(),
             next_action: None,
             total_tool_calls: 0,
