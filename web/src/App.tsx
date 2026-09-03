@@ -5609,9 +5609,19 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   };
 
   const installations = registry?.installations ?? [];
+  const hasWorkflowReadyModel = (installation: (typeof installations)[number]) => instances.some((instance) =>
+    instance.plugin_id === installation.manifest.id
+    && instance.plugin_version === installation.manifest.version
+    && instance.status === "ready"
+    && bundleInventory[pluginIdentity(installation)]?.installed.some((bundle) =>
+      bundle.manifest.id === instance.model_bundle_id
+      && bundle.manifest.version === instance.model_bundle_version
+      && bundle.manifest.publishable),
+  );
   const readyModels = instanceProfiles.filter((model) => model.selectable).length;
   const setupInstallations = installations.filter((installation) =>
-    ["installed", "needs_weights", "unsupported_platform"].includes(installation.status),
+    !hasWorkflowReadyModel(installation)
+    && ["installed", "needs_weights", "unsupported_platform"].includes(installation.status),
   ).length;
   const attentionInstallations = installations.filter((installation) =>
     ["unhealthy", "crashed", "failed_smoke_test", "incompatible_api", "invalid_manifest", "invalid_contract"].includes(installation.status),
@@ -5743,16 +5753,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
 
     {PLUGIN_STATUS_GROUPS.map((group) => {
       const groupItems = installations.filter((installation) => {
-        const hasReadyModel = instances.some((instance) =>
-          instance.plugin_id === installation.manifest.id
-          && instance.plugin_version === installation.manifest.version
-          && instance.status === "ready"
-          && bundleInventory[pluginIdentity(installation)]?.installed.some((bundle) =>
-            bundle.manifest.id === instance.model_bundle_id
-            && bundle.manifest.version === instance.model_bundle_version
-            && bundle.manifest.publishable),
-        );
-        return group.statuses.includes(hasReadyModel ? "ready" : installation.status);
+        return group.statuses.includes(hasWorkflowReadyModel(installation) ? "ready" : installation.status);
       });
       if (!groupItems.length) return null;
       return <section className="plugin-status-group" key={group.title} aria-labelledby={`plugin-group-${group.title.replaceAll(" ", "-")}`}>
