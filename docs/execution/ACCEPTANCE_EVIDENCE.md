@@ -1,5 +1,19 @@
 # AnnotAgent Acceptance Evidence
 
+## Guided Test & Activate persistence — 2026-09-03
+
+1. The Workflow Draft list API reports the newest current persisted Sample Test, with regression
+   coverage proving a post-edit stale result is not selected.
+2. `/projects/:project/build/test?draft=:draft` is canonical and the Automation page passes its exact
+   autosaved Draft into that route. Direct reload restores the same result and the server-owned
+   `completed_at` evidence.
+3. Published Drafts remain available on Test & Activate, preserving immutable activation evidence
+   through refresh. Chromium exercises test, publish, refresh and restored-result rendering.
+4. The Test controls are one responsive grid with matched control heights and an explicit top-level
+   return to Automation. Compact release-surface checks pass without horizontal overflow.
+5. `cargo test -p annotagent-server workflow --lib`, strict focused Clippy, all 46 Web tests, the
+   production Web build and all 38 Chromium E2E scenarios pass.
+
 ## Model Bundle Provisioning Alpha M8 — 2026-09-03
 
 1. The complete Model CLI and read-only TUI projections use the same workspace Catalog, Bundle,

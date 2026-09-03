@@ -48,6 +48,27 @@ describe("guided workspace routing", () => {
     });
   });
 
+  it("keeps the selected Draft in the Test page URL", () => {
+    expect(
+      parseWorkspaceRoute(
+        "/projects/demo/build/test",
+        "?draft=draft with spaces",
+      ),
+    ).toEqual({
+      kind: "build",
+      projectId: "demo",
+      step: "test",
+      draftId: "draft with spaces",
+      canonicalPath: "/projects/demo/build/test?draft=draft%20with%20spaces",
+    });
+    expect(
+      parseWorkspaceRoute(
+        "/projects/demo/build/labels",
+        "?draft=ignored",
+      ),
+    ).not.toHaveProperty("draftId", "ignored");
+  });
+
   it("keeps the guided export destination in Project context", () => {
     expect(parseWorkspaceRoute("/projects/demo/export")).toEqual({
       kind: "export",

@@ -17,6 +17,7 @@ export type WorkspaceRoute =
       canonicalPath: string;
       projectId: string;
       step: BuildStep;
+      draftId?: string;
     }
   | {
       kind: "runs";
@@ -131,11 +132,14 @@ export function parseWorkspaceRoute(
     const projectId = decodeURIComponent(build[1]);
     const candidate = build[2] as BuildStep;
     const step = BUILD_STEPS.has(candidate) ? candidate : "data";
+    const draftId = step === "test" ? params.get("draft") ?? undefined : undefined;
+    const draftContext = draftId ? `?draft=${encodeURIComponent(draftId)}` : "";
     return {
       kind: "build",
       projectId,
       step,
-      canonicalPath: `/projects/${encodeURIComponent(projectId)}/build/${step}`,
+      draftId,
+      canonicalPath: `/projects/${encodeURIComponent(projectId)}/build/${step}${draftContext}`,
     };
   }
   const projectExport = clean.match(/^\/projects\/([^/]+)\/export$/);

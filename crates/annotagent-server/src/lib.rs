@@ -3135,7 +3135,35 @@ async fn list_workflow_drafts(
         .application
         .list_workflow_drafts(query.project_id.as_deref())
         .map_err(ApiError::bad_request)?;
-    Ok(Json(json!({"drafts": drafts})))
+    let mut latest_current_sample_test = None;
+    for draft in &drafts {
+        if draft.status == annotagent_core::WorkflowDraftStatus::Archived {
+            continue;
+        }
+        let sample_test = state
+            .application
+            .store()
+            .get_workflow_sample_test(&draft.id)
+            .map_err(ApiError::internal)?;
+        let Some(sample_test) = sample_test else {
+            continue;
+        };
+        let current = sample_test.project_id == draft.project_id
+            && (draft.status == annotagent_core::WorkflowDraftStatus::Published
+                || sample_test.completed_at >= draft.updated_at);
+        if current
+            && latest_current_sample_test
+                .as_ref()
+                .is_none_or(|(_, completed_at)| sample_test.completed_at > *completed_at)
+        {
+            latest_current_sample_test = Some((draft.id.clone(), sample_test.completed_at));
+        }
+    }
+    Ok(Json(json!({
+        "drafts": drafts,
+        "latest_current_sample_test_draft_id": latest_current_sample_test
+            .map(|(draft_id, _)| draft_id),
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -10512,6 +10540,20 @@ export:
             restored_sample_test["sample_test"]["report"]["samples"][0]["image_name"],
             json!("sample.png")
         );
+        let drafts_after_sample_test = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/workflow-drafts?project_id=workflow-ui",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            drafts_after_sample_test["latest_current_sample_test_draft_id"],
+            json!(draft_id)
+        );
 
         let mut changed_after_test = saved;
         changed_after_test["name"] = json!("Changed after Sample Test");
@@ -10538,6 +10580,17 @@ export:
         .await;
         assert_eq!(stale_sample_test["current"], json!(false));
         assert!(stale_sample_test["sample_test"].is_object());
+        let drafts_after_change = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/workflow-drafts?project_id=workflow-ui",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(drafts_after_change["latest_current_sample_test_draft_id"].is_null());
         let refreshed_dry_run = response_json(
             request(
                 &service,

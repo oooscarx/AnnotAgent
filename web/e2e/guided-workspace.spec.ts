@@ -580,8 +580,9 @@ export:
 test("Dry Run reports real summary metrics and publishes an immutable version", async ({ page, request }) => {
   await page.goto(`/projects/${projectId}/build/test`);
   await expect(page.getByLabel("Current Draft")).not.toHaveValue("");
+  const testedDraftId = await page.getByLabel("Current Draft").inputValue();
   await page.getByRole("spinbutton").fill("1");
-  await page.getByRole("button", { name: "Test samples", exact: true }).click();
+  await page.getByRole("button", { name: /Test samples|Test again/, exact: true }).click();
   await expect(page.getByLabel("Dry Run result summary")).toContainText("Images");
   await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();
   await expect(page.getByText("Ready to activate")).toBeVisible();
@@ -597,7 +598,12 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
   await expect(page.getByRole("button", { name: "Activate automation", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Activate automation", exact: true }).click();
-  await expect(page.getByLabel("Current Draft")).toHaveValue("");
+  await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
+  await expect(page).toHaveURL(new RegExp(`build/test\\?draft=${testedDraftId}$`));
+  await page.reload();
+  await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
+  await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();
+  await expect(page.getByText("Restored saved Sample Test")).toBeVisible();
 
   const state = await dashboard(request);
   const project = state.projects.find((item: { id: string }) => item.id === projectId);

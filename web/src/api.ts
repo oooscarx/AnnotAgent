@@ -518,7 +518,10 @@ export const api = {
   batches: () => request<{ batches: DatasetBatchSummary[] }>("/api/batches"),
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
   workflowDrafts: (projectId?: string) =>
-    request<{ drafts: WorkflowDraft[] }>(
+    request<{
+      drafts: WorkflowDraft[];
+      latest_current_sample_test_draft_id?: string | null;
+    }>(
       `/api/workflow-drafts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
     ),
   workflowCatalog: (projectId: string, taskId?: string, label?: string) =>

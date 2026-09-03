@@ -531,8 +531,8 @@ export function App() {
               navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`)
             }
             onRefresh={refresh}
-            onNavigate={(step) =>
-              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
+            onNavigate={(step, draftId) =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}${step === "test" && draftId ? `?draft=${encodeURIComponent(draftId)}` : ""}`)
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
@@ -546,8 +546,9 @@ export function App() {
           <BuildWorkspace
             project={selectedProject}
             step={route.step}
-            onNavigate={(step) =>
-              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
+            selectedDraftId={route.draftId}
+            onNavigate={(step, draftId, replace) =>
+              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}${step === "test" && draftId ? `?draft=${encodeURIComponent(draftId)}` : ""}`, replace)
             }
             onOpenRuns={() =>
               navigate(`/runs?project_id=${encodeURIComponent(route.projectId)}`)
@@ -695,6 +696,7 @@ function buildStepAllowed(guidance: ProjectGuidance, step: BuildStep): boolean {
 function BuildWorkspace({
   project,
   step,
+  selectedDraftId,
   onNavigate,
   onOpenRuns,
   onOpenProjects,
@@ -704,7 +706,8 @@ function BuildWorkspace({
 }: {
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
-  onNavigate: (step: BuildStep) => void;
+  selectedDraftId?: string;
+  onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
   onOpenRuns: () => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
@@ -731,9 +734,9 @@ function BuildWorkspace({
       ) : step === "labels" ? (
         <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
       ) : (
-        <BuildTestPublish project={project} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
+        <BuildTestPublish project={project} selectedDraftId={selectedDraftId} onSelectDraft={(draftId, replace) => onNavigate("test", draftId, replace)} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
       )}
-      {project && summary && allowed && <BuildFooter
+      {project && summary && allowed && step !== "test" && <BuildFooter
         previous={previousStep}
         next={nextStep}
         nextEnabled={nextStep ? buildStepAllowed(summary.guidance, nextStep) : false}
@@ -992,13 +995,17 @@ function BuildLabels({
 
 function BuildTestPublish({
   project,
+  selectedDraftId,
+  onSelectDraft,
   onNavigate,
   onOpenRuns,
   onRefresh,
   onError,
 }: {
   project: ProjectSummary;
-  onNavigate: (step: BuildStep) => void;
+  selectedDraftId?: string;
+  onSelectDraft: (draftId: string, replace?: boolean) => void;
+  onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
   onOpenRuns: () => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
@@ -1016,17 +1023,23 @@ function BuildTestPublish({
   const [startingRun, setStartingRun] = useState(false);
   const load = (selectFallback = true) => api.workflowDrafts(project.id).then((value) => {
     setDrafts(value.drafts);
-    const visible = value.drafts.filter(
-      (draft) => draft.status !== "archived" && draft.status !== "published",
-    );
-    setDraftId((current) => visible.some((draft) => draft.id === current)
-      ? current
-      : selectFallback ? (visible[0]?.id ?? "") : "");
+    const available = value.drafts.filter((draft) => draft.status !== "archived");
+    setDraftId((current) => {
+      const requested = available.find((draft) => draft.id === selectedDraftId)?.id;
+      const retained = available.find((draft) => draft.id === current)?.id;
+      const restored = available.find(
+        (draft) => draft.id === value.latest_current_sample_test_draft_id,
+      )?.id;
+      return requested ?? retained ?? (selectFallback ? restored ?? available[0]?.id ?? "" : "");
+    });
   });
   useEffect(() => {
     void Promise.all([load(), api.images(project.id).then((value) => setImages(value.images))])
       .catch((error: Error) => onError(error.message));
   }, [project.id]);
+  useEffect(() => {
+    if (draftId && draftId !== selectedDraftId) onSelectDraft(draftId, true);
+  }, [draftId, selectedDraftId]);
   useEffect(() => {
     let cancelled = false;
     setReport(undefined);
@@ -1113,16 +1126,25 @@ function BuildTestPublish({
       .catch((error: Error) => onError(error.message))
       .finally(() => setStartingRun(false));
   };
-  const draftControls = <>
-    <select aria-label="Current Draft" value={draftId} onChange={(event) => { setDraftId(event.target.value); setReport(undefined); setRestoredAt(undefined); setStaleReport(false); setActivated(undefined); }}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived" && draft.status !== "published").map((draft) => <option key={draft.id} value={draft.id}>{draft.name}</option>)}</select>
-    <label>Images<input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
-    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated}>{busy ? "Testing…" : isActivated ? "Activated" : "Test samples"}</button>
-  </>;
+  const chooseDraft = (nextDraftId: string) => {
+    setDraftId(nextDraftId);
+    setReport(undefined);
+    setRestoredAt(undefined);
+    setStaleReport(false);
+    setActivated(undefined);
+    if (nextDraftId) onSelectDraft(nextDraftId, true);
+  };
+  const draftControls = <div className="sample-test-controls" aria-label="Sample Test controls">
+    <label className="sample-test-field"><span>Automation Draft</span><select aria-label="Current Draft" value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? "Activated" : draft.status.replaceAll("_", " ")}</option>)}</select></label>
+    <label className="sample-test-field"><span>Sample images</span><input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
+    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated}>{busy ? "Testing…" : isActivated ? "Already activated" : report ? "Test again" : "Test samples"}</button>
+  </div>;
   return (
     <>
-      <div className="toolbar-panel">
-        <div><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
-        {!report ? <div className="button-row sample-test-controls">{draftControls}</div> : <details className="retest-controls"><summary>Test another sample</summary><div className="sample-test-controls">{draftControls}</div></details>}
+      <div className="toolbar-panel sample-test-toolbar">
+        <div className="sample-test-toolbar-copy"><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
+        <button className="sample-test-back" onClick={() => onNavigate("pipeline")}>← Edit Automation</button>
+        {draftControls}
       </div>
       {!report && <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
         <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? "Unpublished changes" : "Choose a Draft"}</strong></li>
@@ -2500,7 +2522,7 @@ function WorkflowsPage({
   activeProjectId: string;
   onActivate: (id: string) => void;
   onRefresh: () => Promise<void>;
-  onNavigate: (step: "data" | "labels" | "pipeline" | "test") => void;
+  onNavigate: (step: "data" | "labels" | "pipeline" | "test", draftId?: string) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
   onOpenProviders: () => void;
@@ -3125,7 +3147,7 @@ function WorkflowsPage({
   return (
     <section className="page-stack">
       <ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
-      <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={onNavigate} />
+      <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />
       <div className="toolbar-panel workflow-designer-header">
         <div>
           <span className="eyebrow">Step 3 · Automation</span>
@@ -3358,7 +3380,7 @@ function WorkflowsPage({
           <div className="button-row">
             {!immutable && undoDraft && <button onClick={undoAgentApply} disabled={busy}>Undo Agent changes</button>}
             {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
-            {!immutable && <button onClick={() => onNavigate("test")} disabled={busy || !draft}>Open Test &amp; Activate</button>}
+            {!immutable && <button onClick={() => onNavigate("test", draft?.id)} disabled={busy || !draft}>Open Test &amp; Activate</button>}
             {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
             <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>Improve from evidence</button>
             {!immutable && draft && <details className="action-menu"><summary>More</summary><div><button onClick={archive} disabled={busy}>Archive</button></div></details>}
@@ -3958,7 +3980,7 @@ function WorkflowsPage({
           )}
         </div>
       </div>
-      {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} nextPrimary={false} onNavigate={onNavigate} />}
+      {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} nextPrimary={false} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />}
     </section>
   );
 }

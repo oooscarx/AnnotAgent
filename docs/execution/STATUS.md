@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-03 CST
 
+## Guided Test & Activate persistence — 2026-09-03
+
+- Sample Test now restores the newest server-persisted current result instead of blindly selecting
+  the most recently edited Draft. The selected Draft is encoded in the Test URL and survives reload,
+  restart, sharing and browser history.
+- Automation opens Test & Activate with the exact current Draft. Published Drafts remain selectable,
+  so activated evidence is no longer lost after refresh.
+- Test navigation now has one explicit top-level return to Automation and a responsive, aligned
+  Draft / sample count / action control row. The duplicate bottom navigation was removed.
+- Focused Server coverage, 46 Web tests, strict focused Clippy, the production Web build and all 38
+  Chromium E2E scenarios pass. The local GUI remains running on `127.0.0.1:8787`.
+
 ## Real Prompted-Segmentation Delivery M5 — 2026-09-03
 
 - Ready EfficientSAM Model Instances are now selectable in Pipeline Builder as exact
