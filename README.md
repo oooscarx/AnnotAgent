@@ -33,12 +33,11 @@ In the browser:
 8. Open Project **Export**, resolve any readiness blocker, select a Schema-compatible format, and run the real exporter. The completion report and source fingerprint survive reload while the Project snapshot remains current.
 
 Provider and Model Profiles live under **Settings → Providers / Models**. Non-secret settings persist
-in SQLite. The default GUI path uses an environment-variable reference or a process-only session
-value, so a key is never written to the workspace, browser storage, SQLite, or macOS Keychain.
-Native credential storage remains an explicit opt-in source in advanced Provider settings. An
-existing `.annotagent/credentials/provider-api-key` remains readable only as an explicitly labelled
-legacy source and is never copied or deleted automatically. The offline Mock Provider is the Release
-baseline and needs no key.
+in SQLite. The default GUI credential path writes an owner-only file below the Git-ignored local
+workspace; environment-variable and process-only session references remain available, while native
+system credential storage is explicit opt-in. Secrets are never returned to the browser or stored
+in SQLite. Production startup and Pipeline Builder expose no Mock Provider; deterministic test
+doubles remain limited to explicit tests and offline demos.
 
 Start with [Guided Experience](docs/GUIDED_EXPERIENCE.md), [Project setup](docs/GUIDED_PROJECT_SETUP.md), [Run and Review UX](docs/RUN_AND_REVIEW_UX.md), the [offline demo](docs/DEMO_GUIDED_EXPERIENCE.md), or the [Provider Builder demo](docs/DEMO_PROVIDER_BUILDER.md). Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and the current Release Matrix is [`docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md`](docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md).
 
@@ -61,7 +60,7 @@ A Project is one concrete annotation effort. It owns a Dataset and Annotation Sc
 
 ## 3. Workflow
 
-A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static validation, selected-image Dry Run, and immutable publication. An exact Published Version can be selected for an image Run or Dataset Batch; the product executes that DAG, persists typed Artifacts and node trace, and stores its restart checkpoint. Legacy single-Skill Projects retain an explicitly labelled compatibility path when no version is selected.
+A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static validation, selected-image Dry Run, and immutable publication. An exact Published Version can be selected for an image Run or Dataset Batch; the product executes that DAG, persists typed Artifacts and node trace, and stores its restart checkpoint. Formal Runs fail closed until an exact Published Workflow Version is selected.
 
 ## 4. Model
 
@@ -79,8 +78,10 @@ starts an isolated Rust process and requires ONNX Contract plus fixed smoke evid
 publishable model becomes Ready. Existing manually configured HTTP Vision v1 endpoints remain under
 **Legacy HTTP** for historical compatibility, but new Workflows should use native plugins. See
 [Rust Model Plugins](docs/RUST_MODEL_PLUGINS.md), [Writing a Rust Plugin](docs/WRITING_A_RUST_MODEL_PLUGIN.md)
-and [Model Bundles](docs/MODEL_BUNDLES.md). The repository ships no third-party weights; the built-in
-prompted-segmentation Fixture is non-publishable protocol evidence, not SAM or accuracy evidence.
+and [Model Bundles](docs/MODEL_BUNDLES.md). The repository ships no third-party weights in Git; the
+built-in prompted-segmentation Fixture is non-publishable protocol evidence, not SAM or accuracy
+evidence. The separately generated real EfficientSAM-Ti Bundle and its exact installation and
+release identities are documented in [Real Model Release](docs/REAL_MODEL_RELEASE.md).
 
 ## 5. Skill
 
@@ -206,7 +207,7 @@ For a real compatible provider, copy an example configuration, enter the provide
 - `examples`: concrete Project examples.
 - `design/annotagent-visual-system`: canonical Core and Skill visual sources.
 
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
+See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Real Model Release](docs/REAL_MODEL_RELEASE.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Verification
 

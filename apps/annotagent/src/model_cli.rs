@@ -28,7 +28,7 @@ pub async fn run(workspace: &Path, command: ModelsCommand) -> Result<()> {
         ModelsCommand::Search { query } => search(workspace, &query),
         ModelsCommand::Show { bundle_id } => show(workspace, &bundle_id),
         ModelsCommand::Install { bundle, accept } => install(workspace, &bundle, accept).await,
-        ModelsCommand::Import { package, accept } => import(workspace, &package, accept),
+        ModelsCommand::Import { package, accept } => import(workspace, &package, accept).await,
         ModelsCommand::List => list(workspace),
         ModelsCommand::Test { model_instance_id } => {
             test_instance(workspace, parse_instance_id(&model_instance_id)?).await
@@ -378,6 +378,7 @@ async fn install(workspace: &Path, requested: &str, accept: bool) -> Result<()> 
     let _ = std::fs::remove_file(&package);
     let installed = install_result?;
     let instances = bind_instances(workspace, &mut registry, &installed)?;
+    let fixture = installed.manifest.fixture;
     println!(
         "installed {}@{} · {}",
         installed.manifest.id, installed.manifest.version, installed.bundle_digest
@@ -387,14 +388,27 @@ async fn install(workspace: &Path, requested: &str, accept: bool) -> Result<()> 
             "setup required: install and enable a compatible Rust Expert Model Plugin, then reinstall or use the GUI binding action"
         );
     } else {
-        for instance in instances {
+        for instance in &instances {
             println!("model instance: {} · {:?}", instance.id, instance.status);
+        }
+        let instance_ids = instances
+            .into_iter()
+            .map(|instance| instance.id)
+            .collect::<Vec<_>>();
+        drop(registry);
+        for id in instance_ids {
+            println!("running real Smoke Test for Model Instance {id}");
+            let instance = run_instance_smoke(workspace, id).await?;
+            ensure_ready(&instance)?;
+            println!("Model instance: {} · Ready", instance.id);
+            println!("Smoke test: Passed");
+            println!("Fixture only: {}", if fixture { "Yes" } else { "No" });
         }
     }
     Ok(())
 }
 
-fn import(workspace: &Path, package: &Path, accept: bool) -> Result<()> {
+async fn import(workspace: &Path, package: &Path, accept: bool) -> Result<()> {
     let verified = verify_model_bundle(package)?;
     println!(
         "Bundle: {} {}",
@@ -419,6 +433,7 @@ fn import(workspace: &Path, package: &Path, accept: bool) -> Result<()> {
     }
     let installed = registry.import_local(package)?;
     let instances = bind_instances(workspace, &mut registry, &installed)?;
+    let fixture = installed.manifest.fixture;
     println!(
         "imported {}@{} · {} · {} Model Instances",
         installed.manifest.id,
@@ -426,6 +441,19 @@ fn import(workspace: &Path, package: &Path, accept: bool) -> Result<()> {
         installed.bundle_digest,
         instances.len()
     );
+    let instance_ids = instances
+        .into_iter()
+        .map(|instance| instance.id)
+        .collect::<Vec<_>>();
+    drop(registry);
+    for id in instance_ids {
+        println!("running real Smoke Test for Model Instance {id}");
+        let instance = run_instance_smoke(workspace, id).await?;
+        ensure_ready(&instance)?;
+        println!("Model instance: {} · Ready", instance.id);
+        println!("Smoke test: Passed");
+        println!("Fixture only: {}", if fixture { "Yes" } else { "No" });
+    }
     Ok(())
 }
 
@@ -500,6 +528,15 @@ fn list(workspace: &Path) -> Result<()> {
 }
 
 async fn test_instance(workspace: &Path, id: ModelInstanceId) -> Result<()> {
+    let instance = run_instance_smoke(workspace, id).await?;
+    println!("{}", serde_json::to_string_pretty(&instance)?);
+    ensure_ready(&instance)
+}
+
+async fn run_instance_smoke(
+    workspace: &Path,
+    id: ModelInstanceId,
+) -> Result<annotagent_model_catalog::InstalledModelInstance> {
     let mut model_registry = registry(workspace)?;
     let instance = model_registry
         .model_instance(id)
@@ -576,7 +613,10 @@ async fn test_instance(workspace: &Path, id: ModelInstanceId) -> Result<()> {
             },
         };
     let instance = model_registry.record_model_instance_smoke(id, result)?;
-    println!("{}", serde_json::to_string_pretty(&instance)?);
+    Ok(instance)
+}
+
+fn ensure_ready(instance: &annotagent_model_catalog::InstalledModelInstance) -> Result<()> {
     if instance.status != annotagent_model_bundle::ModelInstanceStatus::Ready {
         bail!("Model Instance smoke test did not pass");
     }

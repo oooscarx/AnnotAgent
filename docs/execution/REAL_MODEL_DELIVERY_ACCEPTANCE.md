@@ -115,7 +115,35 @@ Last updated: 2026-09-03 CST
   Python worker.
 - [x] Focused Rust checks and storage/image regressions pass; Web typecheck, 45 unit tests and
   production build pass.
-- [ ] M5 committed locally.
+- [x] M5 committed locally as `a322159`.
+
+## Milestone 6 evidence
+
+- [x] macOS ARM64 Plugin release candidate is immutable, package-verified and pinned at SHA-256
+  `283a9486edaa7b25ae3cf111cd859ca90fa38de488cd3a8c9196d297d10099cd`.
+- [x] Real Model Bundle, Catalog and verification report are staged with a verified
+  `SHA256SUMS`; model bytes remain outside Git.
+- [x] Exact GitHub Release asset names, sizes, hashes and the not-yet-published boundary are
+  documented.
+- [x] GUI and CLI installation instructions identify the exact workspace Plugin Registry and local
+  Catalog paths.
+- [x] CLI `models install` performs the real declared Smoke Test automatically and reports Ready,
+  Passed and non-Fixture from a fresh isolated workspace.
+- [x] Direct `.annotmodel` import performs the same real Smoke Test and reached
+  Ready/Passed/non-Fixture in a separate isolated workspace.
+- [x] Explicit CLI `catalog list`, `search`, `test` and `doctor` commands passed against that second
+  clean installation; doctor returned `workflow_ready`.
+- [x] Full Rustfmt and strict all-target/all-feature Clippy passed.
+- [x] Full all-feature Rust workspace tests passed: 419 runnable tests, 0 failed; 5 explicitly
+  external/billable tests ignored.
+- [x] Full all-feature Rust workspace build passed.
+- [x] Web typecheck, 45 unit tests, production build and all 38 Chromium E2E journeys passed.
+- [x] Boundary checks, doctor and the four offline product demos passed.
+- [x] In-app Run Debug verification still shows the real Mask overlay, eight typed Artifacts and
+  exact frozen model identity after restart.
+- [x] macOS ARM64 is marked Supported. Linux x86_64 is marked build-compatible only, with no claim
+  of unexecuted real inference.
+- [x] M6 is contained in the release-closure commit that records this evidence.
 
 ## Release matrix
 
@@ -152,6 +180,6 @@ Last updated: 2026-09-03 CST
 
 ### E. Regression
 
-- [ ] Full Rustfmt, Clippy, workspace tests and build pass.
-- [ ] Full Web typecheck, unit, E2E and build pass.
-- [ ] Provider, Workflow validator, Geometry, batch, lifecycle, Review, Replay and Export pass.
+- [x] Full Rustfmt, Clippy, workspace tests and build pass.
+- [x] Full Web typecheck, unit, E2E and build pass.
+- [x] Provider, Workflow validator, Geometry, batch, lifecycle, Review, Replay and Export pass.

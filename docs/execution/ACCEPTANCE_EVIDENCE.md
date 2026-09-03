@@ -1797,3 +1797,35 @@ Real Prompted-Segmentation Delivery M4 status: `PASS ON MACOS ARM64 CPU` in loca
 
 Real Prompted-Segmentation Delivery M5 status: `PASS ON MACOS ARM64 CPU`; release matrix validation
 and packaging remain M6.
+
+## Real Prompted-Segmentation Delivery M6 — 2026-09-03
+
+1. `scripts/prepare-real-model-release.sh` stages and verifies the immutable macOS ARM64 Plugin,
+   real Model Bundle, Catalog and verification report, then emits a checked `SHA256SUMS`. The
+   payload SHA-256 identities are `283a9486…99cd`, `3c9004b3…6d6c`, `a6de92a5…27d1` and
+   `3f9344b6…92b6`; model and release bytes remain ignored by Git.
+2. `docs/REAL_MODEL_RELEASE.md` records the exact `models-v1` GitHub Release asset list, GUI and
+   CLI install paths, license/source identity and publication boundary. No asset was uploaded and
+   unsigned local metadata remains `publisher_verified=false`.
+3. CLI `models install` and verified local `models import` now execute the declared real Smoke Test
+   immediately after compatible binding. In a new isolated workspace, Catalog install reported
+   Model Instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72 · Ready`, `Smoke test: Passed` and
+   `Fixture only: No`; explicit test and doctor returned passed and `workflow_ready`. A third
+   isolated workspace imported the `.annotmodel` directly and reached the same result.
+4. A release rebuild experiment produced different linked Plugin bytes after later Core changes.
+   The preparation gate rejected them rather than overwriting the already frozen `1.0.0` package.
+   Future dependency/source rebuilds must increment the Plugin version and repeat real evidence.
+5. Final Rust validation passed format, strict all-target/all-feature Clippy, 419 runnable tests
+   with zero failures, and the all-feature workspace build. Five explicitly external/billable tests
+   were ignored and are not represented as passing.
+6. Final Web validation passed TypeScript, all 45 Vitest cases, production build and all 38
+   Chromium E2E journeys. Agent/Skill and Rust Plugin boundary checks, doctor and all four offline
+   demos also passed.
+7. In-app browser inspection of completed Run `b0dd0e50-3698-4cd5-a65d-28e6d881293b` showed nine
+   succeeded nodes, eight typed Artifacts, the decoded mask overlay and exact frozen Plugin,
+   package, Bundle, model-file, Contract, Instance/Profile revision and CPU provider identity.
+8. macOS ARM64 CPU is Supported. Linux x86_64 remains build-compatible only because no Linux real
+   model run or release package was executed. GitHub Release upload/signing were prohibited remote
+   mutations and remain operator work.
+
+Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.

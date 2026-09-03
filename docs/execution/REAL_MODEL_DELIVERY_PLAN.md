@@ -10,6 +10,9 @@ macOS ARM64 host without Python, conversion, or raw model-file upload.
 
 ## Milestones
 
+All six milestones are implemented and verified on the evidenced macOS ARM64 target. Remote
+publication and Linux real-run evidence are deliberately separate.
+
 | Milestone | Deliverable | Required evidence |
 | --- | --- | --- |
 | M0 | Reproduce the Fixture-only gap and freeze the baseline | platform, Registry/Catalog state, failing-path regression, full baseline |

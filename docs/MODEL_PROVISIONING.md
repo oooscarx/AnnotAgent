@@ -13,6 +13,10 @@ The normal product journey is:
 7. A fixed Bundle smoke test runs through the real isolated Plugin process.
 8. Only a publishable, enabled, Ready instance is offered to Workflow nodes.
 
+`models install` and `models import` run that fixed Smoke Test automatically whenever a compatible
+installed Plugin produces a Model Instance. A failed or crashed smoke never becomes Ready. The
+explicit `models test` command remains available for reruns and diagnostics.
+
 CLI uses the same workspace Registry:
 
 ```bash

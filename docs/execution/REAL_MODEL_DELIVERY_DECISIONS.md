@@ -122,3 +122,11 @@ Replay and post-Review resume reuse the Run's provider mode. A `core` Run can re
 frozen local Model Instance because its Bundle and Plugin identities are persisted and rehashed.
 Remote Provider model nodes still refuse Replay without an explicit current credential binding;
 the implementation does not switch production history to `mock` merely to make Replay proceed.
+
+## RMD-D019 — A released Plugin version is immutable across dependency rebuilds
+
+The exact macOS ARM64 `org.annotagent.efficientsam-onnx@1.0.0` package that passed smoke, Workflow
+and Replay is the release candidate. Re-linking that source after Core changes produced different
+package bytes. Release preparation therefore verifies and stages the already evidenced package
+digest; it never overwrites `1.0.0` with a new digest. Any future rebuild after source or dependency
+changes must increment the Plugin version and repeat model compatibility and real-run evidence.

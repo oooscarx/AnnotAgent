@@ -1041,3 +1041,24 @@ Model Bundle Provisioning M6 status: `PASS`.
   weight, Python process, credential, push or remote mutation was used.
 
 Model Bundle Provisioning M7 status: `PASS WITH EXPLICIT REAL-MODEL LIVE-CONDITIONAL`.
+
+## Real Prompted-Segmentation Delivery M6 — release closure — 2026-09-03
+
+- The first production PromptedSegmentation path is EfficientSAM-Ti split ONNX through the
+  dedicated Rust Plugin and CPU ONNX Runtime. The evidenced support target is macOS ARM64.
+- Release preparation stages the immutable tested Plugin, real non-Fixture Model Bundle, Catalog,
+  verification report and checksum manifest under Git-ignored `dist/releases/models-v1/`. Exact
+  GitHub Release asset names, sizes and digests are documented without claiming remote upload.
+- CLI Catalog install/import now run the Bundle's real Smoke Test automatically. A fresh isolated
+  install ended at Ready / Passed / non-Fixture, and explicit test/doctor returned passed /
+  workflow-ready.
+- Final validation passed Rustfmt, strict all-target/all-feature Clippy, 419 runnable Rust tests,
+  the all-feature build, 45 Web unit tests, production build, 38 Chromium E2E journeys, both
+  architecture boundaries, doctor and four offline demos. Five explicit unrelated external or
+  billable tests remained ignored.
+- Run Debug browser verification still shows the real mask overlay, nine completed nodes, eight
+  Artifacts and the exact immutable Plugin/Bundle/file/Contract/Instance/Profile/provider lineage.
+- Linux x86_64 remains build-compatible only; remote GitHub publication and signing are operator
+  work and were not performed.
+
+Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.

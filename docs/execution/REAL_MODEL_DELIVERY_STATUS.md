@@ -4,8 +4,8 @@ Last updated: 2026-09-03 CST
 
 ## Current Milestone
 
-M5 — Pipeline, Geometry Safety, Debug, Review, Replay and restart closure complete. M6 release
-artifacts and complete regression validation are next.
+M6 — current-platform release assets, CLI/GUI installation evidence and the complete regression
+matrix are complete.
 
 ## Current candidate
 
@@ -132,16 +132,39 @@ path. A fresh workspace completed the GUI Catalog → license → install → Co
 - Attempting to remove the referenced Bundle was rejected with the exact protecting Workflow
   reference. Active Replay process inspection showed only the Rust EfficientSAM executable and no
   child process or Python worker.
+- Added an explicit macOS ARM64 release recipe that stages only the immutable Plugin package already
+  proven by smoke, Workflow and Replay, verifies pinned package digests and emits `SHA256SUMS`.
+- Prepared `dist/releases/models-v1/` with the 8,848,933-byte macOS ARM64 Plugin, the
+  38,577,735-byte Model Bundle, Catalog, verification report and checksum manifest. All four
+  payload checks passed.
+- Added the exact GitHub Release asset list, supported-target matrix, GUI journey, CLI commands and
+  unsigned Developer Preview publication boundary in `docs/REAL_MODEL_RELEASE.md`.
+- Changed CLI Catalog install and local Bundle import to run the declared real Smoke Test
+  automatically whenever a compatible Plugin binds a Model Instance. A second isolated workspace
+  ended the one-command install at `Ready`, `Smoke test: Passed`, `Fixture only: No`; explicit
+  `test` and `doctor` then independently returned `passed` and `workflow_ready`. A third isolated
+  workspace exercised direct `.annotmodel` import and reached the same Ready/Passed/non-Fixture
+  result.
+- Kept Plugin version identity immutable. A post-M5 dependency rebuild produced different binary
+  bytes, so release preparation correctly rejected them instead of overwriting the already-frozen
+  `1.0.0`; any future rebuild must use a new Plugin version and repeat evidence.
+- Re-ran Run Debug in the in-app browser after final regression. The completed real Run still shows
+  nine succeeded nodes, eight typed Artifacts, the mask overlay and the complete frozen Plugin,
+  Bundle, files, Contract, Instance/Profile and CPU provider identity.
+- Completed the final matrix: Rustfmt, strict all-target/all-feature Clippy, 419 runnable Rust tests,
+  workspace build, Web typecheck, 45 Web unit tests, production build, 38 Chromium E2E journeys,
+  both architecture boundary checks, doctor and all four offline demos passed. Five tests that
+  explicitly require unrelated billable or separately supplied model assets remained ignored.
 
 ## In progress
 
-- Build release metadata/assets and execute the complete Rust/Web/cross-platform truth matrix in
-  M6.
+- None. All release-blocking implementation and verification for the evidenced target is complete.
 
 ## Next
 
-Run the complete release test matrix, validate the current-platform release asset list and user
-installation instructions, then record final Git and unsupported-platform truth.
+An operator may publish the exact staged assets as the `models-v1` GitHub Release and then enable a
+remote Catalog. Linux x86_64 still needs its own packaged Plugin and a real-model host run before it
+can be called Supported. Neither action was performed or claimed by this local task.
 
 ## Latest verification
 
@@ -175,15 +198,19 @@ installation instructions, then record final Git and unsupported-platform truth.
 | Active Replay process audit | PASS — Rust EfficientSAM process, no child and no Python worker |
 | Latest focused Web checks | PASS — typecheck, 45 unit tests and production build |
 | Latest focused Rust checks | PASS — Image Tools, exact prior Project/Run annotation source and Server/Application checks |
-| Latest commit | `aad5066` — M4; M5 commit pending |
+| Automatic CLI install | PASS — isolated workspace reached Ready / Passed / non-Fixture in one install command |
+| Release assets | PASS — four payloads verified against pinned SHA-256 plus generated `SHA256SUMS` |
+| Final Rust matrix | PASS — format, strict Clippy, 419 runnable tests and all-feature build; 5 explicit external/billable tests ignored |
+| Final Web matrix | PASS — typecheck, 45 unit tests, production build and 38 Chromium E2E journeys |
+| Final product checks | PASS — Agent/Skill and Rust Plugin boundaries, doctor and four offline demos |
+| Latest commit | M6 release-closure commit containing this status; exact hash is recorded in Git history |
 
 ## Release-blocking remainder
 
-The real-model execution, normal-user GUI installation and Published Workflow/Review/Replay gates
-are closed on macOS ARM64 CPU. Release packaging and the final cross-platform/regression matrix
-remain blocking.
+None for the evidenced macOS ARM64 local Developer Preview. Remote hosting and Linux real-run
+evidence remain explicitly outside the completed target and are not represented as available.
 
 ## Real blocker
 
-There is no external blocker recorded yet. A missing implementation or an unperformed audit is not
-classified as an external blocker.
+None for local macOS ARM64 use. Remote publication requires an operator with GitHub Release
+authority; Linux Supported status requires a Linux x86_64 execution host.
