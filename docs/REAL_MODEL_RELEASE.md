@@ -40,9 +40,9 @@ Bundle is absent:
 
 ```bash
 cargo run -p annotagent -- models recipe fetch \
-  model-recipes/efficientsam-ti-onnx/recipe.toml
+  model-recipes/efficientsam-ti/recipe.toml
 cargo run -p annotagent -- models recipe build \
-  model-recipes/efficientsam-ti-onnx/recipe.toml \
+  model-recipes/efficientsam-ti/recipe.toml \
   --output dist/model-catalog/bundles/efficientsam-ti-onnx-1.0.0.annotmodel \
   --catalog-entry dist/model-catalog/efficientsam-ti-onnx-1.0.0.json \
   --verification-report dist/model-catalog/verification/efficientsam-ti-onnx-1.0.0.json
