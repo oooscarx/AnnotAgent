@@ -10130,12 +10130,17 @@ impl LocalApplication {
                 break;
             }
             if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
-                session
-                    .transition_builder_phase(
-                        annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
-                        "Use deterministic feasibility",
-                    )
-                    .map_err(anyhow::Error::msg)?;
+                // The model may have already resolved feasibility without materializing a Draft.
+                // Recovery must continue from that durable phase instead of attempting to move
+                // the monotonic state machine backwards from Drafting to FeasibilityAnalysis.
+                if session.phase == Some(annotagent_core::PipelineBuilderPhase::ContextLoading) {
+                    session
+                        .transition_builder_phase(
+                            annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                            "Use deterministic feasibility",
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                }
                 let feasibility_result = annotagent_core::AgentToolResult::summary(
                     "Runtime resolved feasibility at the discovery deadline",
                     json!({"context_revision": context_revision, "feasibility": feasibility}),
@@ -10156,12 +10161,16 @@ impl LocalApplication {
                         reasons.join("; "),
                     );
                 } else {
-                    session
-                        .transition_builder_phase(
-                            annotagent_core::PipelineBuilderPhase::Drafting,
-                            "Persist deterministic recovery Draft",
-                        )
-                        .map_err(anyhow::Error::msg)?;
+                    if session.phase
+                        == Some(annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis)
+                    {
+                        session
+                            .transition_builder_phase(
+                                annotagent_core::PipelineBuilderPhase::Drafting,
+                                "Persist deterministic recovery Draft",
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                    }
                     let (created, outcome) =
                         materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
                     self.store.save_workflow_draft(&created.draft)?;
@@ -13093,12 +13102,16 @@ impl LocalApplication {
                 if success {
                     match PipelineBuilderToolRegistry.resolve(&call.name).ok() {
                         Some(PipelineBuilderTool::GetPipelineBuilderContext) => {
-                            session
-                                .transition_builder_phase(
-                                    annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
-                                    "Resolve Pipeline feasibility",
-                                )
-                                .map_err(anyhow::Error::msg)?;
+                            if session.phase
+                                == Some(annotagent_core::PipelineBuilderPhase::ContextLoading)
+                            {
+                                session
+                                    .transition_builder_phase(
+                                        annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                                        "Resolve Pipeline feasibility",
+                                    )
+                                    .map_err(anyhow::Error::msg)?;
+                            }
                         }
                         Some(PipelineBuilderTool::ResolvePipelineFeasibility) => {
                             session
@@ -13225,6 +13238,7 @@ impl LocalApplication {
                         }
                         _ => {}
                     }
+                    self.store.save_agent_session(&session)?;
                 }
                 if !success && failed_attempts >= 3 {
                     session.fail(format!(
@@ -20719,6 +20733,104 @@ export:
                 .len(),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn pipeline_builder_deadline_recovers_after_model_already_entered_drafting() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("drafting-recovery", GENERIC_CLASSIFICATION_PROJECT)
+            .expect("classification Project");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-drafting-recovery");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "scripted-classifier-v1",
+            [ModelCapability::ImageClassification],
+        );
+        let tool_call = |name: &str| MockToolCall {
+            name: name.to_owned(),
+            arguments: json!({}),
+        };
+        let inspection_batch = || MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCalls {
+                calls: [
+                    "inspect_project_geometry_policy",
+                    "inspect_geometry_correction_summary",
+                    "inspect_geometry_calibration",
+                    "find_geometry_refinement_path",
+                ]
+                .into_iter()
+                .map(tool_call)
+                .collect(),
+                content: None,
+            },
+            usage: MockUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCall {
+                        name: "get_pipeline_builder_context".to_owned(),
+                        arguments: json!({}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 100,
+                        output_tokens: 20,
+                    },
+                },
+                inspection_batch(),
+                inspection_batch(),
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCall {
+                        name: "resolve_pipeline_feasibility".to_owned(),
+                        arguments: json!({}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 100,
+                        output_tokens: 20,
+                    },
+                },
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "drafting-recovery",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Drafting recovery must not regress to feasibility");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview)
+        );
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitReached)
+        );
+        assert_eq!(report.session.usage.tool_calls, 12);
+        assert!(report.suggestion.is_some());
     }
 
     #[tokio::test]
