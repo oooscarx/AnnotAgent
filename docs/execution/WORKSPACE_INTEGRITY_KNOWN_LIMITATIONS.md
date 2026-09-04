@@ -6,7 +6,7 @@ This file describes the current product, not the target state.
 - The current plugin package format can prove archive integrity but has no trusted-publisher signature variant. Consequently, native packages are inspect-only in the Web UI and require the explicit CLI trust flow to install.
 - Legacy Runs whose Project was deleted or whose old display name is ambiguous remain explicit orphans until a future user-directed owner-resolution flow is added; they are never silently attached by name.
 - Project-scoped Runs, Batch detail, and Review now have canonical nested routes. Older global detail aliases depend on the dashboard's current ownership summary to resolve their canonical owner.
-- The route model preserves Draft/version/image/node/artifact identities, but request cancellation and stale-response protection are not yet complete.
+- Route resources now have cancellation, request generations, deduplication, and precise Run-event invalidation. Agent sessions still require bounded exponential polling because the SSE protocol does not yet publish Agent-session events.
 - Workflow Draft writes are last-write-wins and sample-test history is mutable.
 - Results is now an explicit final-Annotation projection and Debug retains intermediate Artifacts. Legacy Runs without one authoritative stable Image relation fail closed rather than guessing an image.
 - Review local edit state and cross-project enforcement are not yet fully covered.

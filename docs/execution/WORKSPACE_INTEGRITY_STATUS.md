@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M4 — execution and Results integrity.
-- Next milestone: M5 — recoverable frontend state.
+- Completed milestone: M5 — recoverable frontend state.
+- Next milestone: M6 — Workflow lifecycle and concurrency.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -83,6 +83,17 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Evidence: 99 Core tests, the full Runtime and Storage suites, 60 Application tests (one billable check ignored), 29 Server tests, 55 Web unit tests, Web typecheck/build, and all 40 Chromium E2E journeys passed. The E2E suite explicitly proves final-vs-intermediate projection, stable Image URL restoration, mixed-status Dataset detail, and single-image Debug behavior.
 - Milestone commit subject: `fix(run): separate dataset execution final results and debug artifacts`.
 
+## M5 exit
+
+- Added one route-resource cache with stable keys, request deduplication, stale state, retry, AbortController ownership, and response-generation guards. Late generations cannot replace current cached data.
+- Project summaries, Workflow Draft lists, persisted Sample Tests, Agent/Improvement sessions, Run Results/Debug/Annotations/Artifacts, Project images, and Review queues/items now participate in route-aware loading and cancel work when their owner route changes.
+- Run SSE events invalidate only the affected Run family and targeted Review/project summaries. The full dashboard is re-synchronized only after SSE reconnect or an explicit refresh; the 750 ms Agent interval was replaced by bounded exponential recovery polling.
+- Pipeline URLs now preserve exact Draft, immutable `workflow@version`, Pipeline Builder Session, and Improvement Session identity. Test URLs reserve both exact Draft and Sample Test identity. Review/Run in-page selections remain URL-owned.
+- Removed `activeProjectId` as browser-state truth. Local storage now records only `preferredProjectId` and is never read to establish ownership.
+- H1 focus follows route-page identity, not Draft, Review item, Run view, image, node, or Artifact query changes.
+- Evidence: 59 Web unit tests, Web typecheck/build, and all 40 Chromium E2E journeys passed. Added cache generation/dedup/invalidation tests and route round-trip/focus tests.
+- Milestone commit subject: `fix(web): restore project run workflow and review context from URLs`.
+
 ## Next exit
 
-M5 makes every durable frontend selection URL/server reconstructible, prevents stale async responses from replacing a newer route, and turns SSE into cache invalidation rather than competing state.
+M6 adds server-owned Draft revisions, optimistic concurrency, append-only Sample Test evidence, and exact-revision publication gates.

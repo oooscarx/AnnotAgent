@@ -59,3 +59,11 @@ A Dataset Batch owns ordering, aggregate progress, scheduling, budget, and child
 ## D-015 — Pass-through nodes create a new Artifact producer identity
 
 When a Core node validates, gates, or otherwise passes through a typed Pipeline Artifact, its output reference names the current node and declared output port. Retaining the upstream port makes downstream typed routing silently skip valid data and destroys provenance. Internal subject/parent references remain unchanged so fan-out/fan-in lineage is preserved.
+
+## D-016 — Route resources own cancellation and cache identity
+
+Every durable frontend read is named by its stable owner/object key. A query cache, rather than a page-global refresh, owns deduplication, AbortController lifetime, request generation, stale state, and precise invalidation. SSE is an invalidation signal; reconnect performs one authoritative server resynchronization. Agent sessions temporarily use exponential recovery polling because the current event protocol has no Agent-session event.
+
+## D-017 — Local storage is a write-only navigation preference
+
+The browser may remember the last visited Project as `preferredProjectId`, but App startup, global indexes, and object ownership never read it. Canonical URL identity and server DTO ownership always win. This deliberately removes the prior dual-truth `activeProjectId` mechanism.

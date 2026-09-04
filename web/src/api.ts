@@ -514,14 +514,15 @@ export const api = {
       `/api/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}`,
       { method: "DELETE" },
     ),
-  dashboard: () => request<DashboardData>("/api/projects"),
+  dashboard: (signal?: AbortSignal) =>
+    request<DashboardData>("/api/projects", { signal }),
   createProject: (id: string, yaml: string) =>
     request<ProjectSummary>("/api/projects", {
       method: "POST",
       body: JSON.stringify({ id, yaml }),
     }),
-  projectSummary: (projectId: string) =>
-    request<ProjectWorkspaceSummary>(`/api/projects/${projectId}/summary`),
+  projectSummary: (projectId: string, signal?: AbortSignal) =>
+    request<ProjectWorkspaceSummary>(`/api/projects/${projectId}/summary`, { signal }),
   projectModelBindings: (projectId: string) =>
     request<{ project_id: string; bindings: ProjectModelBinding[] }>(
       `/api/projects/${encodeURIComponent(projectId)}/model-bindings`,
@@ -547,8 +548,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(defaults),
     }),
-  images: (projectId: string) =>
-    request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`),
+  images: (projectId: string, signal?: AbortSignal) =>
+    request<{ images: ImageItem[] }>(`/api/projects/${projectId}/images`, { signal }),
   importImages: (projectId: string, source: string) =>
     request<{
       source: string;
@@ -602,9 +603,9 @@ export const api = {
     request(`/api/runs/${runId}/${action}`, { method: "POST" }),
   controlBatch: (batchId: string, action: "pause" | "resume" | "cancel") =>
     request(`/api/batches/${batchId}/${action}`, { method: "POST" }),
-  runEvents: (runId: string) =>
-    request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
-  runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
+  runEvents: (runId: string, signal?: AbortSignal) =>
+    request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`, { signal }),
+  runs: (signal?: AbortSignal) => request<{ runs: HistoryRun[] }>("/api/runs", { signal }),
   batches: () => request<{ batches: DatasetBatchSummary[] }>("/api/batches"),
   batch: (batchId: string) =>
     request<{
@@ -613,12 +614,13 @@ export const api = {
       events: unknown[];
     }>(`/api/batches/${batchId}`),
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
-  workflowDrafts: (projectId?: string) =>
+  workflowDrafts: (projectId?: string, signal?: AbortSignal) =>
     request<{
       drafts: WorkflowDraft[];
       latest_current_sample_test_draft_id?: string | null;
     }>(
       `/api/workflow-drafts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      { signal },
     ),
   workflowCatalog: (projectId: string, taskId?: string, label?: string) =>
     request<WorkflowCatalog>(
@@ -724,16 +726,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(task),
     }),
-  pipelineArtifacts: (runId: string) =>
+  pipelineArtifacts: (runId: string, signal?: AbortSignal) =>
     request<RunNodeArtifactInspection>(
       `/api/runs/${runId}/pipeline-artifacts`,
+      { signal },
     ),
-  runResultSummary: (runId: string) =>
-    request<RunResultSummary>(`/api/runs/${runId}/result-summary`),
-  runDebugSummary: (runId: string) =>
-    request<RunDebugSummary>(`/api/runs/${runId}/debug-summary`),
-  runAnnotations: (runId: string) =>
-    request<RunAnnotationInspection>(`/api/runs/${runId}/annotations`),
+  runResultSummary: (runId: string, signal?: AbortSignal) =>
+    request<RunResultSummary>(`/api/runs/${runId}/result-summary`, { signal }),
+  runDebugSummary: (runId: string, signal?: AbortSignal) =>
+    request<RunDebugSummary>(`/api/runs/${runId}/debug-summary`, { signal }),
+  runAnnotations: (runId: string, signal?: AbortSignal) =>
+    request<RunAnnotationInspection>(`/api/runs/${runId}/annotations`, { signal }),
   replayNode: (runId: string, nodeId: string) =>
     request<NodeReplayReport>(
       `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
@@ -749,11 +752,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ image_indices: imageIndices }),
     }),
-  workflowSampleTest: (draftId: string) =>
+  workflowSampleTest: (draftId: string, signal?: AbortSignal) =>
     request<{
       sample_test?: WorkflowSampleTestRecord | null;
       current: boolean;
-    }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test`),
+    }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test`, { signal }),
   publishWorkflow: (draftId: string) =>
     request<{ workflow_id: string; version: number }>(
       `/api/workflow-drafts/${draftId}/publish`,
@@ -819,9 +822,10 @@ export const api = {
     request<{ summary: GeometryQualitySummary; reports: unknown[]; evidence: unknown[] }>(
       `/api/runs/${encodeURIComponent(runId)}/geometry-quality`,
     ),
-  pipelineImprovements: (projectId: string) =>
+  pipelineImprovements: (projectId: string, signal?: AbortSignal) =>
     request<{ pipeline_improvements: PipelineImprovementSession[] }>(
       `/api/projects/${encodeURIComponent(projectId)}/pipeline-improvements`,
+      { signal },
     ),
   createPipelineImprovement: (
     projectId: string,
@@ -864,11 +868,13 @@ export const api = {
       `/api/models/${encodeURIComponent(modelId)}/sample-test`,
       { method: "POST", body: JSON.stringify(value) },
     ),
-  reviews: (projectId?: string) =>
+  reviews: (projectId?: string, signal?: AbortSignal) =>
     request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
       `/api/reviews${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      { signal },
     ),
-  review: (id: string) => request<ReviewItem>(`/api/reviews/${id}`),
+  review: (id: string, signal?: AbortSignal) =>
+    request<ReviewItem>(`/api/reviews/${id}`, { signal }),
   reviewNext: (id: string, projectId?: string) =>
     request<ReviewNavigation>(
       `/api/reviews/${id}/next${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
@@ -927,9 +933,10 @@ export const api = {
   revisions: (id: string) =>
     request<{ revisions: unknown[] }>(`/api/annotations/${id}/revisions`),
   skills: () => request<SkillDetail[]>("/api/skills"),
-  agentSessions: (projectId: string) =>
+  agentSessions: (projectId: string, signal?: AbortSignal) =>
     request<{ sessions: AgentSession[] }>(
       `/api/projects/${projectId}/agent-sessions`,
+      { signal },
     ),
   cancelAgentSession: (sessionId: string) =>
     request<{ session: AgentSession }>(

@@ -12,13 +12,17 @@ import { deriveProjectRunView } from "./runState";
 import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
+  projectBuildPath,
   projectBatchPath,
   projectReviewPath,
   projectRunPath,
   projectRunsPath,
+  routeFocusKey,
   type SettingsSection,
   type WorkspaceRoute,
 } from "./navigation";
+import { isAbortError, queryKeys, workspaceQueries } from "./queryCache";
+import { useRouteQuery } from "./useRouteQuery";
 import {
   NO_PROJECT_MESSAGE,
   PRIMARY_NAVIGATION,
@@ -239,9 +243,6 @@ export function App() {
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const hasConnectedRef = useRef(false);
   const needsReconnectSyncRef = useRef(false);
-  const [activeProjectId, setActiveProjectId] = useState(() =>
-    window.localStorage.getItem("annotagent.activeProjectId") ?? "",
-  );
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
 
   const navigate = (path: string, replace = false) => {
@@ -274,29 +275,67 @@ export function App() {
       navigate(route.canonicalPath, true);
   }, [route.canonicalPath]);
 
-  const refresh = () =>
-    api
-      .dashboard()
-      .then((data) => {
-        setProjects(data.projects);
-        setRuns(data.runs);
-        setModels(data.models);
-        setReviewQueue(data.review_queue);
-        setLoaded(true);
+  const applyDashboard = (data: Awaited<ReturnType<typeof api.dashboard>>) => {
+    setProjects(data.projects);
+    setRuns(data.runs);
+    setModels(data.models);
+    setReviewQueue(data.review_queue);
+    setLoaded(true);
+  };
+  const refresh = (force = true) =>
+    workspaceQueries
+      .load(queryKeys.dashboard, (signal) => api.dashboard(signal), {
+        force,
+        staleTime: 15_000,
       })
+      .then(applyDashboard)
       .catch((reason: Error) => {
+        if (isAbortError(reason)) return;
         setLoaded(true);
         setError(reason.message);
       });
 
+  const refreshExecutionState = async (runId: string) => {
+    workspaceQueries.invalidate(queryKeys.run(runId));
+    const nextRuns = await workspaceQueries.load(
+      "runs",
+      (signal) => api.runs(signal),
+      { force: true },
+    );
+    setRuns(nextRuns.runs);
+    const owner = nextRuns.runs.find((run) => run.id === runId)?.project_id;
+    if (!owner) return;
+    workspaceQueries.invalidate(queryKeys.project(owner));
+    const summary = await workspaceQueries.load(
+      queryKeys.projectSummary(owner),
+      (signal) => api.projectSummary(owner, signal),
+      { force: true },
+    );
+    setProjects((current) =>
+      current.map((project) => project.id === owner ? summary.project : project),
+    );
+  };
+
   useEffect(() => {
-    void refresh();
+    void refresh(false);
   }, []);
   useEffect(
     () =>
       subscribeEvents(
         (event) => {
           setEvents((previous) => [...previous.slice(-149), event]);
+          workspaceQueries.invalidate(queryKeys.run(event.run_id));
+          if (event.kind === "review_requested") {
+            workspaceQueries.invalidate("review-queue");
+            void workspaceQueries
+              .load(
+                queryKeys.reviewQueue(),
+                (signal) => api.reviews(undefined, signal),
+                { force: true },
+              )
+              .then((value) => setReviewQueue(value.progress.remaining_count))
+              .catch(() => undefined);
+          }
           if (
             [
               "run_created",
@@ -311,7 +350,7 @@ export function App() {
               "run_interrupted",
             ].includes(event.kind)
           )
-            void refresh();
+            void refreshExecutionState(event.run_id).catch(() => undefined);
         },
         () => {
           needsReconnectSyncRef.current = true;
@@ -319,7 +358,7 @@ export function App() {
         },
         () => {
           setConnection("connected");
-          if (hasConnectedRef.current || needsReconnectSyncRef.current) void refresh();
+          if (hasConnectedRef.current || needsReconnectSyncRef.current) void refresh(true);
           hasConnectedRef.current = true;
           needsReconnectSyncRef.current = false;
         },
@@ -328,7 +367,7 @@ export function App() {
   );
   useEffect(() => {
     pageTitleRef.current?.focus();
-  }, [route.canonicalPath]);
+  }, [routeFocusKey(route)]);
 
   const routeProjectId = (() => {
     switch (route.kind) {
@@ -353,9 +392,8 @@ export function App() {
   const selectedProject = projects.find((project) => project.id === projectId);
   const isProjectWorkspace = Boolean(routeProjectId);
   const setProjectContext = (id: string) => {
-    setActiveProjectId(id);
-    if (id) window.localStorage.setItem("annotagent.activeProjectId", id);
-    else window.localStorage.removeItem("annotagent.activeProjectId");
+    if (id) window.localStorage.setItem("annotagent.preferredProjectId", id);
+    else window.localStorage.removeItem("annotagent.preferredProjectId");
   };
   const openProject = (id: string) => {
     setProjectContext(id);
@@ -383,7 +421,7 @@ export function App() {
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
-    if (resolved && resolved !== activeProjectId) setProjectContext(resolved);
+    if (resolved) setProjectContext(resolved);
   }, [routeProjectId, routeRunProject?.id]);
   useEffect(() => {
     if (
@@ -579,12 +617,21 @@ export function App() {
             projects={projects}
             runs={runs}
             activeProjectId={projectId}
+            selectedDraftId={route.draftId}
+            selectedWorkflow={route.workflowId && route.workflowVersion
+              ? { id: route.workflowId, version: route.workflowVersion }
+              : undefined}
+            selectedAgentSessionId={route.agentSessionId}
+            selectedImprovementSessionId={route.improvementSessionId}
             onActivate={(id) =>
-              navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`)
+              navigate(projectBuildPath(id, "pipeline"))
             }
             onRefresh={refresh}
             onNavigate={(step, draftId) =>
-              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}${step === "test" && draftId ? `?draft=${encodeURIComponent(draftId)}` : ""}`)
+              navigate(projectBuildPath(route.projectId, step, { draftId }))
+            }
+            onSelectContext={(context, replace) =>
+              navigate(projectBuildPath(route.projectId, "pipeline", context), replace)
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
@@ -600,7 +647,7 @@ export function App() {
             step={route.step}
             selectedDraftId={route.draftId}
             onNavigate={(step, draftId, replace) =>
-              navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}${step === "test" && draftId ? `?draft=${encodeURIComponent(draftId)}` : ""}`, replace)
+              navigate(projectBuildPath(route.projectId, step, { draftId }), replace)
             }
             onOpenRuns={(batchId) =>
               navigate(batchId
@@ -732,18 +779,15 @@ function useBuildSummary(
   project: ProjectSummary | undefined,
   onError: (value: string) => void,
 ): ProjectWorkspaceSummary | undefined {
-  const [summary, setSummary] = useState<ProjectWorkspaceSummary>();
+  const query = useRouteQuery(
+    project ? queryKeys.projectSummary(project.id) : undefined,
+    (signal) => api.projectSummary(project!.id, signal),
+    { staleTime: 5_000 },
+  );
   useEffect(() => {
-    if (!project) {
-      setSummary(undefined);
-      return;
-    }
-    void api
-      .projectSummary(project.id)
-      .then(setSummary)
-      .catch((error: Error) => onError(error.message));
-  }, [project]);
-  return summary?.project.id === project?.id ? summary : undefined;
+    if (query.error) onError(query.error.message);
+  }, [query.error]);
+  return query.data?.project.id === project?.id ? query.data : undefined;
 }
 
 function journeyForBuildStep(guidance: ProjectGuidance, step: BuildStep) {
@@ -1088,7 +1132,12 @@ function BuildTestPublish({
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const [startingRun, setStartingRun] = useState(false);
-  const load = (selectFallback = true) => api.workflowDrafts(project.id).then((value) => {
+  const sampleLoadGeneration = useRef(0);
+  const load = (selectFallback = true) => workspaceQueries.load(
+    queryKeys.workflowDrafts(project.id),
+    (signal) => api.workflowDrafts(project.id, signal),
+    { force: true },
+  ).then((value) => {
     setDrafts(value.drafts);
     const available = value.drafts.filter((draft) => draft.status !== "archived");
     setDraftId((current) => {
@@ -1101,25 +1150,42 @@ function BuildTestPublish({
     });
   });
   useEffect(() => {
-    void Promise.all([load(), api.images(project.id).then((value) => setImages(value.images))])
+    const imageKey = queryKeys.projectImages(project.id);
+    void Promise.all([
+      load(),
+      workspaceQueries.load(
+        imageKey,
+        (signal) => api.images(project.id, signal),
+        { staleTime: 30_000 },
+      ).then((value) => setImages(value.images)),
+    ])
       .catch((error: Error) => onError(error.message));
+    return () => {
+      workspaceQueries.abort(queryKeys.workflowDrafts(project.id));
+      workspaceQueries.abort(imageKey);
+    };
   }, [project.id]);
   useEffect(() => {
     if (draftId && draftId !== selectedDraftId) onSelectDraft(draftId, true);
   }, [draftId, selectedDraftId]);
   useEffect(() => {
-    let cancelled = false;
+    const generation = ++sampleLoadGeneration.current;
     setReport(undefined);
     setRestoredAt(undefined);
     setStaleReport(false);
     if (!draftId) {
       setReportLoading(false);
-      return () => { cancelled = true; };
+      return;
     }
+    const key = queryKeys.sampleTest(draftId);
     setReportLoading(true);
-    void api.workflowSampleTest(draftId)
+    void workspaceQueries.load(
+      key,
+      (signal) => api.workflowSampleTest(draftId, signal),
+      { force: true },
+    )
       .then(({ sample_test: sampleTest, current }) => {
-        if (cancelled) return;
+        if (generation !== sampleLoadGeneration.current) return;
         if (sampleTest && current) {
           setReport(sampleTest.report);
           setRestoredAt(sampleTest.completed_at);
@@ -1128,12 +1194,12 @@ function BuildTestPublish({
         }
       })
       .catch((error: Error) => {
-        if (!cancelled) onError(error.message);
+        if (generation === sampleLoadGeneration.current && !isAbortError(error)) onError(error.message);
       })
       .finally(() => {
-        if (!cancelled) setReportLoading(false);
+        if (generation === sampleLoadGeneration.current) setReportLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => workspaceQueries.abort(key);
   }, [draftId]);
   const test = () => {
     if (!draftId) return;
@@ -1210,7 +1276,7 @@ function BuildTestPublish({
     <>
       <div className="toolbar-panel sample-test-toolbar">
         <div className="sample-test-toolbar-copy"><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
-        <button className="sample-test-back" onClick={() => onNavigate("pipeline")}>← Edit Automation</button>
+        <button className="sample-test-back" onClick={() => onNavigate("pipeline", draftId)}>← Edit Automation</button>
         {draftControls}
       </div>
       {!report && <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
@@ -1242,7 +1308,7 @@ function BuildTestPublish({
             </div>
             {isActivated ? <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>This saved Sample Test belongs to the immutable active Version.</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div> : <>
               <div className="button-row">
-                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline")}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
+                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
                 {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
               </div>
               {activated && <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>Immutable Version v{activated.version} is ready for the full Dataset Run.</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div>}
@@ -2605,9 +2671,14 @@ function WorkflowsPage({
   projects,
   runs,
   activeProjectId,
+  selectedDraftId,
+  selectedWorkflow,
+  selectedAgentSessionId,
+  selectedImprovementSessionId,
   onActivate,
   onRefresh,
   onNavigate,
+  onSelectContext,
   onOpenProjects,
   onOpenProject,
   onOpenProviders,
@@ -2618,9 +2689,23 @@ function WorkflowsPage({
   projects: ProjectSummary[];
   runs: HistoryRun[];
   activeProjectId: string;
+  selectedDraftId?: string;
+  selectedWorkflow?: { id: string; version: number };
+  selectedAgentSessionId?: string;
+  selectedImprovementSessionId?: string;
   onActivate: (id: string) => void;
   onRefresh: () => Promise<void>;
   onNavigate: (step: "data" | "labels" | "pipeline" | "test", draftId?: string) => void;
+  onSelectContext: (
+    context: {
+      draftId?: string;
+      workflowId?: string;
+      workflowVersion?: number;
+      agentSessionId?: string;
+      improvementSessionId?: string;
+    },
+    replace?: boolean,
+  ) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
   onOpenProviders: () => void;
@@ -2634,7 +2719,10 @@ function WorkflowsPage({
       workflow,
     })),
   );
-  const [selectedPublishedKey, setSelectedPublishedKey] = useState("");
+  const selectedPublishedFromRoute = selectedWorkflow
+    ? `${selectedWorkflow.id}:${selectedWorkflow.version}`
+    : "";
+  const [selectedPublishedKey, setSelectedPublishedKey] = useState(selectedPublishedFromRoute);
   const selected =
     entries.find(
       (entry) =>
@@ -2690,14 +2778,22 @@ function WorkflowsPage({
   const [savedAt, setSavedAt] = useState<Date>();
   const [clock, setClock] = useState(() => Date.now());
   const refreshDrafts = () =>
-    api
-      .workflowDrafts(activeProjectId || undefined)
+    workspaceQueries
+      .load(
+        queryKeys.workflowDrafts(activeProjectId),
+        (signal) => api.workflowDrafts(activeProjectId || undefined, signal),
+        { force: true },
+      )
       .then((value) => {
         for (const item of value.drafts)
           persistedDrafts.current.set(item.id, JSON.stringify(item));
         setDrafts(value.drafts);
         setDraft(
           (current) =>
+            selectedPublishedFromRoute
+              ? undefined
+              :
+            value.drafts.find((item) => item.id === selectedDraftId) ??
             value.drafts.find((item) => item.id === current?.id) ??
             value.drafts[0],
         );
@@ -2835,10 +2931,17 @@ function WorkflowsPage({
         .workflowCatalog(activeProjectId)
         .then(setCatalog)
         .catch((error: Error) => onError(error.message));
-      void api
-        .agentSessions(activeProjectId)
+      void workspaceQueries
+        .load(
+          queryKeys.agentSessions(activeProjectId),
+          (signal) => api.agentSessions(activeProjectId, signal),
+          { force: true },
+        )
         .then(({ sessions }) => {
-          const latest = sessions.find(
+          const requested = sessions.find(
+            (session) => session.id === selectedAgentSessionId,
+          );
+          const latest = requested ?? sessions.find(
             (session) =>
               session.kind === "pipeline_builder" &&
               ["running", "waiting_for_human"].includes(session.status),
@@ -2857,53 +2960,87 @@ function WorkflowsPage({
       setAdvisorRunning(false);
     }
     setReport(undefined);
-    setSelectedPublishedKey("");
+    setSelectedPublishedKey(selectedPublishedFromRoute);
     setTargetTaskId(activeProject?.annotation_schema[0]?.id ?? "");
     setTargetLabel(activeProject?.annotation_schema[0]?.labels[0] ?? "");
+    return () => {
+      workspaceQueries.abort(queryKeys.workflowDrafts(activeProjectId));
+      workspaceQueries.abort(queryKeys.agentSessions(activeProjectId));
+    };
   }, [activeProjectId]);
+  useEffect(() => {
+    const selectedDraft = drafts.find((item) => item.id === selectedDraftId);
+    if (selectedDraft && selectedDraft.id !== draft?.id) {
+      setDraft(selectedDraft);
+      setReport(undefined);
+    }
+  }, [selectedDraftId, drafts]);
+  useEffect(() => {
+    setSelectedPublishedKey(selectedPublishedFromRoute);
+  }, [selectedPublishedFromRoute]);
+  useEffect(() => {
+    if (draft?.id && draft.id !== selectedDraftId && !selectedPublishedFromRoute)
+      onSelectContext({ draftId: draft.id }, true);
+  }, [draft?.id, selectedDraftId, selectedPublishedFromRoute]);
   useEffect(() => {
     if (!advisorRunning || !activeProjectId) return;
     let stopped = false;
-    const poll = () =>
-      api.agentSessions(activeProjectId).then(({ sessions }) => {
+    let timer: number | undefined;
+    let delay = 1_000;
+    const poll = async () => {
+      try {
+        const { sessions } = await workspaceQueries.load(
+          queryKeys.agentSessions(activeProjectId),
+          (signal) => api.agentSessions(activeProjectId, signal),
+          { force: true },
+        );
         if (stopped) return;
         const latest = sessions.find((session) => session.kind === "pipeline_builder");
         if (latest) {
-          if (
-            advisorRequestActive.current &&
-            latest.status !== "running"
-          )
-            return;
+          if (advisorRequestActive.current && latest.status !== "running") return;
           setActiveAgentSession(latest);
-          if (
-            !advisorRequestActive.current &&
-            latest.status !== "running"
-          ) {
+          onSelectContext({
+            draftId: draft?.id ?? selectedDraftId ?? latest.draft_id,
+            agentSessionId: latest.id,
+          }, true);
+          if (!advisorRequestActive.current && latest.status !== "running") {
             setAdvisorRunning(false);
             void recoverAdvisorProposal(latest).catch((error: Error) =>
               onError(`Agent result recovery: ${error.message}`),
             );
+            return;
           }
         }
-      }).catch(() => undefined);
+      } catch {
+        // The next bounded backoff is the recovery path while SSE has no Agent event.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(() => void poll(), delay);
+        delay = Math.min(10_000, Math.round(delay * 1.8));
+      }
+    };
     void poll();
-    const timer = window.setInterval(() => void poll(), 750);
     return () => {
       stopped = true;
-      window.clearInterval(timer);
+      if (timer) window.clearTimeout(timer);
+      workspaceQueries.abort(queryKeys.agentSessions(activeProjectId));
     };
   }, [advisorRunning, activeProjectId]);
   useEffect(() => {
     if (!draft) return;
-    let cancelled = false;
-    void api.workflowSampleTest(draft.id)
+    const key = queryKeys.sampleTest(draft.id);
+    void workspaceQueries.load(
+      key,
+      (signal) => api.workflowSampleTest(draft.id, signal),
+      { force: true },
+    )
       .then(({ sample_test: sampleTest, current }) => {
-        if (!cancelled) setReport(current ? sampleTest?.report : undefined);
+        setReport(current ? sampleTest?.report : undefined);
       })
-      .catch(() => {
-        if (!cancelled) setReport(undefined);
+      .catch((error: unknown) => {
+        if (!isAbortError(error)) setReport(undefined);
       });
-    return () => { cancelled = true; };
+    return () => workspaceQueries.abort(key);
   }, [draft?.id, draft?.updated_at]);
   const finish = (promise: Promise<unknown>) => {
     setBusy(true);
@@ -2964,6 +3101,10 @@ function WorkflowsPage({
         setAdvisorProposal(proposal);
         setAdvisorProposalRecovered(false);
         setActiveAgentSession(proposal.agent_session);
+        onSelectContext({
+          draftId: baseDraft.id,
+          agentSessionId: proposal.agent_session?.id,
+        }, true);
         setShowProposalComparison(true);
         if (baseDraft.id !== proposal.draft.id) {
           const diff = await api.workflowDraftDiff(baseDraft.id, proposal.draft.id);
@@ -2998,11 +3139,15 @@ function WorkflowsPage({
     const selectedDraft = drafts.find((candidate) => candidate.id === draftId);
     if (selectedDraft) {
       setDraft(selectedDraft);
+      onSelectContext({ draftId }, true);
       return;
     }
     void api.workflowDrafts(activeProjectId || undefined).then(({ drafts: latest }) => {
       const recovered = latest.find((candidate) => candidate.id === draftId);
-      if (recovered) setDraft(recovered);
+      if (recovered) {
+        setDraft(recovered);
+        onSelectContext({ draftId }, true);
+      }
       else onError("The saved Agent Draft is no longer available in this Project.");
     }).catch((error: Error) => onError(error.message));
   };
@@ -3604,6 +3749,14 @@ function WorkflowsPage({
         project={activeProject}
         runs={runs}
         workflows={publishedEntries.map(({ workflow }) => workflow)}
+        selectedSessionId={selectedImprovementSessionId}
+        onSelectSession={(improvementSessionId, replace) =>
+          onSelectContext({
+            draftId: draft?.id,
+            improvementSessionId,
+            agentSessionId: activeAgentSession?.id,
+          }, replace)
+        }
         onDraftApplied={(draftId) => {
           void api.workflowDrafts(activeProject.id).then(({ drafts: latest }) => {
             const applied = latest.find((candidate) => candidate.id === draftId);
@@ -3696,7 +3849,7 @@ function WorkflowsPage({
             <details className="draft-history">
               <summary>Historical Drafts ({drafts.filter((item) => item.id !== draft?.id).length})</summary>
               {drafts.filter((item) => item.id !== draft?.id).map((item) => (
-                <button key={item.id} onClick={() => { setDraft(item); setReport(undefined); }}>
+                <button key={item.id} onClick={() => { setDraft(item); setReport(undefined); onSelectContext({ draftId: item.id }); }}>
                   <span><strong>{item.name}</strong><small>{item.updated_at}</small></span>
                   <Status status={item.status} />
                 </button>
@@ -3714,6 +3867,10 @@ function WorkflowsPage({
                 setSelectedPublishedKey(
                   `${workflow.workflow_id}:${workflow.version}`,
                 );
+                onSelectContext({
+                  workflowId: workflow.workflow_id,
+                  workflowVersion: Number(workflow.version),
+                });
                 setDraft(undefined);
                 setReport(undefined);
               }}
@@ -7207,13 +7364,38 @@ function RunDetailWorkspace({
   onError: (value: string) => void;
 }) {
   const view = route.view ?? "results";
-  const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
-  const [annotationInspection, setAnnotationInspection] = useState<RunAnnotationInspection>();
-  const [resultSummary, setResultSummary] = useState<RunResultSummary>();
-  const [debugSummary, setDebugSummary] = useState<RunDebugSummary>();
   const [replay, setReplay] = useState<NodeReplayReport>();
-  const [images, setImages] = useState<ImageItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const resultQuery = useRouteQuery(
+    queryKeys.runResults(run.id),
+    (signal) => api.runResultSummary(run.id, signal),
+    { staleTime: run.controllable ? 0 : 30_000 },
+  );
+  const annotationQuery = useRouteQuery(
+    queryKeys.runAnnotations(run.id),
+    (signal) => api.runAnnotations(run.id, signal),
+    { staleTime: run.controllable ? 0 : 30_000 },
+  );
+  const debugQuery = useRouteQuery(
+    view === "debug" ? queryKeys.runDebug(run.id) : undefined,
+    (signal) => api.runDebugSummary(run.id, signal),
+    { staleTime: run.controllable ? 0 : 30_000 },
+  );
+  const artifactQuery = useRouteQuery(
+    view === "debug" ? `${queryKeys.runDebug(run.id)}/artifacts` : undefined,
+    (signal) => api.pipelineArtifacts(run.id, signal),
+    { staleTime: run.controllable ? 0 : 30_000 },
+  );
+  const imageQuery = useRouteQuery(
+    project ? queryKeys.projectImages(project.id) : undefined,
+    (signal) => api.images(project!.id, signal),
+    { staleTime: 30_000 },
+  );
+  const inspection = replay?.inspection ?? artifactQuery.data;
+  const annotationInspection = annotationQuery.data;
+  const resultSummary = resultQuery.data;
+  const debugSummary = debugQuery.data;
+  const images = imageQuery.data?.images ?? [];
   const runPath = (context: {
     imageId?: string;
     nodeId?: string;
@@ -7231,22 +7413,13 @@ function RunDetailWorkspace({
           if (context.artifactId) params.set("artifact", context.artifactId);
           return params.size ? `?${params.toString()}` : "";
         })()}`;
+  useEffect(() => setReplay(undefined), [run.id]);
   useEffect(() => {
-    setInspection(undefined);
-    setAnnotationInspection(undefined);
-    setResultSummary(undefined);
-    setDebugSummary(undefined);
-    setReplay(undefined);
-    if (run.checkpoint_present)
-      void api.pipelineArtifacts(run.id).then(setInspection).catch((error: Error) => onError(error.message));
-    void api.runResultSummary(run.id).then(setResultSummary).catch((error: Error) => onError(error.message));
-    void api.runAnnotations(run.id).then(setAnnotationInspection).catch((error: Error) => onError(error.message));
-    if (project)
-      void api.images(project.id).then((value) => setImages(value.images)).catch((error: Error) => onError(error.message));
-  }, [run.id, project?.id]);
+    const error = resultQuery.error ?? annotationQuery.error ?? debugQuery.error ?? artifactQuery.error ?? imageQuery.error;
+    if (error) onError(error.message);
+  }, [resultQuery.error, annotationQuery.error, debugQuery.error, artifactQuery.error, imageQuery.error]);
   useEffect(() => {
     if (view !== "debug") return;
-    void api.runDebugSummary(run.id).then(setDebugSummary).catch((error: Error) => onError(error.message));
     if (!route.nodeId && inspection?.nodes[0]) {
       onNavigate(
         runPath({
@@ -7319,7 +7492,11 @@ function RunDetailWorkspace({
   const replayNode = () => {
     if (!selectedNode) return;
     setBusy(true);
-    void api.replayNode(run.id, selectedNode.node_id).then((value) => { setReplay(value); setInspection(value.inspection); }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+    void api.replayNode(run.id, selectedNode.node_id).then((value) => {
+      setReplay(value);
+      workspaceQueries.invalidate(queryKeys.runDebug(run.id));
+      workspaceQueries.invalidate(queryKeys.runResults(run.id));
+    }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
   };
   const duration = Math.max(0, new Date(run.updated_at).getTime() - new Date(run.created_at).getTime());
   const completedNodes = inspection?.nodes.filter((node) =>
@@ -8001,6 +8178,8 @@ function ReviewPage({
   const [correctionSkillId, setCorrectionSkillId] = useState("");
   const [note, setNote] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
+  const queueLoadGeneration = useRef(0);
+  const itemLoadGeneration = useRef(0);
   useEffect(() => setSelectedId(route.reviewItemId ?? ""), [route.reviewItemId]);
   const routeReview = route.reviewItemId
     ? reviews.find((review) => review.id === route.reviewItemId)
@@ -8043,10 +8222,13 @@ function ReviewPage({
       );
   }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
   const refresh = () => {
+    const generation = ++queueLoadGeneration.current;
+    const key = queryKeys.reviewQueue(route.projectId);
     setQueueLoaded(false);
-    return api
-      .reviews(route.projectId)
+    return workspaceQueries
+      .load(key, (signal) => api.reviews(route.projectId, signal), { force: true })
       .then((value) => {
+        if (generation !== queueLoadGeneration.current) return;
         setReviews(value.reviews);
         setProgress(value.progress);
         const first = value.reviews[0];
@@ -8057,22 +8239,34 @@ function ReviewPage({
         )
           onNavigate(reviewHref(first.id, first), true);
       })
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setQueueLoaded(true));
+      .catch((error: Error) => {
+        if (generation === queueLoadGeneration.current && !isAbortError(error)) onError(error.message);
+      })
+      .finally(() => {
+        if (generation === queueLoadGeneration.current) setQueueLoaded(true);
+      });
   };
   useEffect(() => {
     if (!route.reviewItemId) return;
-    void api
-      .review(route.reviewItemId)
+    const reviewId = route.reviewItemId;
+    const generation = ++itemLoadGeneration.current;
+    const key = queryKeys.review(reviewId);
+    void workspaceQueries
+      .load(key, (signal) => api.review(reviewId, signal), { force: true })
       .then((review) =>
-        setReviews((items) =>
+        generation === itemLoadGeneration.current && setReviews((items) =>
           items.some((item) => item.id === review.id) ? items : [review, ...items],
         ),
       )
-      .catch((error: Error) => onError(error.message));
+      .catch((error: Error) => {
+        if (generation === itemLoadGeneration.current && !isAbortError(error)) onError(error.message);
+      });
+    return () => workspaceQueries.abort(key);
   }, [route.reviewItemId]);
   useEffect(() => {
     void refresh();
+    const key = queryKeys.reviewQueue(route.projectId);
+    return () => workspaceQueries.abort(key);
   }, [route.projectId]);
   useEffect(() => {
     if (!selected?.id) {
@@ -8109,12 +8303,17 @@ function ReviewPage({
       .catch((error: Error) => onError(error.message));
   }, [reviewProject?.id, selected?.source_skill_id]);
   useEffect(() => {
-    if (reviewProject)
-      void api
-        .images(reviewProject.id)
+    if (reviewProject) {
+      const key = queryKeys.projectImages(reviewProject.id);
+      void workspaceQueries
+        .load(key, (signal) => api.images(reviewProject.id, signal), { staleTime: 30_000 })
         .then((value) => setImages(value.images))
-        .catch((error: Error) => onError(error.message));
-    else setImages([]);
+        .catch((error: Error) => {
+          if (!isAbortError(error)) onError(error.message);
+        });
+      return () => workspaceQueries.abort(key);
+    }
+    setImages([]);
   }, [reviewProject?.id]);
   useEffect(() => {
     setDraft(selected?.annotation);

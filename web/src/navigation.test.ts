@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   parseWorkspaceRoute,
+  projectBuildPath,
   projectBatchPath,
   projectReviewPath,
   projectRunPath,
   projectRunsPath,
+  routeFocusKey,
 } from "./navigation";
 
 describe("guided workspace routing", () => {
@@ -164,7 +166,47 @@ describe("guided workspace routing", () => {
       step: "pipeline",
       workflowId: "workflow-1",
       workflowVersion: 3,
+      canonicalPath: "/projects/project-a/build/pipeline?version=workflow-1%403",
     });
+    expect(
+      parseWorkspaceRoute(
+        "/projects/project-a/build/pipeline",
+        "?draft=draft-1&session=session-7&improvement=improve-4",
+      ),
+    ).toMatchObject({
+      draftId: "draft-1",
+      agentSessionId: "session-7",
+      improvementSessionId: "improve-4",
+    });
+    expect(projectBuildPath("project-a", "pipeline", {
+      workflowId: "workflow-1",
+      workflowVersion: 3,
+    })).toBe("/projects/project-a/build/pipeline?version=workflow-1%403");
+  });
+
+  it("keeps Sample Test identity alongside the exact Draft", () => {
+    const path = projectBuildPath("project-a", "test", {
+      draftId: "draft-1",
+      sampleTestId: "test-9",
+    });
+    expect(path).toBe("/projects/project-a/build/test?draft=draft-1&test=test-9");
+    expect(parseWorkspaceRoute("/projects/project-a/build/test", "?draft=draft-1&test=test-9"))
+      .toMatchObject({ draftId: "draft-1", sampleTestId: "test-9" });
+  });
+
+  it("does not treat in-page selections as a new heading focus target", () => {
+    const firstDraft = parseWorkspaceRoute(
+      "/projects/project-a/build/pipeline",
+      "?draft=draft-1",
+    );
+    const secondDraft = parseWorkspaceRoute(
+      "/projects/project-a/build/pipeline",
+      "?draft=draft-2&session=session-2",
+    );
+    const firstReview = parseWorkspaceRoute("/projects/project-a/review/review-1");
+    const secondReview = parseWorkspaceRoute("/projects/project-a/review/review-2");
+    expect(routeFocusKey(firstDraft)).toBe(routeFocusKey(secondDraft));
+    expect(routeFocusKey(firstReview)).toBe(routeFocusKey(secondReview));
   });
 
   it("does not silently rewrite an unknown deep link to Home", () => {

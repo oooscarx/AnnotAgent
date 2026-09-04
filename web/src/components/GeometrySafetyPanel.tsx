@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { queryKeys, workspaceQueries } from "../queryCache";
 import type {
   HistoryRun,
   PipelineDraftDiff,
@@ -83,18 +84,22 @@ export function ImproveAutomationPanel({
   project,
   runs,
   workflows,
+  selectedSessionId,
+  onSelectSession,
   onDraftApplied,
   onError,
 }: {
   project: ProjectSummary;
   runs: HistoryRun[];
   workflows: WorkflowVersion[];
+  selectedSessionId?: string;
+  onSelectSession: (sessionId?: string, replace?: boolean) => void;
   onDraftApplied: (draftId: string) => void;
   onError: (message: string) => void;
 }) {
   const projectRuns = useMemo(
     () => runs.filter((run) => run.project_id === project.project_id && !["running", "paused", "pending"].includes(run.status)),
-    [project.name, runs],
+    [project.project_id, runs],
   );
   const published = workflows.filter((workflow) => workflow.status === "published" && workflow.source.startsWith("published draft"));
   const bboxTasks = project.annotation_schema.filter((task) => task.kind === "bounding_box");
@@ -105,7 +110,7 @@ export function ImproveAutomationPanel({
   const [evidenceRunIds, setEvidenceRunIds] = useState<string[]>([]);
   const [holdoutRunIds, setHoldoutRunIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<PipelineImprovementSession[]>([]);
-  const [activeId, setActiveId] = useState("");
+  const [activeId, setActiveId] = useState(selectedSessionId ?? "");
   const active = sessions.find((session) => session.id === activeId) ?? sessions[0];
   const [selectedChanges, setSelectedChanges] = useState<string[]>([]);
   const [policies, setPolicies] = useState<ProjectGeometryPolicy[]>([]);
@@ -115,18 +120,30 @@ export function ImproveAutomationPanel({
   const selectedWorkflow = published.find((workflow) => `${workflow.workflow_id}:${workflow.version}` === workflowKey) ?? published[0];
   const geometryNodes = selectedWorkflow?.nodes.filter((node) => node.model_binding && (node.node_type.includes("detect") || node.node_type.includes("ground") || node.node_type.includes("segment"))) ?? [];
   const refresh = () => Promise.all([
-    api.pipelineImprovements(project.id),
+    workspaceQueries.load(
+      queryKeys.improvementSessions(project.id),
+      (signal) => api.pipelineImprovements(project.id, signal),
+      { force: true },
+    ),
     api.geometryPolicy(project.id),
     api.geometryCalibrations(project.id),
   ]).then(([improvements, policyResult, calibrationResult]) => {
     setSessions(improvements.pipeline_improvements);
     setPolicies(policyResult.policies);
     setCalibrations(calibrationResult.calibrations);
-    setActiveId((current) => improvements.pipeline_improvements.some((session) => session.id === current) ? current : improvements.pipeline_improvements[0]?.id ?? "");
+    setActiveId((current) => {
+      const requested = improvements.pipeline_improvements.find(
+        (session) => session.id === selectedSessionId,
+      )?.id;
+      const next = requested ?? (improvements.pipeline_improvements.some((session) => session.id === current) ? current : improvements.pipeline_improvements[0]?.id ?? "");
+      if (next && next !== selectedSessionId) onSelectSession(next, true);
+      return next;
+    });
   });
   useEffect(() => {
     setWorkflowKey((current) => current || (published[0] ? `${published[0].workflow_id}:${published[0].version}` : ""));
     void refresh().catch((error: Error) => onError(error.message));
+    return () => workspaceQueries.abort(queryKeys.improvementSessions(project.id));
   }, [project.id]);
   useEffect(() => {
     setLabel(task?.labels[0] ?? "");
@@ -135,6 +152,10 @@ export function ImproveAutomationPanel({
     setSelectedChanges(active ? diffRows(active.diff).map((change) => change.id) : []);
   }, [active?.id]);
   useEffect(() => {
+    if (selectedSessionId && sessions.some((session) => session.id === selectedSessionId))
+      setActiveId(selectedSessionId);
+  }, [selectedSessionId, sessions]);
+  useEffect(() => {
     setCalibrationNode((current) => geometryNodes.some((node) => node.id === current) ? current : geometryNodes[0]?.id ?? "");
   }, [workflowKey]);
   const perform = (name: string, operation: () => Promise<PipelineImprovementSession>) => {
@@ -142,6 +163,7 @@ export function ImproveAutomationPanel({
     void operation().then((session) => {
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
       setActiveId(session.id);
+      onSelectSession(session.id, true);
     }).catch((error: Error) => onError(error.message)).finally(() => setBusy(""));
   };
   const create = () => {
@@ -206,7 +228,7 @@ export function ImproveAutomationPanel({
     </div>}
     <div className="button-row">
       <button disabled={Boolean(busy) || !selectedWorkflow || !taskId || !label || !evidenceRunIds.length} onClick={create}>{busy === "create" ? "Creating Patch…" : "Diagnose and create Patch Draft"}</button>
-      <select aria-label="Saved improvement session" value={active?.id ?? ""} onChange={(event) => setActiveId(event.target.value)}><option value="">No saved session</option>{sessions.map((session) => <option key={session.id} value={session.id}>{title(session.diagnosis.primary_failure_class)} · {session.id.slice(0, 8)}</option>)}</select>
+      <select aria-label="Saved improvement session" value={active?.id ?? ""} onChange={(event) => { setActiveId(event.target.value); onSelectSession(event.target.value || undefined); }}><option value="">No saved session</option>{sessions.map((session) => <option key={session.id} value={session.id}>{title(session.diagnosis.primary_failure_class)} · {session.id.slice(0, 8)}</option>)}</select>
     </div>
     {active && <div className="improvement-result">
       <section className="improvement-diagnosis"><span className="eyebrow">Diagnosis</span><h3>{title(active.diagnosis.primary_failure_class)}</h3><ul>{active.diagnosis.evidence_statements.map((statement) => <li key={statement}>{statement}</li>)}</ul><div className="tag-group"><span>{active.diagnosis.geometry_correction_count} geometry corrections</span><span>{active.diagnosis.semantic_target_correct_count} semantic matches</span><span>{active.diagnosis.provider_failure_count} Provider failures</span><span>{active.diagnosis.no_candidate_count} no-candidate results</span></div></section>

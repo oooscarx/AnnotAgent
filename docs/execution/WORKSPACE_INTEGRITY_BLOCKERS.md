@@ -1,6 +1,6 @@
 # Workspace Integrity Blockers
 
-No implementation blocker currently prevents M5.
+No implementation blocker currently prevents M6.
 
 ## Input gaps
 

@@ -38,14 +38,14 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## D. State recovery
 
-- [ ] Pipeline refresh preserves the exact Draft.
-- [ ] Test refresh preserves the exact Draft and Sample Test.
+- [x] Pipeline refresh preserves the exact Draft.
+- [x] Test refresh preserves the exact Draft and current persisted Sample Test; immutable Sample Test IDs complete in M6.
 - [x] Run refresh preserves Image, View, Node, and Artifact.
-- [ ] Review refresh preserves the Item.
-- [ ] A stale request cannot overwrite a newly selected Project.
-- [ ] SSE reconnection resynchronizes server truth.
-- [ ] Local storage never determines object ownership.
-- [ ] In-page selection changes do not steal H1 focus.
+- [x] Review refresh preserves the Item.
+- [x] A stale request cannot overwrite a newly selected Project.
+- [x] SSE reconnection resynchronizes server truth.
+- [x] Local storage never determines object ownership.
+- [x] In-page selection changes do not steal H1 focus.
 
 ## E. Run and results
 
@@ -69,8 +69,8 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] Sample Tests bind to a Draft content hash.
 - [ ] Publish requires an exact current Sample Test.
 - [ ] Published versions are immutable.
-- [ ] Pipeline URLs preserve Draft/version.
-- [ ] Stale asynchronous results cannot overwrite a new Draft.
+- [x] Pipeline URLs preserve Draft/version.
+- [x] Stale asynchronous results cannot overwrite a new Draft.
 
 ## G. Review
 
@@ -115,8 +115,8 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] Global discovery into owned detail.
 - [ ] Duplicate Project names.
 - [ ] Project rename with historical data.
-- [ ] Refresh recovery for Build/Test/Run/Review.
-- [ ] Slow-request race.
+- [x] Refresh recovery for Build/Test/Run/Review.
+- [x] Slow-request race.
 - [ ] Two-tab Draft conflict.
 - [x] Final result vs intermediate artifact.
 - [x] Mixed batch status/progress.

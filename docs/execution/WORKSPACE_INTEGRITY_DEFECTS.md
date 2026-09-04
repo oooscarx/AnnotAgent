@@ -41,16 +41,16 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P2-05 | Run canonicalization drops `project_id` | current canonicalizer reconstructs partial route | Owner resolution replaces the alias with a canonical nested route and preserves typed context | M3 | accepted |
 | P2-06 | Legacy `/models` and `/skills` redirect to Vision Workers | `navigation.ts` | Redirects now target `/settings/models` and `/settings/plugins` | M3 | accepted |
 | P2-07 | Unknown URLs silently become Home | navigation fallback | Explicit NotFound route preserves the invalid URL | M3 | accepted |
-| P2-08 | Canonicalizer drops query state not typed in Route | route parser/builder | Current route identities are typed and round-trip; async ownership/selection recovery continues in M5 | M3/M5 | implementing |
-| P2-09 | Image/node/artifact selection repeatedly moves focus to H1 | route change focus effect treats query changes as page changes | Focus on pathname/page identity only | M5 | reproduced |
-| P2-10 | URL and localStorage compete as active Project truth | workspace selection bootstrap | URL/server owner first; localStorage preference only | M5 | reproduced |
+| P2-08 | Canonicalizer drops query state not typed in Route | route parser/builder | Draft, version, Agent Session, Improvement Session, Sample Test, Run and Review identities are typed and round-trip | M3/M5 | accepted |
+| P2-09 | Image/node/artifact selection repeatedly moves focus to H1 | route change focus effect treats query changes as page changes | Page-level focus key excludes in-page durable selections; unit/E2E keyboard coverage passes | M5 | accepted |
+| P2-10 | URL and localStorage compete as active Project truth | workspace selection bootstrap | Removed localStorage reads from owner selection; only a renamed write-only preference remains | M5 | accepted |
 | P2-11 | Run image status filter is a dead control | control state is not applied to list | Removed from single-image Run; real status filtering now lives on Dataset Batch images | M4 | accepted |
-| P2-12 | Selecting image/node/artifact forces Debug | coupled selection/view state | Preserve explicit view and validate query combinations | M5 | reproduced |
-| P2-13 | Image query lacks full type/ownership validation | loosely parsed query | Typed parse plus owner validation | M5 | reproduced |
-| P2-14 | Debug artifacts load only when checkpoint flag exists | conditional data fetch | Load inspector artifacts from capability/endpoint truth | M4/M5 | reproduced |
-| P2-15 | Pipeline URL omits selected Draft/version | route model has no identity query | Parser/builders retain `draft` or `workflow`/`version`; UI state authority and stale-response safety continue in M5 | M3/M5 | implementing |
-| P2-16 | Stale async responses overwrite newly selected pages | effects lack cancellation/request identity | Route-aware query cache and AbortController | M5 | reproduced |
-| P2-17 | SSE invalidation and frequent polling duplicate synchronization | independent refresh loops | SSE invalidates cache; one bounded recovery poll | M5 | reproduced |
+| P2-12 | Selecting image/node/artifact forces Debug | coupled selection/view state | Explicit Results/Debug view is URL-owned; Run child selection preserves its compatible view | M5 | accepted |
+| P2-13 | Image query lacks full type/ownership validation | loosely parsed query | Stable string Image IDs are parsed and canonicalized, then replaced by the Run-owned server identity | M4/M5 | accepted |
+| P2-14 | Debug artifacts load only when checkpoint flag exists | conditional data fetch | Debug endpoint is queried by selected view regardless of checkpoint hint; Results does not fetch intermediate artifacts | M5 | accepted |
+| P2-15 | Pipeline URL omits selected Draft/version | route model has no identity query | Typed builder preserves exact Draft or combined immutable `workflow@version`, plus Agent/Improvement session | M3/M5 | accepted |
+| P2-16 | Stale async responses overwrite newly selected pages | effects lack cancellation/request identity | Route cache tests prove abort and generation guards; route components cancel the old owner key | M5 | accepted |
+| P2-17 | SSE invalidation and frequent polling duplicate synchronization | independent refresh loops | Run SSE precisely invalidates affected resources; reconnect resyncs once; Agent recovery uses 1–10 second exponential backoff | M5 | accepted |
 | P2-18 | Advanced graph editor can create unsafe graphs | editor permits invalid connections/states | Move to read-only/Labs until graph-safe editing is complete | M8 | reproduced |
 | P2-19 | “Review uncertain result” only scrolls | button has no durable review action | Create/open real scoped review item or remove | M8 | reproduced |
 | P2-20 | Sample count ignores dataset size | fixed count/control bounds | Clamp to available stable image set | M8 | reproduced |

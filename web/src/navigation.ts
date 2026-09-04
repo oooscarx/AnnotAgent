@@ -20,6 +20,9 @@ export type WorkspaceRoute =
       draftId?: string;
       workflowId?: string;
       workflowVersion?: number;
+      agentSessionId?: string;
+      improvementSessionId?: string;
+      sampleTestId?: string;
     }
   | {
       kind: "runs";
@@ -65,6 +68,15 @@ type RunUrlContext = {
   view?: "results" | "debug";
 };
 
+export type BuildUrlContext = {
+  draftId?: string;
+  workflowId?: string;
+  workflowVersion?: number;
+  agentSessionId?: string;
+  improvementSessionId?: string;
+  sampleTestId?: string;
+};
+
 function runContextSearch(context: RunUrlContext): string {
   const params = new URLSearchParams();
   if (context.view === "debug" || context.nodeId || context.artifactId) params.set("view", "debug");
@@ -102,6 +114,54 @@ export function projectBatchPath(projectId: string, batchId: string): string {
 export function projectReviewPath(projectId: string, reviewItemId?: string): string {
   const base = `/projects/${encodeURIComponent(projectId)}/review`;
   return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}` : base;
+}
+
+export function projectBuildPath(
+  projectId: string,
+  step: BuildStep,
+  context: BuildUrlContext = {},
+): string {
+  const params = new URLSearchParams();
+  if ((step === "pipeline" || step === "test") && context.draftId)
+    params.set("draft", context.draftId);
+  if (step === "pipeline" && context.workflowId && context.workflowVersion)
+    params.set("version", `${context.workflowId}@${context.workflowVersion}`);
+  if (step === "pipeline" && context.agentSessionId)
+    params.set("session", context.agentSessionId);
+  if (step === "pipeline" && context.improvementSessionId)
+    params.set("improvement", context.improvementSessionId);
+  if (step === "test" && context.sampleTestId)
+    params.set("test", context.sampleTestId);
+  const suffix = params.size ? `?${canonicalSearch(params)}` : "";
+  return `/projects/${encodeURIComponent(projectId)}/build/${step}${suffix}`;
+}
+
+export function routeFocusKey(route: WorkspaceRoute): string {
+  switch (route.kind) {
+    case "build":
+      return `build:${route.projectId}:${route.step}`;
+    case "projectRun":
+      return `project-run:${route.projectId}:${route.runId}`;
+    case "runs":
+      return route.runId ? `run:${route.runId}` : "runs";
+    case "projectReview":
+      return `project-review:${route.projectId}`;
+    case "review":
+      return "review";
+    case "projectRuns":
+      return `project-runs:${route.projectId}`;
+    case "projectBatch":
+      return `project-batch:${route.projectId}:${route.batchId}`;
+    case "project":
+    case "export":
+      return `${route.kind}:${route.projectId}`;
+    case "settings":
+      return `settings:${route.section}`;
+    case "notFound":
+      return "not-found";
+    default:
+      return route.kind;
+  }
 }
 
 const BUILD_STEPS = new Set<BuildStep>([
@@ -285,21 +345,31 @@ export function parseWorkspaceRoute(
       };
     const step = candidate;
     const draftId = step === "test" || step === "pipeline" ? params.get("draft") ?? undefined : undefined;
-    const workflowId = step === "pipeline" ? params.get("workflow") ?? undefined : undefined;
-    const parsedVersion = step === "pipeline" && params.get("version") ? Number(params.get("version")) : undefined;
+    const combinedVersion = step === "pipeline" ? params.get("version") : null;
+    const combinedMatch = combinedVersion?.match(/^(.+)@(\d+)$/);
+    const workflowId = step === "pipeline"
+      ? combinedMatch?.[1] ?? params.get("workflow") ?? undefined
+      : undefined;
+    const parsedVersion = step === "pipeline"
+      ? Number(combinedMatch?.[2] ?? (params.has("workflow") ? params.get("version") : undefined))
+      : undefined;
     const workflowVersion =
       parsedVersion !== undefined &&
       Number.isInteger(parsedVersion) &&
       parsedVersion > 0
         ? parsedVersion
         : undefined;
-    const context = new URLSearchParams();
-    if (draftId) context.set("draft", draftId);
-    if (workflowId && workflowVersion) {
-      context.set("workflow", workflowId);
-      context.set("version", String(workflowVersion));
-    }
-    const draftContext = context.size ? `?${canonicalSearch(context)}` : "";
+    const agentSessionId = step === "pipeline" ? params.get("session") ?? undefined : undefined;
+    const improvementSessionId = step === "pipeline" ? params.get("improvement") ?? undefined : undefined;
+    const sampleTestId = step === "test" ? params.get("test") ?? undefined : undefined;
+    const canonicalPath = projectBuildPath(projectId, step, {
+      draftId,
+      workflowId,
+      workflowVersion,
+      agentSessionId,
+      improvementSessionId,
+      sampleTestId,
+    });
     return {
       kind: "build",
       projectId,
@@ -307,7 +377,10 @@ export function parseWorkspaceRoute(
       draftId,
       workflowId,
       workflowVersion,
-      canonicalPath: `/projects/${encodeURIComponent(projectId)}/build/${step}${draftContext}`,
+      agentSessionId,
+      improvementSessionId,
+      sampleTestId,
+      canonicalPath,
     };
   }
   const projectExport = clean.match(/^\/projects\/([^/]+)\/export$/);
