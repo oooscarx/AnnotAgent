@@ -21240,6 +21240,142 @@ export:
         assert!(report.session.builder_proposal.is_some());
     }
 
+    /// Milestone 0 regression fixture for the live GLM failure: discovery proves that a Ready
+    /// prompted-segmentation model and a complete typed refinement path exist, then reaches the
+    /// discovery deadline without explicitly creating a Draft. Before plan preservation, runtime
+    /// recovery discards that observation and materializes only the bootstrap template.
+    #[tokio::test]
+    #[ignore = "fails until Builder plan candidates survive discovery-limit salvage"]
+    async fn discovered_prompted_segmentation_path_is_materialized_at_discovery_limit() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "plan-loss-regression",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-glm-plan-loss");
+        let detector = register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-vlm-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-prompted-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut registry_provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider Profile");
+        registry_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        registry_provider.credential_ref = Some(annotagent_core::CredentialReference {
+            provider_id: registry_provider.id,
+            source: annotagent_core::CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_PLAN_LOSS_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&registry_provider)
+            .expect("non-mock Registry Provider");
+
+        let call = |name: &str, arguments: serde_json::Value| MockToolCall {
+            name: name.to_owned(),
+            arguments,
+        };
+        let turn = |calls: Vec<MockToolCall>| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCalls {
+                calls,
+                content: None,
+            },
+            usage: MockUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                turn(vec![call("get_pipeline_builder_context", json!({}))]),
+                turn(vec![
+                    call(
+                        "list_compatible_models",
+                        json!({"node_type": "capability.segment"}),
+                    ),
+                    call("find_geometry_refinement_path", json!({})),
+                    call(
+                        "inspect_model_profile",
+                        json!({"model_profile_id": detector.id}),
+                    ),
+                    call(
+                        "inspect_model_profile",
+                        json!({"model_profile_id": segmenter.id}),
+                    ),
+                ]),
+                turn(vec![
+                    call(
+                        "inspect_node_definition",
+                        json!({"node_type": "core.detections_to_box_prompts"}),
+                    ),
+                    call(
+                        "inspect_node_definition",
+                        json!({"node_type": "capability.segment"}),
+                    ),
+                    call(
+                        "inspect_node_definition",
+                        json!({"node_type": "core.mask_to_bbox"}),
+                    ),
+                    call("inspect_project_geometry_policy", json!({})),
+                ]),
+                turn(vec![call("inspect_geometry_calibration", json!({}))]),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "plan-loss-regression",
+                &load_settings(None).expect("settings"),
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Builder salvage report");
+
+        let path = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "find_geometry_refinement_path")
+            .expect("persisted conversion-path observation");
+        assert_eq!(path.result["model_payload"]["runnable"], json!(true));
+        let draft = &report.suggestion.expect("salvaged Draft").draft;
+        assert!(
+            draft
+                .nodes
+                .iter()
+                .any(|node| node.node_type == "capability.segment"),
+            "discovery found a runnable segmentation path, but salvage kept only: {:?}",
+            draft
+                .nodes
+                .iter()
+                .map(|node| node.node_type.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[tokio::test]
     async fn pipeline_builder_repeated_inspection_recovers_blocked_draft_before_budget() {
         let temporary = tempfile::tempdir().expect("temporary workspace");

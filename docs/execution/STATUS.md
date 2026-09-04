@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-03 CST
 
+## Builder Plan Preservation M0 — 2026-09-05
+
+- Added a deterministic ignored regression that reproduces the confirmed plan-loss defect: the
+  Builder discovers a Ready prompted-segmentation model and complete typed conversion path, reaches
+  the discovery deadline, and materializes only the VLM bootstrap Draft.
+- The pre-fix run fails with `runnable=true` in the persisted path observation and no
+  `capability.segment` node in the recovered Draft. The runtime fallback and exact tool sequence are
+  recorded in `BUILDER_PLAN_PRESERVATION_STATUS.md`.
+- Full baseline passes: Rustfmt, strict workspace Clippy, all-feature workspace tests/build, 61 Web
+  unit tests, TypeScript/build and 43 Chromium E2E scenarios.
+- The regression remains explicitly ignored until durable candidates and deterministic salvage are
+  implemented. No remote, secret, model asset, Published Workflow, historical Run or annotation
+  was changed.
+
 ## Guided Test & Activate persistence — 2026-09-03
 
 - Sample Test now restores the newest server-persisted current result instead of blindly selecting

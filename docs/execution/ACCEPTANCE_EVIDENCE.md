@@ -1,5 +1,21 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M0 — 2026-09-05
+
+1. The scripted Builder registers a non-Mock available VLM detector and prompted-segmentation Model
+   Profile, and the persisted `find_geometry_refinement_path` Tool Result reports `runnable=true`.
+2. After ten discovery calls, current runtime recovery saves the hard-coded safe suggestion instead
+   of the discovered path. The failing assertion prints the exact VLM-only node chain and proves
+   `capability.segment` was discarded.
+3. The focused pre-fix command
+   `cargo test -p annotagent-application discovered_prompted_segmentation_path_is_materialized_at_discovery_limit --lib -- --ignored --nocapture`
+   fails exactly at the missing segmentation assertion. This is intentional M0 red evidence, not a
+   claimed passing test.
+4. The release baseline passes Rustfmt, strict workspace Clippy, all-feature workspace tests/build,
+   61 Web tests, Web typecheck/build, and 43 Chromium E2E scenarios.
+5. The fixture performs no real inference and makes no accuracy claim. It exists only to reproduce
+   orchestration loss; no secret, weight, remote mutation or push was used.
+
 ## Guided Test & Activate persistence — 2026-09-03
 
 1. The Workflow Draft list API reports the newest current persisted Sample Test, with regression
