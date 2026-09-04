@@ -23,7 +23,7 @@ A **Skill** is a reusable domain extension. It contributes namespaced nodes, Val
 
 A **Workflow** is a Project-owned strongly typed DAG. Drafts are mutable and can be invalid while edited. Publishing creates a content-addressed immutable version with frozen Skill, Model, and prompt/resource snapshots. Image Runs and Dataset Batches can select an exact version, execute it through the generic DAG Runtime, and persist the complete version plus checkpoint.
 
-A **Provider Profile** owns a reusable service/account connection and opaque credential reference. A revisioned **Model Profile** is the user-selectable model on that Provider and declares modalities, protocol/task capabilities, limits, generation defaults, pricing provenance, status, and lock state. The runtime **Model Descriptor** connects that durable choice to an executable backend. Workflow nodes bind to Model Profiles; GUI-managed credentials use the native system credential store, while environment and session-only references remain available. See [Provider and Model Registry](PROVIDER_MODEL_REGISTRY.md).
+A **Provider Profile** owns a reusable service/account connection and opaque credential reference. A revisioned **Model Profile** is the user-selectable model on that Provider and declares modalities, protocol/task capabilities, limits, generation defaults, pricing provenance, status, and lock state. The runtime **Model Descriptor** connects that durable choice to an executable backend. Workflow nodes bind to Model Profiles. The default GUI credential path is an owner-only, Git-ignored workspace file; environment, session-only, and explicit native-system-store references remain available. See [Provider and Model Registry](PROVIDER_MODEL_REGISTRY.md).
 
 A **Run** is one image execution pinned to Project, Workflow, model identity, input, budget, state, node trace, Artifacts, validation, and usage. A **Dataset Batch** coordinates many child Runs with a durable queue, global exact budget, leases, pause/resume/cancel, and restart checkpoint. **Review** appends human revisions and correction records instead of overwriting history.
 
@@ -53,6 +53,24 @@ Create Project → Data → Labels → Automation → Test & Activate
 Project Overview is the navigation hub. Its server-owned Guidance chooses one primary action and explains blockers; Build owns Data, Labels, Automation, and Sample Test; Run Detail owns Results and Debug; Review owns human decisions; Export owns readiness, format compatibility, and the terminal report. Workflows, Models, Skills, and Artifacts remain real independent entities but are not competing global destinations in the guided path.
 
 Global navigation is limited to Home, Projects, Runs, Review, and Settings. Project-scoped routes carry the Project identity. Global Runs and Review are never silently filtered by a remembered Project; scope is explicit in the URL.
+
+The canonical ownership hierarchy is:
+
+```text
+/projects/:projectId
+├── /build/data | labels | pipeline | test
+├── /runs
+├── /runs/:runId
+├── /batches/:batchId
+├── /review
+├── /review/:reviewId
+└── /export
+```
+
+Legacy global object URLs resolve the persisted owner and replace themselves with the canonical
+Project URL. A mismatched Project/object pair is rejected or redirected to the real owner; the URL
+never assigns ownership. Dataset Runs aggregate many child Image Runs, while each Image Run owns
+one stable image and its final/debug projections.
 
 ## Visual and domain boundary
 

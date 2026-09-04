@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M9 — service queries and incremental extraction.
-- Next milestone: M10 — release verification and final documentation.
-- Overall state: implementation in progress; not release-ready.
+- Completed milestone: M10 — release verification and final documentation.
+- Next milestone: none in Project-Scoped Workspace Integrity Alpha.
+- Overall state: release-blocking acceptance complete; external real-model/provider checks remain explicitly conditional.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
 
@@ -140,6 +140,16 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Regression evidence: Rust formatting and warning-denying clippy passed; Storage (21), Application (62 + one ignored billable smoke), and Server (30) unit suites plus Storage integrations passed; Web typecheck/build and 61 unit tests passed; all 42 Chromium E2E journeys passed.
 - Milestone commit subject: `refactor(architecture): isolate workspace features and bounded summary queries`.
 
-## Next exit
+## M10 exit
 
-M10 runs the complete release command matrix, adds explicit 200% zoom coverage, reconciles public product/runtime/API documentation with the implemented route and ownership contracts, records final browser evidence, and closes the release matrix.
+- Reinstalled the locked Web dependency graph with `npm ci`; audit reported zero vulnerabilities.
+- Full release commands passed: Rust format, warning-denying workspace Clippy, all-feature workspace tests, all-feature workspace build, Web typecheck, 61 Web unit tests, production build, and 43 Chromium E2E journeys. Five explicitly gated real-provider/model-weight Rust tests remained ignored and are not counted as live evidence.
+- Added a 640 CSS-pixel responsive regression representing the reflow boundary of a 1280 px window at 200% browser zoom. The core Project, Pipeline, Run, Review, and Export routes have no horizontal overflow there; existing 1024, 720×450, 390×844, reduced-motion, focus, and keyboard checks also pass.
+- Browser verification against an isolated E2E workspace confirmed Project Runs → canonical Image Run → Debug, exact image/node refresh, Back/Forward, global Review → real owner, Review ↔ source Run, foreign-owner Run canonicalization, Not Found preservation, and zero horizontal overflow at 640 and 390 px.
+- Manual verification found a truthful-pagination defect: JSON `next_offset: null` was treated as a present page. Run and Review indexes now model the nullable contract explicitly and hide load-more controls when no page exists; E2E covers the terminal Run page.
+- Public README, product hierarchy, guided experience, Run/Review, Workflow model/runtime, API, and limitations documents now describe stable ownership, canonical nested routes, exact Workflow/Sample Test evidence, final-result projection, bounded summaries, and the localhost security boundary.
+- Release commit subject: `test(release): validate project-scoped workspace integrity alpha`.
+
+## Release-blocking remainder
+
+None. The missing `PRO_REVIEW_BRIEF.md` and user-provisioned real Provider/model-weight smoke environments remain documented input/environment gaps and do not invalidate the offline integrity acceptance.

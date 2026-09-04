@@ -25,7 +25,7 @@ This ledger is the durable execution plan for the workspace-integrity program. T
 | M7 | Review integrity | Scoped endpoints, item-keyed edits, guards, provenance, navigation | `fix(review): preserve ownership edits and provenance across review navigation` | Complete |
 | M8 | Feature truth and guided UX | Truth matrix, remove dead/fake controls, accessibility and honest capability language | `refactor(product): expose only complete and recoverable workspace actions` | Complete |
 | M9 | Bounded queries and modularity | Summary SQL, pagination, indexes, N+1 removal, incremental route/service extraction | `refactor(architecture): isolate workspace features and bounded summary queries` | Complete |
-| M10 | Release verification | Rust/Web/Playwright/security/performance/responsive/keyboard/docs acceptance | `test(release): validate project-scoped workspace integrity alpha` | Next |
+| M10 | Release verification | Rust/Web/Playwright/security/performance/responsive/keyboard/docs acceptance | `test(release): validate project-scoped workspace integrity alpha` | Complete |
 
 ## Working protocol
 

@@ -2,8 +2,13 @@
 
 These are current implementation boundaries, not hidden release claims:
 
-- The local server is a trusted loopback, single-user application. It has permissive development CORS and no login, authorization, multi-user isolation, cloud object storage, or distributed scheduler.
-- The product Runtime executes an exact selected Published Workflow for image and Dataset Batch starts. Starting without a selected version retains the legacy single-Skill AgentRuntime for compatibility; zero- or multi-Skill Projects must select a Published Workflow.
+- The local server is a loopback, single-user application with strict Host/Origin, local-session,
+  CSRF, privileged-confirmation and resource-limit controls. It is not a multi-user authorization
+  system and provides no cloud object storage or distributed scheduler. Remote serving requires a
+  separate authentication boundary and is not enabled by the local security model.
+- The product Runtime requires an exact selected Published Workflow for formal image and Dataset
+  starts. Historical unversioned single-Skill AgentRuntime Runs remain readable for migration, but
+  the Web API does not create new legacy fallback Runs.
 - Executor-level HumanReview checkpoints can be approved and resumed without rerunning completed nodes. In the product image path, review candidates are currently persisted as `NeedsReview` and the image Run becomes terminal `CompletedWithReview`; a later Review decision does not resume that same Run to its Commit node.
 - The Model Registry, capability checks, OpenAI-compatible/HTTP/deterministic adapters and native
   Rust plugin lifecycle are implemented. The compatibility Settings field is still serialized as
@@ -41,7 +46,16 @@ These are current implementation boundaries, not hidden release claims:
   and persisted checkpoints support cross-process Replay without rerunning ancestors. Arbitrary
   cross-process reuse of cached model outputs is not implemented. Dynamic plugins, training loops,
   video, mobile, Tauri packaging, and automatic execution of generated code are outside this Alpha.
-- Native browser 200% zoom remains a manual Release check because the automated Chromium environment can set viewport and motion preferences but cannot prove the browser chrome's native zoom level. The full journey is automated at 1024 px and 720×450, and responsive CSS remains usable under reflow.
+- The release suite exercises the core Project workspace at the 640 CSS-pixel reflow boundary
+  produced by 200% browser zoom on a 1280 px window, as well as 1024 px, 720×450, and 390×844.
+  Browser-chrome-specific zoom controls still vary by host and remain appropriate for a final
+  platform smoke; no current evidence claims every OS/browser combination.
+- Summary APIs are bounded to at most 100 rows per request. Run and Review indexes expose
+  incremental loading; the global Project dashboard currently renders its first bounded page
+  rather than virtualizing arbitrarily large Project inventories.
+- The production Web bundle remains above the 500 kB warning threshold. M9 extracted ownership
+  route/service seams without a disruptive rewrite; further route-level code splitting is future
+  performance work.
 - Complex polygon, mask, and keypoint editing is keyboard-readable and selectable through the structured annotation list, but precise geometry manipulation remains more efficient with a pointer. COCO string RLE remains non-editable as described above.
 - The default improvement recommendation floor is ten independent holdout images and the default
   calibration threshold is thirty reviewed references. These are conservative Alpha guards, not a

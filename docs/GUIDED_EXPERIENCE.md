@@ -51,6 +51,12 @@ Artifacts, Cache state, lineage and Replay.
 
 Server and URL state are authoritative. Refresh restores Project Guidance, Build step, Run Results/Debug Image/Node/Artifact, Review item and scope, Runs filters, active execution, and Export readiness. An SSE reconnect always resynchronizes after an interrupted connection. A failed page request explains what failed and reloads the latest server state before retrying.
 
+Global Runs and Review are cross-Project discovery indexes. Selecting an item enters its canonical
+Project-owned route and keeps Project tabs, breadcrumb, current Workflow, active execution, and
+Review count visible. Dataset starts open `/projects/:projectId/batches/:batchId`; Image Runs and
+Review decisions use stable nested IDs. The browser never restores ownership from a remembered
+Project name or local component state.
+
 ## Release accessibility contract
 
 - At most one solid primary action appears in a page state.
@@ -61,6 +67,7 @@ Server and URL state are authoritative. Refresh restores Project Guidance, Build
 - Status always has text; color is supplementary.
 - Reduced-motion preference suppresses meaningful transitions.
 - The full path has no horizontal overflow at 1024 px or 720×450.
+- Core Project routes reflow without horizontal overflow at the effective 640 CSS-pixel boundary of a 1280 px window at 200% browser zoom.
 
 See [Project Guidance](PROJECT_GUIDANCE.md), [Guided Project Setup](GUIDED_PROJECT_SETUP.md), [Run and Review UX](RUN_AND_REVIEW_UX.md), and the [offline demo](DEMO_GUIDED_EXPERIENCE.md).
 

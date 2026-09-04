@@ -1,6 +1,6 @@
 # Workspace Integrity Blockers
 
-No implementation blocker currently prevents M10 release verification.
+No release-blocking implementation or verification item remains for Project-Scoped Workspace Integrity Alpha.
 
 ## Input gaps
 

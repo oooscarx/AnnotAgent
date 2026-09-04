@@ -13,6 +13,13 @@ The Web product is organized around one concrete Project journey:
 
 `Create -> Data -> Labels -> Automation -> Test & Activate -> Run -> Review -> Export`
 
+Global Home, Projects, Runs, and Review are discovery indexes. Once an owned object is opened,
+AnnotAgent uses a canonical Project URL such as `/projects/:projectId/runs/:runId`,
+`/projects/:projectId/batches/:batchId`, or `/projects/:projectId/review/:reviewId`. These URLs retain
+the Project shell and restore the same object after refresh, sharing, and browser Back/Forward.
+Project names and image list positions are display data; stable IDs carried by the server are the
+ownership boundary.
+
 Start it from the repository root:
 
 ```bash
@@ -27,8 +34,8 @@ In the browser:
 2. In **Data**, add workspace-local images. In **Labels**, define annotation semantics such as classification or bounding box labels.
 3. In **Automation**, preview a registry-bounded recommendation, apply it to the editable Draft, and adjust the readable Recipe or its node settings. The full typed graph remains in Expert mode.
 4. In **Test & Activate**, run 1–10 real images in the sandbox. Inspect image outcomes, Crops, Review workload, duration, and cost; then activate the tested Draft as an immutable Workflow Version.
-5. Return to the Project and choose the single server-recommended next action. Starting the Dataset creates real Runs; active work is restored from backend state and duplicate Start is locked.
-6. Open a Run. **Results** shows annotations, confidence, linked Crops, and attention items; **Debug** reveals node inputs, outputs, configuration, usage, errors, and Replay. URL state preserves the exact Image, Node, and Artifact.
+5. Return to the Project and choose the single server-recommended next action. Starting the Dataset opens its durable Dataset Run detail; active work is restored from backend state and duplicate Start is locked.
+6. Open an Image Run. **Results** shows only committed annotations, current review-final candidates, or a valid No Target outcome. **Debug** reveals intermediate detections, crops, masks, node inputs/outputs, configuration, usage, errors, and Replay. URL state preserves the exact Image, Node, and Artifact.
 7. Use **Review** as a decision Inbox. Edit if needed, then Accept & next or Reject & next; source Run links are bidirectional and the final item leads to Export.
 8. Open Project **Export**, resolve any readiness blocker, select a Schema-compatible format, and run the real exporter. The completion report and source fingerprint survive reload while the Project snapshot remains current.
 

@@ -859,6 +859,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
 test("Project-owned routes preserve hierarchy, resolve owners, and expose Batch detail", async ({ page }) => {
   await page.goto(`/projects/${projectId}/runs`);
   await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
+  await expect(page.getByRole("button", { name: "Load older Runs" })).toHaveCount(0);
   await expect(page.locator(".sidebar [aria-current='page']")).toHaveCount(1);
   await expect(page.locator(".sidebar [aria-current='page']")).toContainText("Projects");
   await page.locator(".run-row").filter({ hasText: projectName }).click();
@@ -1663,6 +1664,35 @@ test("release surfaces keep one primary action and remain operable at compact vi
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), route).toBeTruthy();
     await expectVisibleFormsToFit(route);
     const lastControl = page.locator("#main-content button:enabled:visible").last();
+    if (await lastControl.count()) {
+      await lastControl.scrollIntoViewIfNeeded();
+      await expect(lastControl).toBeVisible();
+    }
+  }
+});
+
+test("Project workspace routes remain operable at the 200 percent reflow boundary", async ({ page }) => {
+  // Native 200% browser zoom halves a 1280 px window to an effective 640 CSS-pixel viewport.
+  // Exercise that reflow boundary directly so responsive media queries behave as they do under
+  // browser zoom; CSS `zoom: 2` would only magnify the desktop layout and is not equivalent.
+  await page.setViewportSize({ width: 640, height: 720 });
+  for (const route of [
+    `/projects/${projectId}`,
+    `/projects/${projectId}/build/pipeline`,
+    `/projects/${projectId}/runs/${runId}`,
+    `/projects/${projectId}/review`,
+    `/projects/${projectId}/export`,
+  ]) {
+    await page.goto(route);
+    await expect(page.locator("#main-content")).toHaveAttribute("aria-busy", "false");
+    await expect(page.locator("#main-content h1")).toBeVisible();
+    const layout = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(layout.viewport, `${route} effective zoom viewport`).toBe(640);
+    expect(layout.scrollWidth, `${route} horizontal overflow at 200% reflow`).toBeLessThanOrEqual(layout.viewport);
+    const lastControl = page.locator("#main-content button:enabled:visible, #main-content a:visible").last();
     if (await lastControl.count()) {
       await lastControl.scrollIntoViewIfNeeded();
       await expect(lastControl).toBeVisible();

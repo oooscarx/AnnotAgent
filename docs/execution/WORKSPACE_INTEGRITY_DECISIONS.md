@@ -107,3 +107,7 @@ Project, execution, Batch-image, and Review indexes have explicit page bounds an
 ## D-027 — Module extraction follows tested ownership seams
 
 The first extraction boundaries are the Project workspace summary service, the owned workspace route registry, and the Not Found route feature. The large implementation files remain partly monolithic, but behavior moves only behind already-tested ownership contracts. This produces an incremental path toward Project/Run/Review feature modules without a high-risk rewrite or a second state model.
+
+## D-028 — Pagination termination is explicit null, not property absence
+
+Summary responses always include `next_offset`, with a number when another bounded page exists and `null` at the end. The Web DTO models that JSON contract exactly. Load-more actions are visible only for a numeric continuation, preventing a terminal list from advertising an operation with no next page.

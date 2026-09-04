@@ -111,15 +111,15 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## Required regression journeys
 
-- [ ] Complete Project journey.
-- [ ] Global discovery into owned detail.
-- [ ] Duplicate Project names.
-- [ ] Project rename with historical data.
+- [x] Complete Project journey.
+- [x] Global discovery into owned detail.
+- [x] Duplicate Project names.
+- [x] Project rename with historical data.
 - [x] Refresh recovery for Build/Test/Run/Review.
 - [x] Slow-request race.
 - [x] Two-tab Draft conflict.
 - [x] Final result vs intermediate artifact.
 - [x] Mixed batch status/progress.
-- [ ] Cross-project object attack.
-- [ ] Malicious browser Origin.
-- [ ] Feature-truth audit.
+- [x] Cross-project object attack.
+- [x] Malicious browser Origin.
+- [x] Feature-truth audit.

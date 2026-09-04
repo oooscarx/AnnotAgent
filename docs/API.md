@@ -30,12 +30,12 @@ All paths are relative to the local Axum server.
 |---|---|---|
 | GET | `/api/health` | Service/workspace/database status |
 | GET | `/api/skills`, `/api/skills/{id}` | Skill boundary, tools, validators, resources, Project template, and Workflow templates |
-| GET/POST | `/api/projects` | Dashboard list or validated project creation |
+| GET/POST | `/api/projects?limit=&offset=` | Bounded Project/Run dashboard summary or validated Project creation |
 | GET | `/api/projects/{id}` | Project summary |
 | GET | `/api/projects/{id}/workflow-catalog` | Registry-bounded Advisor/editor context and data profile |
 | GET | `/api/workflows` | Published Workflow Versions for all Projects |
 | GET/POST | `/api/workflow-drafts` | List or create blank/generic/Skill-template Drafts; `template_id` must belong to an enabled Skill |
-| POST | `/api/workflow-drafts/suggest` | Mock or constrained workspace-LLM Advisor suggestion |
+| POST | `/api/workflow-drafts/suggest` | Constrained workspace-LLM Advisor suggestion using registered, available capability |
 | PATCH | `/api/workflow-drafts/{id}` | Persist an editable Draft |
 | POST | `/api/workflow-drafts/{id}/dry-run` | Validate and execute up to ten selected images in an isolated sandbox |
 | POST | `/api/workflow-drafts/{id}/publish` | Publish an immutable Workflow Version |
@@ -43,13 +43,13 @@ All paths are relative to the local Axum server.
 | POST | `/api/workflows/{id}/versions/{version}/clone` | Clone an immutable version to a new editable Draft |
 | POST | `/api/workflows/compare` | Compare two immutable Workflow Versions |
 | GET | `/api/models` | Saved workspace Model Binding |
-| GET | `/api/runs` | Cross-Project summaries with Workflow, current node/status, Artifact/validation/recovery/model/usage/checkpoint/review context |
+| GET | `/api/runs?limit=&offset=&project_id=` | Bounded global or stable-Project execution summaries; no full History or Artifact payload expansion |
 | POST | `/api/projects/{id}/import` | Controlled workspace-folder image import |
 | GET | `/api/projects/{id}/images` | Ordered image list |
-| GET | `/api/projects/{id}/images/{index}/content` | Bounded workspace image content |
+| GET | `/api/projects/{id}/images/{image_id}/content` | Stable owner-checked workspace image content; numeric index is read-only legacy compatibility |
 | POST | `/api/projects/{id}/runs` | Start one image run; optional `workflow_id` + `version` select an immutable version together |
 | POST | `/api/projects/{id}/batches` | Create and execute a durable batch; optional `workflow_id` + `version` pin every child Run |
-| GET | `/api/batches` | List active and terminal dataset batches |
+| GET | `/api/batches?limit=&offset=&project_id=` | Bounded active and terminal Dataset Run summaries |
 | GET | `/api/batches/{batch}` | Durable checkpoint, progress summary, budget ledger, and ordered events |
 | POST | `/api/batches/{batch}/pause` | Stop new image/node claims and persist resumable state |
 | POST | `/api/batches/{batch}/resume` | Recover a paused/failed batch and execute only remaining images |
@@ -61,7 +61,10 @@ All paths are relative to the local Axum server.
 | POST | `/api/runs/{run}/resume` | Resume a paused run |
 | POST | `/api/runs/{run}/cancel` | Propagate cancellation |
 | GET | `/api/runs/{run}/events` | Historical typed events |
-| GET | `/api/reviews`, `/api/reviews/{id}` | Review queue/details |
+| GET | `/api/reviews?limit=&offset=`, `/api/reviews/{id}` | Bounded global Review discovery and exact detail |
+| GET | `/api/projects/{project_id}/reviews?limit=&offset=` | Bounded Project-owned Review queue |
+| GET | `/api/projects/{project_id}/reviews/{review_id}` | Exact owner-checked Project Review detail |
+| GET | `/api/runs/{run_id}/reviews?limit=&offset=` | Bounded Review items for one Run |
 | POST | `/api/reviews/{id}/decision` | Accept/reject/delete and correction record |
 | PATCH | `/api/annotations/{id}` | Validate edit and append revision |
 | GET | `/api/annotations/{id}/revisions` | Revision chain |
@@ -70,6 +73,16 @@ All paths are relative to the local Axum server.
 | GET | `/api/events?run_id=...` | Live SSE stream |
 
 Errors are JSON objects with an HTTP status and a concrete message. User paths are canonicalized against the workspace before reads.
+
+List limits default to 50 and are capped at 100 by Core. Pages include `total`, `limit`, `offset`,
+and `next_offset`; order uses a stable ID tie-break. Exact Run/Review/Batch endpoints expand detail
+independently, so an object remains deep-linkable even when it is outside the current list page.
+
+The loopback Web API validates Host and Origin, establishes an HttpOnly `SameSite=Strict` local
+session, and requires CSRF proof for mutation. Credential, billable probe, plugin/model install, and
+delete operations additionally consume a short-lived single-use confirmation. JSON body,
+mutation/expensive-operation concurrency, rate, and SSE-client limits return structured errors.
+`/api/health` never discloses absolute workspace/database paths.
 
 `annotagent evaluate` reads two separate schema-v1 JSON documents. The ground-truth document must explicitly set `labeled: true`; otherwise the command refuses to calculate accuracy. Reports include bbox IoU/precision/recall, mask IoU, keypoint distance, polyline point-to-line distance, classification/attribute accuracy, review/failure rate, cost, latency, model calls, missing/extra image IDs, and configured quality-gate results.
 
@@ -82,12 +95,16 @@ When a dataset batch is active, Project responses also include `active_batch` an
 restarted server can render Pending, Running, Paused, or Awaiting Review state before the
 operator resumes work.
 
-Run list summaries derive immutable Workflow name/version, Skill versions, current node/status, Artifact count, validation issues, retry/fallback, provider/model identity, usage/cost, timeout, checkpoint, review suspension, and terminal reason from persisted history. Exact-version image and Batch starts execute `published_dag_runtime`; only an unselected legacy single-Skill start records `legacy_agent_runtime`.
+Run list summaries derive immutable Workflow name/version, Skill versions, current node/status,
+Artifact count, validation issues, retry/fallback, provider/model identity, usage/cost, timeout,
+checkpoint, review suspension, and terminal reason from purpose-built aggregate SQL. They do not
+deserialize event/tool/message History. Formal exact-version image and Batch starts execute
+`published_dag_runtime`; unversioned legacy Runs are history-only through the Web product.
 
-Run annotation inspection is independent of Pipeline checkpoints. For compatibility Runs, the
-server resolves the source image from the persisted model-message image digest; for published
-Pipeline Runs it reuses the checkpoint image index. The GUI overlays formal committed bounding-box
-Annotations together with typed Detection Artifacts without drawing exact duplicates twice.
+Run annotation inspection is independent of Pipeline checkpoints. Stable Run–Image ownership is
+persisted before execution. Results consumes the explicit final annotation/review/No-Target
+projection; Detection, Crop, mask, fallback, validator, and other intermediate Artifacts are
+available only from Debug/lineage endpoints.
 
 Batch mutation is lease-guarded and transactional. Budget reservations include already
 consumed and concurrently reserved usage before an image is claimed. Batch events use a

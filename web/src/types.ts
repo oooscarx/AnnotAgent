@@ -743,7 +743,7 @@ export interface PageMetadata {
   total: number;
   limit: number;
   offset: number;
-  next_offset?: number;
+  next_offset: number | null;
 }
 
 export interface ProjectWorkflow {

@@ -7011,7 +7011,7 @@ function RunsPage({
   const [batches, setBatches] = useState<DatasetBatchSummary[]>([]);
   const [indexedRuns, setIndexedRuns] = useState<HistoryRun[]>(runs);
   const [runTotal, setRunTotal] = useState(runs.length);
-  const [nextRunOffset, setNextRunOffset] = useState<number>();
+  const [nextRunOffset, setNextRunOffset] = useState<number | null>(null);
   const loadRunPage = (offset = 0, append = false) => {
     const controller = new AbortController();
     void api
@@ -7152,7 +7152,7 @@ function RunsPage({
             : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} />)}
           {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
-        {nextRunOffset !== undefined && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>Load older Runs</button>}
+        {nextRunOffset !== null && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>Load older Runs</button>}
       </Panel>
       {routeRunId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
     </section>
@@ -8190,7 +8190,7 @@ function ReviewPage({
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [queueLoaded, setQueueLoaded] = useState(false);
-  const [nextReviewOffset, setNextReviewOffset] = useState<number>();
+  const [nextReviewOffset, setNextReviewOffset] = useState<number | null>(null);
   const [progress, setProgress] = useState<ReviewQueueProgress>({
     reviewed_count: 0,
     total_count: 0,
@@ -8713,7 +8713,7 @@ function ReviewPage({
             </button>
           ))}
         </div>
-        {nextReviewOffset !== undefined && (
+        {nextReviewOffset !== null && (
           <button
             className="text-button"
             onClick={() => void refresh(nextReviewOffset, true)}
