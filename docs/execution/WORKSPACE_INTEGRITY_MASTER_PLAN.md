@@ -16,8 +16,8 @@ This ledger is the durable execution plan for the workspace-integrity program. T
 | Milestone | Scope | Exit evidence | Required commit | State |
 | --- | --- | --- | --- | --- |
 | M0 | Baseline, audit, expected-failure regressions | Full baseline plus executable ownership, routing, and security failures | `test(integrity): reproduce workspace ownership and navigation failures` | Complete |
-| M1 | Same-origin security boundary | Strict Origin/Host, session, CSRF, privileged confirmation, resource limits, plugin policy | `fix(security): protect privileged localhost APIs from cross-origin access` | Next |
-| M2 | Stable identity and API truth | Stable Project/Run/Review/Image IDs, real bindings, migrations, API tests | `fix(core): preserve stable ownership across projects runs and images` | Pending |
+| M1 | Same-origin security boundary | Strict Origin/Host, session, CSRF, privileged confirmation, resource limits, plugin policy | `fix(security): protect privileged localhost APIs from cross-origin access` | Complete |
+| M2 | Stable identity and API truth | Stable Project/Run/Review/Image IDs, real bindings, migrations, API tests | `fix(core): preserve stable ownership across projects runs and images` | Next |
 | M3 | Project route model | GlobalShell, ProjectShell, canonical nested routes, redirects, Not Found | `refactor(web): keep project-owned work inside the project workspace` | Pending |
 | M4 | Execution and result integrity | Batch/Image detail, real progress, final projection, artifact ownership | `fix(run): separate dataset execution final results and debug artifacts` | Pending |
 | M5 | Recoverable frontend state | Route-aware cache, cancellation, URL selections, SSE invalidation | `fix(web): restore project run workflow and review context from URLs` | Pending |

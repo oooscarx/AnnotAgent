@@ -1,6 +1,7 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { expect, test } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 

@@ -32,3 +32,10 @@ The oversized frontend/server/application modules will be split along route and 
 
 `PRO_REVIEW_BRIEF.md` was requested as an audit input but is absent from this checkout. Work continues from repository evidence and the master prompt; no claim will be made that the missing file was reviewed.
 
+## D-009 — Web native-plugin installation fails closed
+
+The current `.annotplugin` verifier checks package digest, file checksums, manifest safety, and target compatibility, but its signature state is only `unsigned` or `present_unverified`. Neither is a trusted publisher identity. The Web API therefore supports safe inspection but rejects installation for both states. A user who deliberately trusts a local package can use `annotagent plugin inspect` followed by `annotagent plugin install --accept`; a future Web install path requires an actual trusted-signature state rather than another confirmation checkbox.
+
+## D-010 — Local session security is memory-only
+
+The session cookie is HttpOnly, host-only, `SameSite=Strict`, and expires with the browser/server session. CSRF and one-time privileged tokens are never persisted. This intentionally makes restart recovery a fresh handshake while leaving workspace data and credentials untouched.

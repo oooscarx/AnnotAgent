@@ -62,8 +62,96 @@ import type {
   VerifiedModelBundlePackage,
 } from "./types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface LocalApiSession {
+  csrf_token: string;
+}
+
+let localSession: Promise<LocalApiSession> | undefined;
+
+export function resetLocalApiSessionForTests() {
+  localSession = undefined;
+}
+
+async function initializeLocalSession(force = false): Promise<LocalApiSession> {
+  if (force) localSession = undefined;
+  localSession ??= fetch("/api/session", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Unable to initialize local session (${response.status}).`);
+    const value = await response.json() as Partial<LocalApiSession>;
+    if (!value.csrf_token) throw new Error("Local session did not provide a CSRF token.");
+    return value as LocalApiSession;
+  }).catch((error) => {
+    localSession = undefined;
+    throw error;
+  });
+  return localSession;
+}
+
+function isMutation(init?: RequestInit) {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes((init?.method ?? "GET").toUpperCase());
+}
+
+function apiPath(path: string) {
+  return path.split("?", 1)[0];
+}
+
+function privilegedAction(path: string, init?: RequestInit): string | undefined {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const cleanPath = apiPath(path);
+  const privileged = method === "DELETE"
+    || cleanPath === "/api/settings"
+    || cleanPath.includes("/credential")
+    || cleanPath.endsWith("/active-probe")
+    || cleanPath === "/api/model-bundles/install"
+    || cleanPath === "/api/model-bundles/import"
+    || cleanPath === "/api/model-bundles/gc"
+    || cleanPath === "/api/model-installations"
+    || (cleanPath.startsWith("/api/model-bundles/") && ["/verify", "/test", "/enable", "/disable", "/license-acceptance"].some((suffix) => cleanPath.endsWith(suffix)))
+    || (cleanPath.startsWith("/api/model-instances/") && cleanPath.endsWith("/test"))
+    || cleanPath === "/api/plugins/packages/install"
+    || (cleanPath.startsWith("/api/plugins/") && ["/test", "/enable", "/disable", "/weights", "/legacy-model-bundle"].some((suffix) => cleanPath.endsWith(suffix)));
+  return privileged ? `${method} ${cleanPath}` : undefined;
+}
+
+async function secureFetch(path: string, init?: RequestInit, retry = true): Promise<Response> {
+  if (!isMutation(init)) {
+    return fetch(path, { ...init, credentials: "same-origin" });
+  }
+  const session = await initializeLocalSession();
+  const headers = new Headers(init?.headers);
+  headers.set("x-annotagent-csrf", session.csrf_token);
+  const action = privilegedAction(path, init);
+  if (action) {
+    const confirmation = await fetch("/api/session/privileged-confirmation", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        "x-annotagent-csrf": session.csrf_token,
+      },
+      body: JSON.stringify({ action, confirmed: true }),
+    });
+    if (!confirmation.ok) return confirmation;
+    const value = await confirmation.json() as { confirmation_token?: string };
+    if (!value.confirmation_token) throw new Error("Privileged confirmation did not return a token.");
+    headers.set("x-annotagent-privileged-confirmation", value.confirmation_token);
+  }
   const response = await fetch(path, {
+    ...init,
+    credentials: "same-origin",
+    headers,
+  });
+  if (retry && response.status === 401) {
+    await initializeLocalSession(true);
+    return secureFetch(path, init, false);
+  }
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await secureFetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
   });
@@ -90,7 +178,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function upload<T>(path: string, file: File): Promise<T> {
-  const response = await fetch(path, {
+  const response = await secureFetch(path, {
     method: "POST",
     headers: { "content-type": "application/octet-stream" },
     body: file,
@@ -109,7 +197,7 @@ async function upload<T>(path: string, file: File): Promise<T> {
 }
 
 async function requestNoContent(path: string, init?: RequestInit): Promise<void> {
-  const response = await fetch(path, {
+  const response = await secureFetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
   });

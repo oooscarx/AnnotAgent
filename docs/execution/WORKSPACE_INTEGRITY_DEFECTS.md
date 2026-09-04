@@ -6,8 +6,8 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 
 | ID | Defect / impact | Evidence and reproduction | Root cause / planned repair | Regression | Commit | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| P0-01 | Cross-origin pages can invoke privileged localhost operations; health leaks paths; plugin install/credentials/billable actions lack layered confirmation | `annotagent-server` uses `CorsLayer::permissive()`; explicit ignored probes show malicious preflight returns 200 and health includes `workspace` | Add strict Origin/Host policy, local session, CSRF, privileged confirmation, safe health DTO, signed native-plugin policy | `integrity_rejects_cross_origin_preflight_for_mutations`, `integrity_health_response_does_not_expose_local_paths`; expand M1 security suite | M1 | test-added |
-| P0-02 | Large bodies, request storms, and unbounded event clients can exhaust the local service | Router has no uniform body/concurrency/SSE layer; limits exist only in isolated upload code | Add global body caps, bounded in-flight mutations, SSE client/backpressure policy and 413/429 tests | M1 resource-limit integration tests | M1 | reproduced |
+| P0-01 | Cross-origin pages can invoke privileged localhost operations; health leaks paths; plugin install/credentials/billable actions lack layered confirmation | M0 probes reproduced malicious preflight 200 and path disclosure | Strict Origin/Host, local session, CSRF, one-time privileged grants, safe health DTO, and native-plugin Web trust policy implemented | Server security suite plus `web/e2e/security.spec.ts` | M1 | accepted |
+| P0-02 | Large bodies, request storms, and unbounded event clients can exhaust the local service | M0 audit found no uniform limits | JSON body, mutation rate/concurrency, expensive-operation concurrency, SSE client/backpressure limits, request IDs and structured limit errors implemented | `integrity_limits_json_bodies_and_sse_clients_with_structured_errors` | M1 | accepted |
 
 ## P1 — Identity, data integrity, and backend truth
 
@@ -67,4 +67,3 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P2-31 | Existing tests encode the wrong information architecture | tests expect query-scoped global pages | New expected-failure route tests added; replace old assertions in M3 | M3 | test-added |
 | P2-32 | Summary/list APIs perform N+1 and unbounded loads | `run_summary` loads full history; lists unpaginated | Summary SQL, pagination, indexes, 1000-Run query budget | M9 | reproduced |
 | P2-33 | Huge frontend/server/application files amplify regression risk | App/server/application modules are oversized | Covered incremental feature extraction | M9 | reproduced |
-

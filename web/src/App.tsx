@@ -5440,7 +5440,9 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       setPermissionsReviewed(false);
       setCodeLicenseAccepted(false);
       setWeightLicenseAccepted(!result.manifest.weights.required);
-      setMessage("Package verification passed. Review every declaration before installing.");
+      setMessage(result.web_installable
+        ? "Package verification passed. Review every declaration before installing."
+        : "Package integrity passed, but its publisher signature is not trusted for Web installation.");
     } catch (error) {
       onError((error as Error).message);
     } finally {
@@ -5749,7 +5751,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
         </div>
         {verified && <div className="plugin-review-grid">
           <section>
-            <span className="eyebrow">Verified identity</span>
+            <span className="eyebrow">Package identity</span>
             <h3>{verified.manifest.display_name} <small>v{verified.manifest.version}</small></h3>
             <p>{verified.manifest.description}</p>
             <dl className="registry-facts">
@@ -5759,6 +5761,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
               <div><dt>Runtime</dt><dd>Native Rust process</dd></div>
               <div><dt>Targets</dt><dd>{verified.manifest.compatibility.targets.join(", ")}</dd></div>
               <div><dt>Implementation</dt><dd>{verified.manifest.implementation_status.replaceAll("_", " ")}</dd></div>
+              <div><dt>Publisher signature</dt><dd>{verified.signature_trusted ? "Trusted" : verified.signature.replaceAll("_", " ")}</dd></div>
             </dl>
           </section>
           <fieldset className="plugin-review-checks">
@@ -5772,7 +5775,8 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
             <label className="checkbox-line"><input type="checkbox" checked={permissionsReviewed} onChange={(event) => setPermissionsReviewed(event.target.checked)} /><span>I reviewed the publisher, target, runtime resources, and requested permissions.</span></label>
             <label className="checkbox-line"><input type="checkbox" checked={codeLicenseAccepted} onChange={(event) => setCodeLicenseAccepted(event.target.checked)} /><span>I accept the code license: <strong>{verified.manifest.license.code}</strong>.</span></label>
             {verified.manifest.weights.required && <label className="checkbox-line"><input type="checkbox" checked={weightLicenseAccepted} onChange={(event) => setWeightLicenseAccepted(event.target.checked)} /><span>I accept the weight license: <strong>{verified.manifest.license.weights}</strong>.</span></label>}
-            <button className="primary" onClick={installPackage} disabled={Boolean(busy) || !permissionsReviewed || !codeLicenseAccepted || (verified.manifest.weights.required && !weightLicenseAccepted)}>{busy === "install" ? "Installing…" : "Install verified package"}</button>
+            {!verified.web_installable && <p className="setup-requirement" role="status">{verified.install_guidance}</p>}
+            <button className="primary" onClick={installPackage} disabled={Boolean(busy) || !verified.web_installable || !permissionsReviewed || !codeLicenseAccepted || (verified.manifest.weights.required && !weightLicenseAccepted)} title={!verified.web_installable ? verified.install_guidance : undefined}>{busy === "install" ? "Installing…" : "Install trusted package"}</button>
           </fieldset>
         </div>}
       </div>

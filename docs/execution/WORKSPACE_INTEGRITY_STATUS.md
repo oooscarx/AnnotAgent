@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M0 — baseline and failing regressions.
-- Next milestone: M1 — localhost security boundary.
+- Completed milestone: M1 — localhost security boundary.
+- Next milestone: M2 — stable identity and API truth.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -40,6 +40,17 @@ Last updated: 2026-09-04
 
 All required ledgers are present, the master prompt is preserved byte-for-byte, expected failures compile and reproduce the insecure/ambiguous baseline, and clean baseline suites remain green. The milestone commit subject is `test(integrity): reproduce workspace ownership and navigation failures`.
 
+## M1 exit
+
+- Removed permissive CORS and reject untrusted Origin, preflight, and non-loopback Host requests.
+- Added a process-local HttpOnly `SameSite=Strict` session cookie and mutation CSRF token.
+- Added method/path-bound, 30-second, single-use confirmation grants for credentials, billable probes, native plugin/model operations, settings, and deletes.
+- Web clients bootstrap and recover the local session without persisting security tokens.
+- Unsigned and present-but-unverified native plugins may be inspected but cannot be installed by the Web API; the explicit CLI trust flow remains.
+- Added a 2 MiB JSON limit, mutation rate/concurrency limits, a separate expensive action limit, an eight-client SSE cap, lagging-client disconnect, and request IDs with structured 413/429 errors.
+- Security evidence: 28 server tests passed, 47 Web unit tests passed, all workspace tests passed, and 39 Playwright tests passed including malicious Origin/session/CSRF coverage.
+- Milestone commit subject: `fix(security): protect privileged localhost APIs from cross-origin access`.
+
 ## Next exit
 
-M1 makes the security probes normal passing tests and adds session, CSRF, privileged-action, native-plugin, request-body, concurrency, and SSE-limit coverage.
+M2 carries stable Project, Run, Review, and Image identity through storage, API DTOs, and frontend associations; removes mutable-name ownership; and records compatible migrations.

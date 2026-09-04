@@ -4,14 +4,14 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## A. Security
 
-- [ ] Permissive CORS is removed.
-- [ ] Cross-origin pages cannot call state-changing APIs.
-- [ ] Plugin installation requires a trusted same-origin session and privileged confirmation.
-- [ ] Unverified native plugins cannot be installed through the ordinary Web UI.
-- [ ] Credential APIs are protected against CSRF.
-- [ ] Billable probes require explicit confirmation.
-- [ ] Global body, concurrency, and SSE limits exist.
-- [ ] `/api/health` does not disclose absolute paths.
+- [x] Permissive CORS is removed.
+- [x] Cross-origin pages cannot call state-changing APIs.
+- [x] Plugin installation requires a trusted same-origin session and privileged confirmation.
+- [x] Unverified native plugins cannot be installed through the ordinary Web UI.
+- [x] Credential APIs are protected against CSRF.
+- [x] Billable probes require explicit confirmation.
+- [x] Global body, concurrency, and SSE limits exist.
+- [x] `/api/health` does not disclose absolute paths.
 
 ## B. Ownership
 
@@ -123,4 +123,3 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] Cross-project object attack.
 - [ ] Malicious browser Origin.
 - [ ] Feature-truth audit.
-

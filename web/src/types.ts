@@ -1835,6 +1835,9 @@ export interface VerifiedExpertPluginPackage {
   package_sha256: string;
   signature: string;
   verified: true;
+  signature_trusted: boolean;
+  web_installable: boolean;
+  install_guidance: string;
   installed: false;
 }
 

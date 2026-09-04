@@ -1,5 +1,7 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod security;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     convert::Infallible,
@@ -56,7 +58,7 @@ use annotagent_model_catalog::{
     parse_model_instance_selection_id, prepare_bundle_smoke_test,
 };
 use annotagent_plugin_api::{PluginId, PluginVersion, Sha256Digest};
-use annotagent_plugin_host::verify_package;
+use annotagent_plugin_host::{PackageSignatureState, verify_package};
 use annotagent_plugin_registry::{
     InstallApproval, PluginInstallation, PluginRegistryError, plugin_model_selection_id,
     run_model_instance_smoke,
@@ -74,8 +76,9 @@ use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path as AxumPath, Query, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response, Sse, sse::Event},
     routing::{delete, get, patch, post},
 };
@@ -87,7 +90,6 @@ use serde_json::{Value, json};
 use tokio::{io::AsyncWriteExt as _, sync::RwLock};
 use tokio_util::sync::CancellationToken;
 use tower_http::{
-    cors::CorsLayer,
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
@@ -105,6 +107,7 @@ pub struct ServerState {
     credential_reference: Arc<RwLock<CredentialReference>>,
     default_write_reference: Arc<CredentialReference>,
     model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
+    security: security::LocalSecurity,
 }
 
 impl ServerState {
@@ -209,6 +212,7 @@ impl ServerState {
             credential_reference: Arc::new(RwLock::new(credential_reference)),
             default_write_reference: Arc::new(default_write_reference),
             model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
+            security: security::LocalSecurity::default(),
         })
     }
 
@@ -414,6 +418,24 @@ impl ApiError {
         }
     }
 
+    fn forbidden(error: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            body: json!({"error": error.to_string(), "status": StatusCode::FORBIDDEN.as_u16()}),
+        }
+    }
+
+    fn too_many_requests(error: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: json!({
+                "error": error.to_string(),
+                "code": "connection_limit_reached",
+                "status": StatusCode::TOO_MANY_REQUESTS.as_u16()
+            }),
+        }
+    }
+
     fn conflict(
         code: &str,
         error: impl std::fmt::Display,
@@ -489,8 +511,14 @@ impl IntoResponse for ApiError {
 type ApiResult<T> = Result<T, ApiError>;
 
 pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
+    let local_security = state.security.clone();
     let api = Router::new()
         .route("/api/health", get(health))
+        .route("/api/session", get(local_session))
+        .route(
+            "/api/session/privileged-confirmation",
+            post(issue_privileged_confirmation),
+        )
         .route("/api/provider-presets", get(list_provider_presets))
         .route(
             "/api/registry-migrations/legacy",
@@ -855,7 +883,11 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/events", get(events))
         .with_state(state)
-        .layer(CorsLayer::permissive())
+        .layer(DefaultBodyLimit::max(security::MAX_JSON_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(
+            local_security,
+            security::protect_local_api,
+        ))
         .layer(TraceLayer::new_for_http());
     if let Some(web_dist) = web_dist.filter(|path| path.join("index.html").is_file()) {
         api.fallback_service(
@@ -891,9 +923,44 @@ async fn health(State(state): State<ServerState>) -> Json<Value> {
     Json(json!({
         "status": "ok",
         "service": "AnnotAgent",
-        "workspace": state.application.workspace(),
-        "database": state.application.database_path(),
+        "workspace_ready": state.application.workspace().is_dir(),
     }))
+}
+
+async fn local_session(State(state): State<ServerState>) -> Response {
+    let mut response = Json(state.security.session_payload()).into_response();
+    if let Ok(cookie) = HeaderValue::from_str(&state.security.session_cookie()) {
+        response.headers_mut().insert(header::SET_COOKIE, cookie);
+    }
+    response
+}
+
+#[derive(Debug, Deserialize)]
+struct PrivilegedConfirmationRequest {
+    action: String,
+    confirmed: bool,
+}
+
+async fn issue_privileged_confirmation(
+    State(state): State<ServerState>,
+    Json(request): Json<PrivilegedConfirmationRequest>,
+) -> ApiResult<Json<Value>> {
+    if !request.confirmed {
+        return Err(ApiError::forbidden(
+            "privileged actions require an explicit confirmation",
+        ));
+    }
+    let token = state
+        .security
+        .issue_privileged_grant(&request.action)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({
+        "confirmation_token": token,
+        "action": request.action,
+        "expires_in_seconds": 30,
+        "single_use": true
+    })))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6491,11 +6558,14 @@ struct EventQuery {
 async fn events(
     State(state): State<ServerState>,
     Query(query): Query<EventQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let permit = state.security.try_acquire_sse().ok_or_else(|| {
+        ApiError::too_many_requests("the local SSE client limit has been reached")
+    })?;
     let receiver = state.application.subscribe();
     let stream = stream::unfold(
-        (receiver, query.run_id),
-        |(mut receiver, run_id)| async move {
+        (receiver, query.run_id, permit),
+        |(mut receiver, run_id, permit)| async move {
             loop {
                 match receiver.recv().await {
                     Ok(value) if run_id.is_none_or(|filter| filter == value.run_id) => {
@@ -6503,19 +6573,22 @@ async fn events(
                             .event(serde_json::to_value(value.kind).ok()?.as_str()?)
                             .json_data(&value)
                             .ok()?;
-                        return Some((Ok(event), (receiver, run_id)));
+                        return Some((Ok(event), (receiver, run_id, permit)));
                     }
-                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    Ok(_) => {}
+                    Err(
+                        tokio::sync::broadcast::error::RecvError::Lagged(_)
+                        | tokio::sync::broadcast::error::RecvError::Closed,
+                    ) => return None,
                 }
             }
         },
     );
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(10))
             .text("keep-alive"),
-    )
+    ))
 }
 
 const MAX_PLUGIN_PACKAGE_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
@@ -8349,6 +8422,9 @@ async fn inspect_expert_model_plugin_package(
         "package_sha256": verified.package_digest,
         "signature": format!("{:?}", verified.signature).to_ascii_lowercase(),
         "verified": true,
+        "signature_trusted": false,
+        "web_installable": false,
+        "install_guidance": "This package passed integrity checks but has no trusted publisher signature. Install it only with the explicit CLI developer workflow.",
         "installed": false,
     })))
 }
@@ -8370,6 +8446,17 @@ async fn install_expert_model_plugin_package(
         MAX_PLUGIN_PACKAGE_UPLOAD_BYTES,
     )
     .await?;
+    let verify_path = upload.clone();
+    let verified = tokio::task::spawn_blocking(move || verify_package(&verify_path))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::bad_request)?;
+    if !web_signature_is_trusted(verified.signature) {
+        let _ = tokio::fs::remove_file(upload).await;
+        return Err(ApiError::forbidden(
+            "the Web UI cannot install unsigned or unverified native plugins; inspect the package, then use the explicit CLI developer workflow if you trust its source",
+        ));
+    }
     let approval = InstallApproval {
         permissions_reviewed: query.permissions_reviewed,
         code_license_accepted: query.code_license_accepted,
@@ -8398,6 +8485,12 @@ async fn install_expert_model_plugin_package(
             "enabled": installed.enabled,
         })),
     ))
+}
+
+fn web_signature_is_trusted(signature: PackageSignatureState) -> bool {
+    match signature {
+        PackageSignatureState::Unsigned | PackageSignatureState::PresentUnverified => false,
+    }
 }
 
 async fn provision_expert_model_plugin_weights(
@@ -9028,24 +9121,104 @@ mod tests {
             .expect("state")
     }
 
+    async fn security_headers(
+        service: &Router,
+        method: &axum::http::Method,
+        uri: &str,
+    ) -> HeaderMap {
+        if !matches!(
+            *method,
+            axum::http::Method::POST
+                | axum::http::Method::PUT
+                | axum::http::Method::PATCH
+                | axum::http::Method::DELETE
+        ) {
+            return HeaderMap::new();
+        }
+        let session_response = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/session")
+                    .body(Body::empty())
+                    .expect("session request"),
+            )
+            .await
+            .expect("session response");
+        assert_eq!(session_response.status(), StatusCode::OK);
+        let cookie = session_response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .expect("session cookie")
+            .to_owned();
+        let bytes = to_bytes(session_response.into_body(), 64 * 1024)
+            .await
+            .expect("session body");
+        let session: Value = serde_json::from_slice(&bytes).expect("session JSON");
+        let csrf = session["csrf_token"].as_str().expect("CSRF token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&cookie).expect("cookie header"),
+        );
+        headers.insert(
+            security::CSRF_HEADER,
+            HeaderValue::from_str(csrf).expect("CSRF header"),
+        );
+
+        let path = uri.split('?').next().expect("request path");
+        if let Some(action) = security::privileged_action(method, path) {
+            let response = service
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method(axum::http::Method::POST)
+                        .uri("/api/session/privileged-confirmation")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::COOKIE, &cookie)
+                        .header(security::CSRF_HEADER, csrf)
+                        .body(Body::from(
+                            json!({"action": action, "confirmed": true}).to_string(),
+                        ))
+                        .expect("confirmation request"),
+                )
+                .await
+                .expect("confirmation response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("confirmation body");
+            let confirmation: Value = serde_json::from_slice(&bytes).expect("confirmation JSON");
+            headers.insert(
+                security::PRIVILEGED_CONFIRMATION_HEADER,
+                HeaderValue::from_str(
+                    confirmation["confirmation_token"]
+                        .as_str()
+                        .expect("confirmation token"),
+                )
+                .expect("confirmation header"),
+            );
+        }
+        headers
+    }
+
     async fn call_json(
         service: &Router,
         method: axum::http::Method,
         uri: &str,
         body: Value,
     ) -> (StatusCode, Value) {
-        let response = service
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .header("content-type", "application/json")
-                    .body(Body::from(body.to_string()))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
+        let headers = security_headers(service, &method, uri).await;
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        request.headers_mut().extend(headers);
+        let response = service.clone().oneshot(request).await.expect("response");
         let status = response.status();
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
@@ -9060,18 +9233,15 @@ mod tests {
         uri: &str,
         body: Vec<u8>,
     ) -> (StatusCode, Value) {
-        let response = service
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .header("content-type", "application/octet-stream")
-                    .body(Body::from(body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
+        let headers = security_headers(service, &method, uri).await;
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/octet-stream")
+            .body(Body::from(body))
+            .expect("request");
+        request.headers_mut().extend(headers);
+        let response = service.clone().oneshot(request).await.expect("response");
         let status = response.status();
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
@@ -9171,7 +9341,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plugin_install_wizard_uses_real_package_validation_and_explicit_approval() {
+    async fn web_plugin_install_inspects_but_rejects_untrusted_native_packages() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
         let service = router(
@@ -9189,6 +9359,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{inspected:#?}");
         assert_eq!(inspected["verified"], json!(true));
+        assert_eq!(inspected["signature_trusted"], json!(false));
+        assert_eq!(inspected["web_installable"], json!(false));
         assert_eq!(
             inspected["manifest"]["id"],
             json!("org.annotagent.dummy-detector")
@@ -9201,21 +9373,21 @@ mod tests {
             package.clone(),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected:#?}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{rejected:#?}");
         assert!(
             rejected["error"]
                 .as_str()
-                .is_some_and(|error| error.contains("approval"))
+                .is_some_and(|error| error.contains("cannot install unsigned"))
         );
 
-        let (status, installed) = call_bytes(
+        let (status, rejected) = call_bytes(
             &service,
             axum::http::Method::POST,
             "/api/plugins/packages/install?filename=fixture.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
             package,
         )
         .await;
-        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{rejected:#?}");
 
         let (status, catalog) = call_json(
             &service,
@@ -9225,9 +9397,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{catalog:#?}");
-        assert_eq!(catalog["installations"].as_array().map(Vec::len), Some(1));
-        assert_eq!(catalog["models"].as_array().map(Vec::len), Some(1));
-        assert_eq!(catalog["models"][0]["selectable"], json!(false));
+        assert_eq!(catalog["installations"].as_array().map(Vec::len), Some(0));
+        assert_eq!(catalog["models"].as_array().map(Vec::len), Some(0));
         assert_eq!(catalog["agent_permissions"]["install"], json!(false));
         assert!(
             catalog["installations"][0]
@@ -9247,17 +9418,22 @@ mod tests {
             .catalogs()[0]
             .clone();
         let entry = catalog.entries[0].clone();
+        let _package = sam_plugin_package(&temp);
+        application
+            .plugin_registry()
+            .lock()
+            .expect("plugin registry")
+            .install(
+                &temp.path().join("sam-fixture.annotplugin"),
+                &InstallApproval {
+                    permissions_reviewed: true,
+                    code_license_accepted: true,
+                    weight_license_accepted: true,
+                },
+            )
+            .expect("CLI-equivalent trusted-user installation fixture");
         let state = test_state(application, Arc::new(InMemorySecretStore::default())).await;
         let service = router(state, None);
-        let package = sam_plugin_package(&temp);
-        let (status, installed) = call_bytes(
-            &service,
-            axum::http::Method::POST,
-            "/api/plugins/packages/install?filename=sam.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
-            package,
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
 
         let request = json!({
             "catalog_id": catalog.catalog_id,
@@ -9362,19 +9538,24 @@ mod tests {
     async fn legacy_model_files_are_untrusted_and_preserved_during_local_bundle_migration() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let _package = sam_plugin_package(&temp);
+        application
+            .plugin_registry()
+            .lock()
+            .expect("plugin registry")
+            .install(
+                &temp.path().join("sam-fixture.annotplugin"),
+                &InstallApproval {
+                    permissions_reviewed: true,
+                    code_license_accepted: true,
+                    weight_license_accepted: true,
+                },
+            )
+            .expect("CLI-equivalent trusted-user installation fixture");
         let service = router(
             test_state(application, Arc::new(InMemorySecretStore::default())).await,
             None,
         );
-        let package = sam_plugin_package(&temp);
-        let (status, installed) = call_bytes(
-            &service,
-            axum::http::Method::POST,
-            "/api/plugins/packages/install?filename=sam.annotplugin&permissions_reviewed=true&code_license_accepted=true&weight_license_accepted=true",
-            package,
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED, "{installed:#?}");
         for (component, filename) in [
             ("image_encoder", "encoder.onnx"),
             ("mask_decoder", "decoder.onnx"),
@@ -10218,7 +10399,6 @@ export:
     }
 
     #[tokio::test]
-    #[ignore = "known P0 integrity failure: permissive CORS accepts an untrusted origin"]
     async fn integrity_rejects_cross_origin_preflight_for_mutations() {
         let temp = tempfile::tempdir().expect("temp");
         let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
@@ -10253,7 +10433,6 @@ export:
     }
 
     #[tokio::test]
-    #[ignore = "known P0 integrity failure: health response leaks local absolute paths"]
     async fn integrity_health_response_does_not_expose_local_paths() {
         let temp = tempfile::tempdir().expect("temp");
         let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
@@ -10278,6 +10457,189 @@ export:
 
         assert!(health.get("workspace").is_none());
         assert!(health.get("database").is_none());
+    }
+
+    #[tokio::test]
+    async fn integrity_rejects_cross_origin_simple_requests() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let response = service
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/projects")
+                    .header(axum::http::header::HOST, "127.0.0.1:8787")
+                    .header(axum::http::header::ORIGIN, "https://untrusted.example")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(
+            response
+                .headers()
+                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn integrity_requires_session_csrf_and_single_use_privileged_confirmation() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let action = "DELETE /api/providers/not-a-provider-id";
+        let missing = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri("/api/session/privileged-confirmation")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"action": action, "confirmed": true}).to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+        let headers = security_headers(
+            &service,
+            &axum::http::Method::POST,
+            "/api/session/privileged-confirmation",
+        )
+        .await;
+        let mut wrong_headers = headers.clone();
+        wrong_headers.insert(
+            security::CSRF_HEADER,
+            HeaderValue::from_static("wrong-token"),
+        );
+        let mut wrong = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/session/privileged-confirmation")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"action": action, "confirmed": true}).to_string(),
+            ))
+            .expect("request");
+        wrong.headers_mut().extend(wrong_headers);
+        let wrong = service.clone().oneshot(wrong).await.expect("response");
+        assert_eq!(wrong.status(), StatusCode::FORBIDDEN);
+
+        let mut same_origin = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/session/privileged-confirmation")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "127.0.0.1:8787")
+            .header(header::ORIGIN, "http://127.0.0.1:8787")
+            .body(Body::from(
+                json!({"action": action, "confirmed": true}).to_string(),
+            ))
+            .expect("request");
+        same_origin.headers_mut().extend(headers);
+        let same_origin = service
+            .clone()
+            .oneshot(same_origin)
+            .await
+            .expect("response");
+        assert_eq!(same_origin.status(), StatusCode::OK);
+
+        let secured = security_headers(
+            &service,
+            &axum::http::Method::DELETE,
+            "/api/providers/not-a-provider-id",
+        )
+        .await;
+        let make_request = || {
+            let mut request = axum::http::Request::builder()
+                .method(axum::http::Method::DELETE)
+                .uri("/api/providers/not-a-provider-id")
+                .body(Body::empty())
+                .expect("request");
+            request.headers_mut().extend(secured.clone());
+            request
+        };
+        let first = service
+            .clone()
+            .oneshot(make_request())
+            .await
+            .expect("response");
+        assert_eq!(first.status(), StatusCode::BAD_REQUEST);
+        let reused = service
+            .clone()
+            .oneshot(make_request())
+            .await
+            .expect("response");
+        assert_eq!(reused.status(), StatusCode::FORBIDDEN);
+        let reused = response_json(reused).await;
+        assert_eq!(reused["code"], json!("privileged_confirmation_required"));
+    }
+
+    #[tokio::test]
+    async fn integrity_limits_json_bodies_and_sse_clients_with_structured_errors() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let headers = security_headers(&service, &axum::http::Method::POST, "/api/projects").await;
+        let mut oversized = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/projects")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CONTENT_LENGTH, security::MAX_JSON_BODY_BYTES + 1)
+            .body(Body::from("{}"))
+            .expect("request");
+        oversized.headers_mut().extend(headers);
+        let oversized = service.clone().oneshot(oversized).await.expect("response");
+        assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            oversized
+                .headers()
+                .contains_key(security::REQUEST_ID_HEADER)
+        );
+        let oversized = response_json(oversized).await;
+        assert_eq!(oversized["code"], json!("request_body_too_large"));
+
+        let mut clients = Vec::new();
+        for _ in 0..8 {
+            let response = service
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri("/api/events")
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK);
+            clients.push(response);
+        }
+        let limited = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/events")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        let limited = response_json(limited).await;
+        assert_eq!(limited["code"], json!("connection_limit_reached"));
+        drop(clients);
     }
 
     #[tokio::test]
@@ -12241,8 +12603,9 @@ export:
         uri: &str,
         body: Option<Value>,
     ) -> Response {
+        let headers = security_headers(service, &method, uri).await;
         let request = axum::http::Request::builder().method(method).uri(uri);
-        let request = if let Some(value) = body {
+        let mut request = if let Some(value) = body {
             request
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(value.to_string()))
@@ -12250,6 +12613,7 @@ export:
             request.body(Body::empty())
         }
         .expect("request");
+        request.headers_mut().extend(headers);
         service.clone().oneshot(request).await.expect("response")
     }
 
