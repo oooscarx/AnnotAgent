@@ -1,5 +1,24 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M3 — 2026-09-05
+
+1. `registry_synthesizer_ranks_by_explicit_quality_and_cost_not_candidate_source` proves Accurate
+   selection prefers explicit geometry evaluation, LowCost selection prefers fewer model calls,
+   and identical graphs receive identical scores whether sourced from a template or Registry.
+2. `registry_synthesizer_blocks_fixture_bindings_and_preserves_working_draft_identity` proves a
+   fixture binding cannot become runnable and Candidate materialization replaces graph content
+   without replacing the persistent Working Draft identity or Project scope.
+3. The M0 scripted scenario now persists three distinct plans: the partial conversion Fragment,
+   conservative reviewed baseline and complete Registry refinement. The selected Candidate is
+   runnable, references both real non-Mock Profile revisions and contains prompted segmentation,
+   geometry evaluation, geometry decision, review and commit.
+4. All 103 Core tests and 63 runnable Application tests pass. The M0 ignored scenario now reaches
+   only its final expected pre-M4 assertion: runtime fallback has not yet materialized the selected
+   Candidate into the returned Draft.
+5. The synthesizer performs no inference, installs nothing, publishes nothing and never stores a
+   credential. Model eligibility comes solely from credential-safe Registry state and verified
+   expert availability evidence.
+
 ## Builder Plan Preservation M2 — 2026-09-05
 
 1. `conversion_path_becomes_a_contract_checked_materializable_fragment` converts the registered

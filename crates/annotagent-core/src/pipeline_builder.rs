@@ -537,6 +537,166 @@ fn workflow_kind_for_definition(definition: &crate::NodeDefinition) -> WorkflowN
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RegistryPipelineSynthesizer;
+
+impl RegistryPipelineSynthesizer {
+    #[must_use]
+    pub fn score_candidate(
+        &self,
+        candidate: &PipelinePlanCandidate,
+        priority: OptimizationPriority,
+    ) -> PlanCandidateScore {
+        let runnable = candidate.is_runnable();
+        let goal_coverage = if candidate.has_commit_path { 1.0 } else { 0.0 };
+        let geometry_safety = match candidate.geometry_safety {
+            CandidateGeometrySafety::Unsafe => 0.0,
+            CandidateGeometrySafety::MandatoryReview => 0.5,
+            CandidateGeometrySafety::Evaluated => 1.0,
+        };
+        let binding_completeness = if candidate.unresolved_bindings.is_empty()
+            && candidate.model_bindings.iter().all(|binding| {
+                binding.production_eligible
+                    && !binding.fixture_only
+                    && binding.availability == "available"
+            }) {
+            1.0
+        } else {
+            0.0
+        };
+        let domain_coverage = if candidate.skill_bindings.is_empty() || candidate.has_review_path {
+            1.0
+        } else {
+            0.0
+        };
+        let model_calls = candidate
+            .model_bindings
+            .iter()
+            .map(|binding| binding.node_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len() as u32;
+        let mut deterministic_total = 0_i64;
+        if runnable {
+            deterministic_total += 1_000_000;
+        }
+        deterministic_total += (goal_coverage * 100_000.0) as i64;
+        deterministic_total += (binding_completeness * 80_000.0) as i64;
+        deterministic_total += (domain_coverage * 40_000.0) as i64;
+        if candidate.has_review_path {
+            deterministic_total += 20_000;
+        }
+        if candidate.has_commit_path {
+            deterministic_total += 20_000;
+        }
+        if candidate
+            .model_bindings
+            .iter()
+            .all(|binding| !binding.fixture_only)
+        {
+            deterministic_total += 10_000;
+        }
+        match priority {
+            OptimizationPriority::Accurate => {
+                deterministic_total += (geometry_safety * 120_000.0) as i64;
+                deterministic_total -= i64::from(model_calls) * 500;
+            }
+            OptimizationPriority::Balanced => {
+                deterministic_total += (geometry_safety * 80_000.0) as i64;
+                deterministic_total -= i64::from(model_calls) * 2_000;
+            }
+            OptimizationPriority::Fast | OptimizationPriority::LowCost => {
+                deterministic_total += (geometry_safety * 20_000.0) as i64;
+                deterministic_total -= i64::from(model_calls) * 50_000;
+            }
+        }
+        deterministic_total -= i64::try_from(candidate.node_blueprints.len()).unwrap_or(i64::MAX);
+        let mut reasons = vec![format!(
+            "{} candidate with {:?} geometry safety",
+            if runnable { "Runnable" } else { "Blocked" },
+            candidate.geometry_safety
+        )];
+        if matches!(
+            priority,
+            OptimizationPriority::Fast | OptimizationPriority::LowCost
+        ) {
+            reasons.push(format!(
+                "{priority:?} priority penalizes each additional model call"
+            ));
+        } else if candidate.geometry_safety == CandidateGeometrySafety::Evaluated {
+            reasons.push("Accuracy priority rewards explicit geometry evaluation".to_owned());
+        }
+        PlanCandidateScore {
+            runnable,
+            goal_coverage,
+            geometry_safety,
+            binding_completeness,
+            domain_coverage,
+            estimated_cost: candidate.score.estimated_cost,
+            estimated_model_calls: Some(model_calls),
+            deterministic_total,
+            reasons,
+        }
+    }
+
+    pub fn rank_candidates(
+        &self,
+        candidates: &mut [PipelinePlanCandidate],
+        priority: OptimizationPriority,
+    ) {
+        for candidate in candidates.iter_mut() {
+            candidate.score = self.score_candidate(candidate, priority);
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .score
+                .deterministic_total
+                .cmp(&left.score.deterministic_total)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+    }
+
+    #[must_use]
+    pub fn best_candidate<'a>(
+        &self,
+        candidates: &'a [PipelinePlanCandidate],
+    ) -> Option<&'a PipelinePlanCandidate> {
+        candidates.first()
+    }
+
+    pub fn materialize_candidate(
+        &self,
+        candidate: &PipelinePlanCandidate,
+        working_draft: &mut WorkflowDraft,
+    ) -> CoreResult<()> {
+        if candidate.node_blueprints.is_empty() {
+            return Err(CoreError::Validation(
+                "Pipeline Plan Candidate has no materializable nodes".to_owned(),
+            ));
+        }
+        let node_ids = candidate
+            .node_blueprints
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if candidate.edge_blueprints.iter().any(|edge| {
+            !node_ids.contains(edge.from_node.as_str()) || !node_ids.contains(edge.to_node.as_str())
+        }) {
+            return Err(CoreError::Validation(
+                "Pipeline Plan Candidate contains an edge outside its node blueprint".to_owned(),
+            ));
+        }
+        working_draft.nodes.clone_from(&candidate.node_blueprints);
+        working_draft.edges.clone_from(&candidate.edge_blueprints);
+        working_draft.status = if candidate.is_runnable() {
+            WorkflowDraftStatus::Editing
+        } else {
+            WorkflowDraftStatus::BlockedBySetup
+        };
+        working_draft.updated_at = Utc::now();
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuilderFact {
     pub value: serde_json::Value,
@@ -3775,5 +3935,157 @@ mod tests {
                 && edge.to_node == "fragment-2-capability-segment"
                 && edge.to_port == "images"
         }));
+    }
+
+    fn runnable_candidate(
+        id: &str,
+        source: PipelineCandidateSource,
+        geometry_safety: CandidateGeometrySafety,
+        model_calls: usize,
+    ) -> PipelinePlanCandidate {
+        let now = Utc::now();
+        PipelinePlanCandidate {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            source,
+            status: PipelineCandidateStatus::Runnable,
+            sufficiency: CandidateSufficiency::Complete,
+            fragment_ids: Vec::new(),
+            node_blueprints: vec![WorkflowDraftNode {
+                id: "commit".to_owned(),
+                node_type: "core.commit".to_owned(),
+                kind: WorkflowNodeKind::Commit,
+                ..WorkflowDraftNode::default()
+            }],
+            edge_blueprints: Vec::new(),
+            model_bindings: (0..model_calls)
+                .map(|index| CandidateModelBinding {
+                    node_id: format!("model-{index}"),
+                    capability: ModelCapability::ObjectDetection,
+                    model_profile_id: None,
+                    model_profile_revision: None,
+                    expert_model_id: Some(format!("expert-{index}")),
+                    availability: "available".to_owned(),
+                    fixture_only: false,
+                    production_eligible: true,
+                })
+                .collect(),
+            skill_bindings: Vec::new(),
+            evidence: Vec::new(),
+            unresolved_bindings: Vec::new(),
+            output_artifact: ArtifactKind::AnnotationCandidateSet,
+            geometry_safety,
+            has_review_path: true,
+            has_commit_path: true,
+            registry_revision: "registry-1".to_owned(),
+            score: PlanCandidateScore::default(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn registry_synthesizer_ranks_by_explicit_quality_and_cost_not_candidate_source() {
+        let synthesizer = RegistryPipelineSynthesizer;
+        let baseline = runnable_candidate(
+            "baseline",
+            PipelineCandidateSource::TemplateSeed,
+            CandidateGeometrySafety::MandatoryReview,
+            1,
+        );
+        let refined = runnable_candidate(
+            "refined",
+            PipelineCandidateSource::RegistrySynthesis,
+            CandidateGeometrySafety::Evaluated,
+            2,
+        );
+
+        let mut accurate = vec![baseline.clone(), refined.clone()];
+        synthesizer.rank_candidates(&mut accurate, OptimizationPriority::Accurate);
+        assert_eq!(accurate[0].id, "refined");
+        assert!(
+            accurate[0]
+                .score
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("geometry evaluation"))
+        );
+
+        let mut low_cost = vec![baseline.clone(), refined];
+        synthesizer.rank_candidates(&mut low_cost, OptimizationPriority::LowCost);
+        assert_eq!(low_cost[0].id, "baseline");
+        assert!(
+            low_cost[0]
+                .score
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("model call"))
+        );
+
+        let mut same_graph = vec![
+            runnable_candidate(
+                "a-registry",
+                PipelineCandidateSource::RegistrySynthesis,
+                CandidateGeometrySafety::MandatoryReview,
+                1,
+            ),
+            runnable_candidate(
+                "b-template",
+                PipelineCandidateSource::TemplateSeed,
+                CandidateGeometrySafety::MandatoryReview,
+                1,
+            ),
+        ];
+        synthesizer.rank_candidates(&mut same_graph, OptimizationPriority::Balanced);
+        assert_eq!(
+            same_graph[0].score.deterministic_total,
+            same_graph[1].score.deterministic_total
+        );
+        assert_eq!(same_graph[0].id, "a-registry");
+    }
+
+    #[test]
+    fn registry_synthesizer_blocks_fixture_bindings_and_preserves_working_draft_identity() {
+        let synthesizer = RegistryPipelineSynthesizer;
+        let mut candidate = runnable_candidate(
+            "fixture",
+            PipelineCandidateSource::RegistrySynthesis,
+            CandidateGeometrySafety::Evaluated,
+            1,
+        );
+        candidate.model_bindings[0].fixture_only = true;
+        candidate.model_bindings[0].production_eligible = false;
+        candidate.score = synthesizer.score_candidate(&candidate, OptimizationPriority::Accurate);
+        assert!(!candidate.is_runnable());
+        assert!(!candidate.score.runnable);
+
+        let now = Utc::now();
+        let mut working = WorkflowDraft {
+            schema_version: crate::WORKFLOW_SCHEMA_VERSION,
+            id: "persistent-working-draft".to_owned(),
+            project_id: "project".to_owned(),
+            name: "Working".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        candidate.model_bindings[0].fixture_only = false;
+        candidate.model_bindings[0].production_eligible = true;
+        synthesizer
+            .materialize_candidate(&candidate, &mut working)
+            .expect("materialized candidate");
+        assert_eq!(working.id, "persistent-working-draft");
+        assert_eq!(working.project_id, "project");
+        assert_eq!(working.nodes[0].id, "commit");
     }
 }

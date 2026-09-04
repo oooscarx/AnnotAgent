@@ -1849,6 +1849,451 @@ fn persist_discovered_conversion_fragments(
     Ok(())
 }
 
+fn candidate_model_bindings(
+    draft: &WorkflowDraft,
+    input: &WorkflowAdvisorInput,
+) -> (Vec<annotagent_core::CandidateModelBinding>, Vec<String>) {
+    let compatible_profile_ids = compatible_builder_models(input, None)
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect::<BTreeSet<_>>();
+    let mut bindings = Vec::new();
+    let mut unresolved = Vec::new();
+    for node in &draft.nodes {
+        let Some((capability, _)) = registry_requirement_for_node(node) else {
+            continue;
+        };
+        let profile = node
+            .model_profile_binding
+            .as_ref()
+            .and_then(|binding| {
+                input
+                    .model_profiles
+                    .iter()
+                    .find(|profile| profile.id == binding.model_profile_id)
+            })
+            .or_else(|| {
+                let runtime_id = node.model_binding.as_deref()?;
+                input.model_profiles.iter().find(|profile| {
+                    profile.remote_model_id == runtime_id
+                        || input.model_registry.iter().any(|runtime| {
+                            runtime.id == runtime_id
+                                && (runtime.model == profile.remote_model_id
+                                    || runtime.id == profile.remote_model_id)
+                        })
+                })
+            });
+        if let Some(profile) = profile {
+            let fixture_only = input
+                .provider_profiles
+                .iter()
+                .find(|provider| provider.id == profile.provider_id)
+                .is_some_and(|provider| provider.adapter == ProviderAdapterKind::Mock);
+            let production_eligible = compatible_profile_ids.contains(&profile.id)
+                && profile.task_capabilities.contains(&capability)
+                && !fixture_only;
+            bindings.push(annotagent_core::CandidateModelBinding {
+                node_id: node.id.clone(),
+                capability,
+                model_profile_id: Some(profile.id),
+                model_profile_revision: Some(profile.revision),
+                expert_model_id: None,
+                availability: if production_eligible {
+                    "available".to_owned()
+                } else {
+                    format!("{:?}", profile.status).to_lowercase()
+                },
+                fixture_only,
+                production_eligible,
+            });
+            if !production_eligible {
+                unresolved.push(format!(
+                    "{} requires an Available non-fixture {:?} Model Profile",
+                    node.id, capability
+                ));
+            }
+            continue;
+        }
+        let expert = node.model_binding.as_deref().and_then(|model_id| {
+            input
+                .expert_models
+                .iter()
+                .find(|model| model.model_id == model_id)
+        });
+        if let Some(expert) = expert {
+            let fixture_only = matches!(&expert.connection, ModelConnection::Mock { .. })
+                || expert
+                    .metadata
+                    .get("fixture_only")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+            let production_eligible = expert.availability == ModelAvailability::Available
+                && expert.availability_evidence.available()
+                && expert.checkpoint.is_some()
+                && expert.capabilities.contains(&capability)
+                && !fixture_only;
+            bindings.push(annotagent_core::CandidateModelBinding {
+                node_id: node.id.clone(),
+                capability,
+                model_profile_id: None,
+                model_profile_revision: None,
+                expert_model_id: Some(expert.model_id.clone()),
+                availability: if production_eligible {
+                    "available".to_owned()
+                } else {
+                    format!("{:?}", expert.availability).to_lowercase()
+                },
+                fixture_only,
+                production_eligible,
+            });
+            if !production_eligible {
+                unresolved.push(format!(
+                    "{} requires verified availability evidence and a pinned checkpoint for {:?}",
+                    node.id, capability
+                ));
+            }
+            continue;
+        }
+        unresolved.push(format!(
+            "{} has no Registry binding for {:?}",
+            node.id, capability
+        ));
+    }
+    unresolved.sort();
+    unresolved.dedup();
+    (bindings, unresolved)
+}
+
+fn bind_available_registry_models(draft: &mut WorkflowDraft, input: &WorkflowAdvisorInput) {
+    for node in &mut draft.nodes {
+        let Some((capability, _)) = registry_requirement_for_node(node) else {
+            continue;
+        };
+        let current_expert_is_eligible = node.model_binding.as_deref().is_some_and(|model_id| {
+            input.expert_models.iter().any(|model| {
+                model.model_id == model_id
+                    && model.availability == ModelAvailability::Available
+                    && model.availability_evidence.available()
+                    && model.checkpoint.is_some()
+                    && !matches!(&model.connection, ModelConnection::Mock { .. })
+                    && model.capabilities.contains(&capability)
+            })
+        });
+        let current_profile_is_eligible =
+            node.model_profile_binding.as_ref().is_some_and(|binding| {
+                compatible_builder_models(input, Some(capability))
+                    .into_iter()
+                    .any(|profile| profile.id == binding.model_profile_id)
+            });
+        if current_expert_is_eligible || current_profile_is_eligible {
+            continue;
+        }
+        let mut profiles = compatible_builder_models(input, Some(capability))
+            .into_iter()
+            .filter(|profile| {
+                input
+                    .provider_profiles
+                    .iter()
+                    .find(|provider| provider.id == profile.provider_id)
+                    .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
+            })
+            .collect::<Vec<_>>();
+        profiles.sort_by_key(|profile| profile.id.to_string());
+        let Some(profile) = profiles.first() else {
+            continue;
+        };
+        node.model_binding = Some(
+            input
+                .model_registry
+                .iter()
+                .find(|runtime| {
+                    runtime.id == profile.remote_model_id
+                        || runtime.model == profile.remote_model_id
+                })
+                .map_or_else(
+                    || profile.remote_model_id.clone(),
+                    |runtime| runtime.id.clone(),
+                ),
+        );
+        node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+            model_profile_id: profile.id,
+            locked: true,
+        });
+        node.unresolved_model_requirement = None;
+    }
+}
+
+struct CandidateDraftSource {
+    id: String,
+    name: String,
+    source: annotagent_core::PipelineCandidateSource,
+    fragment_ids: Vec<String>,
+    evidence: Vec<annotagent_core::ObservationRef>,
+}
+
+fn candidate_from_draft(
+    source: CandidateDraftSource,
+    draft: &WorkflowDraft,
+    input: &WorkflowAdvisorInput,
+    registry_revision: &str,
+) -> annotagent_core::PipelinePlanCandidate {
+    let has_review_path = draft.nodes.iter().any(|node| {
+        node.kind == WorkflowNodeKind::HumanReview || node.review_gate || node.gate.required
+    });
+    let has_commit_path = draft
+        .nodes
+        .iter()
+        .any(|node| node.kind == WorkflowNodeKind::Commit);
+    let geometry_safety = if draft
+        .nodes
+        .iter()
+        .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION)
+        && draft
+            .nodes
+            .iter()
+            .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_DECISION)
+    {
+        annotagent_core::CandidateGeometrySafety::Evaluated
+    } else if has_review_path {
+        annotagent_core::CandidateGeometrySafety::MandatoryReview
+    } else {
+        annotagent_core::CandidateGeometrySafety::Unsafe
+    };
+    let (model_bindings, mut unresolved_bindings) = candidate_model_bindings(draft, input);
+    unresolved_bindings.extend(draft.nodes.iter().filter_map(|node| {
+        node.unresolved_model_requirement
+            .as_ref()
+            .map(|requirement| format!("{}: {}", node.id, requirement.reason))
+    }));
+    unresolved_bindings.sort();
+    unresolved_bindings.dedup();
+    let complete = has_commit_path && has_review_path;
+    let production_bindings = model_bindings.iter().all(|binding| {
+        binding.production_eligible && !binding.fixture_only && binding.availability == "available"
+    });
+    let now = chrono::Utc::now();
+    annotagent_core::PipelinePlanCandidate {
+        id: source.id,
+        name: source.name,
+        source: source.source,
+        status: if complete && unresolved_bindings.is_empty() && production_bindings {
+            annotagent_core::PipelineCandidateStatus::Runnable
+        } else {
+            annotagent_core::PipelineCandidateStatus::Blocked
+        },
+        sufficiency: if complete {
+            annotagent_core::CandidateSufficiency::Complete
+        } else {
+            annotagent_core::CandidateSufficiency::Partial
+        },
+        fragment_ids: source.fragment_ids,
+        node_blueprints: draft.nodes.clone(),
+        edge_blueprints: draft.edges.clone(),
+        model_bindings,
+        skill_bindings: draft
+            .enabled_skills
+            .iter()
+            .map(
+                |(skill_id, version)| annotagent_core::CandidateSkillBinding {
+                    skill_id: skill_id.clone(),
+                    version: version.clone(),
+                },
+            )
+            .collect(),
+        evidence: source.evidence,
+        unresolved_bindings,
+        output_artifact: ArtifactKind::AnnotationCandidateSet,
+        geometry_safety,
+        has_review_path,
+        has_commit_path,
+        registry_revision: registry_revision.to_owned(),
+        score: annotagent_core::PlanCandidateScore::default(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn synthesize_registry_plan_candidates(
+    session: &mut AgentSession,
+    safe_suggestion: &WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+    feasibility: &annotagent_core::BuildFeasibility,
+    priority: annotagent_core::OptimizationPriority,
+) -> Result<()> {
+    let registry_revision = session
+        .working_memory
+        .as_ref()
+        .map(|memory| memory.context_revision.clone())
+        .ok_or_else(|| anyhow!("Pipeline Builder Session has no Registry context revision"))?;
+    let (materialized_baseline, _) =
+        materialize_feasibility_draft(safe_suggestion, input, feasibility)?;
+    // Preserve the controlled Label Pipeline projection when the Registry feasibility helper
+    // selected a flat template. The projection is what lets a typed refinement reconnect its
+    // output to the existing decision/review/commit tail without guessing graph topology.
+    let mut baseline = if safe_suggestion.draft.label_pipeline.is_some() {
+        safe_suggestion.clone()
+    } else {
+        materialized_baseline
+    };
+    bind_available_registry_models(&mut baseline.draft, input);
+    let baseline_candidate = candidate_from_draft(
+        CandidateDraftSource {
+            id: format!("baseline-{}", session.id),
+            name: "Conservative detection with mandatory Review".to_owned(),
+            source: annotagent_core::PipelineCandidateSource::TemplateSeed,
+            fragment_ids: Vec::new(),
+            evidence: Vec::new(),
+        },
+        &baseline.draft,
+        input,
+        &registry_revision,
+    );
+    session.record_plan_candidate(baseline_candidate);
+
+    let refinement_fragments = session
+        .working_memory
+        .as_ref()
+        .map(|memory| {
+            memory
+                .conversion_paths
+                .values()
+                .filter(|fragment| {
+                    fragment.from_artifact == ArtifactKind::DetectionSet
+                        && fragment.to_artifact == ArtifactKind::DetectionSet
+                        && fragment
+                            .required_model_capabilities
+                            .contains(&ModelCapability::PromptedSegmentation)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !refinement_fragments.is_empty()
+        && let (Some(task_id), Some(label)) =
+            (input.target_task_id.as_ref(), input.target_label.as_ref())
+    {
+        let mut available_experts = input
+            .expert_models
+            .iter()
+            .filter(|model| {
+                model.availability == ModelAvailability::Available
+                    && model.availability_evidence.available()
+                    && model.checkpoint.is_some()
+                    && !matches!(&model.connection, ModelConnection::Mock { .. })
+                    && model
+                        .capabilities
+                        .contains(&ModelCapability::PromptedSegmentation)
+            })
+            .collect::<Vec<_>>();
+        available_experts.sort_by(|left, right| left.model_id.cmp(&right.model_id));
+        let mut available_profiles =
+            compatible_builder_models(input, Some(ModelCapability::PromptedSegmentation))
+                .into_iter()
+                .filter(|profile| {
+                    input
+                        .provider_profiles
+                        .iter()
+                        .find(|provider| provider.id == profile.provider_id)
+                        .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
+                })
+                .collect::<Vec<_>>();
+        available_profiles.sort_by_key(|profile| profile.id.to_string());
+        let selected_model_id = available_experts
+            .first()
+            .map(|model| model.model_id.clone())
+            .or_else(|| {
+                available_profiles
+                    .first()
+                    .map(|profile| profile.id.to_string())
+            });
+        if let Some(selected_model_id) = selected_model_id {
+            let mut refined = baseline.clone();
+            let synthesis_evidence = AgentDryRunSummary {
+                image_count: 1,
+                detection_count: 1,
+                review_count: 1,
+                geometry_review_count: 1,
+                ..AgentDryRunSummary::default()
+            };
+            if add_prompted_segmentation_revision(
+                &mut refined,
+                task_id.as_str(),
+                label.as_str(),
+                &selected_model_id,
+                &synthesis_evidence,
+            )? {
+                bind_available_registry_models(&mut refined.draft, input);
+                if let Some(profile) = available_profiles
+                    .iter()
+                    .find(|profile| profile.id.to_string() == selected_model_id)
+                    && let Some(node) = refined
+                        .draft
+                        .nodes
+                        .iter_mut()
+                        .find(|node| node.node_type == "capability.segment")
+                {
+                    node.model_binding = Some(
+                        input
+                            .model_registry
+                            .iter()
+                            .find(|runtime| {
+                                runtime.id == profile.remote_model_id
+                                    || runtime.model == profile.remote_model_id
+                            })
+                            .map_or_else(
+                                || profile.remote_model_id.clone(),
+                                |runtime| runtime.id.clone(),
+                            ),
+                    );
+                    node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                        model_profile_id: profile.id,
+                        locked: true,
+                    });
+                }
+                let fragment_ids = refinement_fragments
+                    .iter()
+                    .map(|fragment| fragment.id.clone())
+                    .collect::<Vec<_>>();
+                let evidence = refinement_fragments
+                    .iter()
+                    .flat_map(|fragment| fragment.source_observation_ids.iter())
+                    .map(|observation_id| annotagent_core::ObservationRef {
+                        id: observation_id.clone(),
+                        tool_name: "find_geometry_refinement_path".to_owned(),
+                        original_call_id: observation_id.clone(),
+                        context_revision: fragment_ids.join(":"),
+                    })
+                    .collect();
+                let candidate = candidate_from_draft(
+                    CandidateDraftSource {
+                        id: format!("registry-refinement-{}", session.id),
+                        name: "Registry-composed prompted geometry refinement".to_owned(),
+                        source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                        fragment_ids,
+                        evidence,
+                    },
+                    &refined.draft,
+                    input,
+                    &registry_revision,
+                );
+                session.record_plan_candidate(candidate);
+            }
+        }
+    }
+
+    let synthesizer = annotagent_core::RegistryPipelineSynthesizer;
+    synthesizer.rank_candidates(&mut session.plan_candidates, priority);
+    if let Some(candidate_id) = synthesizer
+        .best_candidate(&session.plan_candidates)
+        .map(|candidate| candidate.id.clone())
+    {
+        session
+            .select_plan_candidate(&candidate_id)
+            .map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
 /// Re-evaluates only unresolved bindings on a persisted Draft after the human has completed a
 /// setup action. Manual node/configuration edits and the Draft identity are preserved. The Agent
 /// remains read-only with respect to installation: it can observe newly Available profiles and
@@ -13300,6 +13745,19 @@ impl LocalApplication {
                         &context_revision,
                         &input.node_catalog,
                     )?;
+                    if matches!(
+                        PipelineBuilderToolRegistry.resolve(&call.name),
+                        Ok(PipelineBuilderTool::FindArtifactConversionPath
+                            | PipelineBuilderTool::FindGeometryRefinementPath)
+                    ) {
+                        synthesize_registry_plan_candidates(
+                            &mut session,
+                            &safe_suggestion,
+                            &input,
+                            &feasibility,
+                            builder_constraints.priority,
+                        )?;
+                    }
                 }
                 self.store.save_agent_session(&session)?;
                 messages.push(ModelMessage {
@@ -21500,10 +21958,32 @@ export:
             .expect("persisted conversion-path observation");
         assert_eq!(path.result["model_payload"]["runnable"], json!(true));
         assert_eq!(report.session.discovered_conversion_paths.len(), 1);
-        assert_eq!(report.session.plan_candidates.len(), 1);
+        assert_eq!(report.session.plan_candidates.len(), 3);
+        let selected_candidate = report
+            .session
+            .selected_candidate_id
+            .as_ref()
+            .and_then(|candidate_id| {
+                report
+                    .session
+                    .plan_candidates
+                    .iter()
+                    .find(|candidate| &candidate.id == candidate_id)
+            })
+            .expect("selected synthesized Candidate");
         assert_eq!(
-            report.session.plan_candidates[0].source,
-            annotagent_core::PipelineCandidateSource::ConversionPath
+            selected_candidate.source,
+            annotagent_core::PipelineCandidateSource::RegistrySynthesis
+        );
+        assert!(
+            selected_candidate.is_runnable(),
+            "selected Candidate is blocked: {selected_candidate:#?}"
+        );
+        assert!(
+            selected_candidate
+                .node_blueprints
+                .iter()
+                .any(|node| { node.node_type == "capability.segment" })
         );
         let persisted = application
             .store
@@ -21513,7 +21993,23 @@ export:
             persisted.discovered_conversion_paths,
             report.session.discovered_conversion_paths
         );
-        assert_eq!(persisted.plan_candidates, report.session.plan_candidates);
+        assert_eq!(
+            persisted
+                .plan_candidates
+                .iter()
+                .map(|candidate| candidate.id.as_str())
+                .collect::<Vec<_>>(),
+            report
+                .session
+                .plan_candidates
+                .iter()
+                .map(|candidate| candidate.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            persisted.selected_candidate_id,
+            report.session.selected_candidate_id
+        );
         let draft = &report.suggestion.expect("salvaged Draft").draft;
         assert!(
             draft

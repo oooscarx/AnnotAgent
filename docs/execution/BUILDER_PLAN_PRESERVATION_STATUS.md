@@ -79,3 +79,24 @@ Status: complete.
   synthesizer rather than hidden in the conversion registry.
 - Core materialization and Application persistence tests pass; the original M0 regression still
   reaches the expected final missing-segmentation assertion until candidate synthesis/salvage land.
+
+## Milestone 3 — Registry-driven synthesis (2026-09-05)
+
+Status: complete.
+
+- Added a deterministic `RegistryPipelineSynthesizer`. Candidate ranking is driven by runnable
+  state, goal coverage, binding completeness, geometry safety, review/commit coverage and the
+  explicit accuracy/cost/latency priority. Candidate origin is deliberately not a score input.
+- A safe baseline and a Registry-composed geometry-refinement Candidate now compete as ordinary
+  plans. Templates are seeds; a template can win only when its explicit score is better.
+- The composed refinement consumes the discovered typed Fragment and produces the concrete
+  detection → box-prompt → prompted-segmentation → mask-to-bbox → geometry-evaluation →
+  geometry-decision → review → commit chain.
+- Model bindings are resolved from Available Provider/Expert Registry records. Mock Providers,
+  fixture connections, missing availability evidence and unpinned expert checkpoints cannot make a
+  production Candidate runnable.
+- The M0 fixture now proves that the runnable Registry refinement is persisted and selected before
+  the discovery limit. Its final assertion intentionally remains red until Milestone 4 changes
+  limit handling from template fallback to Candidate salvage.
+- All 103 Core tests and 63 runnable Application tests pass; strict focused Clippy passes after the
+  final formatting check.

@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-03 CST
 
+## Builder Plan Preservation M3 — 2026-09-05
+
+- The Builder now synthesizes complete Pipeline Candidates from Registry-discovered conversion
+  contracts instead of treating templates as the only executable fallback.
+- Deterministic scoring evaluates runnable state, binding completeness, goal coverage, geometry
+  safety and the explicit optimization priority. Candidate source is not scored.
+- Available non-Mock Provider Profiles and evidence-complete, checkpoint-pinned Expert Models are
+  eligible bindings. Fixture/setup-only models remain blocked and visible.
+- The regression fixture selects a complete prompted-segmentation refinement before the discovery
+  deadline. Candidate materialization at that boundary remains the focused M4 change.
+
 ## Builder Plan Preservation M2 — 2026-09-05
 
 - Registry Artifact conversion paths now become typed Pipeline Fragments with concrete node and edge
