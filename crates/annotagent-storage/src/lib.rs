@@ -53,6 +53,8 @@ const RUST_PLUGIN_MIGRATION: &str = include_str!("../../../migrations/0013_rust_
 const MODEL_BUNDLE_MIGRATION: &str = include_str!("../../../migrations/0014_model_bundles.sql");
 const WORKSPACE_IDENTITY_MIGRATION: &str =
     include_str!("../../../migrations/0015_workspace_identity.sql");
+const WORKFLOW_REVISION_INTEGRITY_MIGRATION: &str =
+    include_str!("../../../migrations/0016_workflow_revision_integrity.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -84,6 +86,10 @@ pub enum StorageError {
     ModelBindingNotFound(ModelBindingId),
     #[error("Agent cannot modify a locked Project Model Binding")]
     ModelBindingLocked,
+    #[error(
+        "workflow_draft_revision_conflict: expected revision {expected}, current revision {current}"
+    )]
+    WorkflowDraftRevisionConflict { expected: u64, current: u64 },
     #[error("unsupported history schema version {0}")]
     UnsupportedHistoryVersion(u32),
     #[error("invalid stored enum value: {0}")]
@@ -175,10 +181,42 @@ pub struct HistoryImportReport {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorkflowSampleTest {
+    pub id: String,
     pub draft_id: String,
     pub project_id: String,
+    pub draft_revision: u64,
+    pub request_revision: u64,
+    pub draft_content_hash: String,
+    pub image_set_hash: String,
+    pub model_snapshot_hash: String,
+    pub status: WorkflowSampleTestStatus,
+    pub inputs: Vec<WorkflowSampleTestInput>,
+    pub model_bindings: BTreeMap<String, String>,
     pub report: WorkflowDryRunReport,
+    pub started_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowSampleTestStatus {
+    Passed,
+    Failed,
+    HumanApproved,
+    LegacyUnverified,
+}
+
+impl WorkflowSampleTestStatus {
+    #[must_use]
+    pub fn allows_publication(self) -> bool {
+        matches!(self, Self::Passed | Self::HumanApproved)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowSampleTestInput {
+    pub image_id: String,
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -425,6 +463,20 @@ impl SqliteStore {
                 transaction.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (15, ?1, ?2)",
                     params!["project_scoped_workspace_identity", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
+            let has_workflow_revision_integrity = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 16)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_workflow_revision_integrity {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute_batch(WORKFLOW_REVISION_INTEGRITY_MIGRATION)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (16, ?1, ?2)",
+                    params!["workflow_revision_integrity", Utc::now().to_rfc3339()],
                 )?;
                 transaction.commit()?;
             }
@@ -1415,16 +1467,24 @@ impl SqliteStore {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO workflow_sample_tests
-                 (draft_id, project_id, report_json, completed_at)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(draft_id) DO UPDATE SET
-                   project_id = excluded.project_id,
-                   report_json = excluded.report_json,
-                   completed_at = excluded.completed_at",
+                 (id, draft_id, project_id, draft_revision, request_revision,
+                  draft_content_hash, image_set_hash, model_snapshot_hash, status,
+                  input_json, model_bindings_json, report_json, started_at, completed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
+                    sample_test.id,
                     sample_test.draft_id,
                     sample_test.project_id,
+                    i64::try_from(sample_test.draft_revision).unwrap_or(i64::MAX),
+                    i64::try_from(sample_test.request_revision).unwrap_or(i64::MAX),
+                    sample_test.draft_content_hash,
+                    sample_test.image_set_hash,
+                    sample_test.model_snapshot_hash,
+                    enum_string(sample_test.status)?,
+                    serde_json::to_string(&sample_test.inputs)?,
+                    serde_json::to_string(&sample_test.model_bindings)?,
                     serde_json::to_string(&sample_test.report)?,
+                    sample_test.started_at.to_rfc3339(),
                     sample_test.completed_at.to_rfc3339(),
                 ],
             )?;
@@ -1439,34 +1499,86 @@ impl SqliteStore {
         self.with_connection(|connection| {
             let row = connection
                 .query_row(
-                    "SELECT draft_id, project_id, report_json, completed_at
-                     FROM workflow_sample_tests WHERE draft_id = ?1",
+                    "SELECT id, draft_id, project_id, draft_revision, request_revision,
+                            draft_content_hash, image_set_hash, model_snapshot_hash, status,
+                            input_json, model_bindings_json, report_json, started_at, completed_at
+                     FROM workflow_sample_tests WHERE draft_id = ?1
+                     ORDER BY completed_at DESC, id DESC LIMIT 1",
                     [draft_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
+                    workflow_sample_test_row,
                 )
                 .optional()?;
-            row.map(|(draft_id, project_id, report_json, completed_at)| {
-                Ok(WorkflowSampleTest {
-                    draft_id,
-                    project_id,
-                    report: serde_json::from_str(&report_json)?,
-                    completed_at: DateTime::parse_from_rfc3339(&completed_at)
-                        .map_err(|error| {
-                            StorageError::InvalidEnum(format!(
-                                "invalid sample test timestamp: {error}"
-                            ))
-                        })?
-                        .with_timezone(&Utc),
+            row.map(workflow_sample_test_from_columns).transpose()
+        })
+    }
+
+    pub fn get_workflow_sample_test_for_revision(
+        &self,
+        draft_id: &str,
+        draft_revision: u64,
+        draft_content_hash: &str,
+    ) -> Result<Option<WorkflowSampleTest>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT id, draft_id, project_id, draft_revision, request_revision,
+                            draft_content_hash, image_set_hash, model_snapshot_hash, status,
+                            input_json, model_bindings_json, report_json, started_at, completed_at
+                     FROM workflow_sample_tests
+                     WHERE draft_id = ?1 AND request_revision = ?2 AND draft_content_hash = ?3
+                     ORDER BY completed_at DESC, id DESC LIMIT 1",
+                    params![
+                        draft_id,
+                        i64::try_from(draft_revision).unwrap_or(i64::MAX),
+                        draft_content_hash,
+                    ],
+                    workflow_sample_test_row,
+                )
+                .optional()?
+                .map(workflow_sample_test_from_columns)
+                .transpose()
+        })
+    }
+
+    pub fn get_workflow_sample_test_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<WorkflowSampleTest>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT id, draft_id, project_id, draft_revision, request_revision,
+                            draft_content_hash, image_set_hash, model_snapshot_hash, status,
+                            input_json, model_bindings_json, report_json, started_at, completed_at
+                     FROM workflow_sample_tests WHERE id = ?1",
+                    [id],
+                    workflow_sample_test_row,
+                )
+                .optional()?
+                .map(workflow_sample_test_from_columns)
+                .transpose()
+        })
+    }
+
+    pub fn list_workflow_sample_tests(
+        &self,
+        draft_id: &str,
+    ) -> Result<Vec<WorkflowSampleTest>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, draft_id, project_id, draft_revision, request_revision,
+                        draft_content_hash, image_set_hash, model_snapshot_hash, status,
+                        input_json, model_bindings_json, report_json, started_at, completed_at
+                 FROM workflow_sample_tests WHERE draft_id = ?1
+                 ORDER BY completed_at DESC, id DESC",
+            )?;
+            statement
+                .query_map([draft_id], workflow_sample_test_row)?
+                .map(|row| {
+                    row.map_err(StorageError::from)
+                        .and_then(workflow_sample_test_from_columns)
                 })
-            })
-            .transpose()
+                .collect()
         })
     }
 
@@ -2120,27 +2232,84 @@ impl SqliteStore {
     }
 
     pub fn save_workflow_draft(&self, draft: &WorkflowDraft) -> Result<(), StorageError> {
-        let status = enum_string(draft.status)?;
-        let draft_json = serde_json::to_string(draft)?;
         self.with_connection(|connection| {
+            let current = connection
+                .query_row(
+                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    [&draft.id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let persisted = persisted_workflow_draft(draft, current.as_ref())?;
+            let status = enum_string(persisted.status)?;
+            let draft_json = serde_json::to_string(&persisted)?;
             connection.execute(
                 "INSERT INTO workflow_drafts
-                 (id, project_id, status, draft_json, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 (id, project_id, status, draft_json, created_at, updated_at, revision, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
                    status = excluded.status,
                    draft_json = excluded.draft_json,
-                   updated_at = excluded.updated_at",
+                   updated_at = excluded.updated_at,
+                   revision = excluded.revision,
+                   content_hash = excluded.content_hash",
                 params![
-                    draft.id,
-                    draft.project_id,
+                    persisted.id,
+                    persisted.project_id,
                     status,
                     draft_json,
-                    draft.created_at.to_rfc3339(),
-                    draft.updated_at.to_rfc3339()
+                    persisted.created_at.to_rfc3339(),
+                    persisted.updated_at.to_rfc3339(),
+                    i64::try_from(persisted.revision).unwrap_or(i64::MAX),
+                    persisted.content_hash,
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    /// Atomically persists an editable Draft only when the caller observed the current revision.
+    pub fn save_workflow_draft_if_revision(
+        &self,
+        draft: &WorkflowDraft,
+        expected_revision: u64,
+    ) -> Result<Option<WorkflowDraft>, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let current = transaction
+                .query_row(
+                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    [&draft.id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let Some(current) = current else {
+                return Ok(None);
+            };
+            if u64::try_from(current.0).ok() != Some(expected_revision) {
+                return Ok(None);
+            }
+            let persisted = persisted_workflow_draft(draft, Some(&current))?;
+            let changed = transaction.execute(
+                "UPDATE workflow_drafts
+                 SET status = ?2, draft_json = ?3, updated_at = ?4,
+                     revision = ?5, content_hash = ?6
+                 WHERE id = ?1 AND revision = ?7",
+                params![
+                    persisted.id,
+                    enum_string(persisted.status)?,
+                    serde_json::to_string(&persisted)?,
+                    persisted.updated_at.to_rfc3339(),
+                    i64::try_from(persisted.revision).unwrap_or(i64::MAX),
+                    persisted.content_hash,
+                    i64::try_from(expected_revision).unwrap_or(i64::MAX),
+                ],
+            )?;
+            if changed != 1 {
+                return Ok(None);
+            }
+            transaction.commit()?;
+            Ok(Some(persisted))
         })
     }
 
@@ -2150,10 +2319,10 @@ impl SqliteStore {
     ) -> Result<Vec<WorkflowDraft>, StorageError> {
         self.with_connection(|connection| {
             let (sql, parameter) = project_id.map_or(
-                ("SELECT draft_json FROM workflow_drafts ORDER BY updated_at DESC", None),
+                ("SELECT draft_json, revision, content_hash FROM workflow_drafts ORDER BY updated_at DESC", None),
                 |project_id| {
                     (
-                        "SELECT draft_json FROM workflow_drafts WHERE project_id = ?1 ORDER BY updated_at DESC",
+                        "SELECT draft_json, revision, content_hash FROM workflow_drafts WHERE project_id = ?1 ORDER BY updated_at DESC",
                         Some(project_id),
                     )
                 },
@@ -2161,32 +2330,39 @@ impl SqliteStore {
             let mut statement = connection.prepare(sql)?;
             let rows = if let Some(project_id) = parameter {
                 statement
-                    .query_map([project_id], |row| row.get::<_, String>(0))?
+                    .query_map([project_id], workflow_draft_row)?
                     .collect::<Result<Vec<_>, _>>()?
             } else {
                 statement
-                    .query_map([], |row| row.get::<_, String>(0))?
+                    .query_map([], workflow_draft_row)?
                     .collect::<Result<Vec<_>, _>>()?
             };
             rows.into_iter()
-                .map(|json| serde_json::from_str(&json).map_err(StorageError::from))
+                .map(workflow_draft_from_columns)
                 .collect()
         })
     }
 
     pub fn get_workflow_draft(&self, id: &str) -> Result<WorkflowDraft, StorageError> {
+        self.get_workflow_draft_optional(id)?.ok_or_else(|| {
+            StorageError::InvalidEnum(format!("workflow draft {id:?} was not found"))
+        })
+    }
+
+    pub fn get_workflow_draft_optional(
+        &self,
+        id: &str,
+    ) -> Result<Option<WorkflowDraft>, StorageError> {
         self.with_connection(|connection| {
-            let json = connection
+            connection
                 .query_row(
-                    "SELECT draft_json FROM workflow_drafts WHERE id = ?1",
+                    "SELECT draft_json, revision, content_hash FROM workflow_drafts WHERE id = ?1",
                     [id],
-                    |row| row.get::<_, String>(0),
+                    workflow_draft_row,
                 )
                 .optional()?
-                .ok_or_else(|| {
-                    StorageError::InvalidEnum(format!("workflow draft {id:?} was not found"))
-                })?;
-            serde_json::from_str(&json).map_err(StorageError::from)
+                .map(workflow_draft_from_columns)
+                .transpose()
         })
     }
 
@@ -2198,6 +2374,28 @@ impl SqliteStore {
     ) -> Result<PublishedWorkflowVersion, StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            let (current_revision, current_hash) = transaction
+                .query_row(
+                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    [&draft.id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StorageError::InvalidEnum(format!(
+                        "workflow draft {:?} was not found",
+                        draft.id
+                    ))
+                })?;
+            let current_revision = u64::try_from(current_revision).unwrap_or(1);
+            let expected_hash =
+                annotagent_image_tools::sha256(&draft.content_hash_material()?);
+            if current_revision != draft.revision || current_hash != expected_hash {
+                return Err(StorageError::WorkflowDraftRevisionConflict {
+                    expected: draft.revision,
+                    current: current_revision,
+                });
+            }
             let next_version: u32 = transaction.query_row(
                 "SELECT COALESCE(MAX(version), 0) + 1 FROM workflow_versions WHERE workflow_id = ?1",
                 [&draft.id],
@@ -2205,6 +2403,8 @@ impl SqliteStore {
             )?;
             let mut published_draft = draft.clone();
             published_draft.status = WorkflowDraftStatus::Published;
+            published_draft.revision = current_revision;
+            published_draft.content_hash.clone_from(&expected_hash);
             published_draft.updated_at = Utc::now();
             let version = PublishedWorkflowVersion {
                 workflow_id: draft.id.clone(),
@@ -2229,14 +2429,23 @@ impl SqliteStore {
                     version.published_at.to_rfc3339()
                 ],
             )?;
-            transaction.execute(
-                "UPDATE workflow_drafts SET status = 'published', draft_json = ?2, updated_at = ?3 WHERE id = ?1",
+            let changed = transaction.execute(
+                "UPDATE workflow_drafts SET status = 'published', draft_json = ?2, updated_at = ?3
+                 WHERE id = ?1 AND revision = ?4 AND content_hash = ?5",
                 params![
                     draft.id,
                     serde_json::to_string(&published_draft)?,
-                    published_draft.updated_at.to_rfc3339()
+                    published_draft.updated_at.to_rfc3339(),
+                    i64::try_from(draft.revision).unwrap_or(i64::MAX),
+                    expected_hash,
                 ],
             )?;
+            if changed != 1 {
+                return Err(StorageError::WorkflowDraftRevisionConflict {
+                    expected: draft.revision,
+                    current: current_revision,
+                });
+            }
             transaction.commit()?;
             Ok(version)
         })
@@ -3215,6 +3424,126 @@ fn stored_project_image_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<St
         metadata_json: row.get(4)?,
         imported_at: row.get(5)?,
     })
+}
+
+type WorkflowSampleTestColumns = (
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
+fn workflow_sample_test_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<WorkflowSampleTestColumns> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
+    ))
+}
+
+fn workflow_sample_test_from_columns(
+    columns: WorkflowSampleTestColumns,
+) -> Result<WorkflowSampleTest, StorageError> {
+    let (
+        id,
+        draft_id,
+        project_id,
+        draft_revision,
+        request_revision,
+        draft_content_hash,
+        image_set_hash,
+        model_snapshot_hash,
+        status,
+        input_json,
+        model_bindings_json,
+        report_json,
+        started_at,
+        completed_at,
+    ) = columns;
+    Ok(WorkflowSampleTest {
+        id,
+        draft_id,
+        project_id,
+        draft_revision: u64::try_from(draft_revision).map_err(|_| {
+            StorageError::InvalidEnum("negative workflow sample-test revision".to_owned())
+        })?,
+        request_revision: u64::try_from(request_revision).map_err(|_| {
+            StorageError::InvalidEnum("negative workflow sample-test request revision".to_owned())
+        })?,
+        draft_content_hash,
+        image_set_hash,
+        model_snapshot_hash,
+        status: serde_json::from_str(&format!("\"{status}\""))?,
+        inputs: serde_json::from_str(&input_json)?,
+        model_bindings: serde_json::from_str(&model_bindings_json)?,
+        report: serde_json::from_str(&report_json)?,
+        started_at: DateTime::parse_from_rfc3339(&started_at)
+            .map_err(|error| {
+                StorageError::InvalidEnum(format!("invalid sample test start timestamp: {error}"))
+            })?
+            .with_timezone(&Utc),
+        completed_at: DateTime::parse_from_rfc3339(&completed_at)
+            .map_err(|error| {
+                StorageError::InvalidEnum(format!("invalid sample test timestamp: {error}"))
+            })?
+            .with_timezone(&Utc),
+    })
+}
+
+fn workflow_draft_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, i64, String)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+}
+
+fn workflow_draft_from_columns(
+    (json, revision, content_hash): (String, i64, String),
+) -> Result<WorkflowDraft, StorageError> {
+    let mut draft = serde_json::from_str::<WorkflowDraft>(&json)?;
+    draft.revision = u64::try_from(revision.max(1)).unwrap_or(1);
+    draft.content_hash = content_hash;
+    if draft.content_hash.is_empty() {
+        draft.content_hash = annotagent_image_tools::sha256(&draft.content_hash_material()?);
+    }
+    Ok(draft)
+}
+
+fn persisted_workflow_draft(
+    draft: &WorkflowDraft,
+    current: Option<&(i64, String)>,
+) -> Result<WorkflowDraft, StorageError> {
+    let mut persisted = draft.clone();
+    let content_hash = annotagent_image_tools::sha256(&persisted.content_hash_material()?);
+    persisted.revision = current.map_or(1, |(revision, current_hash)| {
+        if current_hash.is_empty() || current_hash != &content_hash {
+            u64::try_from(*revision).unwrap_or(1).saturating_add(1)
+        } else {
+            u64::try_from(*revision).unwrap_or(1)
+        }
+    });
+    persisted.content_hash = content_hash;
+    Ok(persisted)
 }
 
 fn append_json_references(
@@ -4494,6 +4823,8 @@ mod tests {
             project_id: "project".to_owned(),
             name: "Fixture Draft".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![WorkflowDraftNode {
                 id: "detector".to_owned(),
                 node_type: "capability.detect".to_owned(),
@@ -4741,12 +5072,21 @@ mod tests {
     }
 
     #[test]
-    fn workflow_sample_test_is_persisted_per_draft() {
+    fn workflow_sample_tests_are_immutable_and_selected_by_exact_revision() {
         let store = SqliteStore::open_in_memory().expect("in-memory database");
         let completed_at = Utc::now();
         let sample_test = WorkflowSampleTest {
+            id: "sample-test-1".to_owned(),
             draft_id: "draft-1".to_owned(),
             project_id: "project-1".to_owned(),
+            draft_revision: 1,
+            request_revision: 1,
+            draft_content_hash: "sha256:draft".to_owned(),
+            image_set_hash: "sha256:images".to_owned(),
+            model_snapshot_hash: "sha256:models".to_owned(),
+            status: WorkflowSampleTestStatus::Passed,
+            inputs: Vec::new(),
+            model_bindings: BTreeMap::new(),
             report: WorkflowDryRunReport {
                 sandbox: true,
                 validation: annotagent_core::WorkflowValidationReport {
@@ -4762,6 +5102,7 @@ mod tests {
                 total_latency_ms: 12,
                 estimated_cost: "0".to_owned(),
             },
+            started_at: completed_at,
             completed_at,
         };
         store
@@ -4772,6 +5113,39 @@ mod tests {
             .expect("load sample test")
             .expect("sample test exists");
         assert_eq!(restored, sample_test);
+
+        let mut current = sample_test.clone();
+        current.id = "sample-test-revision-2".to_owned();
+        current.draft_revision = 2;
+        current.request_revision = 2;
+        current.draft_content_hash = "sha256:draft-v2".to_owned();
+        current.started_at = completed_at - chrono::Duration::seconds(4);
+        current.completed_at = completed_at - chrono::Duration::seconds(3);
+        store
+            .save_workflow_sample_test(&current)
+            .expect("save current revision test");
+
+        let mut stale_finished_late = sample_test.clone();
+        stale_finished_late.id = "sample-test-stale-late".to_owned();
+        stale_finished_late.started_at = completed_at - chrono::Duration::seconds(2);
+        stale_finished_late.completed_at = completed_at + chrono::Duration::seconds(1);
+        store
+            .save_workflow_sample_test(&stale_finished_late)
+            .expect("save stale test that finished last");
+
+        assert_eq!(
+            store
+                .list_workflow_sample_tests("draft-1")
+                .expect("immutable history")
+                .len(),
+            3
+        );
+        let selected = store
+            .get_workflow_sample_test_for_revision("draft-1", 2, "sha256:draft-v2")
+            .expect("select exact revision")
+            .expect("current test");
+        assert_eq!(selected.id, current.id);
+        assert_eq!(selected.request_revision, 2);
     }
 
     #[test]
@@ -4808,6 +5182,8 @@ mod tests {
             project_id: "multi-workflow-project".to_owned(),
             name: id.to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![WorkflowDraftNode {
                 id: "commit".to_owned(),
                 node_type: "commit".to_owned(),

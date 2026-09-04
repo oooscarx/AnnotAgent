@@ -68,6 +68,18 @@ interface LocalApiSession {
 
 let localSession: Promise<LocalApiSession> | undefined;
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly suggestedAction?: string,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 export function resetLocalApiSessionForTests() {
   localSession = undefined;
 }
@@ -170,8 +182,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const actionable = [body.error, body.suggested_action]
       .filter(Boolean)
       .join(" ");
-    throw new Error(
+    throw new ApiRequestError(
       active ?? (actionable || `${response.status} ${response.statusText}`),
+      response.status,
+      body.code,
+      body.suggested_action,
     );
   }
   return response.json() as Promise<T>;
@@ -742,21 +757,25 @@ export const api = {
       `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
       { method: "POST" },
     ),
-  saveWorkflowDraft: (draft: WorkflowDraft) =>
+  saveWorkflowDraft: (draft: WorkflowDraft, signal?: AbortSignal) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, {
       method: "PATCH",
+      headers: { "if-match": String(draft.revision) },
       body: JSON.stringify(draft),
+      signal,
     }),
   dryRunWorkflow: (draftId: string, imageIndices: number[] = []) =>
     request<WorkflowDryRunReport>(`/api/workflow-drafts/${draftId}/dry-run`, {
       method: "POST",
       body: JSON.stringify({ image_indices: imageIndices }),
     }),
-  workflowSampleTest: (draftId: string, signal?: AbortSignal) =>
+  workflowSampleTest: (draftId: string, signal?: AbortSignal, sampleTestId?: string) =>
     request<{
       sample_test?: WorkflowSampleTestRecord | null;
       current: boolean;
-    }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test`, { signal }),
+    }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test${
+      sampleTestId ? `?test_id=${encodeURIComponent(sampleTestId)}` : ""
+    }`, { signal }),
   publishWorkflow: (draftId: string) =>
     request<{ workflow_id: string; version: number }>(
       `/api/workflow-drafts/${draftId}/publish`,

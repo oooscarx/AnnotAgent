@@ -92,6 +92,8 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         project_id: "generic".to_owned(),
         name: "Generic DAG".to_owned(),
         status: WorkflowDraftStatus::Validated,
+        revision: 1,
+        content_hash: String::new(),
         nodes,
         edges,
         enabled_skills: BTreeMap::from([("generic".to_owned(), "1".to_owned())]),

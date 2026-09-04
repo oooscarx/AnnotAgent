@@ -39,7 +39,7 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 ## D. State recovery
 
 - [x] Pipeline refresh preserves the exact Draft.
-- [x] Test refresh preserves the exact Draft and current persisted Sample Test; immutable Sample Test IDs complete in M6.
+- [x] Test refresh preserves the exact Draft and immutable Sample Test ID.
 - [x] Run refresh preserves Image, View, Node, and Artifact.
 - [x] Review refresh preserves the Item.
 - [x] A stale request cannot overwrite a newly selected Project.
@@ -62,13 +62,13 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## F. Workflow
 
-- [ ] Drafts have revisions.
-- [ ] Autosave uses optimistic concurrency.
-- [ ] Two tabs cannot silently overwrite each other.
-- [ ] Sample Tests do not overwrite history.
-- [ ] Sample Tests bind to a Draft content hash.
-- [ ] Publish requires an exact current Sample Test.
-- [ ] Published versions are immutable.
+- [x] Drafts have revisions.
+- [x] Autosave uses optimistic concurrency.
+- [x] Two tabs cannot silently overwrite each other.
+- [x] Sample Tests do not overwrite history.
+- [x] Sample Tests bind to a Draft content hash.
+- [x] Publish requires an exact current Sample Test.
+- [x] Published versions are immutable.
 - [x] Pipeline URLs preserve Draft/version.
 - [x] Stale asynchronous results cannot overwrite a new Draft.
 
@@ -117,7 +117,7 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] Project rename with historical data.
 - [x] Refresh recovery for Build/Test/Run/Review.
 - [x] Slow-request race.
-- [ ] Two-tab Draft conflict.
+- [x] Two-tab Draft conflict.
 - [x] Final result vs intermediate artifact.
 - [x] Mixed batch status/progress.
 - [ ] Cross-project object attack.

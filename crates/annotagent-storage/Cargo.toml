@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 annotagent-core = { path = "../annotagent-core" }
+annotagent-image-tools = { path = "../annotagent-image-tools" }
 annotagent-runtime = { path = "../annotagent-runtime" }
 async-trait.workspace = true
 chrono.workspace = true

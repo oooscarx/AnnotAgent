@@ -109,6 +109,8 @@ fn workflow(
         project_id: "generic".to_owned(),
         name: name.to_owned(),
         status: WorkflowDraftStatus::Published,
+        revision: 1,
+        content_hash: String::new(),
         nodes,
         edges,
         enabled_skills: BTreeMap::new(),

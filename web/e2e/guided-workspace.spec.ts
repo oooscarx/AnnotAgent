@@ -10,6 +10,7 @@ const projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
 const agentDiffProjectId = `guided-agent-diff-${stamp}`;
+const conflictProjectId = `guided-conflict-${stamp}`;
 const cropProjectId = `guided-crop-${stamp}`;
 const mixedProjectId = `guided-mixed-${stamp}`;
 const mixedRunId = "00000000-0000-4000-8000-000000000091";
@@ -440,6 +441,83 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
 });
 
+test("two tabs surface a Draft revision conflict without losing either copy", async ({ context, request }, testInfo) => {
+  const project = await request.post("/api/projects", {
+    data: {
+      id: conflictProjectId,
+      yaml: `version: 1
+project:
+  name: Two tab Draft ${stamp}
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks:
+  - id: scene
+    display_name: Scene
+    kind: classification
+    labels: [day, night]
+    required: true
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`,
+    },
+  });
+  expect(project.status()).toBe(201);
+  const imported = await request.post(`/api/projects/${conflictProjectId}/import`, {
+    data: { source: String(testInfo.config.metadata.e2eImport) },
+  });
+  expect(imported.ok()).toBeTruthy();
+  const created = await request.post("/api/workflow-drafts", {
+    data: { project_id: conflictProjectId, from_template: true },
+  });
+  expect(created.status()).toBe(201);
+  const draft = await created.json() as { id: string };
+  const first = await context.newPage();
+  const second = await context.newPage();
+  await Promise.all([
+    first.goto(`/projects/${conflictProjectId}/build/pipeline?draft=${draft.id}`),
+    second.goto(`/projects/${conflictProjectId}/build/pipeline?draft=${draft.id}`),
+  ]);
+  await Promise.all([
+    expect(first.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible(),
+    expect(second.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible(),
+  ]);
+
+  const editNode = async (page: Page, key: string) => {
+    await page.getByText("View technical graph", { exact: true }).last().click();
+    const nodeId = page.getByLabel("Node ID").first();
+    const value = await nodeId.inputValue();
+    const response = page.waitForResponse((candidate) =>
+      candidate.request().method() === "PATCH" &&
+      candidate.url().includes(`/api/workflow-drafts/${draft.id}`),
+    );
+    await nodeId.fill(`${value}-${key}`);
+    return response;
+  };
+
+  expect((await editNode(first, "saved_by_first_tab")).status()).toBe(200);
+  expect((await editNode(second, "saved_by_second_tab")).status()).toBe(409);
+  await expect(second.getByRole("heading", { name: "This Draft changed in another tab" })).toBeVisible();
+  await second.getByText("Compare Draft snapshots", { exact: true }).click();
+  await expect(second.getByText("Your unsaved copy", { exact: true })).toBeVisible();
+  await expect(second.getByText("Latest server copy", { exact: true })).toBeVisible();
+
+  const copied = second.waitForResponse((candidate) =>
+    candidate.request().method() === "PATCH" &&
+    candidate.url().includes("/api/workflow-drafts/") &&
+    !candidate.url().endsWith(draft.id),
+  );
+  await second.getByRole("button", { name: "Save mine as new Draft" }).click();
+  expect((await copied).status()).toBe(200);
+  await expect(second).toHaveURL(/build\/pipeline\?draft=[^&]+$/);
+  await first.close();
+  await second.close();
+});
+
 test("Pipeline Builder setup outcome restores its Draft and exposes recovery navigation", async ({ page, request }) => {
   const draftsResponse = await request.get(`/api/workflow-drafts?project_id=${projectId}`);
   expect(draftsResponse.ok()).toBeTruthy();
@@ -507,6 +585,7 @@ test("Pipeline Builder setup outcome restores its Draft and exposes recovery nav
 });
 
 test("Pipeline Builder applies a structured Draft Diff and restores it with Undo", async ({ page, request }, testInfo) => {
+  await ensurePipelineBuilderFixture(request);
   const created = await request.post("/api/projects", {
     data: {
       id: agentDiffProjectId,
@@ -561,7 +640,13 @@ export:
   const diff = page.getByLabel("Draft Diff");
   await expect(diff).toBeVisible({ timeout: 30_000 });
   await expect(diff.getByRole("checkbox").first()).toBeVisible();
+  const applyResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    response.url().includes("/apply-diff"),
+  );
   await page.getByRole("button", { name: "Apply selected" }).click();
+  const applied = await applyResponse;
+  expect(applied.status(), await applied.text()).toBe(200);
   await expect(page.getByRole("button", { name: "Undo Agent changes" })).toBeVisible();
 
   await expect.poll(async () => {
@@ -600,7 +685,9 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await expect(page.getByRole("button", { name: "Activate automation", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Activate automation", exact: true }).click();
   await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
-  await expect(page).toHaveURL(new RegExp(`build/test\\?draft=${testedDraftId}$`));
+  await expect(page).toHaveURL(
+    new RegExp(`build/test\\?draft=${testedDraftId}&test=[^&]+$`),
+  );
   await page.reload();
   await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
   await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();

@@ -372,6 +372,8 @@ impl PipelineDraftDiff {
 fn applied_identity(base: &WorkflowDraft, mut proposed: WorkflowDraft) -> WorkflowDraft {
     proposed.id.clone_from(&base.id);
     proposed.project_id.clone_from(&base.project_id);
+    proposed.revision = base.revision;
+    proposed.content_hash.clone_from(&base.content_hash);
     proposed.created_at = base.created_at;
     proposed.status = WorkflowDraftStatus::Editing;
     proposed.updated_at = Utc::now();
@@ -2495,6 +2497,8 @@ mod tests {
             project_id: "project".to_owned(),
             name: "Draft".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![detect, decision, commit],
             edges: vec![
                 WorkflowEdge {
@@ -2814,6 +2818,8 @@ mod tests {
             .apply_selected(&base, &proposed, &diff.all_change_ids())
             .expect("apply all");
         assert_eq!(fully_applied.id, base.id);
+        assert_eq!(fully_applied.revision, base.revision);
+        assert_eq!(fully_applied.content_hash, base.content_hash);
         assert_eq!(fully_applied.nodes.len(), proposed.nodes.len());
         assert_eq!(fully_applied.status, WorkflowDraftStatus::Editing);
         assert!(

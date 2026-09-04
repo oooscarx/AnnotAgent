@@ -185,6 +185,12 @@ pub struct WorkflowDraft {
     pub project_id: String,
     pub name: String,
     pub status: WorkflowDraftStatus,
+    /// Monotonic, server-owned edit revision used for optimistic concurrency.
+    #[serde(default = "default_workflow_draft_revision")]
+    pub revision: u64,
+    /// SHA-256 of semantic authoring content. Lifecycle state and timestamps are excluded.
+    #[serde(default)]
+    pub content_hash: String,
     pub nodes: Vec<WorkflowDraftNode>,
     #[serde(default)]
     pub edges: Vec<WorkflowEdge>,
@@ -208,6 +214,39 @@ pub struct WorkflowDraft {
     pub label_pipeline: Option<crate::LabelWorkflowComposition>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl WorkflowDraft {
+    /// Canonical semantic material used to bind Sample Tests to the exact authoring revision.
+    pub fn content_hash_material(&self) -> Result<Vec<u8>, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Material<'a> {
+            schema_version: u32,
+            project_id: &'a str,
+            name: &'a str,
+            nodes: &'a [WorkflowDraftNode],
+            edges: &'a [WorkflowEdge],
+            enabled_skills: &'a BTreeMap<String, String>,
+            resource_versions: &'a BTreeMap<String, String>,
+            runtime_policies: &'a BTreeMap<String, serde_json::Value>,
+            allow_unvalidated_commit: bool,
+            geometry_risk_acceptance: &'a Option<GeometryRiskAcceptance>,
+            label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
+        }
+        serde_json::to_vec(&Material {
+            schema_version: self.schema_version,
+            project_id: &self.project_id,
+            name: &self.name,
+            nodes: &self.nodes,
+            edges: &self.edges,
+            enabled_skills: &self.enabled_skills,
+            resource_versions: &self.resource_versions,
+            runtime_policies: &self.runtime_policies,
+            allow_unvalidated_commit: self.allow_unvalidated_commit,
+            geometry_risk_acceptance: &self.geometry_risk_acceptance,
+            label_pipeline: &self.label_pipeline,
+        })
+    }
 }
 
 /// A domain extension's project-independent starting graph. Applications instantiate the
@@ -240,6 +279,8 @@ impl WorkflowTemplate {
             project_id: project_id.into(),
             name: self.name.clone(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: self.nodes.clone(),
             edges: self.edges.clone(),
             enabled_skills,
@@ -273,6 +314,10 @@ impl GeometryRiskAcceptance {
 }
 
 const fn default_workflow_schema_version() -> u32 {
+    1
+}
+
+const fn default_workflow_draft_revision() -> u64 {
     1
 }
 
@@ -945,6 +990,8 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 project_id: project_id.to_owned(),
                 name: format!("{} suggested workflow", project_schema.project.name),
                 status: WorkflowDraftStatus::Suggested,
+                revision: 1,
+                content_hash: String::new(),
                 nodes,
                 edges,
                 enabled_skills: skill_versions,
@@ -1339,6 +1386,8 @@ fn suggest_detection_workflow(
             project_id: project_id.to_owned(),
             name: format!("{} detection workflow", project_schema.project.name),
             status: WorkflowDraftStatus::Suggested,
+            revision: 1,
+            content_hash: String::new(),
             nodes,
             edges,
             enabled_skills: project_schema.project.enabled_skill_versions(),
@@ -2792,6 +2841,8 @@ mod tests {
             project_id: "project".to_owned(),
             name: "test".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes,
             edges,
             enabled_skills: BTreeMap::new(),

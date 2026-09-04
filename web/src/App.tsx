@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, subscribeEvents } from "./api";
+import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import {
@@ -646,8 +646,15 @@ export function App() {
             project={selectedProject}
             step={route.step}
             selectedDraftId={route.draftId}
+            selectedSampleTestId={route.sampleTestId}
             onNavigate={(step, draftId, replace) =>
               navigate(projectBuildPath(route.projectId, step, { draftId }), replace)
+            }
+            onSelectTestContext={(draftId, sampleTestId, replace) =>
+              navigate(projectBuildPath(route.projectId, "test", {
+                draftId,
+                sampleTestId,
+              }), replace)
             }
             onOpenRuns={(batchId) =>
               navigate(batchId
@@ -808,7 +815,9 @@ function BuildWorkspace({
   project,
   step,
   selectedDraftId,
+  selectedSampleTestId,
   onNavigate,
+  onSelectTestContext,
   onOpenRuns,
   onOpenProjects,
   onOpenProject,
@@ -818,7 +827,9 @@ function BuildWorkspace({
   project?: ProjectSummary;
   step: "data" | "labels" | "test";
   selectedDraftId?: string;
+  selectedSampleTestId?: string;
   onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
+  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean) => void;
   onOpenRuns: (batchId?: string) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
@@ -845,7 +856,7 @@ function BuildWorkspace({
       ) : step === "labels" ? (
         <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
       ) : (
-        <BuildTestPublish project={project} selectedDraftId={selectedDraftId} onSelectDraft={(draftId, replace) => onNavigate("test", draftId, replace)} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
+        <BuildTestPublish project={project} selectedDraftId={selectedDraftId} selectedSampleTestId={selectedSampleTestId} onSelectTestContext={onSelectTestContext} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
       )}
       {project && summary && allowed && step !== "test" && <BuildFooter
         previous={previousStep}
@@ -1107,7 +1118,8 @@ function BuildLabels({
 function BuildTestPublish({
   project,
   selectedDraftId,
-  onSelectDraft,
+  selectedSampleTestId,
+  onSelectTestContext,
   onNavigate,
   onOpenRuns,
   onRefresh,
@@ -1115,7 +1127,8 @@ function BuildTestPublish({
 }: {
   project: ProjectSummary;
   selectedDraftId?: string;
-  onSelectDraft: (draftId: string, replace?: boolean) => void;
+  selectedSampleTestId?: string;
+  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean) => void;
   onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
   onOpenRuns: (batchId?: string) => void;
   onRefresh: () => Promise<void>;
@@ -1123,6 +1136,10 @@ function BuildTestPublish({
 }) {
   const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
   const [draftId, setDraftId] = useState("");
+  const [activeSampleTest, setActiveSampleTest] = useState<{
+    draftId: string;
+    id: string;
+  }>();
   const [sampleCount, setSampleCount] = useState(3);
   const [report, setReport] = useState<WorkflowDryRunReport>();
   const [reportLoading, setReportLoading] = useState(false);
@@ -1166,8 +1183,12 @@ function BuildTestPublish({
     };
   }, [project.id]);
   useEffect(() => {
-    if (draftId && draftId !== selectedDraftId) onSelectDraft(draftId, true);
+    if (draftId && draftId !== selectedDraftId) onSelectTestContext(draftId, undefined, true);
   }, [draftId, selectedDraftId]);
+  useEffect(() => {
+    if (draftId && selectedSampleTestId)
+      setActiveSampleTest({ draftId, id: selectedSampleTestId });
+  }, [draftId, selectedSampleTestId]);
   useEffect(() => {
     const generation = ++sampleLoadGeneration.current;
     setReport(undefined);
@@ -1181,7 +1202,7 @@ function BuildTestPublish({
     setReportLoading(true);
     void workspaceQueries.load(
       key,
-      (signal) => api.workflowSampleTest(draftId, signal),
+      (signal) => api.workflowSampleTest(draftId, signal, selectedSampleTestId),
       { force: true },
     )
       .then(({ sample_test: sampleTest, current }) => {
@@ -1189,6 +1210,9 @@ function BuildTestPublish({
         if (sampleTest && current) {
           setReport(sampleTest.report);
           setRestoredAt(sampleTest.completed_at);
+          setActiveSampleTest({ draftId, id: sampleTest.id });
+          if (sampleTest.id !== selectedSampleTestId)
+            onSelectTestContext(draftId, sampleTest.id, true);
         } else {
           setStaleReport(Boolean(sampleTest));
         }
@@ -1200,7 +1224,7 @@ function BuildTestPublish({
         if (generation === sampleLoadGeneration.current) setReportLoading(false);
       });
     return () => workspaceQueries.abort(key);
-  }, [draftId]);
+  }, [draftId, selectedSampleTestId]);
   const test = () => {
     if (!draftId) return;
     setBusy(true);
@@ -1210,6 +1234,10 @@ function BuildTestPublish({
         setReport(value);
         setRestoredAt(undefined);
         setStaleReport(false);
+        if (value.sample_test_id) {
+          setActiveSampleTest({ draftId, id: value.sample_test_id });
+          onSelectTestContext(draftId, value.sample_test_id, true);
+        }
       })
       .then(() => load())
       .catch((error: Error) => onError(error.message))
@@ -1221,7 +1249,10 @@ function BuildTestPublish({
     void api.publishWorkflow(draftId)
       .then((version) => {
         setActivated(version);
-        return Promise.all([onRefresh(), load(false)]);
+        return Promise.all([onRefresh(), load(false)]).then(() => {
+          if (activeSampleTest?.draftId === draftId)
+            onSelectTestContext(draftId, activeSampleTest.id, true);
+        });
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
@@ -1265,7 +1296,8 @@ function BuildTestPublish({
     setRestoredAt(undefined);
     setStaleReport(false);
     setActivated(undefined);
-    if (nextDraftId) onSelectDraft(nextDraftId, true);
+    setActiveSampleTest(undefined);
+    if (nextDraftId) onSelectTestContext(nextDraftId, undefined, true);
   };
   const draftControls = <div className="sample-test-controls" aria-label="Sample Test controls">
     <label className="sample-test-field"><span>Automation Draft</span><select aria-label="Current Draft" value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? "Activated" : draft.status.replaceAll("_", " ")}</option>)}</select></label>
@@ -2775,6 +2807,13 @@ function WorkflowsPage({
   const advisorRequestActive = useRef(false);
   const persistedDrafts = useRef(new Map<string, string>());
   const autosaveTimer = useRef<number | undefined>(undefined);
+  const autosaveController = useRef<AbortController | undefined>(undefined);
+  const autosaveGeneration = useRef(0);
+  const [draftConflict, setDraftConflict] = useState<{
+    local: WorkflowDraft;
+    server?: WorkflowDraft;
+    message: string;
+  }>();
   const [savedAt, setSavedAt] = useState<Date>();
   const [clock, setClock] = useState(() => Date.now());
   const refreshDrafts = () =>
@@ -2904,23 +2943,59 @@ function WorkflowsPage({
   }, []);
   useEffect(() => {
     if (!draft || draft.status === "published" || draft.status === "archived") return;
+    if (draftConflict?.local.id === draft.id) return;
     const snapshot = JSON.stringify(draft);
     if (persistedDrafts.current.get(draft.id) === snapshot) return;
     if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     autosaveTimer.current = window.setTimeout(() => {
+      autosaveController.current?.abort();
+      const controller = new AbortController();
+      autosaveController.current = controller;
+      const generation = ++autosaveGeneration.current;
       void api
-        .saveWorkflowDraft(draft)
+        .saveWorkflowDraft(draft, controller.signal)
         .then((saved) => {
+          if (generation !== autosaveGeneration.current) return;
           persistedDrafts.current.set(saved.id, JSON.stringify(saved));
+          setDraft((current) => {
+            if (!current || current.id !== saved.id) return current;
+            if (JSON.stringify(current) === snapshot) return saved;
+            return {
+              ...current,
+              revision: saved.revision,
+              content_hash: saved.content_hash,
+            };
+          });
           setSavedAt(new Date());
           return onRefresh();
         })
-        .catch((error: Error) => onError(`Draft autosave failed: ${error.message}`));
+        .catch((error: Error) => {
+          if (controller.signal.aborted || generation !== autosaveGeneration.current) return;
+          if (
+            error instanceof ApiRequestError &&
+            error.code === "workflow_draft_revision_conflict"
+          ) {
+            const local = JSON.parse(snapshot) as WorkflowDraft;
+            void api
+              .workflowDrafts(activeProjectId)
+              .then(({ drafts: currentDrafts }) => {
+                setDraftConflict({
+                  local,
+                  server: currentDrafts.find((item) => item.id === local.id),
+                  message: error.message,
+                });
+              })
+              .catch(() => setDraftConflict({ local, message: error.message }));
+            return;
+          }
+          onError(`Draft autosave failed: ${error.message}`);
+        });
     }, 800);
     return () => {
       if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     };
-  }, [draft]);
+  }, [activeProjectId, draft, draftConflict]);
+  useEffect(() => () => autosaveController.current?.abort(), []);
   useEffect(() => {
     setAdvisorProposal(undefined);
     setAdvisorProposalRecovered(false);
@@ -3179,10 +3254,10 @@ function WorkflowsPage({
       .finally(() => setBusy(false));
   };
   const undoAgentApply = () => {
-    if (!undoDraft) return;
+    if (!undoDraft || !draft) return;
     setBusy(true);
     void api
-      .saveWorkflowDraft(undoDraft)
+      .saveWorkflowDraft({ ...undoDraft, revision: draft.revision })
       .then((restored) => {
         persistedDrafts.current.set(restored.id, JSON.stringify(restored));
         setDraft(restored);
@@ -3257,6 +3332,42 @@ function WorkflowsPage({
     const persisted = persistedDrafts.current.get(draft.id);
     if (persisted) setDraft(JSON.parse(persisted) as WorkflowDraft);
     setReport(undefined);
+  };
+  const reloadConflictedDraft = () => {
+    if (!draftConflict?.server) return void refreshDrafts();
+    persistedDrafts.current.set(
+      draftConflict.server.id,
+      JSON.stringify(draftConflict.server),
+    );
+    setDraft(draftConflict.server);
+    setDraftConflict(undefined);
+    setReport(undefined);
+  };
+  const preserveConflictedDraft = () => {
+    if (!draftConflict) return;
+    const timestamp = new Date().toISOString();
+    const copy: WorkflowDraft = {
+      ...draftConflict.local,
+      id: crypto.randomUUID(),
+      name: `${draftConflict.local.name} (conflict copy)`,
+      status: "editing",
+      revision: 1,
+      content_hash: "",
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    setBusy(true);
+    void api
+      .saveWorkflowDraft(copy)
+      .then((saved) => {
+        persistedDrafts.current.set(saved.id, JSON.stringify(saved));
+        setDraft(saved);
+        setDraftConflict(undefined);
+        onSelectContext({ draftId: saved.id }, true);
+        return onRefresh();
+      })
+      .catch((error: Error) => onError(`Conflict copy failed: ${error.message}`))
+      .finally(() => setBusy(false));
   };
   const archive = () => draft && finish(api.archiveWorkflowDraft(draft.id));
   const clonePublished = () =>
@@ -3413,6 +3524,30 @@ function WorkflowsPage({
           </button>
         </div>
       </div>
+      {draftConflict && (
+        <section className="draft-conflict-panel" role="alert">
+          <div>
+            <span className="eyebrow">Draft conflict</span>
+            <h3>This Draft changed in another tab</h3>
+            <p>
+              Your revision {draftConflict.local.revision} was not saved over
+              server revision {draftConflict.server?.revision ?? "unknown"}.
+              Choose which copy to continue with; no edits were discarded.
+            </p>
+            <details>
+              <summary>Compare Draft snapshots</summary>
+              <div className="draft-conflict-comparison">
+                <div><strong>Your unsaved copy</strong><pre>{JSON.stringify(draftConflict.local, null, 2)}</pre></div>
+                <div><strong>Latest server copy</strong><pre>{draftConflict.server ? JSON.stringify(draftConflict.server, null, 2) : draftConflict.message}</pre></div>
+              </div>
+            </details>
+          </div>
+          <div className="button-row">
+            <button onClick={preserveConflictedDraft} disabled={busy}>Save mine as new Draft</button>
+            <button className="primary" onClick={reloadConflictedDraft} disabled={!draftConflict.server || busy}>Reload latest Draft</button>
+          </div>
+        </section>
+      )}
       <div className="workflow-command-grid">
         <section className="workflow-command-card">
           <span className="eyebrow">Starting point</span>
@@ -3734,7 +3869,7 @@ function WorkflowsPage({
           )}
           <div className="button-row">
             {advisorProposalRecovered ? <>
-              <button className="primary" onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
+              <button onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
               <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>Dismiss result</button>
             </> : <>
               <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>

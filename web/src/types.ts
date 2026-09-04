@@ -837,6 +837,8 @@ export interface WorkflowDraft {
     | "blocked_by_setup"
     | "published"
     | "archived";
+  revision: number;
+  content_hash: string;
   nodes: WorkflowDraftNode[];
   edges?: WorkflowEdge[];
   enabled_skills?: Record<string, string>;
@@ -1117,6 +1119,9 @@ export interface WorkflowValidationReport {
 }
 
 export interface WorkflowDryRunReport {
+  sample_test_id?: string;
+  draft_revision?: number;
+  draft_content_hash?: string;
   sandbox: boolean;
   validation: WorkflowValidationReport;
   samples: {
@@ -1194,9 +1199,19 @@ export interface WorkflowDryRunReport {
 }
 
 export interface WorkflowSampleTestRecord {
+  id: string;
   draft_id: string;
   project_id: string;
+  draft_revision: number;
+  request_revision: number;
+  draft_content_hash: string;
+  image_set_hash: string;
+  model_snapshot_hash: string;
+  status: "passed" | "failed" | "human_approved" | "legacy_unverified";
+  inputs: { image_id: string; content_hash: string }[];
+  model_bindings: Record<string, string>;
   report: WorkflowDryRunReport;
+  started_at: string;
   completed_at: string;
 }
 

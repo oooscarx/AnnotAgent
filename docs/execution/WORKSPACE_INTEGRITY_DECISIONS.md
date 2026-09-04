@@ -67,3 +67,11 @@ Every durable frontend read is named by its stable owner/object key. A query cac
 ## D-017 — Local storage is a write-only navigation preference
 
 The browser may remember the last visited Project as `preferredProjectId`, but App startup, global indexes, and object ownership never read it. Canonical URL identity and server DTO ownership always win. This deliberately removes the prior dual-truth `activeProjectId` mechanism.
+
+## D-018 — Sample Test freshness is identity, never wall-clock order
+
+Every Sample Test is an append-only execution record. Publication selects evidence by exact Draft ID, request revision, and semantic content hash, then verifies stable image-set and resolved model-snapshot hashes. Completion time orders history only; it never proves freshness. Consequently, a slow test for revision N may finish after revision N+1 without replacing or authorizing N+1. Legacy timestamp-only rows are retained for audit as `legacy_unverified` and require a new test before publication.
+
+## D-019 — Draft conflicts preserve both branches
+
+Draft content uses an atomic expected-revision write boundary. Within one tab, superseded autosaves are aborted and late responses are generation-guarded. Across tabs, a stale write returns 409 and the editor stops autosaving until the user compares local/server snapshots and either reloads the server copy or persists local work as a new Draft. Silent last-write-wins and destructive automatic merge are both rejected.

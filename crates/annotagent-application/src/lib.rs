@@ -88,7 +88,8 @@ use annotagent_skill_robocup::{
 };
 use annotagent_storage::{
     BatchClaimResult, HistoryRun, LegacyRegistryImport, LegacyRegistryImportReport,
-    RunStartReservation, SqliteStore, WorkflowSampleTest,
+    RunStartReservation, SqliteStore, WorkflowSampleTest, WorkflowSampleTestInput,
+    WorkflowSampleTestStatus,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -3378,38 +3379,6 @@ fn normalize_profile_compatibility_bindings(
                 )
         })?;
         node.model_binding = Some(compatibility_model.id.clone());
-    }
-    if let Some(composition) = draft.label_pipeline.as_mut() {
-        let normalize_step = |step: &mut PipelineStep| -> Result<()> {
-            let Some(binding) = step.model_binding.as_mut() else {
-                return Ok(());
-            };
-            if models.resolve(&binding.model_id).is_ok() {
-                return Ok(());
-            }
-            let compatibility_model = available
-                .iter()
-                .find(|model| model.capabilities.contains(&binding.capability))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "no Runtime compatibility model is registered for Label Pipeline step {:?} with capability {:?}",
-                        step.id,
-                        binding.capability
-                    )
-                })?;
-            binding.model_id.clone_from(&compatibility_model.id);
-            Ok(())
-        };
-        for stage in &mut composition.shared_stages {
-            for step in &mut stage.steps {
-                normalize_step(step)?;
-            }
-        }
-        for pipeline in &mut composition.label_pipelines {
-            for step in &mut pipeline.steps {
-                normalize_step(step)?;
-            }
-        }
     }
     Ok(())
 }
@@ -9276,6 +9245,8 @@ impl LocalApplication {
                 project_id: project_id.to_owned(),
                 name: format!("{} workflow", project.project.name),
                 status: WorkflowDraftStatus::Editing,
+                revision: 1,
+                content_hash: String::new(),
                 nodes: Vec::new(),
                 edges: Vec::new(),
                 enabled_skills: project.project.enabled_skill_versions(),
@@ -9289,7 +9260,7 @@ impl LocalApplication {
             }
         };
         self.store.save_workflow_draft(&draft)?;
-        Ok(draft)
+        self.store.get_workflow_draft(&draft.id).map_err(Into::into)
     }
 
     pub fn suggest_workflow(
@@ -9314,6 +9285,8 @@ impl LocalApplication {
             constraints,
         );
         self.store.save_workflow_draft(&suggestion.draft)?;
+        let mut suggestion = suggestion;
+        suggestion.draft = self.store.get_workflow_draft(&suggestion.draft.id)?;
         Ok(suggestion)
     }
 
@@ -9748,6 +9721,7 @@ impl LocalApplication {
                 }),
             );
             self.store.save_workflow_draft(&revised.draft)?;
+            revised.draft = self.store.get_workflow_draft(&revised.draft.id)?;
             if session.status == AgentSessionStatus::Running {
                 session.wait_for_human("edit_failed_dry_run");
             }
@@ -9773,6 +9747,7 @@ impl LocalApplication {
         }
         revised.draft.status = WorkflowDraftStatus::Suggested;
         self.store.save_workflow_draft(&revised.draft)?;
+        revised.draft = self.store.get_workflow_draft(&revised.draft.id)?;
         if session.status == AgentSessionStatus::Running
             && record(
                 &mut session,
@@ -13462,6 +13437,9 @@ impl LocalApplication {
                 _ => {}
             }
         }
+        if let Some(suggestion) = current.as_mut() {
+            suggestion.draft = self.store.get_workflow_draft(&suggestion.draft.id)?;
+        }
         session.builder_proposal.clone_from(&current);
         self.store.save_agent_session(&session)?;
         self.agent_cancellations
@@ -13502,13 +13480,31 @@ impl LocalApplication {
 
     pub fn save_workflow_draft(&self, mut draft: WorkflowDraft) -> Result<WorkflowDraft> {
         let project_path = self.project_path(&draft.project_id)?;
-        if let Ok(existing) = self.store.get_workflow_draft(&draft.id)
-            && matches!(
-                existing.status,
-                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
-            )
-        {
+        let existing = self.store.get_workflow_draft_optional(&draft.id)?;
+        if existing.is_none() {
+            draft.status = WorkflowDraftStatus::Editing;
+            draft.updated_at = chrono::Utc::now();
+            migrate_legacy_expert_workflow(&mut draft)?;
+            if draft.label_pipeline.is_some() {
+                let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+                draft = compile_label_projection(draft, &project);
+            }
+            self.store.save_workflow_draft(&draft)?;
+            return self.store.get_workflow_draft(&draft.id).map_err(Into::into);
+        }
+        let existing = existing.expect("checked above");
+        if matches!(
+            existing.status,
+            WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+        ) {
             bail!("published or archived workflow drafts are immutable; clone it to a new draft");
+        }
+        if draft.revision != existing.revision {
+            bail!(
+                "workflow_draft_revision_conflict: expected revision {}, current revision {}",
+                draft.revision,
+                existing.revision
+            );
         }
         draft.status = WorkflowDraftStatus::Editing;
         draft.updated_at = chrono::Utc::now();
@@ -13517,8 +13513,14 @@ impl LocalApplication {
             let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
             draft = compile_label_projection(draft, &project);
         }
-        self.store.save_workflow_draft(&draft)?;
-        Ok(draft)
+        self.store
+            .save_workflow_draft_if_revision(&draft, existing.revision)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "workflow_draft_revision_conflict: expected revision {}, current revision changed",
+                    existing.revision
+                )
+            })
     }
 
     pub fn diff_workflow_drafts(
@@ -13575,9 +13577,12 @@ impl LocalApplication {
         draft.id = uuid::Uuid::new_v4().to_string();
         draft.name = format!("{} (from v{version})", draft.name);
         draft.status = WorkflowDraftStatus::Editing;
+        draft.revision = 1;
+        draft.content_hash.clear();
         draft.created_at = now;
         draft.updated_at = now;
-        self.save_workflow_draft(draft)
+        self.store.save_workflow_draft(&draft)?;
+        self.store.get_workflow_draft(&draft.id).map_err(Into::into)
     }
 
     /// Clones an immutable version and inserts a mandatory Human Review boundary before every
@@ -13607,6 +13612,8 @@ impl LocalApplication {
         draft.id = uuid::Uuid::new_v4().to_string();
         draft.name = format!("{} (geometry-safe from v{version})", draft.name);
         draft.status = WorkflowDraftStatus::Editing;
+        draft.revision = 1;
+        draft.content_hash.clear();
         draft.geometry_risk_acceptance = None;
         draft.created_at = now;
         draft.updated_at = now;
@@ -13616,7 +13623,8 @@ impl LocalApplication {
             // authoring projection would recompile and silently discard the inserted boundary.
             draft.label_pipeline = None;
         }
-        self.save_workflow_draft(draft)
+        self.store.save_workflow_draft(&draft)?;
+        self.store.get_workflow_draft(&draft.id).map_err(Into::into)
     }
 
     fn validate_workflow_draft(
@@ -13756,13 +13764,33 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
     ) -> Result<WorkflowValidationReport> {
+        self.prepare_workflow_dry_run(draft_id, settings)
+            .map(|(_, report)| report)
+    }
+
+    fn prepare_workflow_dry_run(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+    ) -> Result<(WorkflowDraft, WorkflowValidationReport)> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
         if !matches!(
             draft.status,
             WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
-        ) && migrate_legacy_expert_workflow(&mut draft)?
-        {
-            self.store.save_workflow_draft(&draft)?;
+        ) {
+            let expected_revision = draft.revision;
+            migrate_legacy_expert_workflow(&mut draft)?;
+            self.freeze_registry_model_profiles(&mut draft)?;
+            let (_, models) = self.workflow_catalog(settings)?;
+            normalize_profile_compatibility_bindings(&mut draft, &models)?;
+            draft = self
+                .store
+                .save_workflow_draft_if_revision(&draft, expected_revision)?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "workflow_draft_revision_conflict: Draft changed while preparing Sample Test"
+                    )
+                })?;
         }
         let report = self.validate_workflow_draft(&draft, settings, false)?;
         if report.valid
@@ -13771,12 +13799,17 @@ impl LocalApplication {
                 WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
             )
         {
-            let mut validated = draft;
+            let mut validated = draft.clone();
             validated.status = WorkflowDraftStatus::Validated;
             validated.updated_at = chrono::Utc::now();
-            self.store.save_workflow_draft(&validated)?;
+            if let Some(saved) = self
+                .store
+                .save_workflow_draft_if_revision(&validated, validated.revision)?
+            {
+                draft = saved;
+            }
         }
-        Ok(report)
+        Ok((draft, report))
     }
 
     pub async fn dry_run_workflow_samples(
@@ -13814,9 +13847,28 @@ impl LocalApplication {
         provider_kind: &str,
         temporary_api_key: Option<&str>,
     ) -> Result<WorkflowDryRunReport> {
+        self.dry_run_workflow_samples_with_provider_record(
+            draft_id,
+            settings,
+            image_indices,
+            provider_kind,
+            temporary_api_key,
+        )
+        .await
+        .map(|(report, _)| report)
+    }
+
+    pub async fn dry_run_workflow_samples_with_provider_record(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+        provider_kind: &str,
+        temporary_api_key: Option<&str>,
+    ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
+        let started_at = chrono::Utc::now();
         let started = std::time::Instant::now();
-        let mut validation = self.dry_run_workflow(draft_id, settings)?;
-        let draft = self.store.get_workflow_draft(draft_id)?;
+        let (draft, mut validation) = self.prepare_workflow_dry_run(draft_id, settings)?;
         let images = self.list_project_images(&draft.project_id)?;
         let selected = if image_indices.is_empty() {
             (0..images.len().min(3)).collect::<Vec<_>>()
@@ -13830,10 +13882,9 @@ impl LocalApplication {
                     .is_some_and(plugin_model_selection)
             });
         if requires_executable_pipeline_sandbox && validation.valid {
-            let project_id = draft.project_id.clone();
             let report = self
                 .dry_run_label_pipeline_samples(
-                    draft,
+                    draft.clone(),
                     settings,
                     &images,
                     &selected,
@@ -13844,20 +13895,17 @@ impl LocalApplication {
                     },
                 )
                 .await?;
-            self.store.save_workflow_sample_test(&WorkflowSampleTest {
-                draft_id: draft_id.to_owned(),
-                project_id,
-                report: report.clone(),
-                completed_at: chrono::Utc::now(),
-            })?;
-            return Ok(report);
+            let sample_test =
+                self.workflow_sample_test_record(&draft, &selected, report.clone(), started_at)?;
+            self.store.save_workflow_sample_test(&sample_test)?;
+            return Ok((report, sample_test));
         }
         let (nodes, models) = self.workflow_catalog_with_api_key(settings, temporary_api_key)?;
         let mut samples = Vec::new();
         if validation.valid {
-            for index in selected {
+            for index in &selected {
                 let path = images
-                    .get(index)
+                    .get(*index)
                     .ok_or_else(|| anyhow!("image index {index} was not found"))?;
                 let image = load_image(path, 40_000_000).map_err(|error| anyhow!(error))?;
                 let model_image = to_model_image("workflow-dry-run", &image, 1280)
@@ -13955,7 +14003,7 @@ impl LocalApplication {
                     });
                 }
                 samples.push(WorkflowDryRunSampleResult {
-                    image_index: index,
+                    image_index: *index,
                     image_name: path
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -14014,13 +14062,72 @@ impl LocalApplication {
             total_latency_ms,
             estimated_cost: "0".to_owned(),
         };
-        self.store.save_workflow_sample_test(&WorkflowSampleTest {
-            draft_id: draft_id.to_owned(),
-            project_id: draft.project_id,
-            report: report.clone(),
+        let sample_test =
+            self.workflow_sample_test_record(&draft, &selected, report.clone(), started_at)?;
+        self.store.save_workflow_sample_test(&sample_test)?;
+        Ok((report, sample_test))
+    }
+
+    fn workflow_sample_test_record(
+        &self,
+        draft: &WorkflowDraft,
+        selected: &[usize],
+        report: WorkflowDryRunReport,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<WorkflowSampleTest> {
+        let images = self.list_project_image_summaries(&draft.project_id)?;
+        let inputs = selected
+            .iter()
+            .filter_map(|index| images.get(*index))
+            .map(|image| WorkflowSampleTestInput {
+                image_id: image.image_id.to_string(),
+                content_hash: image.content_hash.clone(),
+            })
+            .collect();
+        let model_bindings = draft
+            .nodes
+            .iter()
+            .filter_map(|node| match node.model_profile_binding.as_ref() {
+                Some(binding) => Some(
+                    self.store
+                        .get_model_profile(binding.model_profile_id, None)
+                        .map(|profile| {
+                            (
+                                node.id.clone(),
+                                format!("{}@{}", profile.id, profile.revision),
+                            )
+                        }),
+                ),
+                None => node
+                    .model_binding
+                    .as_ref()
+                    .map(|binding| Ok((node.id.clone(), binding.clone()))),
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let image_set_hash = annotagent_image_tools::sha256(&serde_json::to_vec(&inputs)?);
+        let model_snapshot_hash =
+            annotagent_image_tools::sha256(&serde_json::to_vec(&model_bindings)?);
+        let status = if report.validation.valid && report.summary.failed_count == 0 {
+            WorkflowSampleTestStatus::Passed
+        } else {
+            WorkflowSampleTestStatus::Failed
+        };
+        Ok(WorkflowSampleTest {
+            id: uuid::Uuid::new_v4().to_string(),
+            draft_id: draft.id.clone(),
+            project_id: draft.project_id.clone(),
+            draft_revision: draft.revision,
+            request_revision: draft.revision,
+            draft_content_hash: draft.content_hash.clone(),
+            image_set_hash,
+            model_snapshot_hash,
+            status,
+            inputs,
+            model_bindings,
+            report,
+            started_at,
             completed_at: chrono::Utc::now(),
-        })?;
-        Ok(report)
+        })
     }
 
     async fn dry_run_label_pipeline_samples(
@@ -14926,6 +15033,30 @@ impl LocalApplication {
             WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
         ) {
             bail!("published or archived workflow drafts are immutable; clone it to a new draft");
+        }
+        let sample_test = self
+            .store
+            .get_workflow_sample_test_for_revision(draft_id, draft.revision, &draft.content_hash)?
+            .ok_or_else(|| anyhow!("workflow publication requires a persisted Sample Test"))?;
+        if sample_test.project_id != draft.project_id
+            || sample_test.draft_revision != draft.revision
+            || sample_test.request_revision != draft.revision
+            || sample_test.draft_content_hash.is_empty()
+            || sample_test.draft_content_hash != draft.content_hash
+            || sample_test.image_set_hash.is_empty()
+            || sample_test.model_snapshot_hash.is_empty()
+        {
+            bail!(
+                "workflow publication requires a passing Sample Test for Draft revision {} and content hash {}",
+                draft.revision,
+                draft.content_hash
+            );
+        }
+        if !sample_test.status.allows_publication()
+            || !sample_test.report.validation.valid
+            || sample_test.report.summary.failed_count > 0
+        {
+            bail!("workflow publication requires a passing Sample Test without failed images");
         }
         let report = self.dry_run_workflow(draft_id, settings)?;
         if !report.valid {
@@ -17521,6 +17652,67 @@ export:
   formats: [native, coco]
 ";
 
+    /// Seeds explicit immutable evidence for tests whose subject is downstream of publication.
+    /// Workflow lifecycle tests exercise the real Sample Test path instead of this fixture.
+    fn persist_passing_sample_test(application: &LocalApplication, draft_id: &str) {
+        let settings = load_settings(None).expect("publication fixture Settings");
+        let validation = application
+            .dry_run_workflow(draft_id, &settings)
+            .expect("publication fixture static validation");
+        assert!(validation.valid, "{:#?}", validation.issues);
+        let draft = application
+            .store
+            .get_workflow_draft(draft_id)
+            .expect("Draft for publication fixture");
+        let now = chrono::Utc::now();
+        let inputs = Vec::<WorkflowSampleTestInput>::new();
+        let model_bindings = draft
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                node.model_profile_binding
+                    .as_ref()
+                    .map(|binding| (node.id.clone(), binding.model_profile_id.to_string()))
+                    .or_else(|| {
+                        node.model_binding
+                            .as_ref()
+                            .map(|binding| (node.id.clone(), binding.clone()))
+                    })
+            })
+            .collect::<BTreeMap<_, _>>();
+        let report = WorkflowDryRunReport {
+            sandbox: true,
+            validation,
+            samples: Vec::new(),
+            summary: SampleTestSummary::default(),
+            total_latency_ms: 0,
+            estimated_cost: "0".to_owned(),
+        };
+        application
+            .store
+            .save_workflow_sample_test(&WorkflowSampleTest {
+                id: uuid::Uuid::new_v4().to_string(),
+                draft_id: draft.id.clone(),
+                project_id: draft.project_id.clone(),
+                draft_revision: draft.revision,
+                request_revision: draft.revision,
+                draft_content_hash: draft.content_hash.clone(),
+                image_set_hash: annotagent_image_tools::sha256(
+                    &serde_json::to_vec(&inputs).expect("input fixture JSON"),
+                ),
+                model_snapshot_hash: annotagent_image_tools::sha256(
+                    &serde_json::to_vec(&model_bindings).expect("model fixture JSON"),
+                ),
+                status: WorkflowSampleTestStatus::Passed,
+                inputs,
+                model_bindings,
+                report,
+                started_at: now,
+                completed_at: now,
+            })
+            .expect("persist publication evidence fixture");
+    }
+
     fn plugin_package_fixture(temp: &tempfile::TempDir) -> std::path::PathBuf {
         let source = temp.path().join("plugin-source");
         let binary = source
@@ -17594,6 +17786,8 @@ export:
             project_id: "generic".to_owned(),
             name: "Plugin publication fixture".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![WorkflowDraftNode {
                 id: "detector".to_owned(),
                 node_type: "capability.detect".to_owned(),
@@ -18910,6 +19104,8 @@ export:
             project_id: "project".to_owned(),
             name: "Legacy SAM".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![
                 WorkflowDraftNode {
                     id: "image".to_owned(),
@@ -19578,6 +19774,7 @@ export:
             .dry_run_workflow(&suggestion.draft.id, &settings)
             .expect("validation");
         assert!(validation.valid, "{:#?}", validation.issues);
+        persist_passing_sample_test(&application, &suggestion.draft.id);
         let published = application
             .publish_workflow(&suggestion.draft.id, &settings)
             .expect("published Workflow");
@@ -19678,6 +19875,7 @@ export:
         let draft = application
             .save_workflow_draft(suggestion.draft)
             .expect("save fallback fixture");
+        persist_passing_sample_test(&application, &draft.id);
         let published = application
             .publish_workflow(&draft.id, &settings)
             .expect("publish fallback Workflow");
@@ -19747,6 +19945,8 @@ export:
             project_id: "label-classification".to_owned(),
             name: "Whole-image Classification Demo".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![
                 WorkflowDraftNode {
                     id: "image".to_owned(),
@@ -19806,6 +20006,7 @@ export:
             .save_workflow_draft(draft)
             .expect("save Label Pipeline Draft");
         let settings = load_settings(None).expect("settings");
+        persist_passing_sample_test(&application, "label-classification-draft");
         let published = application
             .publish_workflow("label-classification-draft", &settings)
             .expect("publish Label Pipeline");
@@ -20028,6 +20229,8 @@ export:
             project_id: "prompted-segmentation".to_owned(),
             name: "Prompted Segmentation Demo".to_owned(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![
                 node(
                     "image",
@@ -20118,6 +20321,7 @@ export:
             .save_workflow_draft(draft)
             .expect("save prompted segmentation Draft");
         let settings = load_settings(None).expect("settings");
+        persist_passing_sample_test(&application, "prompted-segmentation-draft");
         let published = application
             .publish_workflow("prompted-segmentation-draft", &settings)
             .expect("publish prompted segmentation");
@@ -20251,6 +20455,8 @@ export:
             project_id: "multi-profile".to_owned(),
             name: "Two profile execution".to_owned(),
             status: WorkflowDraftStatus::Published,
+            revision: 1,
+            content_hash: String::new(),
             nodes: vec![
                 WorkflowDraftNode {
                     id: "image".to_owned(),
@@ -20695,8 +20901,10 @@ export:
             WorkflowDraftStatus::Suggested
         );
 
+        let mut undo_draft = report.previous_draft;
+        undo_draft.revision = report.draft.revision;
         let restored = application
-            .save_workflow_draft(report.previous_draft)
+            .save_workflow_draft(undo_draft)
             .expect("Undo through the normal Draft save boundary");
         assert!(!restored.nodes[0].parameters.contains_key("agent_selected"));
         assert!(
@@ -22574,6 +22782,7 @@ export:
                 },
             )
             .expect("generic suggestion");
+        persist_passing_sample_test(&application, &suggestion.draft.id);
         let published = application
             .publish_workflow(&suggestion.draft.id, &settings)
             .expect("Published Workflow");
@@ -23101,6 +23310,7 @@ export:
                 .join("robocup-hybrid-mock/images/sample.png"),
         )
         .expect("sample image");
+        persist_passing_sample_test(&application, &draft.id);
         let published = application
             .publish_workflow(&draft.id, &settings)
             .expect("publish hybrid Workflow");
@@ -23201,6 +23411,7 @@ export:
             .save_workflow_draft(fallback_draft.clone())
             .expect("save fallback fixture");
         let fallback_settings = load_settings(None).expect("fallback settings");
+        persist_passing_sample_test(&application, &fallback_draft.id);
         let fallback_published = application
             .publish_workflow(&fallback_draft.id, &fallback_settings)
             .expect("publish fallback Workflow");
@@ -23270,6 +23481,7 @@ export:
             .save_workflow_draft(reject_draft.clone())
             .expect("save reject fixture");
         let reject_settings = load_settings(None).expect("reject settings");
+        persist_passing_sample_test(&application, &reject_draft.id);
         let reject_published = application
             .publish_workflow(&reject_draft.id, &reject_settings)
             .expect("publish reject Workflow");
@@ -23338,6 +23550,7 @@ export:
             .save_workflow_draft(crashed_draft.clone())
             .expect("save crash fixture");
         let crashed_settings = load_settings(None).expect("crash settings");
+        persist_passing_sample_test(&application, &crashed_draft.id);
         let crashed_published = application
             .publish_workflow(&crashed_draft.id, &crashed_settings)
             .expect("publish crash Workflow");
@@ -23627,6 +23840,51 @@ export:
     }
 
     #[test]
+    fn publication_requires_evidence_for_the_exact_current_draft_revision() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project("revision-bound-publication", GENERIC_BBOX_PROJECT)
+            .expect("Project");
+        let settings = load_settings(None).expect("settings");
+        let draft = application
+            .suggest_workflow(
+                "revision-bound-publication",
+                &settings,
+                &WorkflowConstraints::default(),
+            )
+            .expect("Draft")
+            .draft;
+
+        let missing = application
+            .publish_workflow(&draft.id, &settings)
+            .expect_err("untested Draft must not publish");
+        assert!(missing.to_string().contains("persisted Sample Test"));
+
+        persist_passing_sample_test(&application, &draft.id);
+        let mut edited = application
+            .store
+            .get_workflow_draft(&draft.id)
+            .expect("tested Draft");
+        edited.name.push_str(" changed after test");
+        let edited = application
+            .save_workflow_draft(edited)
+            .expect("new revision");
+        assert!(edited.revision > draft.revision);
+        let stale = application
+            .publish_workflow(&edited.id, &settings)
+            .expect_err("stale evidence must not publish");
+        assert!(stale.to_string().contains("persisted Sample Test"));
+
+        persist_passing_sample_test(&application, &edited.id);
+        let published = application
+            .publish_workflow(&edited.id, &settings)
+            .expect("exact tested revision publishes");
+        assert_eq!(published.draft.revision, edited.revision);
+        assert_eq!(published.draft.content_hash, edited.content_hash);
+    }
+
+    #[test]
     fn workflow_suggestion_edit_dry_run_and_publish_are_real() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -23663,6 +23921,7 @@ export:
             .expect("dry run");
         assert!(report.valid, "{:#?}", report.issues);
         assert_eq!(report.execution_order.len(), edited.nodes.len());
+        persist_passing_sample_test(&application, &edited.id);
         let version = application
             .publish_workflow(&edited.id, &settings)
             .expect("publish");
@@ -23752,6 +24011,7 @@ export:
         application
             .dry_run_workflow(&suggestion.draft.id, &settings)
             .expect("Dry Run validation");
+        persist_passing_sample_test(&application, &suggestion.draft.id);
         let published = application
             .publish_workflow(&suggestion.draft.id, &settings)
             .expect("published Workflow");
@@ -23855,6 +24115,10 @@ export:
             .store
             .save_workflow_draft(&unsafe_draft)
             .expect("unsafe legacy Draft fixture");
+        let unsafe_draft = application
+            .store
+            .get_workflow_draft(&unsafe_draft.id)
+            .expect("persisted unsafe legacy Draft");
         let (_, models) = workflow_catalog(&settings).expect("catalog");
         let legacy_snapshot =
             WorkflowSnapshot::frozen(&unsafe_draft, &models, unsafe_draft.enabled_skills.clone());
@@ -23905,6 +24169,7 @@ export:
                     .get("reason")
                     .is_some_and(|reason| reason == "geometry_verification_required")
         }));
+        persist_passing_sample_test(&application, &safe_draft.id);
         let safe_version = application
             .publish_workflow(&safe_draft.id, &settings)
             .expect("safe publication");
@@ -23942,6 +24207,7 @@ export:
             )
             .expect("safe geometry Draft")
             .draft;
+        persist_passing_sample_test(&application, &draft.id);
         let published = application
             .publish_workflow(&draft.id, &settings)
             .expect("Published Workflow");
@@ -24125,6 +24391,7 @@ export:
             )
             .expect("baseline Draft")
             .draft;
+        persist_passing_sample_test(&application, &draft.id);
         let published = application
             .publish_workflow(&draft.id, &settings)
             .expect("Published baseline");
@@ -24339,6 +24606,7 @@ export:
         let cloned = application
             .save_workflow_draft(cloned)
             .expect("clone remains editable");
+        persist_passing_sample_test(&application, &cloned.id);
         let revised = application
             .publish_workflow(&cloned.id, &settings)
             .expect("revised version");
@@ -24443,6 +24711,7 @@ export:
             .suggest_workflow("batch-demo", &settings, &WorkflowConstraints::default())
             .expect("classification batch Draft")
             .draft;
+        persist_passing_sample_test(app.as_ref(), &draft.id);
         let published = app
             .publish_workflow(&draft.id, &settings)
             .expect("publish classification batch Workflow");

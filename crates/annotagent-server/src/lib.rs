@@ -454,6 +454,18 @@ impl ApiError {
         }
     }
 
+    fn revision_conflict(error: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "code": "workflow_draft_revision_conflict",
+                "error": error.to_string(),
+                "status": StatusCode::CONFLICT.as_u16(),
+                "suggested_action": "Reload the latest Draft, compare your changes, and retry explicitly."
+            }),
+        }
+    }
+
     fn provider(error: &ProviderErrorDetails) -> Self {
         let status = match error.code {
             annotagent_core::ProviderErrorCode::MissingCredential
@@ -3382,14 +3394,15 @@ async fn list_workflow_drafts(
         let sample_test = state
             .application
             .store()
-            .get_workflow_sample_test(&draft.id)
+            .get_workflow_sample_test_for_revision(&draft.id, draft.revision, &draft.content_hash)
             .map_err(ApiError::internal)?;
         let Some(sample_test) = sample_test else {
             continue;
         };
         let current = sample_test.project_id == draft.project_id
-            && (draft.status == annotagent_core::WorkflowDraftStatus::Published
-                || sample_test.completed_at >= draft.updated_at);
+            && sample_test.draft_revision == draft.revision
+            && !sample_test.draft_content_hash.is_empty()
+            && sample_test.draft_content_hash == draft.content_hash;
         if current
             && latest_current_sample_test
                 .as_ref()
@@ -3496,7 +3509,7 @@ async fn suggest_workflow(
     } else {
         request.base_draft_id.clone()
     };
-    let (suggestion, agent_report) = match request.advisor.as_str() {
+    let (mut suggestion, mut agent_report) = match request.advisor.as_str() {
         #[cfg(test)]
         "mock" | "agent" => {
             let report = state
@@ -3576,6 +3589,16 @@ async fn suggest_workflow(
             )));
         }
     };
+    suggestion.draft = state
+        .application
+        .store()
+        .get_workflow_draft(&suggestion.draft.id)
+        .map_err(ApiError::internal)?;
+    if let Some(report) = agent_report.as_mut()
+        && let Some(report_suggestion) = report.suggestion.as_mut()
+    {
+        report_suggestion.draft.clone_from(&suggestion.draft);
+    }
     #[cfg(not(test))]
     if workflow_draft_uses_mock(&suggestion.draft) {
         return Err(ApiError::bad_request(
@@ -3622,6 +3645,7 @@ fn workflow_draft_uses_mock(draft: &WorkflowDraft) -> bool {
 async fn save_workflow_draft(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
+    headers: HeaderMap,
     Json(mut draft): Json<WorkflowDraft>,
 ) -> ApiResult<Json<Value>> {
     if draft.id != draft_id {
@@ -3635,10 +3659,31 @@ async fn save_workflow_draft(
             "Mock bindings are test-only; select a real Registry Model or Vision Worker",
         ));
     }
-    draft = state
-        .application
-        .save_workflow_draft(draft)
-        .map_err(ApiError::bad_request)?;
+    if let Some(value) = headers.get(header::IF_MATCH) {
+        let expected = value
+            .to_str()
+            .ok()
+            .and_then(|value| value.trim_matches('"').parse::<u64>().ok())
+            .ok_or_else(|| {
+                ApiError::bad_request("If-Match must contain a numeric Draft revision")
+            })?;
+        if expected != draft.revision {
+            return Err(ApiError::bad_request(
+                "If-Match revision must match the Draft body revision",
+            ));
+        }
+    }
+    draft = match state.application.save_workflow_draft(draft) {
+        Ok(draft) => draft,
+        Err(error)
+            if error
+                .to_string()
+                .starts_with("workflow_draft_revision_conflict:") =>
+        {
+            return Err(ApiError::revision_conflict(error));
+        }
+        Err(error) => return Err(ApiError::bad_request(error)),
+    };
     Ok(Json(json!(draft)))
 }
 
@@ -3696,9 +3741,9 @@ async fn dry_run_workflow(
         resolve_runtime_model_profiles(&state, &model_profiles, workflow_uses_model(&draft))
             .await?;
     let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
-    let report = state
+    let (report, sample_test) = state
         .application
-        .dry_run_workflow_samples_with_provider(
+        .dry_run_workflow_samples_with_provider_record(
             &draft_id,
             &settings,
             &image_indices,
@@ -3707,27 +3752,70 @@ async fn dry_run_workflow(
         )
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(json!(report)))
+    let mut body = json!(report);
+    if let Some(object) = body.as_object_mut() {
+        object.insert("sample_test_id".to_owned(), json!(sample_test.id));
+        object.insert(
+            "draft_revision".to_owned(),
+            json!(sample_test.draft_revision),
+        );
+        object.insert(
+            "draft_content_hash".to_owned(),
+            json!(sample_test.draft_content_hash),
+        );
+    }
+    Ok(Json(body))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkflowSampleTestQuery {
+    test_id: Option<String>,
 }
 
 async fn get_workflow_sample_test(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
+    Query(query): Query<WorkflowSampleTestQuery>,
 ) -> ApiResult<Json<Value>> {
     let draft = state
         .application
         .store()
         .get_workflow_draft(&draft_id)
         .map_err(ApiError::not_found)?;
-    let sample_test = state
-        .application
-        .store()
-        .get_workflow_sample_test(&draft_id)
-        .map_err(ApiError::internal)?;
+    let sample_test = if let Some(test_id) = query.test_id.as_deref() {
+        state
+            .application
+            .store()
+            .get_workflow_sample_test_by_id(test_id)
+            .map_err(ApiError::internal)?
+    } else {
+        let exact = state
+            .application
+            .store()
+            .get_workflow_sample_test_for_revision(&draft_id, draft.revision, &draft.content_hash)
+            .map_err(ApiError::internal)?;
+        match exact {
+            Some(sample_test) => Some(sample_test),
+            None => state
+                .application
+                .store()
+                .get_workflow_sample_test(&draft_id)
+                .map_err(ApiError::internal)?,
+        }
+    };
+    if sample_test
+        .as_ref()
+        .is_some_and(|record| record.draft_id != draft_id)
+    {
+        return Err(ApiError::not_found(
+            "Sample Test does not belong to the requested Draft",
+        ));
+    }
     let current = sample_test.as_ref().is_some_and(|record| {
         record.project_id == draft.project_id
-            && (draft.status == annotagent_core::WorkflowDraftStatus::Published
-                || record.completed_at >= draft.updated_at)
+            && record.draft_revision == draft.revision
+            && !record.draft_content_hash.is_empty()
+            && record.draft_content_hash == draft.content_hash
     });
     Ok(Json(json!({
         "sample_test": sample_test,
@@ -3757,10 +3845,17 @@ async fn publish_workflow(
         ));
     }
     reject_unresolved_registry_model_nodes(&draft)?;
-    let version = state
-        .application
-        .publish_workflow(&draft_id, &settings)
-        .map_err(ApiError::bad_request)?;
+    let version = match state.application.publish_workflow(&draft_id, &settings) {
+        Ok(version) => version,
+        Err(error)
+            if error
+                .to_string()
+                .contains("workflow_draft_revision_conflict:") =>
+        {
+            return Err(ApiError::revision_conflict(error));
+        }
+        Err(error) => return Err(ApiError::bad_request(error)),
+    };
     Ok(Json(json!(version)))
 }
 
@@ -11287,17 +11382,17 @@ export:
             .expect("typed input node");
         let original_type = draft["nodes"][node_index]["inputs"][0]["artifact_type"].clone();
         draft["nodes"][node_index]["inputs"][0]["artifact_type"] = json!("relations");
-        assert_eq!(
+        let saved_invalid = response_json(
             request(
                 &service,
                 axum::http::Method::PATCH,
                 &format!("/api/workflow-drafts/{draft_id}"),
                 Some(draft.clone()),
             )
-            .await
-            .status(),
-            StatusCode::OK
-        );
+            .await,
+        )
+        .await;
+        assert_eq!(saved_invalid["status"], json!("editing"));
         let invalid = response_json(
             request(
                 &service,
@@ -11319,6 +11414,21 @@ export:
                 })
         );
 
+        let refreshed = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/workflow-drafts?project_id=workflow-ui",
+                None,
+            )
+            .await,
+        )
+        .await;
+        draft = refreshed["drafts"]
+            .as_array()
+            .and_then(|drafts| drafts.iter().find(|candidate| candidate["id"] == draft_id))
+            .cloned()
+            .expect("current Draft after validation");
         draft["nodes"][node_index]["inputs"][0]["artifact_type"] = original_type;
         let saved = response_json(
             request(
@@ -12276,6 +12386,64 @@ export:
     }
 
     #[tokio::test]
+    async fn stale_workflow_tab_returns_409_without_overwriting_newer_draft() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "two-tab-draft",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("project");
+        let settings = annotagent_application::load_settings(None).expect("Settings");
+        let draft = application
+            .create_workflow_draft("two-tab-draft", &settings, false)
+            .expect("Draft");
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+        let mut tab_a = serde_json::to_value(&draft).expect("tab A");
+        let mut tab_b = tab_a.clone();
+        tab_a["name"] = json!("saved by tab A");
+        tab_b["name"] = json!("stale tab B");
+
+        let saved_a = response_json(
+            request(
+                &service,
+                axum::http::Method::PATCH,
+                &format!("/api/workflow-drafts/{}", draft.id),
+                Some(tab_a),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved_a["name"], json!("saved by tab A"));
+        assert_eq!(saved_a["revision"], json!(draft.revision + 1));
+
+        let stale = request(
+            &service,
+            axum::http::Method::PATCH,
+            &format!("/api/workflow-drafts/{}", draft.id),
+            Some(tab_b),
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let stale = response_json(stale).await;
+        assert_eq!(stale["code"], json!("workflow_draft_revision_conflict"));
+        let persisted = application
+            .store()
+            .get_workflow_draft(&draft.id)
+            .expect("persisted Draft");
+        assert_eq!(persisted.name, "saved by tab A");
+        assert_eq!(persisted.revision, draft.revision + 1);
+    }
+
+    #[tokio::test]
     async fn duplicate_project_start_returns_structured_409_conflict() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
@@ -12311,6 +12479,14 @@ export:
                 Some("robocup.ball.vlm-bootstrap"),
             )
             .expect("Workflow Draft");
+        annotagent_image_tools::generate_synthetic_robocup(
+            &temp.path().join("duplicate-demo/images/sample.png"),
+        )
+        .expect("sample image");
+        application
+            .dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .expect("Sample Test");
         let published = application
             .publish_workflow(&draft.id, &settings)
             .expect("Published Workflow");
@@ -13075,7 +13251,15 @@ export:
         body: Option<Value>,
     ) -> Response {
         let headers = security_headers(service, &method, uri).await;
-        let request = axum::http::Request::builder().method(method).uri(uri);
+        let expected_revision = body
+            .as_ref()
+            .and_then(|value| value.get("revision"))
+            .and_then(Value::as_u64)
+            .map(|revision| revision.to_string());
+        let mut request = axum::http::Request::builder().method(method).uri(uri);
+        if let Some(expected_revision) = expected_revision {
+            request = request.header(header::IF_MATCH, expected_revision);
+        }
         let mut request = if let Some(value) = body {
             request
                 .header(header::CONTENT_TYPE, "application/json")

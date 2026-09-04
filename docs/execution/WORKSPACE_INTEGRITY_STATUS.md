@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M5 — recoverable frontend state.
-- Next milestone: M6 — Workflow lifecycle and concurrency.
+- Completed milestone: M6 — Workflow lifecycle and concurrency.
+- Next milestone: M7 — Review integrity.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -94,6 +94,17 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Evidence: 59 Web unit tests, Web typecheck/build, and all 40 Chromium E2E journeys passed. Added cache generation/dedup/invalidation tests and route round-trip/focus tests.
 - Milestone commit subject: `fix(web): restore project run workflow and review context from URLs`.
 
+## M6 exit
+
+- Workflow Drafts now carry a server-owned monotonic `revision` and semantic `content_hash`. Editing writes use atomic compare-and-swap plus `If-Match`; stale tabs receive structured HTTP 409 without overwriting newer content.
+- Autosave cancels superseded requests, ignores late generations, rebases same-tab edits onto the acknowledged revision, and presents a recoverable conflict panel with side-by-side snapshots, reload-latest, and save-as-new-Draft actions.
+- Migration 16 replaces the one-row-per-Draft Sample Test with append-only test IDs. Each record binds request/Draft revision, Draft hash, stable image IDs and content hashes, image-set hash, exact model revisions and model-snapshot hash, status, report, and start/completion timestamps.
+- Sample Test lookup distinguishes exact current evidence from historical stale evidence. An older-revision test that finishes later remains history and cannot displace exact-current evidence or authorize publication.
+- Publication requires a passing or explicitly human-approved record for the exact current Draft revision/hash with non-empty input/model snapshot hashes. Legacy timestamp-only tests migrate as `legacy_unverified` and cannot authorize publication.
+- Test URLs now retain both exact Draft and immutable Sample Test ID across activation and refresh. Published versions remain immutable; clones begin a new revision lineage.
+- Evidence: 61 Application tests plus one ignored billable test, 30 Server tests, 20 Storage unit tests plus 16 integration tests, 60 Web unit tests, Web typecheck/build, and all 41 Chromium E2E journeys passed, including the real two-tab conflict/recovery path.
+- Milestone commit subject: `fix(workflow): bind publication to the exact tested draft revision`.
+
 ## Next exit
 
-M6 adds server-owned Draft revisions, optimistic concurrency, append-only Sample Test evidence, and exact-revision publication gates.
+M7 binds every Review read/mutation to its real Project and Run, isolates per-item edits, preserves source score semantics, and replaces alert-based revision history with durable UI.

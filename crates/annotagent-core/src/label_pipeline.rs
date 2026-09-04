@@ -1571,6 +1571,8 @@ impl LabelWorkflowComposition {
             project_id: project_id.into(),
             name: name.into(),
             status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
             nodes,
             edges,
             enabled_skills,
