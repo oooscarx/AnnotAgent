@@ -1,0 +1,34 @@
+# Workspace Integrity Decisions
+
+## D-001 — Stable IDs are the only ownership key
+
+Project names, file names, positions, and list indexes are presentation data. New contracts and routes carry `project_id`, `run_id`, `batch_id`, `image_id`, `review_id`, `draft_id`, and `version_id` explicitly. Legacy name fallback is migration-only and must not decide ownership.
+
+## D-002 — Nested routes are canonical for owned work
+
+Global `/runs` and `/review` remain cross-project discovery indexes. Project work uses `/projects/:projectId/runs`, `/projects/:projectId/runs/:runId`, `/projects/:projectId/batches/:batchId`, and `/projects/:projectId/review/:reviewId`. A canonical object URL may redirect to the real owner after server resolution.
+
+## D-003 — URL plus server state are durable UI truth
+
+Selected Draft/version/session/image/view/node/artifact/review item belongs in the URL when refresh or sharing must preserve it. Local storage may remember preferences but cannot establish ownership or object identity.
+
+## D-004 — Security is layered, not a CORS-only fix
+
+The localhost server will require a strict trusted Origin/Host policy, a local session, CSRF protection for mutation, and an additional short-lived confirmation for privileged operations. Native plugin installation also needs a trusted signature policy. Global request-body, concurrency, and SSE limits are server responsibilities.
+
+## D-005 — Results are projections; artifacts are provenance
+
+Results render only the workflow's final annotation projection. Intermediate model output, crops, masks, prompts, conversions, and checkpoints remain available in Debug/Inspector and cannot be flattened into final annotations.
+
+## D-006 — Workflow tests are immutable evidence
+
+Draft edits increment a server-owned revision. Autosave uses optimistic concurrency. Sample tests are append-only records bound to exact Draft content hash/revision, inputs, model bindings, and outputs. Publication requires a passing record for the current exact Draft.
+
+## D-007 — Incremental extraction over a rewrite
+
+The oversized frontend/server/application modules will be split along route and service boundaries only after behavior has regression coverage. A large rewrite is explicitly rejected because it would obscure ownership and migration failures.
+
+## D-008 — Missing review brief is an input gap
+
+`PRO_REVIEW_BRIEF.md` was requested as an audit input but is absent from this checkout. Work continues from repository evidence and the master prompt; no claim will be made that the missing file was reviewed.
+

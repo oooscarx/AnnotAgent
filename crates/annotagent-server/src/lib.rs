@@ -10218,6 +10218,69 @@ export:
     }
 
     #[tokio::test]
+    #[ignore = "known P0 integrity failure: permissive CORS accepts an untrusted origin"]
+    async fn integrity_rejects_cross_origin_preflight_for_mutations() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let response = service
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::OPTIONS)
+                    .uri("/api/settings")
+                    .header(axum::http::header::ORIGIN, "https://untrusted.example")
+                    .header(
+                        axum::http::header::ACCESS_CONTROL_REQUEST_METHOD,
+                        axum::http::Method::PUT.as_str(),
+                    )
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(
+            response
+                .headers()
+                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "untrusted origins must not receive an allow-origin header"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "known P0 integrity failure: health response leaks local absolute paths"]
+    async fn integrity_health_response_does_not_expose_local_paths() {
+        let temp = tempfile::tempdir().expect("temp");
+        let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let response = service
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let health: Value = serde_json::from_slice(&body).expect("health JSON");
+
+        assert!(health.get("workspace").is_none());
+        assert!(health.get("database").is_none());
+    }
+
+    #[tokio::test]
     async fn pipeline_improvement_http_surface_is_registered_and_project_scoped() {
         let temp = tempfile::tempdir().expect("temp");
         let app = Arc::new(LocalApplication::new(temp.path()).expect("application"));

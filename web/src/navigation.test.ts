@@ -114,4 +114,62 @@ describe("guided workspace routing", () => {
     expect(parseWorkspaceRoute("/runs")).not.toHaveProperty("projectId", "alpha");
     expect(parseWorkspaceRoute("/review")).not.toHaveProperty("projectId", "alpha");
   });
+
+  it.fails("models the Project-owned Run, Batch, and Review hierarchy in paths", () => {
+    expect(parseWorkspaceRoute("/projects/project-a/runs")).toMatchObject({
+      kind: "projectRuns",
+      projectId: "project-a",
+    });
+    expect(parseWorkspaceRoute("/projects/project-a/runs/run-1")).toMatchObject({
+      kind: "projectRun",
+      projectId: "project-a",
+      runId: "run-1",
+    });
+    expect(parseWorkspaceRoute("/projects/project-a/batches/batch-1")).toMatchObject({
+      kind: "projectBatch",
+      projectId: "project-a",
+      batchId: "batch-1",
+    });
+    expect(parseWorkspaceRoute("/projects/project-a/review/review-1")).toMatchObject({
+      kind: "projectReview",
+      projectId: "project-a",
+      reviewItemId: "review-1",
+    });
+  });
+
+  it.fails("keeps Pipeline Draft and Published Version identity in the URL", () => {
+    expect(
+      parseWorkspaceRoute(
+        "/projects/project-a/build/pipeline",
+        "?draft=draft-1",
+      ),
+    ).toMatchObject({
+      kind: "build",
+      step: "pipeline",
+      draftId: "draft-1",
+    });
+    expect(
+      parseWorkspaceRoute(
+        "/projects/project-a/build/pipeline",
+        "?workflow=workflow-1&version=3",
+      ),
+    ).toMatchObject({
+      kind: "build",
+      step: "pipeline",
+      workflowId: "workflow-1",
+      workflowVersion: 3,
+    });
+  });
+
+  it.fails("does not silently rewrite an unknown deep link to Home", () => {
+    expect(parseWorkspaceRoute("/missing/deep-link")).toMatchObject({
+      kind: "notFound",
+      invalidPath: "/missing/deep-link",
+    });
+  });
+
+  it.fails("redirects legacy model and capability destinations to their real owners", () => {
+    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
+    expect(parseWorkspaceRoute("/skills").canonicalPath).toBe("/settings/plugins");
+  });
 });
