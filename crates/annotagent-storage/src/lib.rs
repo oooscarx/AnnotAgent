@@ -4427,6 +4427,64 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_builder_working_state_survives_store_reopen_boundary() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let mut session = AgentSession::start(
+            annotagent_core::AgentKind::PipelineBuilder,
+            annotagent_core::AgentBudget::default(),
+        )
+        .with_project("durable-builder")
+        .with_build_mode(annotagent_core::PipelineBuildMode::FromScratch);
+        session.set_builder_working_draft(
+            "working-draft",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            "registry-revision",
+        );
+        let now = Utc::now();
+        session.record_plan_candidate(annotagent_core::PipelinePlanCandidate {
+            id: "candidate".to_owned(),
+            name: "Registry candidate".to_owned(),
+            source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+            status: annotagent_core::PipelineCandidateStatus::Blocked,
+            sufficiency: annotagent_core::CandidateSufficiency::Partial,
+            fragment_ids: Vec::new(),
+            node_blueprints: Vec::new(),
+            edge_blueprints: Vec::new(),
+            model_bindings: Vec::new(),
+            skill_bindings: Vec::new(),
+            evidence: Vec::new(),
+            unresolved_bindings: vec!["PromptedSegmentation model required".to_owned()],
+            output_artifact: annotagent_core::ArtifactKind::DetectionSet,
+            geometry_safety: annotagent_core::CandidateGeometrySafety::MandatoryReview,
+            has_review_path: true,
+            has_commit_path: true,
+            registry_revision: "registry-revision".to_owned(),
+            score: annotagent_core::PlanCandidateScore::default(),
+            created_at: now,
+            updated_at: now,
+        });
+        session
+            .select_plan_candidate("candidate")
+            .expect("select candidate");
+        store.save_agent_session(&session).expect("save Session");
+
+        let restored = store
+            .get_agent_session(session.id)
+            .expect("restore Session");
+        assert_eq!(restored.build_mode, session.build_mode);
+        assert_eq!(restored.working_draft, session.working_draft);
+        assert_eq!(restored.plan_candidates, session.plan_candidates);
+        assert_eq!(restored.selected_candidate_id.as_deref(), Some("candidate"));
+        assert_eq!(
+            restored
+                .working_memory
+                .as_ref()
+                .map(|memory| memory.plan_candidate_ids.as_slice()),
+            Some(["candidate".to_owned()].as_slice())
+        );
+    }
+
+    #[test]
     fn project_images_keep_stable_ids_without_collapsing_duplicate_content() {
         let store = SqliteStore::open_in_memory().expect("in-memory database");
         let project_id = ProjectId::new();

@@ -1,5 +1,18 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M1 — 2026-09-05
+
+1. `builder_working_plan_round_trips_fragments_candidates_and_selection` proves Build Mode, Working
+   Draft, conversion Fragment, Candidate, selection and four ordered planning events survive JSON
+   serialization.
+2. `pipeline_builder_working_state_survives_store_reopen_boundary` saves and restores the same
+   Candidate and Working Memory through the SQLite Agent Session store.
+3. `live_pipeline_builder_uses_multi_turn_tool_results_and_never_publishes` proves a FromScratch
+   live-loop session uses one stable Working Draft ID from session creation through human-review
+   outcome and still creates no Published Workflow.
+4. Focused strict Clippy passes for Core, Storage and Application. The full baseline was already
+   recorded in M0; no model inference, credential, remote mutation or push was used in M1.
+
 ## Builder Plan Preservation M0 — 2026-09-05
 
 1. The scripted Builder registers a non-Mock available VLM detector and prompted-segmentation Model

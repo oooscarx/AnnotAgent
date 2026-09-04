@@ -1378,7 +1378,7 @@ fn pipeline_builder_visible_tools(
                                 | PipelineBuilderTool::EstimatePipelineCost
                         )
                 }
-                Phase::Finalizing => finalization,
+                Phase::DraftSalvage | Phase::Finalizing => finalization,
                 Phase::WaitingForHuman | Phase::Completed | Phase::Cancelled | Phase::Failed => {
                     false
                 }
@@ -1772,6 +1772,20 @@ fn materialize_feasibility_draft(
             bail!("unsupported Pipeline request: {}", reasons.join("; "))
         }
     }
+}
+
+fn adopt_builder_working_draft_identity(
+    session: &AgentSession,
+    draft: &mut WorkflowDraft,
+) -> Result<()> {
+    let working = session
+        .working_draft
+        .as_ref()
+        .ok_or_else(|| anyhow!("Pipeline Builder Session has no persistent working Draft"))?;
+    draft.id.clone_from(&working.draft_id);
+    draft.created_at = working.created_at;
+    draft.updated_at = chrono::Utc::now();
+    Ok(())
 }
 
 /// Re-evaluates only unresolved bindings on a persisted Draft after the human has completed a
@@ -9740,7 +9754,7 @@ impl LocalApplication {
         temporary_api_key: Option<String>,
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
-        self.run_workflow_advisor_live_agent(
+        Box::pin(self.run_workflow_advisor_live_agent(
             project_id,
             settings,
             temporary_api_key,
@@ -9748,7 +9762,7 @@ impl LocalApplication {
             None,
             PipelineBuilderConstraints::default(),
             CancellationToken::new(),
-        )
+        ))
         .await?
         .suggestion
         .ok_or_else(|| anyhow!("Pipeline Builder stopped without an editable Draft"))
@@ -9763,7 +9777,7 @@ impl LocalApplication {
         target_label: &str,
         constraints: &WorkflowConstraints,
     ) -> Result<WorkflowSuggestion> {
-        self.run_workflow_advisor_live_agent(
+        Box::pin(self.run_workflow_advisor_live_agent(
             project_id,
             settings,
             temporary_api_key,
@@ -9771,7 +9785,7 @@ impl LocalApplication {
             Some((target_task_id, target_label)),
             PipelineBuilderConstraints::default(),
             CancellationToken::new(),
-        )
+        ))
         .await?
         .suggestion
         .ok_or_else(|| anyhow!("Pipeline Builder stopped without an editable Draft"))
@@ -10114,6 +10128,13 @@ impl LocalApplication {
         let tools = pipeline_builder_live_tools(&input);
         let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
         let context_revision = context_snapshot.context_revision.clone();
+        let build_mode = if resume_existing_draft {
+            annotagent_core::PipelineBuildMode::RepairDraft {
+                draft_id: safe_suggestion.draft.id.clone(),
+            }
+        } else {
+            annotagent_core::PipelineBuildMode::FromScratch
+        };
         let feasibility = Self::resolve_pipeline_feasibility(&input, &context_snapshot);
         let forced_progress_deadline = match &feasibility {
             annotagent_core::BuildFeasibility::BlockedByBindings { .. }
@@ -10137,11 +10158,37 @@ impl LocalApplication {
             self.store.save_workflow_draft(&suggestion.draft)?;
         }
         if let Some(suggestion) = current.as_ref() {
-            session.set_builder_draft(suggestion.draft.id.clone());
+            session.set_builder_working_draft(
+                suggestion.draft.id.clone(),
+                build_mode,
+                context_revision.clone(),
+            );
             session.unresolved_bindings = suggestion.unresolved_model_bindings.clone();
             session.next_action = Some(
                 "Load the bounded context, then validate or repair the persisted Draft".to_owned(),
             );
+            self.store.save_agent_session(&session)?;
+        } else {
+            let now = chrono::Utc::now();
+            let mut working_draft = safe_suggestion.draft.clone();
+            working_draft.id = uuid::Uuid::new_v4().to_string();
+            working_draft.name = format!("{} · working draft", working_draft.name);
+            working_draft.status = WorkflowDraftStatus::Editing;
+            working_draft.revision = 1;
+            working_draft.content_hash.clear();
+            working_draft.nodes.clear();
+            working_draft.edges.clear();
+            working_draft.label_pipeline = None;
+            working_draft.created_at = now;
+            working_draft.updated_at = now;
+            self.store.save_workflow_draft(&working_draft)?;
+            session.set_builder_working_draft(
+                working_draft.id,
+                build_mode,
+                context_revision.clone(),
+            );
+            session.next_action =
+                Some("Discover and save a Registry-backed Pipeline Plan Candidate".to_owned());
             self.store.save_agent_session(&session)?;
         }
         let mut validation: Option<WorkflowValidationReport> = None;
@@ -10215,8 +10262,9 @@ impl LocalApplication {
                             )
                             .map_err(anyhow::Error::msg)?;
                     }
-                    let (created, outcome) =
+                    let (mut created, outcome) =
                         materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
+                    adopt_builder_working_draft_identity(&session, &mut created.draft)?;
                     self.store.save_workflow_draft(&created.draft)?;
                     session.set_builder_draft(created.draft.id.clone());
                     session
@@ -10688,8 +10736,9 @@ impl LocalApplication {
                         ))
                     }
                     Ok(PipelineBuilderTool::CreateBlockedDraft) => {
-                        let (created, outcome) =
+                        let (mut created, outcome) =
                             materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
+                        adopt_builder_working_draft_identity(&session, &mut created.draft)?;
                         if outcome != annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired {
                             bail!("create_blocked_draft requires a blocked-by-bindings feasibility result");
                         }
@@ -11971,6 +12020,7 @@ impl LocalApplication {
                                     .to_owned(),
                             ];
                         }
+                        adopt_builder_working_draft_identity(&session, &mut created.draft)?;
                         if let Some(name) = call.arguments.get("name").and_then(|value| value.as_str())
                             && !name.trim().is_empty()
                         {
@@ -21064,6 +21114,22 @@ export:
         assert_eq!(provider.remaining_steps(), 0);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
         assert!(report.approval_required);
+        assert_eq!(
+            report.session.build_mode,
+            Some(annotagent_core::PipelineBuildMode::FromScratch)
+        );
+        assert_eq!(
+            report
+                .session
+                .working_draft
+                .as_ref()
+                .map(|working| working.draft_id.as_str()),
+            report
+                .suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.draft.id.as_str())
+        );
+        assert!(report.session.working_memory.is_some());
         assert_eq!(
             report
                 .session

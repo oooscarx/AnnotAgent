@@ -329,6 +329,22 @@ pub struct AgentSession {
     #[serde(default)]
     pub builder_stop_reason: Option<crate::BuilderStopReason>,
     #[serde(default)]
+    pub build_mode: Option<crate::PipelineBuildMode>,
+    #[serde(default)]
+    pub working_draft: Option<crate::BuilderWorkingDraft>,
+    #[serde(default)]
+    pub working_memory: Option<crate::BuilderWorkingMemory>,
+    #[serde(default)]
+    pub plan_candidates: Vec<crate::PipelinePlanCandidate>,
+    #[serde(default)]
+    pub selected_candidate_id: Option<crate::PlanCandidateId>,
+    #[serde(default)]
+    pub discovered_conversion_paths: Vec<crate::PipelineFragmentId>,
+    #[serde(default)]
+    pub planning_events: Vec<crate::BuilderPlanEvent>,
+    #[serde(default)]
+    pub salvage_outcome: Option<crate::BuilderSalvageOutcome>,
+    #[serde(default)]
     pub builder_budget: Option<crate::PipelineBuilderBudget>,
     #[serde(default)]
     pub progress_invariant: Option<crate::BuilderProgressInvariant>,
@@ -385,6 +401,14 @@ impl AgentSession {
             phase: None,
             outcome: None,
             builder_stop_reason: None,
+            build_mode: None,
+            working_draft: None,
+            working_memory: None,
+            plan_candidates: Vec::new(),
+            selected_candidate_id: None,
+            discovered_conversion_paths: Vec::new(),
+            planning_events: Vec::new(),
+            salvage_outcome: None,
             builder_budget: None,
             progress_invariant: None,
             model_turns: 0,
@@ -443,6 +467,128 @@ impl AgentSession {
         self
     }
 
+    #[must_use]
+    pub fn with_build_mode(mut self, build_mode: crate::PipelineBuildMode) -> Self {
+        self.build_mode = Some(build_mode);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn set_builder_working_draft(
+        &mut self,
+        draft_id: impl Into<String>,
+        build_mode: crate::PipelineBuildMode,
+        context_revision: impl Into<String>,
+    ) {
+        let now = Utc::now();
+        let draft_id = draft_id.into();
+        self.build_mode = Some(build_mode.clone());
+        self.draft_id = Some(draft_id.clone());
+        self.working_draft = Some(crate::BuilderWorkingDraft {
+            draft_id: draft_id.clone(),
+            build_mode,
+            created_at: now,
+            updated_at: now,
+        });
+        self.working_memory = Some(crate::BuilderWorkingMemory {
+            session_id: self.id,
+            context_revision: context_revision.into(),
+            project_facts: std::collections::BTreeMap::new(),
+            model_facts: std::collections::BTreeMap::new(),
+            node_facts: std::collections::BTreeMap::new(),
+            conversion_paths: std::collections::BTreeMap::new(),
+            plan_candidate_ids: Vec::new(),
+            selected_candidate_id: None,
+            working_draft_id: draft_id,
+        });
+        self.record_builder_plan_event(
+            crate::BuilderPlanEventKind::WorkingDraftCreated,
+            None,
+            None,
+            "Created the persistent Pipeline Builder working Draft",
+        );
+    }
+
+    pub fn record_pipeline_fragment(&mut self, fragment: crate::PipelineFragment) {
+        if let Some(memory) = self.working_memory.as_mut() {
+            memory
+                .conversion_paths
+                .insert(fragment.id.clone(), fragment.clone());
+        }
+        if !self.discovered_conversion_paths.contains(&fragment.id) {
+            self.discovered_conversion_paths.push(fragment.id.clone());
+        }
+        self.record_builder_plan_event(
+            crate::BuilderPlanEventKind::FragmentSaved,
+            None,
+            Some(fragment.id),
+            "Saved a typed Artifact conversion path as a Pipeline Fragment",
+        );
+    }
+
+    pub fn record_plan_candidate(&mut self, candidate: crate::PipelinePlanCandidate) {
+        let candidate_id = candidate.id.clone();
+        if let Some(existing) = self
+            .plan_candidates
+            .iter_mut()
+            .find(|existing| existing.id == candidate_id)
+        {
+            *existing = candidate;
+        } else {
+            self.plan_candidates.push(candidate);
+        }
+        if let Some(memory) = self.working_memory.as_mut()
+            && !memory.plan_candidate_ids.contains(&candidate_id)
+        {
+            memory.plan_candidate_ids.push(candidate_id.clone());
+        }
+        self.record_builder_plan_event(
+            crate::BuilderPlanEventKind::CandidateSaved,
+            Some(candidate_id),
+            None,
+            "Saved a Pipeline Plan Candidate",
+        );
+    }
+
+    pub fn select_plan_candidate(&mut self, candidate_id: &str) -> Result<(), String> {
+        if !self
+            .plan_candidates
+            .iter()
+            .any(|candidate| candidate.id == candidate_id)
+        {
+            return Err(format!("unknown Pipeline Plan Candidate {candidate_id:?}"));
+        }
+        self.selected_candidate_id = Some(candidate_id.to_owned());
+        if let Some(memory) = self.working_memory.as_mut() {
+            memory.selected_candidate_id = Some(candidate_id.to_owned());
+        }
+        self.record_builder_plan_event(
+            crate::BuilderPlanEventKind::CandidateSelected,
+            Some(candidate_id.to_owned()),
+            None,
+            "Selected a Pipeline Plan Candidate",
+        );
+        Ok(())
+    }
+
+    pub fn record_builder_plan_event(
+        &mut self,
+        kind: crate::BuilderPlanEventKind,
+        candidate_id: Option<crate::PlanCandidateId>,
+        fragment_id: Option<crate::PipelineFragmentId>,
+        detail: impl Into<String>,
+    ) {
+        self.planning_events.push(crate::BuilderPlanEvent {
+            sequence: u32::try_from(self.planning_events.len() + 1).unwrap_or(u32::MAX),
+            kind,
+            candidate_id,
+            fragment_id,
+            detail: detail.into(),
+            created_at: Utc::now(),
+        });
+        self.updated_at = Utc::now();
+    }
+
     pub fn transition_builder_phase(
         &mut self,
         next: crate::PipelineBuilderPhase,
@@ -477,7 +623,15 @@ impl AgentSession {
     }
 
     pub fn set_builder_draft(&mut self, draft_id: impl Into<String>) {
-        self.draft_id = Some(draft_id.into());
+        let draft_id = draft_id.into();
+        self.draft_id = Some(draft_id.clone());
+        if let Some(working_draft) = self.working_draft.as_mut() {
+            working_draft.draft_id.clone_from(&draft_id);
+            working_draft.updated_at = Utc::now();
+        }
+        if let Some(working_memory) = self.working_memory.as_mut() {
+            working_memory.working_draft_id = draft_id;
+        }
         self.updated_at = Utc::now();
     }
 
@@ -709,5 +863,91 @@ mod tests {
                 .expect_err("Alpha fallback limit")
                 .contains("at most one")
         );
+    }
+
+    #[test]
+    fn builder_working_plan_round_trips_fragments_candidates_and_selection() {
+        let mut session = AgentSession::start(AgentKind::PipelineBuilder, AgentBudget::default())
+            .with_build_mode(crate::PipelineBuildMode::FromScratch);
+        session.set_builder_working_draft(
+            "working-draft",
+            crate::PipelineBuildMode::FromScratch,
+            "registry-revision-1",
+        );
+        let now = Utc::now();
+        let fragment = crate::PipelineFragment {
+            id: "fragment-1".to_owned(),
+            context_revision: "registry-revision-1".to_owned(),
+            from_artifact: crate::ArtifactKind::DetectionSet,
+            to_artifact: crate::ArtifactKind::DetectionSet,
+            node_blueprints: Vec::new(),
+            edge_blueprints: Vec::new(),
+            required_model_capabilities: std::collections::BTreeSet::from([
+                crate::ModelCapability::PromptedSegmentation,
+            ]),
+            required_skills: std::collections::BTreeSet::new(),
+            source_observation_ids: vec!["tool-call-3".to_owned()],
+            created_at: now,
+        };
+        session.record_pipeline_fragment(fragment);
+        let candidate = crate::PipelinePlanCandidate {
+            id: "candidate-1".to_owned(),
+            name: "Typed geometry refinement".to_owned(),
+            source: crate::PipelineCandidateSource::ConversionPath,
+            status: crate::PipelineCandidateStatus::Runnable,
+            sufficiency: crate::CandidateSufficiency::Complete,
+            fragment_ids: vec!["fragment-1".to_owned()],
+            node_blueprints: Vec::new(),
+            edge_blueprints: Vec::new(),
+            model_bindings: Vec::new(),
+            skill_bindings: Vec::new(),
+            evidence: Vec::new(),
+            unresolved_bindings: Vec::new(),
+            output_artifact: crate::ArtifactKind::DetectionSet,
+            geometry_safety: crate::CandidateGeometrySafety::Evaluated,
+            has_review_path: true,
+            has_commit_path: true,
+            registry_revision: "registry-revision-1".to_owned(),
+            score: crate::PlanCandidateScore {
+                runnable: true,
+                deterministic_total: 100,
+                ..crate::PlanCandidateScore::default()
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        session.record_plan_candidate(candidate);
+        session
+            .select_plan_candidate("candidate-1")
+            .expect("candidate selection");
+
+        let restored: AgentSession = serde_json::from_str(
+            &serde_json::to_string(&session).expect("serialize Builder Session"),
+        )
+        .expect("restore Builder Session");
+        assert_eq!(
+            restored.build_mode,
+            Some(crate::PipelineBuildMode::FromScratch)
+        );
+        assert_eq!(
+            restored
+                .working_draft
+                .as_ref()
+                .map(|working| working.draft_id.as_str()),
+            Some("working-draft")
+        );
+        assert_eq!(restored.discovered_conversion_paths, ["fragment-1"]);
+        assert_eq!(
+            restored.selected_candidate_id.as_deref(),
+            Some("candidate-1")
+        );
+        assert_eq!(
+            restored
+                .working_memory
+                .as_ref()
+                .map(|memory| memory.conversion_paths.len()),
+            Some(1)
+        );
+        assert_eq!(restored.planning_events.len(), 4);
     }
 }

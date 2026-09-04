@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-03 CST
 
+## Builder Plan Preservation M1 — 2026-09-05
+
+- Pipeline Builder Sessions now persist an explicit Build Mode and create a Working Draft at
+  session start. FromScratch starts from an empty graph while RepairDraft retains the named Draft.
+- Typed Pipeline Fragments, Plan Candidates, binding/score/geometry metadata, Working Memory and
+  planning events survive the existing SQLite Agent Session JSON boundary and are returned by the
+  Session API.
+- Materialization adopts the Working Draft identity, preventing discovery state and final Draft
+  state from becoming unrelated records.
+- Focused Core, Storage and Application tests plus strict focused Clippy pass. Automatic conversion
+  path capture and materialization remain assigned to M2.
+
 ## Builder Plan Preservation M0 — 2026-09-05
 
 - Added a deterministic ignored regression that reproduces the confirmed plan-loss defect: the

@@ -42,3 +42,22 @@ modified by this milestone.
 - Milestone 4: reserved-budget DraftSalvage and structured outcomes.
 - Milestone 5: prompt, API, UI and build-mode product flow.
 - Milestone 6: current-project real Builder validation and release regression.
+
+## Milestone 1 — durable working plans (2026-09-05)
+
+Status: complete.
+
+- Added explicit `PipelineBuildMode` variants for FromScratch, ImproveExisting, RepairDraft and
+  ResolveBindings.
+- Every fresh Builder Session creates and persists an empty, project-scoped Working Draft before
+  model discovery. Repair sessions explicitly retain their selected editable Draft.
+- Added durable `PipelineFragment`, `PipelinePlanCandidate`, binding, score, sufficiency, geometry
+  safety, Working Memory and planning-event structures.
+- Agent Session JSON now exposes `build_mode`, `working_draft`, `working_memory`, `plan_candidates`,
+  `selected_candidate_id`, `discovered_conversion_paths`, `planning_events`, and
+  `salvage_outcome`; the existing SQLite Session store persists them without a second source of
+  truth.
+- Draft creation and deterministic recovery adopt the already-persisted Working Draft identity
+  instead of creating an unrelated Draft at the end of discovery.
+- Core serialization, SQLite round-trip, Application multi-turn editing and focused strict Clippy
+  pass. Conversion observations are converted into fragments in Milestone 2.

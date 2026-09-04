@@ -8,14 +8,246 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    AgentBudget, AgentKind, AgentSession, AgentSessionStatus, AgentUsage, CoreError, CoreResult,
-    ModelProfile, ModelProfileStatus, ModelRegistry, NodeRegistry, ProviderAdapterKind,
-    ProviderHealthStatus, ProviderId, StoredPayloadRef, ValidationCatalog, VisionBackendKind,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowModelBinding,
-    WorkflowNodeKind, WorkflowStaticValidator, WorkflowValidationIssue, WorkflowValidationReport,
+    AgentBudget, AgentKind, AgentSession, AgentSessionStatus, AgentUsage, ArtifactKind, CoreError,
+    CoreResult, ModelCapability, ModelProfile, ModelProfileId, ModelProfileStatus, ModelRegistry,
+    NodeRegistry, ProviderAdapterKind, ProviderHealthStatus, ProviderId, StoredPayloadRef,
+    ValidationCatalog, VisionBackendKind, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus,
+    WorkflowEdge, WorkflowModelBinding, WorkflowNodeKind, WorkflowStaticValidator,
+    WorkflowValidationIssue, WorkflowValidationReport,
 };
 
 pub const PIPELINE_BUILDER_PROTOCOL_VERSION: u32 = 1;
+
+pub type PlanCandidateId = String;
+pub type PipelineFragmentId = String;
+
+/// The user's explicit relationship to existing workflow state. `FromScratch` deliberately has no
+/// implicit base version: immutable history can remain available without influencing synthesis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PipelineBuildMode {
+    #[default]
+    FromScratch,
+    ImproveExisting {
+        base_workflow_version_id: String,
+    },
+    RepairDraft {
+        draft_id: String,
+    },
+    ResolveBindings {
+        draft_id: String,
+    },
+}
+
+impl PipelineBuildMode {
+    #[must_use]
+    pub fn source_draft_id(&self) -> Option<&str> {
+        match self {
+            Self::RepairDraft { draft_id } | Self::ResolveBindings { draft_id } => Some(draft_id),
+            Self::FromScratch | Self::ImproveExisting { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuilderWorkingDraft {
+    pub draft_id: String,
+    pub build_mode: PipelineBuildMode,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineCandidateSource {
+    RegistrySynthesis,
+    ConversionPath,
+    TemplateSeed,
+    ExistingDraftPatch,
+    RuntimeSalvage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineCandidateStatus {
+    Runnable,
+    Blocked,
+    Stale,
+    Materialized,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateSufficiency {
+    Partial,
+    Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateGeometrySafety {
+    Unsafe,
+    MandatoryReview,
+    Evaluated,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PlanCandidateScore {
+    pub runnable: bool,
+    pub goal_coverage: f32,
+    pub geometry_safety: f32,
+    pub binding_completeness: f32,
+    pub domain_coverage: f32,
+    pub estimated_cost: Option<Decimal>,
+    pub estimated_model_calls: Option<u32>,
+    pub deterministic_total: i64,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateModelBinding {
+    pub node_id: String,
+    pub capability: ModelCapability,
+    pub model_profile_id: Option<ModelProfileId>,
+    pub model_profile_revision: Option<u64>,
+    pub expert_model_id: Option<String>,
+    pub availability: String,
+    pub fixture_only: bool,
+    pub production_eligible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateSkillBinding {
+    pub skill_id: String,
+    pub version: String,
+}
+
+/// A typed, materializable graph fragment produced from Registry contracts. Full Tool Results stay
+/// in `AgentToolStep`; this structure keeps the durable blueprint needed after context compaction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelineFragment {
+    pub id: PipelineFragmentId,
+    pub context_revision: String,
+    pub from_artifact: ArtifactKind,
+    pub to_artifact: ArtifactKind,
+    #[serde(default)]
+    pub node_blueprints: Vec<WorkflowDraftNode>,
+    #[serde(default)]
+    pub edge_blueprints: Vec<WorkflowEdge>,
+    #[serde(default)]
+    pub required_model_capabilities: BTreeSet<ModelCapability>,
+    #[serde(default)]
+    pub required_skills: BTreeSet<String>,
+    #[serde(default)]
+    pub source_observation_ids: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PipelinePlanCandidate {
+    pub id: PlanCandidateId,
+    pub name: String,
+    pub source: PipelineCandidateSource,
+    pub status: PipelineCandidateStatus,
+    pub sufficiency: CandidateSufficiency,
+    #[serde(default)]
+    pub fragment_ids: Vec<PipelineFragmentId>,
+    #[serde(default)]
+    pub node_blueprints: Vec<WorkflowDraftNode>,
+    #[serde(default)]
+    pub edge_blueprints: Vec<WorkflowEdge>,
+    #[serde(default)]
+    pub model_bindings: Vec<CandidateModelBinding>,
+    #[serde(default)]
+    pub skill_bindings: Vec<CandidateSkillBinding>,
+    #[serde(default)]
+    pub evidence: Vec<ObservationRef>,
+    #[serde(default)]
+    pub unresolved_bindings: Vec<String>,
+    pub output_artifact: ArtifactKind,
+    pub geometry_safety: CandidateGeometrySafety,
+    pub has_review_path: bool,
+    pub has_commit_path: bool,
+    pub registry_revision: String,
+    pub score: PlanCandidateScore,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl PipelinePlanCandidate {
+    #[must_use]
+    pub fn is_runnable(&self) -> bool {
+        matches!(
+            self.status,
+            PipelineCandidateStatus::Runnable | PipelineCandidateStatus::Materialized
+        ) && self.unresolved_bindings.is_empty()
+            && self.model_bindings.iter().all(|binding| {
+                binding.production_eligible
+                    && !binding.fixture_only
+                    && binding.availability == "available"
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuilderFact {
+    pub value: serde_json::Value,
+    pub source_observation_id: String,
+    pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuilderWorkingMemory {
+    pub session_id: Uuid,
+    pub context_revision: String,
+    #[serde(default)]
+    pub project_facts: BTreeMap<String, BuilderFact>,
+    #[serde(default)]
+    pub model_facts: BTreeMap<String, BuilderFact>,
+    #[serde(default)]
+    pub node_facts: BTreeMap<String, BuilderFact>,
+    #[serde(default)]
+    pub conversion_paths: BTreeMap<PipelineFragmentId, PipelineFragment>,
+    #[serde(default)]
+    pub plan_candidate_ids: Vec<PlanCandidateId>,
+    pub selected_candidate_id: Option<PlanCandidateId>,
+    pub working_draft_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuilderPlanEventKind {
+    WorkingDraftCreated,
+    FragmentSaved,
+    CandidateSaved,
+    CandidateSelected,
+    CandidateMaterialized,
+    CandidateBlocked,
+    CandidateStale,
+    SalvageStarted,
+    SalvageCompleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuilderPlanEvent {
+    pub sequence: u32,
+    pub kind: BuilderPlanEventKind,
+    pub candidate_id: Option<PlanCandidateId>,
+    pub fragment_id: Option<PipelineFragmentId>,
+    pub detail: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuilderSalvageOutcome {
+    RunnableDraftMaterialized,
+    BlockedDraftMaterialized,
+    ExistingDraftPreserved,
+    UnsupportedRequest,
+}
 
 /// Credential-safe Provider information allowed into the Builder model context. In particular,
 /// this deliberately has no credential reference, locator, headers, or secret-bearing URL path.
@@ -537,6 +769,7 @@ pub enum PipelineBuilderPhase {
     Validating,
     DryRunning,
     Revising,
+    DraftSalvage,
     Finalizing,
     WaitingForHuman,
     Completed,
@@ -555,7 +788,11 @@ impl PipelineBuilderPhase {
             (Self::ContextLoading, Self::FeasibilityAnalysis)
                 | (Self::FeasibilityAnalysis, Self::Drafting | Self::Completed)
                 | (
-                    Self::Drafting | Self::Revising,
+                    Self::FeasibilityAnalysis | Self::Drafting | Self::Revising,
+                    Self::DraftSalvage
+                )
+                | (
+                    Self::Drafting | Self::Revising | Self::DraftSalvage,
                     Self::Validating | Self::Finalizing | Self::Failed
                 )
                 | (
@@ -564,7 +801,7 @@ impl PipelineBuilderPhase {
                 )
                 | (
                     Self::DryRunning,
-                    Self::Revising | Self::Finalizing | Self::Failed
+                    Self::Revising | Self::DraftSalvage | Self::Finalizing | Self::Failed
                 )
                 | (
                     Self::Finalizing,
