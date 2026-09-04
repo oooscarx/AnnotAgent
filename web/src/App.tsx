@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
+import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
   PROVIDER_PRESETS,
   isEnvironmentVariableName,
@@ -7008,13 +7009,52 @@ function RunsPage({
   onError: (value: string) => void;
 }) {
   const [batches, setBatches] = useState<DatasetBatchSummary[]>([]);
+  const [indexedRuns, setIndexedRuns] = useState<HistoryRun[]>(runs);
+  const [runTotal, setRunTotal] = useState(runs.length);
+  const [nextRunOffset, setNextRunOffset] = useState<number>();
+  const loadRunPage = (offset = 0, append = false) => {
+    const controller = new AbortController();
+    void api
+      .runs(controller.signal, offset, scopeProject?.id)
+      .then((value) => {
+        setIndexedRuns((current) => append
+          ? [...current, ...value.runs.filter((run) => !current.some((item) => item.id === run.id))]
+          : value.runs);
+        setRunTotal(value.page.total);
+        setNextRunOffset(value.page.next_offset);
+      })
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      });
+    return controller;
+  };
   useEffect(() => {
     void api.batches().then((value) => setBatches(value.batches)).catch((error: Error) => onError(error.message));
   }, [runs.length, runs[0]?.updated_at]);
+  useEffect(() => {
+    if (route.kind === "projectRun" || (route.kind === "runs" && route.runId)) return;
+    const controller = loadRunPage();
+    return () => controller.abort();
+  }, [route.kind, scopeProject?.id, runs.length, runs[0]?.updated_at]);
   const detailRoute =
     route.kind === "runs" || route.kind === "projectRun" ? route : undefined;
   const routeRunId = detailRoute?.runId;
-  const run = runs.find((item) => item.id === routeRunId);
+  const availableRuns = [...indexedRuns, ...runs.filter((run) => !indexedRuns.some((item) => item.id === run.id))];
+  const run = availableRuns.find((item) => item.id === routeRunId);
+  useEffect(() => {
+    if (!routeRunId || run) return;
+    const controller = new AbortController();
+    void api
+      .run(routeRunId, controller.signal)
+      .then((value) => setIndexedRuns((current) => [
+        value.run,
+        ...current.filter((item) => item.id !== value.run.id),
+      ]))
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      });
+    return () => controller.abort();
+  }, [routeRunId, run?.id]);
   const runOwner = run
     ? projects.find((item) => item.project_id === run.project_id)
     : undefined;
@@ -7045,7 +7085,7 @@ function RunsPage({
         onError={onError}
       />
     );
-  const projectRuns = runsForContext(runs, scopeProject);
+  const projectRuns = runsForContext(indexedRuns, scopeProject);
   const statusFilter =
     route.kind === "runs" || route.kind === "projectRuns"
       ? route.status ?? "all"
@@ -7087,7 +7127,7 @@ function RunsPage({
         onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)}
       />}
       <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
-      <Panel title="Run history" eyebrow={`${visibleExecutions.length} executions visible · ${runs.length} image Runs recorded`}>
+      <Panel title="Run history" eyebrow={`${visibleExecutions.length} executions visible · ${runTotal} image Runs recorded`}>
         <div className="list-filters">
           <label>Project
             <select
@@ -7108,10 +7148,11 @@ function RunsPage({
         </div>
         <div className="runs-table">
           {visibleExecutions.map((execution) => execution.kind === "batch"
-            ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={runs} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} />
+            ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={availableRuns} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} />
             : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} />)}
           {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
+        {nextRunOffset !== undefined && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>Load older Runs</button>}
       </Panel>
       {routeRunId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
     </section>
@@ -8149,6 +8190,7 @@ function ReviewPage({
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [queueLoaded, setQueueLoaded] = useState(false);
+  const [nextReviewOffset, setNextReviewOffset] = useState<number>();
   const [progress, setProgress] = useState<ReviewQueueProgress>({
     reviewed_count: 0,
     total_count: 0,
@@ -8224,16 +8266,19 @@ function ReviewPage({
         true,
       );
   }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
-  const refresh = () => {
+  const refresh = (offset = 0, append = false) => {
     const generation = ++queueLoadGeneration.current;
-    const key = queryKeys.reviewQueue(route.projectId);
-    setQueueLoaded(false);
+    const key = `${queryKeys.reviewQueue(route.projectId)}:${offset}`;
+    if (!append) setQueueLoaded(false);
     return workspaceQueries
-      .load(key, (signal) => api.reviews(route.projectId, signal), { force: true })
+      .load(key, (signal) => api.reviews(route.projectId, signal, offset), { force: true })
       .then((value) => {
         if (generation !== queueLoadGeneration.current) return;
-        setReviews(value.reviews);
+        setReviews((current) => append
+          ? [...current, ...value.reviews.filter((review) => !current.some((item) => item.id === review.id))]
+          : value.reviews);
         setProgress(value.progress);
+        setNextReviewOffset(value.page.next_offset);
       })
       .catch((error: Error) => {
         if (generation === queueLoadGeneration.current && !isAbortError(error)) onError(error.message);
@@ -8242,9 +8287,10 @@ function ReviewPage({
         if (generation === queueLoadGeneration.current) setQueueLoaded(true);
       });
   };
+  const detailReviewId = route.reviewItemId || selectedId || visibleReviews[0]?.id;
   useEffect(() => {
-    if (!route.reviewItemId) return;
-    const reviewId = route.reviewItemId;
+    if (!detailReviewId) return;
+    const reviewId = detailReviewId;
     const generation = ++itemLoadGeneration.current;
     const key = queryKeys.review(reviewId, route.projectId);
     void workspaceQueries
@@ -8257,19 +8303,20 @@ function ReviewPage({
         ),
         { force: true },
       )
-      .then((review) =>
-        generation === itemLoadGeneration.current && setReviews((items) =>
-          items.some((item) => item.id === review.id) ? items : [review, ...items],
-        ),
-      )
+      .then((review) => {
+        if (generation !== itemLoadGeneration.current) return;
+        setReviews((items) => items.some((item) => item.id === review.id)
+          ? items.map((item) => item.id === review.id ? review : item)
+          : [review, ...items]);
+      })
       .catch((error: Error) => {
         if (generation === itemLoadGeneration.current && !isAbortError(error)) onError(error.message);
       });
     return () => workspaceQueries.abort(key);
-  }, [route.kind, route.reviewItemId, route.projectId]);
+  }, [route.kind, route.projectId, detailReviewId]);
   useEffect(() => {
     void refresh();
-    const key = queryKeys.reviewQueue(route.projectId);
+    const key = `${queryKeys.reviewQueue(route.projectId)}:0`;
     return () => workspaceQueries.abort(key);
   }, [route.projectId]);
   useEffect(() => {
@@ -8666,6 +8713,12 @@ function ReviewPage({
             </button>
           ))}
         </div>
+        {nextReviewOffset !== undefined && (
+          <button
+            className="text-button"
+            onClick={() => void refresh(nextReviewOffset, true)}
+          >Load more review items</button>
+        )}
         {visibleReviews.length === 0 && (
           <Empty
             title="Queue is clear"
@@ -10151,36 +10204,6 @@ function Status({ status }: { status: string }) {
     </span>
   );
 }
-function NotFoundPage({
-  invalidPath,
-  onNavigate,
-}: {
-  invalidPath: string;
-  onNavigate: (path: string) => void;
-}) {
-  return (
-    <section className="page-stack">
-      <div className="toolbar-panel">
-        <div>
-          <span className="eyebrow">404 · Workspace route</span>
-          <h2>This page does not exist</h2>
-          <p>
-            AnnotAgent kept the requested address visible instead of silently
-            sending you somewhere unrelated.
-          </p>
-          <code>{invalidPath}</code>
-        </div>
-        <div className="button-row">
-          <button onClick={() => window.history.back()}>Go back</button>
-          <button className="primary" onClick={() => onNavigate("/projects")}>
-            Open Projects
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function Empty({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="empty" role="status">

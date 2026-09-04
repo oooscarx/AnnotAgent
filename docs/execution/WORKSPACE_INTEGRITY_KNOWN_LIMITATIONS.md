@@ -12,6 +12,7 @@ This file describes the current product, not the target state.
 - Review scope, local draft isolation, score provenance, revision history, and decision navigation are covered. The App-level navigation boundary and browser-close handling guard unsaved Review edits.
 - Free-form technical graph mutation remains intentionally unavailable; the technical graph is a read-only Draft projection until typed ports, cycle prevention, deletion constraints, and undo are implemented together.
 - Browser upload/chooser transport is not implemented. The only current manual source field is explicitly an advanced server-local path read by the local AnnotAgent process.
-- Large server/application/frontend modules and unbounded/N+1 summary queries remain. Batch image summaries currently resolve child results individually and are scheduled for the M9 bounded-query pass.
-- The Web production bundle currently warns about a JavaScript chunk above 500 kB.
+- The largest frontend/server/application implementation files still need further incremental extraction. M9 established tested seams for the Not Found route, owned workspace route registration, and Project summary service; it did not attempt a destabilizing full rewrite.
+- List APIs are bounded to at most 100 rows per request. The current browser exposes incremental loading for Run and Review indexes; very large Project inventories currently show the first bounded page in the global dashboard rather than virtualizing every Project.
+- The Web production bundle currently warns about a JavaScript chunk above 500 kB (579.03 kB in the M9 build). Route-level code splitting remains future performance work.
 - Real provider/model checks are environment-dependent and remain outside offline acceptance until explicitly provisioned.

@@ -739,6 +739,13 @@ export interface DashboardData {
   review_queue: number;
 }
 
+export interface PageMetadata {
+  total: number;
+  limit: number;
+  offset: number;
+  next_offset?: number;
+}
+
 export interface ProjectWorkflow {
   project_id: string;
   project_name: string;

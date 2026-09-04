@@ -1,8 +1,13 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
 mod batch;
+mod summary;
 
-pub use batch::BatchClaimResult;
+pub use batch::{BatchClaimResult, BatchImageListSummary};
+pub use summary::{
+    PageRequest, ProjectExecutionHead, ReviewCountSummary, StoredBatchSummary, StoredReviewSummary,
+    StoredRunSummary, SummaryPage,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,6 +60,8 @@ const WORKSPACE_IDENTITY_MIGRATION: &str =
     include_str!("../../../migrations/0015_workspace_identity.sql");
 const WORKFLOW_REVISION_INTEGRITY_MIGRATION: &str =
     include_str!("../../../migrations/0016_workflow_revision_integrity.sql");
+const BOUNDED_WORKSPACE_SUMMARIES_MIGRATION: &str =
+    include_str!("../../../migrations/0017_bounded_workspace_summaries.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -477,6 +484,20 @@ impl SqliteStore {
                 transaction.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (16, ?1, ?2)",
                     params!["workflow_revision_integrity", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
+            let has_bounded_workspace_summaries = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 17)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_bounded_workspace_summaries {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute_batch(BOUNDED_WORKSPACE_SUMMARIES_MIGRATION)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (17, ?1, ?2)",
+                    params!["bounded_workspace_summaries", Utc::now().to_rfc3339()],
                 )?;
                 transaction.commit()?;
             }

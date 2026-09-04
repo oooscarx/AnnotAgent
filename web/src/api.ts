@@ -60,6 +60,7 @@ import type {
   ModelCatalogEntry,
   ModelInstallOperation,
   ModelInstanceProfile,
+  PageMetadata,
   VerifiedModelBundlePackage,
 } from "./types";
 
@@ -621,8 +622,14 @@ export const api = {
     request(`/api/batches/${batchId}/${action}`, { method: "POST" }),
   runEvents: (runId: string, signal?: AbortSignal) =>
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`, { signal }),
-  runs: (signal?: AbortSignal) => request<{ runs: HistoryRun[] }>("/api/runs", { signal }),
-  batches: () => request<{ batches: DatasetBatchSummary[] }>("/api/batches"),
+  run: (runId: string, signal?: AbortSignal) =>
+    request<{ run: HistoryRun; event_count: number }>(`/api/runs/${runId}`, { signal }),
+  runs: (signal?: AbortSignal, offset = 0, projectId?: string) => {
+    const params = new URLSearchParams({ limit: "100", offset: String(offset) });
+    if (projectId) params.set("project_id", projectId);
+    return request<{ runs: HistoryRun[]; page: PageMetadata }>(`/api/runs?${params}`, { signal });
+  },
+  batches: () => request<{ batches: DatasetBatchSummary[]; page: PageMetadata }>("/api/batches?limit=100"),
   batch: (batchId: string) =>
     request<{
       batch: DatasetBatchSummary;
@@ -888,11 +895,11 @@ export const api = {
       `/api/models/${encodeURIComponent(modelId)}/sample-test`,
       { method: "POST", body: JSON.stringify(value) },
     ),
-  reviews: (projectId?: string, signal?: AbortSignal) =>
-    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
+  reviews: (projectId?: string, signal?: AbortSignal, offset = 0) =>
+    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress; page: PageMetadata }>(
       projectId
-        ? `/api/projects/${encodeURIComponent(projectId)}/reviews`
-        : "/api/reviews",
+        ? `/api/projects/${encodeURIComponent(projectId)}/reviews?limit=50&offset=${offset}`
+        : `/api/reviews?limit=50&offset=${offset}`,
       { signal },
     ),
   review: (id: string, signal?: AbortSignal, projectId?: string) =>
@@ -906,8 +913,8 @@ export const api = {
         : `/api/reviews/${encodeURIComponent(id)}/next`,
     ),
   runReviews: (runId: string, signal?: AbortSignal) =>
-    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
-      `/api/runs/${encodeURIComponent(runId)}/reviews`,
+    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress; page: PageMetadata }>(
+      `/api/runs/${encodeURIComponent(runId)}/reviews?limit=50`,
       { signal },
     ),
   revise: (annotation: Annotation, reason: string) =>

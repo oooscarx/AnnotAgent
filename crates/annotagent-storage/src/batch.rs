@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use annotagent_core::{
-    BatchBudgetLedger, BatchCheckpoint, BatchEvent, BatchId, BatchImageCheckpoint,
+    AnnotationId, BatchBudgetLedger, BatchCheckpoint, BatchEvent, BatchId, BatchImageCheckpoint,
     BatchImageRecord, BatchImageStatus, BatchProgress, BatchRecord, BatchStatus, BatchUsage,
-    ImageId, RunId,
+    ImageId, RunId, RunStatus,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, params, types::Type};
@@ -15,6 +15,16 @@ pub enum BatchClaimResult {
     Claimed(Box<BatchImageRecord>),
     Empty,
     BudgetExceeded(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchImageListSummary {
+    pub image: BatchImageRecord,
+    pub run_status: Option<RunStatus>,
+    pub terminal_reason: Option<String>,
+    pub annotation_count: usize,
+    pub review_count: usize,
+    pub review_ids: Vec<AnnotationId>,
 }
 
 impl SqliteStore {
@@ -129,6 +139,25 @@ impl SqliteStore {
         })
     }
 
+    pub fn active_batch_for_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<BatchRecord>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT * FROM dataset_batches
+                     WHERE project_id = ?1
+                       AND status IN ('pending', 'running', 'paused', 'awaiting_review')
+                     ORDER BY updated_at DESC, id DESC LIMIT 1",
+                    [project_id],
+                    batch_from_row,
+                )
+                .optional()
+                .map_err(StorageError::from)
+        })
+    }
+
     pub fn list_batch_images(
         &self,
         batch_id: BatchId,
@@ -142,6 +171,87 @@ impl SqliteStore {
             )?;
             statement
                 .query_map([batch_id.to_string()], batch_image_from_row)?
+                .map(|row| row.map_err(StorageError::from))
+                .collect()
+        })
+    }
+
+    /// List Batch images and their final annotation/review counters in one statement. This is
+    /// intentionally separate from `RunResultSummary`, which expands complete Run History and is
+    /// reserved for one exact Run detail.
+    pub fn list_batch_images_summary(
+        &self,
+        batch_id: BatchId,
+    ) -> Result<Vec<BatchImageListSummary>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT bi.batch_id, bi.image_id, bi.image_path, bi.position, bi.status,
+                        bi.child_run_id, bi.attempt_count, bi.reservation_json,
+                        bi.actual_usage_json, bi.checkpoint_json, bi.error, bi.lease_owner,
+                        bi.updated_at, r.status, r.terminal_reason,
+                        CASE WHEN bi.child_run_id IS NULL THEN 0 ELSE (
+                            SELECT COUNT(*) FROM annotations a
+                            WHERE a.run_id = bi.child_run_id
+                              AND a.review_status IN ('auto_accepted', 'human_accepted', 'needs_review')
+                        ) END,
+                        CASE WHEN bi.child_run_id IS NULL THEN 0 ELSE (
+                            SELECT COUNT(*) FROM annotations a
+                            WHERE a.run_id = bi.child_run_id AND a.review_status = 'needs_review'
+                        ) END,
+                        CASE WHEN bi.child_run_id IS NULL THEN NULL ELSE (
+                            SELECT GROUP_CONCAT(a.id, ',') FROM annotations a
+                            WHERE a.run_id = bi.child_run_id AND a.review_status = 'needs_review'
+                            ORDER BY a.created_at, a.id
+                        ) END
+                 FROM batch_images bi
+                 LEFT JOIN runs r ON r.id = bi.child_run_id
+                 WHERE bi.batch_id = ?1
+                 ORDER BY bi.position",
+            )?;
+            statement
+                .query_map([batch_id.to_string()], |row| {
+                    let image = batch_image_from_row(row)?;
+                    let run_status = row
+                        .get::<_, Option<String>>(13)?
+                        .map(|value| serde_json::from_value(serde_json::Value::String(value)))
+                        .transpose()
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                13,
+                                Type::Text,
+                                Box::new(error),
+                            )
+                        })?;
+                    let review_ids = row
+                        .get::<_, Option<String>>(17)?
+                        .map(|value| {
+                            value
+                                .split(',')
+                                .filter(|id| !id.is_empty())
+                                .map(|id| {
+                                    id.parse().map_err(|error| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            17,
+                                            Type::Text,
+                                            Box::new(error),
+                                        )
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                        })
+                        .transpose()?
+                        .unwrap_or_default();
+                    Ok(BatchImageListSummary {
+                        image,
+                        run_status,
+                        terminal_reason: row.get(14)?,
+                        annotation_count: usize::try_from(row.get::<_, i64>(15)?.max(0))
+                            .unwrap_or(usize::MAX),
+                        review_count: usize::try_from(row.get::<_, i64>(16)?.max(0))
+                            .unwrap_or(usize::MAX),
+                        review_ids,
+                    })
+                })?
                 .map(|row| row.map_err(StorageError::from))
                 .collect()
         })
@@ -725,7 +835,7 @@ fn read_batch(connection: &Connection, batch_id: BatchId) -> Result<BatchRecord,
         .ok_or(StorageError::BatchNotFound(batch_id))
 }
 
-fn batch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BatchRecord> {
+pub(crate) fn batch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BatchRecord> {
     Ok(BatchRecord {
         id: parse_column_id(row, 0, "batch id")?,
         project_id: row.get(1)?,

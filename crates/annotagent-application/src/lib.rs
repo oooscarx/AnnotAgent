@@ -2,6 +2,7 @@
 
 mod guidance;
 mod published_run;
+mod workspace_summary;
 
 pub use guidance::{
     GuidanceBlocker, GuidedAction, GuidedActionKind, ProjectGuidance, ProjectGuidanceInput,
@@ -7433,45 +7434,14 @@ impl LocalApplication {
             .join(&project.dataset.root);
         let image_count = supported_images(&dataset).count();
         let stable_id = stable_project_id(path.parent().unwrap_or(&self.workspace));
-        let project_runs = self
-            .store
-            .list_runs()?
-            .into_iter()
-            .filter(|run| run.project_id == Some(stable_id))
-            .collect::<Vec<_>>();
-        let active_run = project_runs
-            .iter()
-            .find(|run| {
-                matches!(
-                    run.status,
-                    RunStatus::Pending
-                        | RunStatus::Running
-                        | RunStatus::Paused
-                        | RunStatus::AwaitingReview
-                )
-            })
-            .cloned();
-        let active_batch = self
-            .store
-            .list_batches(true)?
-            .into_iter()
-            .find(|batch| batch.project_id == project_id);
+        let execution_head = self.store.project_execution_head(stable_id)?;
+        let active_run = execution_head.active_run;
+        let last_run = execution_head.last_run;
+        let active_batch = self.store.active_batch_for_project(project_id)?;
         let active_batch_progress = active_batch
             .as_ref()
             .map(|batch| self.store.batch_progress(batch.id))
             .transpose()?;
-        let last_run = project_runs
-            .iter()
-            .find(|run| {
-                !matches!(
-                    run.status,
-                    RunStatus::Pending
-                        | RunStatus::Running
-                        | RunStatus::Paused
-                        | RunStatus::AwaitingReview
-                )
-            })
-            .cloned();
         let compatibility = compatibility_workflow(&project, &project_skills);
         let published = self
             .store
@@ -7516,14 +7486,7 @@ impl LocalApplication {
         // Registry-backed Project bindings are attached by the server from their exact Project
         // scope. Never infer configuration from the most recent Run.
         let model_bindings = Vec::new();
-        let review_count = project_runs
-            .iter()
-            .map(|run| self.store.list_annotations(run.id))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
-            .count();
+        let review_count = self.store.review_counts(Some(stable_id))?.remaining_count;
         let mut blocking_issues = Vec::new();
         if image_count == 0 {
             blocking_issues.push(ProjectBlockingIssue {
@@ -7631,165 +7594,6 @@ impl LocalApplication {
             active_batch_progress,
             active_run,
             last_run,
-        })
-    }
-
-    pub fn project_guidance(
-        &self,
-        project_id: &str,
-        settings: &Settings,
-        workspace_model_connected: bool,
-    ) -> Result<ProjectGuidance> {
-        let summary = self.get_project(project_id)?;
-        let project_path = self.project_path(project_id)?;
-        let mut updated_at = project_path
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .map_or_else(
-                |_| chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
-                chrono::DateTime::<chrono::Utc>::from,
-            );
-        let mut drafts = self
-            .store
-            .list_workflow_drafts(Some(project_id))?
-            .into_iter()
-            .filter(|draft| draft.status != WorkflowDraftStatus::Archived)
-            .collect::<Vec<_>>();
-        drafts.sort_by_key(|draft| std::cmp::Reverse(draft.updated_at));
-        if let Some(draft) = drafts.first() {
-            updated_at = updated_at.max(draft.updated_at);
-        }
-        let published = self
-            .store
-            .list_published_workflow_versions(Some(project_id))?
-            .into_iter()
-            .max_by_key(|version| version.published_at);
-        if let Some(version) = &published {
-            updated_at = updated_at.max(version.published_at);
-        }
-        for run in summary.active_run.iter().chain(summary.last_run.iter()) {
-            if let Ok(value) = chrono::DateTime::parse_from_rfc3339(&run.updated_at) {
-                updated_at = updated_at.max(value.with_timezone(&chrono::Utc));
-            }
-        }
-
-        let editable_draft = drafts.iter().find(|draft| {
-            matches!(
-                draft.status,
-                WorkflowDraftStatus::Suggested
-                    | WorkflowDraftStatus::Editing
-                    | WorkflowDraftStatus::Validated
-            )
-        });
-        let automation = published
-            .as_ref()
-            .map(|version| &version.draft)
-            .or(editable_draft);
-        let has_automation = automation.is_some();
-        let automation_valid = if published.is_some() {
-            true
-        } else if let Some(draft) = editable_draft {
-            self.validate_workflow_draft(draft, settings, false)?
-                .issues
-                .iter()
-                .all(|issue| !issue.blocking || issue.code == "unresolved_model_binding")
-        } else {
-            true
-        };
-        let model_nodes = automation
-            .into_iter()
-            .flat_map(|draft| draft.nodes.iter())
-            .filter(|node| {
-                matches!(
-                    node.kind,
-                    WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-                )
-            })
-            .collect::<Vec<_>>();
-        let all_model_nodes_bound = model_nodes.iter().all(|node| node.model_binding.is_some());
-        let needs_workspace_connection = model_nodes.iter().any(|node| {
-            node.model_binding
-                .as_deref()
-                .is_some_and(|binding| !binding.starts_with("mock"))
-        });
-        let has_model_binding =
-            all_model_nodes_bound && (!needs_workspace_connection || workspace_model_connected);
-
-        let sample_test = if published.is_some() {
-            SampleTestState::Passed
-        } else if let Some(draft) = editable_draft {
-            self.store.get_workflow_sample_test(&draft.id)?.map_or(
-                SampleTestState::NotRun,
-                |record| {
-                    updated_at = updated_at.max(record.completed_at);
-                    if record.report.validation.valid
-                        && record.report.summary.failed_count == 0
-                        && record.report.summary.needs_review_count == 0
-                    {
-                        SampleTestState::Passed
-                    } else {
-                        SampleTestState::NeedsAttention
-                    }
-                },
-            )
-        } else {
-            SampleTestState::NotRun
-        };
-        let project_root = project_path.parent().unwrap_or(&self.workspace);
-        let stable_id = stable_project_id(project_root);
-        let project_runs = self
-            .store
-            .list_runs()?
-            .into_iter()
-            .filter(|run| run.project_id == Some(stable_id))
-            .collect::<Vec<_>>();
-        let has_completed_run = project_runs.iter().any(|run| {
-            matches!(
-                run.status,
-                RunStatus::Completed | RunStatus::CompletedWithReview | RunStatus::Partial
-            ) && published
-                .as_ref()
-                .is_none_or(|workflow| run_uses_published_workflow(run, workflow))
-        });
-        let has_labels = !summary.annotation_schema.is_empty()
-            && summary
-                .annotation_schema
-                .iter()
-                .any(|task| !task.labels.is_empty());
-        let guidance = derive_project_guidance(ProjectGuidanceInput {
-            project_id: project_id.to_owned(),
-            image_count: summary.image_count,
-            has_labels,
-            has_automation,
-            has_model_binding,
-            automation_valid,
-            sample_test,
-            automation_activated: published.is_some(),
-            active_run_id: summary.active_run.as_ref().map(|run| run.id.to_string()),
-            active_batch_id: summary
-                .active_batch
-                .as_ref()
-                .map(|batch| batch.id.to_string()),
-            review_count: summary.review_count,
-            has_completed_run,
-            updated_at,
-        });
-        Ok(guidance)
-    }
-
-    pub fn project_workspace_summary(
-        &self,
-        project_id: &str,
-        settings: &Settings,
-        workspace_model_connected: bool,
-    ) -> Result<ProjectWorkspaceSummary> {
-        let project = self.get_project(project_id)?;
-        let guidance = self.project_guidance(project_id, settings, workspace_model_connected)?;
-        let readiness = guidance.readiness_summary();
-        Ok(ProjectWorkspaceSummary {
-            project,
-            guidance,
-            readiness,
         })
     }
 
@@ -16705,21 +16509,6 @@ fn history_run_duration_ms(run: &HistoryRun) -> u64 {
         .unwrap_or_default()
 }
 
-fn run_uses_published_workflow(run: &HistoryRun, workflow: &PublishedWorkflowVersion) -> bool {
-    run.workflow_snapshot_json
-        .as_deref()
-        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(snapshot).ok())
-        .and_then(|snapshot| snapshot.get("selected_workflow").cloned())
-        .is_some_and(|selected| {
-            selected
-                .get("workflow_id")
-                .and_then(serde_json::Value::as_str)
-                == Some(workflow.workflow_id.as_str())
-                && selected.get("version").and_then(serde_json::Value::as_u64)
-                    == Some(u64::from(workflow.version))
-        })
-}
-
 fn history_usage_summary(history: &annotagent_storage::HistoryDocument) -> UsageSummary {
     let mut totals = annotagent_core::UsageTotals::default();
     for record in &history.usage {
@@ -24872,5 +24661,40 @@ export:
                 .active_batch
                 .is_none()
         );
+    }
+
+    #[test]
+    fn project_summary_index_loads_only_the_requested_page() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        let yaml = r"
+version: 1
+project:
+  name: Summary fixture
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        for index in 0..100 {
+            let root = temp.path().join(format!("project-{index:03}"));
+            std::fs::create_dir_all(root.join("images")).expect("Project directory");
+            std::fs::write(root.join("project.yaml"), yaml).expect("Project schema");
+        }
+
+        let page = application
+            .list_projects_summary(annotagent_storage::PageRequest::bounded(Some(7), Some(10)))
+            .expect("Project summary page");
+        assert_eq!(page.total, 100);
+        assert_eq!(page.items.len(), 7);
+        assert_eq!(page.items[0].id, "project-010");
+        assert_eq!(page.items[6].id, "project-016");
+        assert_eq!(page.next_offset, Some(17));
     }
 }

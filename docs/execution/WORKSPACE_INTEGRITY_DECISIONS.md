@@ -99,3 +99,11 @@ New-Project recommendations may use only Ready models compatible with the exact 
 ## D-025 — Local paths must identify their execution boundary
 
 A browser text field cannot be presented as a native file chooser. Until a real upload/chooser protocol exists, AnnotAgent exposes the source only as an advanced server-local path and states that the local server process reads it. Unsupported operating-system actions such as “Open folder” are absent rather than simulated.
+
+## D-026 — Index queries return bounded projections; detail endpoints expand evidence
+
+Project, execution, Batch-image, and Review indexes have explicit page bounds and stable tie-break ordering. A list row may aggregate status, usage, counts, owner IDs, and frozen snapshot metadata, but it never deserializes complete Run History or loads Artifact payloads. Exact Run and Review endpoints remain independently addressable by stable ID and are the only place where detail evidence is expanded. This keeps deep links complete while making list cost depend on page size rather than total history volume.
+
+## D-027 — Module extraction follows tested ownership seams
+
+The first extraction boundaries are the Project workspace summary service, the owned workspace route registry, and the Not Found route feature. The large implementation files remain partly monolithic, but behavior moves only behind already-tested ownership contracts. This produces an incremental path toward Project/Run/Review feature modules without a high-risk rewrite or a second state model.

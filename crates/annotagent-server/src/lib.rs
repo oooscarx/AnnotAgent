@@ -1,6 +1,7 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
 mod security;
+mod workspace_routes;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,10 +40,9 @@ use annotagent_core::{
     ProviderId, ProviderProfile, PublishedWorkflowVersion, RequiredGeometryQuality, ReviewStatus,
     RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope,
     SecretStore, SecretStoreError, SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind,
-    UsageTotals, VisionCapability, VisionInferenceRequest, VisionModelBackend,
-    VisionModelHealthStatus, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind,
-    build_geometry_correction_evidence, check_model_compatibility,
-    effective_model_quality_contracts,
+    VisionCapability, VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus,
+    WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence,
+    check_model_compatibility, effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_model_bundle::{
@@ -72,7 +72,10 @@ use annotagent_provider::{
     passive_provider_check,
 };
 use annotagent_runtime::RuntimeStore;
-use annotagent_storage::{HistoryRun, ProviderProbeUsage, RegistryReference};
+use annotagent_storage::{
+    HistoryRun, PageRequest, ProviderProbeUsage, RegistryReference, StoredReviewSummary,
+    StoredRunSummary, SummaryPage,
+};
 use anyhow::{Context, anyhow};
 use axum::{
     Json, Router,
@@ -763,160 +766,14 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/models/{model_id}/sample-test",
             post(sample_test_detection_worker),
         )
-        .route("/api/runs", get(list_run_summaries))
-        .route("/api/projects/{project_id}", get(get_project))
-        .route(
-            "/api/projects/{project_id}/guidance",
-            get(get_project_guidance),
-        )
-        .route(
-            "/api/projects/{project_id}/readiness",
-            get(get_project_readiness),
-        )
-        .route(
-            "/api/projects/{project_id}/summary",
-            get(get_project_summary),
-        )
-        .route(
-            "/api/projects/{project_id}/schema/labels",
-            post(add_project_label),
-        )
-        .route(
-            "/api/projects/{project_id}/schema/tasks",
-            post(add_project_task),
-        )
-        .route(
-            "/api/projects/{project_id}/skills",
-            post(set_project_skills),
-        )
-        .route(
-            "/api/projects/{project_id}/workflow-catalog",
-            get(get_workflow_catalog),
-        )
-        .route("/api/projects/{project_id}/import", post(import_images))
-        .route(
-            "/api/projects/{project_id}/annotation-import",
-            post(import_annotations),
-        )
-        .route("/api/projects/{project_id}/images", get(list_images))
-        .route(
-            "/api/projects/{project_id}/images/{index}",
-            delete(remove_image),
-        )
-        .route(
-            "/api/projects/{project_id}/agent-sessions",
-            get(list_project_agent_sessions),
-        )
-        .route(
-            "/api/projects/{project_id}/correction-memory",
-            get(list_project_correction_memory),
-        )
-        .route(
-            "/api/projects/{project_id}/geometry-corrections",
-            get(list_project_geometry_corrections),
-        )
-        .route(
-            "/api/projects/{project_id}/geometry-policy",
-            get(get_project_geometry_policy).put(put_project_geometry_policy),
-        )
-        .route(
-            "/api/projects/{project_id}/geometry-calibrations",
-            get(list_project_geometry_calibrations).post(create_project_geometry_calibration),
-        )
-        .route(
-            "/api/projects/{project_id}/images/{index}/content",
-            get(image_content),
-        )
-        .route("/api/projects/{project_id}/runs", post(start_run))
-        .route("/api/projects/{project_id}/batches", post(start_batch))
-        .route("/api/batches", get(list_batches))
-        .route("/api/batches/{batch_id}", get(get_batch))
-        .route("/api/batches/{batch_id}/pause", post(pause_batch))
-        .route("/api/batches/{batch_id}/resume", post(resume_batch))
-        .route("/api/batches/{batch_id}/cancel", post(cancel_batch))
-        .route(
-            "/api/projects/{project_id}/export-readiness",
-            get(get_export_readiness),
-        )
-        .route("/api/projects/{project_id}/export", post(export_dataset))
-        .route("/api/runs/{run_id}", get(get_run))
-        .route(
-            "/api/runs/{run_id}/result-summary",
-            get(get_run_result_summary),
-        )
-        .route(
-            "/api/runs/{run_id}/debug-summary",
-            get(get_run_debug_summary),
-        )
-        .route(
-            "/api/runs/{run_id}/geometry-quality",
-            get(get_run_geometry_quality),
-        )
-        .route(
-            "/api/runs/{run_id}/pipeline-artifacts",
-            get(inspect_run_pipeline_artifacts),
-        )
-        .route(
-            "/api/runs/{run_id}/replay/{node_id}",
-            post(replay_run_from_node),
-        )
-        .route("/api/runs/{run_id}/pause", post(pause_run))
-        .route("/api/runs/{run_id}/resume", post(resume_run))
-        .route("/api/runs/{run_id}/cancel", post(cancel_run))
-        .route("/api/runs/{run_id}/events", get(run_events))
-        .route(
-            "/api/runs/{run_id}/annotations",
-            get(list_run_annotations).post(create_annotation),
-        )
-        .route("/api/runs/{run_id}/reviews", get(list_run_reviews))
-        .route(
-            "/api/projects/{project_id}/reviews",
-            get(list_project_reviews),
-        )
-        .route(
-            "/api/projects/{project_id}/reviews/{review_id}",
-            get(get_project_review),
-        )
-        .route(
-            "/api/projects/{project_id}/reviews/{review_id}/next",
-            get(get_next_project_review),
-        )
-        .route(
-            "/api/projects/{project_id}/reviews/{review_id}/accept-and-next",
-            post(accept_project_review_and_next),
-        )
-        .route(
-            "/api/projects/{project_id}/reviews/{review_id}/reject-and-next",
-            post(reject_project_review_and_next),
-        )
-        .route(
-            "/api/projects/{project_id}/reviews/{review_id}/revisions",
-            get(project_review_revisions),
-        )
-        .route("/api/reviews", get(list_reviews))
-        .route("/api/reviews/{review_id}", get(get_review))
-        .route("/api/reviews/{review_id}/next", get(get_next_review))
-        .route("/api/reviews/{review_id}/decision", post(review_decision))
+        .merge(workspace_routes::routes())
         .route(
             "/api/geometry-calibrations/{calibration_id}",
             get(get_geometry_calibration),
         )
         .route(
-            "/api/reviews/{review_id}/accept-and-next",
-            post(accept_review_and_next),
-        )
-        .route(
-            "/api/reviews/{review_id}/reject-and-next",
-            post(reject_review_and_next),
-        )
-        .route(
             "/api/agent-sessions/{session_id}/cancel",
             post(cancel_agent_session),
-        )
-        .route("/api/annotations/{annotation_id}", patch(patch_annotation))
-        .route(
-            "/api/annotations/{annotation_id}/revisions",
-            get(annotation_revisions),
         )
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/events", get(events))
@@ -3059,7 +2916,12 @@ fn validation_issue_codes(events: &[RunEvent]) -> Vec<String> {
     codes
 }
 
-fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
+fn run_summary(
+    state: &ServerState,
+    stored: StoredRunSummary,
+    project_route_ids: &BTreeMap<ProjectId, String>,
+) -> RunSummary {
+    let run = stored.run;
     let project = serde_json::from_str::<ProjectSchema>(&run.project_schema_json).ok();
     let workflow_snapshot = run
         .workflow_snapshot_json
@@ -3084,22 +2946,9 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let resolved_project_id = run.project_id.and_then(|stable_id| {
-        state
-            .application
-            .list_projects()
-            .ok()?
-            .into_iter()
-            .find(|project| {
-                state
-                    .application
-                    .project_path(&project.id)
-                    .ok()
-                    .and_then(|path| path.parent().map(stable_project_id))
-                    == Some(stable_id)
-            })
-            .map(|project| project.id)
-    });
+    let resolved_project_id = run
+        .project_id
+        .and_then(|stable_id| project_route_ids.get(&stable_id).cloned());
     let ownership_status = if resolved_project_id.is_some() {
         "resolved"
     } else {
@@ -3108,30 +2957,6 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     // Keep the field required without guessing an owner by mutable name. The namespaced token is
     // an explicit legacy resolver identity and cannot collide with a valid Project route id.
     let project_id = resolved_project_id.unwrap_or_else(|| format!("legacy-orphan:{}", run.id));
-    let image_ids = state
-        .application
-        .store()
-        .run_image_ids(run.id)
-        .map_err(ApiError::internal)?;
-    let image_id = (image_ids.len() == 1)
-        .then(|| image_ids.iter().next().copied())
-        .flatten();
-    let batch_id = state
-        .application
-        .store()
-        .list_batches(false)
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .find_map(|batch| {
-            state
-                .application
-                .store()
-                .list_batch_images(batch.id)
-                .ok()?
-                .iter()
-                .any(|image| image.child_run_id == Some(run.id))
-                .then_some(batch.id)
-        });
     let workflow_version_id = published_workflow
         .as_ref()
         .map(|workflow| format!("{}@{}", workflow.workflow_id, workflow.version));
@@ -3181,22 +3006,9 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
                 },
             )
         });
-    let history = state
-        .application
-        .store()
-        .history(run.id)
-        .map_err(ApiError::internal)?;
-    let mut totals = UsageTotals::default();
-    let mut retry_count = 0_u32;
-    for record in &history.usage {
-        totals.add(record);
-        retry_count = retry_count.saturating_add(record.retry_count);
-    }
-    let current_task = history.task_runs.last();
-    let current_node = current_task.map(|task| task.task_id.to_string());
-    let current_node_status =
-        current_task.map(|task| format!("{:?}", task.status).to_ascii_lowercase());
-    let validation_issue_codes = validation_issue_codes(&history.events);
+    let current_node_status = stored
+        .current_node_status
+        .map(|status| format!("{status:?}").to_ascii_lowercase());
     let fallback_nodes = workflow_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot.pointer("/checkpoint/activated_fallbacks"))
@@ -3225,45 +3037,17 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
                 .sum::<usize>()
         })
         .unwrap_or_default();
-    let timed_out = run
-        .terminal_reason
-        .as_deref()
-        .is_some_and(|reason| reason.to_ascii_lowercase().contains("timeout"))
-        || history.events.iter().any(|event| match &event.payload {
-            annotagent_core::RunEventPayload::ProviderFailure { error_code, .. }
-            | annotagent_core::RunEventPayload::TaskFailure { error_code, .. } => {
-                error_code.to_ascii_lowercase().contains("timeout")
-            }
-            _ => false,
-        });
-    let review_suspended = run.status == RunStatus::AwaitingReview
-        || history
-            .task_runs
-            .iter()
-            .any(|task| task.status == annotagent_core::TaskRunStatus::NeedsReview);
     let terminal_reason = if run
         .terminal_reason
         .as_deref()
         .is_some_and(|reason| reason == "run reached a terminal condition")
     {
-        history
-            .events
-            .iter()
-            .rev()
-            .find_map(|event| match &event.payload {
-                annotagent_core::RunEventPayload::ProviderFailure { summary, .. }
-                | annotagent_core::RunEventPayload::TaskFailure { summary, .. } => {
-                    Some(summary.clone())
-                }
-                _ => None,
-            })
-            .or_else(|| {
-                (!validation_issue_codes.is_empty()).then(|| {
+        (!stored.validation_issue_codes.is_empty())
+            .then(|| {
                     format!(
                         "Run ended with validation issues: {}",
-                        validation_issue_codes.join(", ")
+                        stored.validation_issue_codes.join(", ")
                     )
-                })
             })
             .or_else(|| {
                 matches!(run.status, RunStatus::Failed | RunStatus::Interrupted).then(|| {
@@ -3278,27 +3062,36 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     };
     let controllable = state.application.is_run_controllable(run.id);
     let model_identity = format!("{}/{}", run.provider, run.model);
-    let result_summary = state.application.run_result_summary(run.id).ok();
-    let image_status = result_summary
-        .as_ref()
-        .map(|summary| summary.image.status.as_str());
+    let total_images = u64::try_from(stored.image_count.max(1)).unwrap_or(u64::MAX);
+    let has_review = stored.needs_review_count > 0 || stored.review_suspended;
     let progress = BatchProgress {
-        total_images: 1,
-        pending_images: u64::from(image_status == Some("pending")),
-        running_images: u64::from(image_status == Some("running")),
-        completed_images: u64::from(matches!(image_status, Some("ready" | "no_target"))),
-        failed_images: u64::from(image_status == Some("failed")),
-        review_images: u64::from(image_status == Some("needs_review")),
-        cancelled_images: u64::from(image_status == Some("cancelled")),
+        total_images,
+        pending_images: u64::from(run.status == RunStatus::Pending),
+        running_images: u64::from(run.status == RunStatus::Running),
+        completed_images: u64::from(
+            matches!(
+                run.status,
+                RunStatus::Completed | RunStatus::CompletedWithReview
+            ) && !has_review,
+        ),
+        failed_images: u64::from(matches!(
+            run.status,
+            RunStatus::Failed
+                | RunStatus::Interrupted
+                | RunStatus::Partial
+                | RunStatus::BudgetExceeded
+        )),
+        review_images: u64::from(has_review),
+        cancelled_images: u64::from(run.status == RunStatus::Cancelled),
     };
-    Ok(RunSummary {
+    RunSummary {
         id: run.id,
         run_id: run.id,
         project_id,
         project_scope_id: run.project_id,
         ownership_status,
-        batch_id,
-        image_id,
+        batch_id: stored.batch_id,
+        image_id: stored.image_id,
         workflow_version_id,
         frozen_model_bindings: frozen_model_bindings.clone(),
         project_name: run.project_name,
@@ -3310,35 +3103,60 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
         model: run.model,
         status: run.status,
         progress,
-        result_summary,
+        result_summary: None,
         controllable,
-        input_tokens: totals.input_tokens,
-        output_tokens: totals.output_tokens,
-        cost: totals.cost.to_string(),
-        current_node,
+        input_tokens: stored.input_tokens,
+        output_tokens: stored.output_tokens,
+        cost: stored.cost,
+        current_node: stored.current_node,
         current_node_status,
-        artifact_count: history.artifacts.len().max(pipeline_artifact_count),
-        validation_issue_codes,
-        retry_count,
+        artifact_count: stored.artifact_count.max(pipeline_artifact_count),
+        validation_issue_codes: stored.validation_issue_codes,
+        retry_count: stored.retry_count,
         fallback_nodes,
         model_identity,
-        timed_out,
+        timed_out: stored.timed_out,
         checkpoint_present,
-        review_suspended,
+        review_suspended: stored.review_suspended,
         terminal_reason,
         created_at: run.created_at,
         updated_at: run.updated_at,
-    })
+    }
 }
 
-fn product_runs(state: &ServerState) -> ApiResult<Vec<RunSummary>> {
+fn project_route_ids(state: &ServerState) -> ApiResult<BTreeMap<ProjectId, String>> {
     state
         .application
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .map(|run| run_summary(state, run))
-        .collect()
+        .list_project_route_ids()
+        .map_err(ApiError::internal)
+}
+
+fn product_runs(
+    state: &ServerState,
+    project_id: Option<ProjectId>,
+    request: PageRequest,
+) -> ApiResult<SummaryPage<RunSummary>> {
+    let route_ids = project_route_ids(state)?;
+    let page = if let Some(project_id) = project_id {
+        state
+            .application
+            .store()
+            .list_project_runs_summary(project_id, request)
+    } else {
+        state.application.store().list_executions_summary(request)
+    }
+    .map_err(ApiError::internal)?;
+    Ok(SummaryPage {
+        items: page
+            .items
+            .into_iter()
+            .map(|run| run_summary(state, run, &route_ids))
+            .collect(),
+        total: page.total,
+        limit: page.limit,
+        offset: page.offset,
+        next_offset: page.next_offset,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -3348,9 +3166,33 @@ struct ProjectWorkflow {
     workflow: WorkflowVersion,
 }
 
-async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let projects = product_projects(&state)?;
-    let runs = product_runs(&state)?;
+#[derive(Debug, Default, Deserialize)]
+struct DashboardPageQuery {
+    project_limit: Option<usize>,
+    project_offset: Option<usize>,
+    run_limit: Option<usize>,
+    run_offset: Option<usize>,
+}
+
+async fn list_projects(
+    State(state): State<ServerState>,
+    Query(query): Query<DashboardPageQuery>,
+) -> ApiResult<Json<Value>> {
+    let project_paging =
+        PageRequest::bounded(query.project_limit.or(Some(100)), query.project_offset);
+    let mut project_summaries = state
+        .application
+        .list_projects_summary(project_paging)
+        .map_err(ApiError::internal)?;
+    for project in &mut project_summaries.items {
+        project.model_bindings = project_registry_model_bindings(&state, &project.id)?;
+    }
+    let projects = project_summaries.items;
+    let run_page = product_runs(
+        &state,
+        None,
+        PageRequest::bounded(query.run_limit.or(Some(100)), query.run_offset),
+    )?;
     let models = registry_model_bindings(&state)?;
     let installed_skills = state
         .application
@@ -3372,10 +3214,24 @@ async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value
         .map_err(ApiError::internal)?;
     Ok(Json(json!({
         "projects": projects,
-        "runs": runs,
+        "runs": run_page.items,
         "models": models,
         "installed_skills": installed_skills,
         "review_queue": review_queue,
+        "page": {
+            "projects": {
+                "total": project_summaries.total,
+                "limit": project_summaries.limit,
+                "offset": project_summaries.offset,
+                "next_offset": project_summaries.next_offset,
+            },
+            "runs": {
+                "total": run_page.total,
+                "limit": run_page.limit,
+                "offset": run_page.offset,
+                "next_offset": run_page.next_offset,
+            }
+        }
     })))
 }
 
@@ -4704,8 +4560,46 @@ fn pipeline_artifact_coordinates(artifact: &PipelineArtifact) -> Value {
     }
 }
 
-async fn list_run_summaries(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({"runs": product_runs(&state)?})))
+#[derive(Debug, Default, Deserialize)]
+struct SummaryPageQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    project_id: Option<String>,
+}
+
+async fn list_run_summaries(
+    State(state): State<ServerState>,
+    Query(query): Query<SummaryPageQuery>,
+) -> ApiResult<Json<Value>> {
+    let stable_project_id = query
+        .project_id
+        .as_deref()
+        .map(|project_id| {
+            state
+                .application
+                .project_path(project_id)
+                .map_err(ApiError::not_found)
+                .and_then(|path| {
+                    path.parent()
+                        .map(stable_project_id)
+                        .ok_or_else(|| ApiError::not_found("Project root was not found"))
+                })
+        })
+        .transpose()?;
+    let page = product_runs(
+        &state,
+        stable_project_id,
+        PageRequest::bounded(query.limit, query.offset),
+    )?;
+    Ok(Json(json!({
+        "runs": page.items,
+        "page": {
+            "total": page.total,
+            "limit": page.limit,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+        }
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -5285,17 +5179,42 @@ fn parse_batch_id(value: &str) -> ApiResult<BatchId> {
     value.parse().map_err(ApiError::bad_request)
 }
 
-async fn list_batches(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let batches = state
+async fn list_batches(
+    State(state): State<ServerState>,
+    Query(query): Query<SummaryPageQuery>,
+) -> ApiResult<Json<Value>> {
+    let page = state
         .application
         .store()
-        .list_batches(false)
+        .list_batch_summaries(
+            query.project_id.as_deref(),
+            PageRequest::bounded(query.limit, query.offset),
+        )
         .map_err(ApiError::internal)?;
-    let batches = batches
+    let batches = page
+        .items
         .into_iter()
-        .map(|batch| batch_summary_value(&state, &batch))
+        .map(batch_overview_value)
         .collect::<ApiResult<Vec<_>>>()?;
-    Ok(Json(json!({"batches": batches})))
+    Ok(Json(json!({
+        "batches": batches,
+        "page": {
+            "total": page.total,
+            "limit": page.limit,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+        }
+    })))
+}
+
+fn batch_overview_value(summary: annotagent_storage::StoredBatchSummary) -> ApiResult<Value> {
+    let mut value = serde_json::to_value(summary.batch).map_err(ApiError::internal)?;
+    if let Value::Object(fields) = &mut value {
+        fields.insert("progress".to_owned(), json!(summary.progress));
+        fields.insert("child_run_ids".to_owned(), json!(summary.child_run_ids));
+        fields.insert("images".to_owned(), json!([]));
+    }
+    Ok(value)
 }
 
 fn batch_summary_value(
@@ -5310,20 +5229,38 @@ fn batch_summary_value(
     let images = state
         .application
         .store()
-        .list_batch_images(batch.id)
+        .list_batch_images_summary(batch.id)
         .map_err(ApiError::internal)?
         .into_iter()
-        .map(|image| {
-            let result = image
-                .child_run_id
-                .and_then(|run_id| state.application.run_result_summary(run_id).ok());
+        .map(|summary| {
+            let image = summary.image;
             let execution_status = serde_json::to_value(image.status)
                 .ok()
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .unwrap_or_else(|| "unknown".to_owned());
-            let status = result
-                .as_ref()
-                .map_or_else(|| execution_status.clone(), |summary| summary.image.status.clone());
+            let status = if summary.review_count > 0 {
+                "needs_review".to_owned()
+            } else if summary.run_status.is_some_and(|status| {
+                matches!(
+                    status,
+                    RunStatus::Failed
+                        | RunStatus::Interrupted
+                        | RunStatus::Partial
+                        | RunStatus::BudgetExceeded
+                )
+            }) {
+                "failed".to_owned()
+            } else if summary.run_status.is_some_and(|status| {
+                matches!(status, RunStatus::Completed | RunStatus::CompletedWithReview)
+            }) {
+                if summary.annotation_count > 0 {
+                    "ready".to_owned()
+                } else {
+                    "no_target".to_owned()
+                }
+            } else {
+                execution_status.clone()
+            };
             json!({
                 "image_id": image.image_id,
                 "position": image.position,
@@ -5331,10 +5268,10 @@ fn batch_summary_value(
                 "status": status,
                 "execution_status": execution_status,
                 "child_run_id": image.child_run_id,
-                "annotation_count": result.as_ref().map_or(0, |summary| summary.image.annotation_count),
-                "review_count": result.as_ref().map_or(0, |summary| summary.image.review_count),
-                "review_ids": result.as_ref().map_or_else(Vec::new, |summary| summary.projection.review_candidate_ids.clone()),
-                "failure": result.as_ref().and_then(|summary| summary.image.failure.clone()).or(image.error),
+                "annotation_count": summary.annotation_count,
+                "review_count": summary.review_count,
+                "review_ids": summary.review_ids,
+                "failure": summary.terminal_reason.or(image.error),
                 "usage": image.actual_usage,
             })
         })
@@ -5480,18 +5417,18 @@ async fn get_run(
     AxumPath(run_id): AxumPath<String>,
 ) -> ApiResult<Json<Value>> {
     let run_id = parse_run_id(&run_id)?;
-    let run = state
+    let stored = state
         .application
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|run| run.id == run_id)
-        .ok_or_else(|| ApiError::not_found("run was not found"))?;
-    let events = state
+        .store()
+        .get_run_summary(run_id)
+        .map_err(ApiError::not_found)?;
+    let run = run_summary(&state, stored, &project_route_ids(&state)?);
+    let event_count = state
         .application
-        .list_events(run_id)
+        .store()
+        .run_event_count(run_id)
         .map_err(ApiError::internal)?;
-    Ok(Json(json!({"run": run, "event_count": events.len()})))
+    Ok(Json(json!({"run": run, "event_count": event_count})))
 }
 
 async fn pause_run(
@@ -5787,7 +5724,19 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                 .map_err(ApiError::internal)
         })
         .collect::<ApiResult<BTreeMap<_, _>>>()?;
-    for run in state.application.list_runs().map_err(ApiError::internal)? {
+    let runs = if let Some((run_id, _)) = target_annotation.as_ref() {
+        vec![
+            state
+                .application
+                .store()
+                .get_run_summary(*run_id)
+                .map_err(ApiError::internal)?
+                .run,
+        ]
+    } else {
+        state.application.list_runs().map_err(ApiError::internal)?
+    };
+    for run in runs {
         let annotations = if let Some((target_run_id, annotation)) = target_annotation.as_ref() {
             if *target_run_id != run.id {
                 continue;
@@ -6026,9 +5975,83 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
     Ok(reviews)
 }
 
+fn review_summary_item(
+    summary: &StoredReviewSummary,
+    project_ids: &BTreeMap<ProjectId, String>,
+) -> Value {
+    let project_id = summary
+        .run
+        .project_id
+        .and_then(|id| project_ids.get(&id).cloned())
+        .unwrap_or_else(|| format!("legacy-orphan:{}", summary.run.id));
+    let workflow_snapshot = summary
+        .run
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|snapshot| serde_json::from_str::<Value>(snapshot).ok());
+    let workflow_id = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.pointer("/selected_workflow/workflow_id"))
+        .and_then(Value::as_str);
+    let workflow_version = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.pointer("/selected_workflow/version"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            serde_json::from_str::<ProjectSchema>(&summary.run.project_schema_json)
+                .map_or(0, |schema| u64::from(schema.version))
+        });
+    let source_artifact_id = summary.annotation.provenance.artifact_ids.first().copied();
+    let review_reason = if summary
+        .annotation
+        .confidence
+        .is_some_and(|value| value < 0.8)
+    {
+        "low_confidence"
+    } else if !summary.validation_issue_codes.is_empty() {
+        "validation_issue"
+    } else {
+        "review_policy"
+    };
+    let explanation = review_explanation(
+        &summary.annotation,
+        &summary.validation_issue_codes,
+        &summary.validation_issue_codes,
+        &[],
+        None,
+        None,
+    );
+    json!({
+        "id": summary.annotation.id,
+        "review_id": summary.annotation.id,
+        "annotation_id": summary.annotation.id,
+        "run_id": summary.run.id,
+        "project_id": project_id,
+        "project_name": summary.run.project_name,
+        "image_id": summary.annotation.image_id,
+        "annotation": summary.annotation,
+        "workflow_id": workflow_id,
+        "workflow_version": workflow_version,
+        "image_index": summary.image_index,
+        "source_node": Value::Null,
+        "source_skill_id": Value::Null,
+        "source_artifact_id": source_artifact_id,
+        "refinement_chain": Vec::<String>::new(),
+        "review_reason": review_reason,
+        "confidence": summary.annotation.confidence,
+        "validation_issues": summary.validation_issue_codes,
+        "detection_evidence": Vec::<DetectionEvidence>::new(),
+        "candidate_agreement": Value::Null,
+        "evidence_decision": Value::Null,
+        "review_explanation": explanation,
+    })
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ReviewQueueQuery {
     project_id: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6052,41 +6075,24 @@ fn review_queue_progress(
     pending: &[Value],
     current: Option<AnnotationId>,
 ) -> ApiResult<ReviewQueueProgress> {
-    let projects = state
-        .application
-        .list_projects()
-        .map_err(ApiError::internal)?;
-    let project_ids = projects
-        .iter()
-        .filter_map(|project| {
-            let path = state.application.project_path(&project.id).ok()?;
-            Some((stable_project_id(path.parent()?), project.id.clone()))
+    let stable_project_id = project_id
+        .map(|project_id| {
+            state
+                .application
+                .project_path(project_id)
+                .map_err(ApiError::not_found)
+                .and_then(|path| {
+                    path.parent()
+                        .map(stable_project_id)
+                        .ok_or_else(|| ApiError::not_found("Project root was not found"))
+                })
         })
-        .collect::<BTreeMap<_, _>>();
-    let mut reviewed_count = 0;
-    for run in state.application.list_runs().map_err(ApiError::internal)? {
-        let run_project_id = run
-            .project_id
-            .as_ref()
-            .and_then(|id| project_ids.get(id))
-            .map(String::as_str);
-        if project_id.is_some_and(|project_id| run_project_id != Some(project_id)) {
-            continue;
-        }
-        reviewed_count += state
-            .application
-            .store()
-            .list_annotations(run.id)
-            .map_err(ApiError::internal)?
-            .into_iter()
-            .filter(|annotation| {
-                matches!(
-                    annotation.review_status,
-                    ReviewStatus::HumanAccepted | ReviewStatus::Rejected
-                )
-            })
-            .count();
-    }
+        .transpose()?;
+    let counts = state
+        .application
+        .store()
+        .review_counts(stable_project_id)
+        .map_err(ApiError::internal)?;
     let current_position = current.and_then(|current| {
         pending
             .iter()
@@ -6094,9 +6100,9 @@ fn review_queue_progress(
             .map(|position| position + 1)
     });
     Ok(ReviewQueueProgress {
-        reviewed_count,
-        total_count: reviewed_count + pending.len(),
-        remaining_count: pending.len(),
+        reviewed_count: counts.reviewed_count,
+        total_count: counts.reviewed_count + counts.remaining_count,
+        remaining_count: counts.remaining_count,
         current_position,
     })
 }
@@ -6122,9 +6128,41 @@ async fn list_reviews(
     State(state): State<ServerState>,
     Query(query): Query<ReviewQueueQuery>,
 ) -> ApiResult<Json<Value>> {
-    let pending = reviews_in_scope(reviews(&state, None)?, query.project_id.as_deref());
+    let project_ids = project_route_ids(&state)?;
+    let stable_project_id = query
+        .project_id
+        .as_deref()
+        .map(|project_id| {
+            project_ids
+                .iter()
+                .find_map(|(stable_id, route_id)| (route_id == project_id).then_some(*stable_id))
+                .ok_or_else(|| ApiError::not_found("Project was not found"))
+        })
+        .transpose()?;
+    let page = state
+        .application
+        .store()
+        .list_review_summary(
+            stable_project_id,
+            PageRequest::bounded(query.limit, query.offset),
+        )
+        .map_err(ApiError::internal)?;
+    let pending = page
+        .items
+        .into_iter()
+        .map(|summary| review_summary_item(&summary, &project_ids))
+        .collect::<Vec<_>>();
     let progress = review_queue_progress(&state, query.project_id.as_deref(), &pending, None)?;
-    Ok(Json(json!({"reviews": pending, "progress": progress})))
+    Ok(Json(json!({
+        "reviews": pending,
+        "progress": progress,
+        "page": {
+            "total": page.total,
+            "limit": page.limit,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+        }
+    })))
 }
 
 fn review_item(state: &ServerState, review_id: AnnotationId) -> ApiResult<Value> {
@@ -6144,56 +6182,82 @@ fn ensure_review_project<'a>(item: &'a Value, project_id: &str) -> ApiResult<&'a
 async fn list_project_reviews(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<ReviewQueueQuery>,
 ) -> ApiResult<Json<Value>> {
-    state
+    let path = state
         .application
         .project_path(&project_id)
         .map_err(ApiError::not_found)?;
-    let pending = reviews_in_scope(reviews(&state, None)?, Some(&project_id));
+    let stable_project_id = path
+        .parent()
+        .map(stable_project_id)
+        .ok_or_else(|| ApiError::not_found("Project root was not found"))?;
+    let project_ids = project_route_ids(&state)?;
+    let page = state
+        .application
+        .store()
+        .list_review_summary(
+            Some(stable_project_id),
+            PageRequest::bounded(query.limit, query.offset),
+        )
+        .map_err(ApiError::internal)?;
+    let pending = page
+        .items
+        .into_iter()
+        .map(|summary| review_summary_item(&summary, &project_ids))
+        .collect::<Vec<_>>();
     let progress = review_queue_progress(&state, Some(&project_id), &pending, None)?;
-    Ok(Json(json!({"reviews": pending, "progress": progress})))
+    Ok(Json(json!({
+        "reviews": pending,
+        "progress": progress,
+        "page": {
+            "total": page.total,
+            "limit": page.limit,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+        }
+    })))
 }
 
 async fn list_run_reviews(
     State(state): State<ServerState>,
     AxumPath(run_id): AxumPath<RunId>,
+    Query(query): Query<SummaryPageQuery>,
 ) -> ApiResult<Json<Value>> {
     let project_id = review_project_route_id(&state, run_id)?;
-    let run = state
-        .application
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|run| run.id == run_id)
-        .ok_or_else(|| ApiError::not_found("Run was not found"))?;
-    let pending = reviews(&state, None)?
-        .into_iter()
-        .filter(|item| item["run_id"] == json!(run_id))
-        .collect::<Vec<_>>();
-    let reviewed_count = state
+    let page = state
         .application
         .store()
-        .list_annotations(run_id)
-        .map_err(ApiError::internal)?
+        .list_run_review_summaries(run_id, PageRequest::bounded(query.limit, query.offset))
+        .map_err(ApiError::internal)?;
+    let project_ids = project_route_ids(&state)?;
+    let pending = page
+        .items
         .into_iter()
-        .filter(|annotation| {
-            matches!(
-                annotation.review_status,
-                ReviewStatus::HumanAccepted | ReviewStatus::Rejected
-            )
-        })
-        .count();
+        .map(|summary| review_summary_item(&summary, &project_ids))
+        .collect::<Vec<_>>();
+    let counts = state
+        .application
+        .store()
+        .review_counts_for_run(run_id)
+        .map_err(ApiError::internal)?;
     let progress = ReviewQueueProgress {
-        reviewed_count,
-        total_count: reviewed_count + pending.len(),
-        remaining_count: pending.len(),
+        reviewed_count: counts.reviewed_count,
+        total_count: counts.reviewed_count + counts.remaining_count,
+        remaining_count: counts.remaining_count,
         current_position: None,
     };
     Ok(Json(json!({
-        "run_id": run.id,
+        "run_id": run_id,
         "project_id": project_id,
         "reviews": pending,
         "progress": progress,
+        "page": {
+            "total": page.total,
+            "limit": page.limit,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+        }
     })))
 }
 
@@ -6422,11 +6486,9 @@ fn save_structured_geometry_correction(
     let history = state
         .application
         .store()
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|run| run.id == run_id)
-        .ok_or_else(|| ApiError::not_found("source Run was not found"))?;
+        .get_run_summary(run_id)
+        .map_err(ApiError::not_found)?
+        .run;
     let snapshot = history
         .workflow_snapshot_json
         .as_deref()
@@ -6504,12 +6566,10 @@ async fn review_decision(
 fn review_project_route_id(state: &ServerState, run_id: RunId) -> ApiResult<String> {
     let run = state
         .application
-        .list_runs()
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .find(|run| run.id == run_id)
-        .ok_or_else(|| ApiError::not_found("source Run was not found"))?;
-    let project_id = run_summary(state, run)?.project_id;
+        .store()
+        .get_run_summary(run_id)
+        .map_err(ApiError::internal)?;
+    let project_id = run_summary(state, run, &project_route_ids(state)?).project_id;
     if project_id.starts_with("legacy-orphan:") {
         return Err(ApiError::not_found(
             "Review belongs to an unresolved legacy Project",
@@ -6759,18 +6819,14 @@ async fn apply_review_decision(
         let remaining = state
             .application
             .store()
-            .list_annotations(run_id)
-            .map_err(ApiError::internal)?
-            .into_iter()
-            .any(|item| item.review_status == ReviewStatus::NeedsReview);
+            .run_has_pending_review(run_id)
+            .map_err(ApiError::internal)?;
         if !remaining {
             let previous = state
                 .application
-                .list_runs()
-                .map_err(ApiError::internal)?
-                .into_iter()
-                .find(|run| run.id == run_id)
-                .map_or(RunStatus::CompletedWithReview, |run| run.status);
+                .store()
+                .get_run_summary(run_id)
+                .map_or(RunStatus::CompletedWithReview, |run| run.run.status);
             state
                 .application
                 .store()
@@ -11463,6 +11519,21 @@ export:
             assert_eq!(run["project_id"], json!(expected[run_id]));
             assert_eq!(run["ownership_status"], json!("resolved"));
         }
+        assert_eq!(response["page"]["total"], json!(2));
+        let second_page = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/runs?limit=1&offset=1&project_id=project-a",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(second_page["page"]["limit"], json!(1));
+        assert_eq!(second_page["page"]["offset"], json!(1));
+        assert_eq!(second_page["page"]["total"], json!(1));
+        assert_eq!(second_page["runs"], json!([]));
         let projects =
             response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
                 .await;

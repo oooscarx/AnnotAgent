@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M8 — Feature truth and guided UX.
-- Next milestone: M9 — service queries and incremental extraction.
+- Completed milestone: M9 — service queries and incremental extraction.
+- Next milestone: M10 — release verification and final documentation.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -128,6 +128,18 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Evidence: 61 Web unit tests, Web typecheck, production build, and all 42 Chromium E2E journeys passed. The production build retains the tracked 577.73 kB bundle warning.
 - Milestone commit subject: `refactor(product): expose only complete and recoverable workspace actions`.
 
+## M9 exit
+
+- Added bounded, stable-order summary services for Project discovery, global executions, Project Runs, Batch images, Review queues, and aggregate Review progress. Run lists use a fixed two-statement page/count path and never deserialize Run events, tool calls, messages, checkpoints, or Artifact payloads.
+- Project summary construction now loads only the requested filesystem page and uses one Project execution head plus aggregate Review/Batch queries instead of loading every Run and Annotation. Exact Run deep links use a dedicated ID query, so older Runs remain reachable without expanding the list page.
+- Batch image status/final/review counters are resolved in one query. Review list pages defer evidence and revision expansion to exact Review detail.
+- Migration 17 adds stable owner/order indexes for Runs, Run images, Batch children, Reviews, revisions, task state, validation, usage/model calls, and content-addressed Sample Tests.
+- The Web Run and Review indexes consume page metadata and expose explicit incremental loading. Lightweight Review rows are replaced by exact detail data when selected.
+- Incremental extraction moved Project workspace summary services into `workspace_summary.rs`, Project/Run/Batch/Review route registration into `workspace_routes.rs`, and Not Found into its own route feature component.
+- Performance evidence: the 100-Project/1000-Run/1000-Review fixture passed in 0.09 seconds of test execution and deliberately stores malformed History JSON to prove list summaries never read it.
+- Regression evidence: Rust formatting and warning-denying clippy passed; Storage (21), Application (62 + one ignored billable smoke), and Server (30) unit suites plus Storage integrations passed; Web typecheck/build and 61 unit tests passed; all 42 Chromium E2E journeys passed.
+- Milestone commit subject: `refactor(architecture): isolate workspace features and bounded summary queries`.
+
 ## Next exit
 
-M9 adds bounded, paginated summary queries and ownership indexes, proves query behavior at 100/1000-record scale, and incrementally extracts critical frontend route, server route, and application service modules without behavior regression.
+M10 runs the complete release command matrix, adds explicit 200% zoom coverage, reconciles public product/runtime/API documentation with the implemented route and ownership contracts, records final browser evidence, and closes the release matrix.

@@ -100,14 +100,14 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## I. Performance and architecture
 
-- [ ] Run list does not load complete History for every Run.
-- [ ] Project list does not load complete History for every Run.
-- [ ] Review progress uses a summary query.
-- [ ] Lists are paginated.
-- [ ] Query counts remain bounded with a 1000-Run fixture.
-- [ ] `App.tsx` is incrementally split by route feature.
-- [ ] Critical server routes and application services are split into modules.
-- [ ] No big-bang rewrite causes behavior regression.
+- [x] Run list does not load complete History for every Run.
+- [x] Project list does not load complete History for every Run.
+- [x] Review progress uses a summary query.
+- [x] Lists are paginated.
+- [x] Query counts remain bounded with a 1000-Run fixture.
+- [x] `App.tsx` is incrementally split by route feature.
+- [x] Critical server routes and application services are split into modules.
+- [x] No big-bang rewrite causes behavior regression.
 
 ## Required regression journeys
 

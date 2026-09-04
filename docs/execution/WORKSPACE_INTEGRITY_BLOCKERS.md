@@ -1,6 +1,6 @@
 # Workspace Integrity Blockers
 
-No implementation blocker currently prevents M9.
+No implementation blocker currently prevents M10 release verification.
 
 ## Input gaps
 
