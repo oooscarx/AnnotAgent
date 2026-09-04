@@ -255,7 +255,7 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   expect(inputFocus.shadow).not.toBe("none");
   await dialog.getByLabel("Class name").fill("Day");
   await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByLabel("Image file or folder").fill(imageSource);
+  await dialog.getByLabel("Advanced server-local image path").fill(imageSource);
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByText("Balanced", { exact: true }).click();
   await dialog.getByRole("button", { name: "Continue" }).click();
@@ -305,15 +305,9 @@ test("create and open a generic Project", async ({ page, request }, testInfo) =>
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.screenshot({ path: `${screenshots}/03-project-guidance.png`, fullPage: true });
   await page.locator("#project-advanced-details > summary").click();
-  const skillSettings = page.locator("details.advanced-settings").filter({ hasText: "Configure Capability and Domain Skills" });
-  await skillSettings.locator("summary").click();
-  const skillActionGap = await skillSettings.evaluate((details) => {
-    const helper = details.querySelector(":scope > small");
-    const action = details.querySelector(":scope > button");
-    if (!helper || !action) return 0;
-    return action.getBoundingClientRect().top - helper.getBoundingClientRect().bottom;
-  });
-  expect(skillActionGap).toBeGreaterThanOrEqual(10);
+  await expect(page.getByRole("button", { name: "Edit Skills in Automation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit Labels in Build" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Save Project Skills|Add Label to Project Schema/ })).toHaveCount(0);
   await page.reload();
   await expect(page.locator(".guidance-actions .primary")).toHaveText(restoredAction ?? "");
 });
@@ -354,7 +348,10 @@ export:
 test("Build blocks direct navigation past an incomplete prerequisite", async ({ page }) => {
   await page.goto(`/projects/${emptyProjectId}/build/test`);
   await expect(page.getByLabel("Build step blocked")).toContainText("Add images to start this Project");
-  await expect(page.getByRole("button", { name: "Test & Activate" })).toBeDisabled();
+  const blockedStep = page.getByRole("button", { name: /Test & Activate unavailable/ });
+  await expect(blockedStep).toHaveAttribute("aria-disabled", "true");
+  await blockedStep.focus();
+  await expect(blockedStep).toBeFocused();
   await expect(page.getByRole("button", { name: "Add images" })).toBeVisible();
 });
 
@@ -436,8 +433,9 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   expect((await autosaved).ok()).toBeTruthy();
   await drawer.getByRole("button", { name: "Close node configuration" }).click();
 
-  await page.getByText("View technical graph", { exact: true }).click();
-  await expect(page.getByLabel("Technical graph JSON")).toBeVisible();
+  await page.getByText("View technical graph (read-only)", { exact: true }).click();
+  await expect(page.getByLabel("Technical graph JSON")).toHaveAttribute("readonly", "");
+  await expect(page.getByRole("button", { name: /Apply technical graph|Add node|Add connection/ })).toHaveCount(0);
   await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
 });
 
@@ -488,14 +486,13 @@ export:
   ]);
 
   const editNode = async (page: Page, key: string) => {
-    await page.getByText("View technical graph", { exact: true }).last().click();
-    const nodeId = page.getByLabel("Node ID").first();
-    const value = await nodeId.inputValue();
+    const draftName = page.getByLabel("Draft name");
+    const value = await draftName.inputValue();
     const response = page.waitForResponse((candidate) =>
       candidate.request().method() === "PATCH" &&
       candidate.url().includes(`/api/workflow-drafts/${draft.id}`),
     );
-    await nodeId.fill(`${value}-${key}`);
+    await draftName.fill(`${value} · ${key}`);
     return response;
   };
 
@@ -667,7 +664,9 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await page.goto(`/projects/${projectId}/build/test`);
   await expect(page.getByLabel("Current Draft")).not.toHaveValue("");
   const testedDraftId = await page.getByLabel("Current Draft").inputValue();
-  await page.getByRole("spinbutton").fill("1");
+  const sampleCount = page.getByRole("spinbutton");
+  await expect(sampleCount).toHaveAttribute("max", "1");
+  await sampleCount.fill("1");
   await page.getByRole("button", { name: /Test samples|Test again/, exact: true }).click();
   await expect(page.getByLabel("Dry Run result summary")).toContainText("Images");
   await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();
@@ -1098,6 +1097,32 @@ test("generic Project routes contain no RoboCup-specific copy", async ({ page })
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
 });
 
+test("feature-truth surfaces are read-only, capability-safe, and explicit about local paths", async ({ page }) => {
+  await page.goto(`/projects/${projectId}`);
+  await page.getByText("Current Project configuration", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit Labels in Build" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit Skills in Automation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Add Label to Project Schema|Save Project Skills|Preview import/ })).toHaveCount(0);
+
+  await page.goto(`/projects/${projectId}/build/data`);
+  await expect(page.getByLabel("Server-local image file or folder path")).toBeVisible();
+  await expect(page.getByText("This is not a browser file picker.", { exact: false })).toBeVisible();
+
+  await page.goto("/projects?new=1");
+  const dialog = page.getByRole("dialog", { name: "Create Project" });
+  await dialog.getByRole("radio", { name: /Find objects/ }).check();
+  await dialog.getByLabel("Project name").fill("Geometry-safe recommendation");
+  await dialog.getByLabel("Object name").fill("ball");
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByLabel("Advanced server-local image path")).toBeVisible();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByText("Balanced", { exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog).toContainText("semantic or relative score is not geometry proof");
+  await expect(dialog).toContainText("100% initial target review");
+  await expect(dialog).not.toContainText("Automatically accept high-confidence results");
+});
+
 test("mixed detector Results, Debug, and Review retain independent evidence", async ({ page, request }, testInfo) => {
   const mixedProjectName = `Mixed Detection ${stamp}`;
   const created = await request.post("/api/projects", { data: {
@@ -1163,6 +1188,7 @@ export:
   };
   const rfdetr = {
     source_model_id: "rfdetr-specialist-v1",
+    source_model_display_name: "RF-DETR",
     source_artifact_id: "rfdetr-set",
     bbox: [0.1, 0.2, 0.2, 0.2],
     score: { value: 0.87, semantics: "relative_confidence" },
@@ -1172,6 +1198,7 @@ export:
   };
   const locate = {
     source_model_id: "locate-anything-v1",
+    source_model_display_name: "LocateAnything",
     source_artifact_id: "locate-set",
     bbox: [0.15, 0.2, 0.2, 0.2],
     score: { value: null, semantics: "not_provided" },
@@ -1707,7 +1734,7 @@ test("reduced motion and server-state error recovery are explicit", async ({ pag
   failReadiness = false;
   await expect(alert).not.toContainText("&#x45;");
   await expect(alert).not.toContainText(/\\\s*$/);
-  await alert.getByRole("button", { name: "Reload latest state" }).click();
+  await alert.getByRole("button", { name: "Retry this view" }).click();
   await expect(page.getByRole("heading", { name: "Your dataset is ready" })).toBeVisible();
 
   await page.unroute(`**/api/projects/${projectId}/export-readiness`);

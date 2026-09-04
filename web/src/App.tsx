@@ -153,7 +153,7 @@ const PROJECT_MODEL_CHOICES: {
   {
     role: "detection",
     capability: "object_detection",
-    label: "Detection",
+    label: "Specialist detection",
     modality: "image",
   },
   {
@@ -165,7 +165,7 @@ const PROJECT_MODEL_CHOICES: {
   {
     role: "verification",
     capability: "vision_language",
-    label: "Verification",
+    label: "VLM detection / verification",
     modality: "image",
   },
 ];
@@ -239,9 +239,10 @@ export function App() {
   const [models, setModels] = useState<ModelBinding[]>([]);
   const [reviewQueue, setReviewQueue] = useState(0);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [error, setError] = useState("");
+  const [error, setErrorState] = useState<{ message: string; scope: string }>();
   const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
+  const [routeRetryVersion, setRouteRetryVersion] = useState(0);
   const hasConnectedRef = useRef(false);
   const needsReconnectSyncRef = useRef(false);
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
@@ -253,6 +254,15 @@ export function App() {
   const setNavigationGuard = useCallback((guard?: () => boolean) => {
     navigationGuardRef.current = guard;
   }, []);
+  const routeScope = routeFocusKey(route);
+  const setError = (message: string) =>
+    setErrorState(message ? { message, scope: routeScope } : undefined);
+  const visibleError = error?.scope === routeScope ? error.message : undefined;
+  const retryCurrentView = () => {
+    if (navigationGuardRef.current && !navigationGuardRef.current()) return;
+    setErrorState(undefined);
+    setRouteRetryVersion((version) => version + 1);
+  };
 
   const navigate = (path: string, replace = false) => {
     if (navigationGuardRef.current && !navigationGuardRef.current()) return false;
@@ -524,6 +534,7 @@ export function App() {
         </div>
       </aside>
       <main
+        key={`${routeScope}:${routeRetryVersion}`}
         id="main-content"
         aria-busy={!loaded}
         className={page === "review" ? "review-main" : undefined}
@@ -563,17 +574,15 @@ export function App() {
             </select>
           </div>}
         </header>
-        {error && (
+        {visibleError && (
           <div className="error-banner" role="alert">
             <span className="error-message">
               <strong>AnnotAgent couldn’t complete that action.</strong>
-              <span>{readableErrorMessage(error)}</span>
-              <small>Saved workspace data remains on the server. Reloading recovers the latest persisted state; retry is a separate Agent action.</small>
+              <span>{readableErrorMessage(visibleError)}</span>
+              <small>Saved workspace data remains on the server. Dismiss this message, correct the indicated input if needed, then retry the same action on this page.</small>
             </span>
             <span className="error-actions">
-              <button onClick={() => window.location.reload()}>
-                Reload latest state
-              </button>
+              <button onClick={retryCurrentView}>Retry this view</button>
               <button aria-label="Dismiss error" onClick={() => setError("")}>
                 Dismiss
               </button>
@@ -715,6 +724,7 @@ export function App() {
           <ReviewPage
             project={selectedProject}
             projects={projects}
+            models={models}
             events={events}
             route={route}
             onNavigate={navigate}
@@ -918,7 +928,13 @@ function BuildFooter({
     <span>Changes in this step are saved to the Project as you complete them.</span>
     <div className="button-row">
       {previous && <button onClick={() => onNavigate(previous)}>← {name(previous)}</button>}
-      {next && <button className={nextEnabled && nextPrimary ? "primary" : ""} disabled={!nextEnabled} title={!nextEnabled ? "Complete this step before continuing" : undefined} onClick={() => onNavigate(next)}>Continue to {name(next)} →</button>}
+      {next && <button
+        className={nextEnabled && nextPrimary ? "primary" : ""}
+        aria-disabled={!nextEnabled}
+        aria-label={!nextEnabled ? `Continue to ${name(next)} unavailable: complete this step first` : undefined}
+        title={!nextEnabled ? "Complete this step before continuing" : undefined}
+        onClick={() => nextEnabled && onNavigate(next)}
+      >Continue to {name(next)} →</button>}
     </div>
   </footer>;
 }
@@ -943,9 +959,10 @@ function BuildNavigation({
           key={item}
           className={`${step === item ? "active" : ""} ${complete ? "complete" : ""}`.trim()}
           aria-current={step === item ? "step" : undefined}
-          disabled={!allowed}
+          aria-disabled={!allowed}
+          aria-label={!allowed ? `${item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : item[0].toUpperCase() + item.slice(1)} unavailable until the earlier Build step is complete` : undefined}
           title={!allowed ? "Complete the earlier Build step first" : journey?.detail}
-          onClick={() => onNavigate(item)}
+          onClick={() => allowed && onNavigate(item)}
         >
           <span>{complete ? "✓" : index + 1}</span>
           {item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : item[0].toUpperCase() + item.slice(1)}
@@ -1000,22 +1017,22 @@ function BuildData({
   };
   return (
     <>
-      <div className="build-step-heading"><span className="eyebrow">Step 1 · Data</span><h2>Add images to your Project</h2><p>Import workspace-local PNG or JPEG files. AnnotAgent validates every image, skips matching content, and keeps the Project copy under its dataset root.</p></div>
+      <div className="build-step-heading"><span className="eyebrow">Step 1 · Data</span><h2>Add images to your Project</h2><p>Import PNG or JPEG files already reachable by this local AnnotAgent server. It validates every image, skips matching content, and keeps the Project copy under its dataset root.</p></div>
       <div className="metrics-grid build-metrics">
         <Metric label="Project images" value={images.length} detail="Ready for sample testing" />
         <Metric label="Latest import" value={result?.imported ?? 0} detail={`${result?.discovered ?? 0} supported files found`} />
         <Metric label="Needs attention" value={(result?.duplicates ?? 0) + (result?.corrupt.length ?? 0)} detail={`${result?.duplicates ?? 0} duplicate · ${result?.corrupt.length ?? 0} corrupt`} />
       </div>
-      <Panel title="Add more images" eyebrow="Workspace import">
+      <Panel title="Import from a local path" eyebrow="Advanced server-local source">
         <label>
-          Image file or folder
+          Server-local image file or folder path
           <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
         </label>
         <div className="button-row">
           <button className={imagesLoaded && images.length === 0 ? "primary" : ""} disabled={busy || !source.trim()} onClick={importImages}>
             {busy ? "Importing…" : "Add images"}
           </button>
-          <small>Supported: PNG and JPEG · recursive folder discovery · 100 MP decode safety limit</small>
+          <small>This is not a browser file picker. The path is read by the local AnnotAgent process. Supported: PNG and JPEG · recursive discovery · 100 MP decode safety limit.</small>
         </div>
         {result && <div className="import-outcome" aria-live="polite">
           <strong>{result.imported} images added</strong>
@@ -1284,6 +1301,7 @@ function BuildTestPublish({
   const uncertainSamples = report?.samples.filter((sample) => sample.review_count > 0 || sample.failed) ?? [];
   const needsAttention = (summary?.needs_review_count ?? 0) + (summary?.failed_count ?? 0);
   const fullRun = summary?.estimated_full_run;
+  const sampleLimit = Math.min(10, images.length);
   const currentDraft = drafts.find((draft) => draft.id === draftId);
   const isActivated = currentDraft?.status === "published";
   const publishedWorkflowVersion = project.available_workflow_versions.find(
@@ -1316,15 +1334,19 @@ function BuildTestPublish({
     setActiveSampleTest(undefined);
     if (nextDraftId) onSelectTestContext(nextDraftId, undefined, true);
   };
+  useEffect(() => {
+    setSampleCount((current) => Math.min(current, Math.max(1, sampleLimit)));
+  }, [sampleLimit]);
   const draftControls = <div className="sample-test-controls" aria-label="Sample Test controls">
     <label className="sample-test-field"><span>Automation Draft</span><select aria-label="Current Draft" value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? "Activated" : draft.status.replaceAll("_", " ")}</option>)}</select></label>
-    <label className="sample-test-field"><span>Sample images</span><input type="number" min="1" max="10" value={sampleCount} onChange={(event) => setSampleCount(Math.max(1, Math.min(10, Number(event.target.value))))} /></label>
-    <button className={!report ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated}>{busy ? "Testing…" : isActivated ? "Already activated" : report ? "Test again" : "Test samples"}</button>
+    <label className="sample-test-field"><span>Sample images</span><input type="number" min="1" max={Math.max(1, sampleLimit)} value={sampleCount} disabled={sampleLimit === 0} aria-describedby="sample-image-limit" onChange={(event) => setSampleCount(Math.max(1, Math.min(Math.max(1, sampleLimit), Number(event.target.value))))} /><small id="sample-image-limit">{sampleLimit ? `Up to ${sampleLimit} available Project image${sampleLimit === 1 ? "" : "s"}` : "No Project images are available"}</small></label>
+    <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? "Testing…" : isActivated ? "Already activated" : sampleLimit === 0 ? "Add images first" : report ? "Test again" : "Test samples"}</button>
+    {sampleLimit === 0 && <button onClick={() => onNavigate("data")}>Open Data step</button>}
   </div>;
   return (
     <>
       <div className="toolbar-panel sample-test-toolbar">
-        <div className="sample-test-toolbar-copy"><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes 1–10 real Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
+        <div className="sample-test-toolbar-copy"><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes up to 10 available Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
         <button className="sample-test-back" onClick={() => onNavigate("pipeline", draftId)}>← Edit Automation</button>
         {draftControls}
       </div>
@@ -1357,7 +1379,7 @@ function BuildTestPublish({
             </div>
             {isActivated ? <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>This saved Sample Test belongs to the immutable active Version.</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div> : <>
               <div className="button-row">
-                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review uncertain result</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
+                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Inspect uncertain samples</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
                 {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
               </div>
               {activated && <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>Immutable Version v{activated.version} is ready for the full Dataset Run.</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div>}
@@ -1698,14 +1720,6 @@ function ProjectPage({
   const [starting, setStarting] = useState(false);
   const [startingImageId, setStartingImageId] = useState("");
   const [workflowKey, setWorkflowKey] = useState("");
-  const [importSource, setImportSource] = useState("");
-  const [importFormat, setImportFormat] = useState("native");
-  const [importDryRun, setImportDryRun] = useState(true);
-  const [importResult, setImportResult] = useState("");
-  const [labelTaskId, setLabelTaskId] = useState("");
-  const [newLabel, setNewLabel] = useState("");
-  const [skillCatalog, setSkillCatalog] = useState<SkillDetail[]>([]);
-  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const refreshWorkspace = async () => {
     await onRefresh();
     if (initialProject)
@@ -1752,14 +1766,6 @@ function ProjectPage({
     project?.active_workflow.workflow_id,
     project?.active_workflow.version,
   ]);
-  useEffect(() => {
-    setLabelTaskId(project?.annotation_schema[0]?.id ?? "");
-    setNewLabel("");
-    setSelectedSkillIds(project?.enabled_skills.map((skill) => skill.id) ?? []);
-  }, [project?.id]);
-  useEffect(() => {
-    void api.skills().then(setSkillCatalog).catch((error: Error) => onError(error.message));
-  }, []);
   if (!project)
     return (
       <section className="page-stack">
@@ -1793,6 +1799,12 @@ function ProjectPage({
     (latestState?.payload.data.to as string | undefined) ??
     activeSummary?.status ??
     (activeRun ? "running" : (projectRuns[0]?.status ?? "pending"));
+  const activeProgress = project.active_batch_progress && project.active_batch_progress.total_images > 0
+    ? Math.round(
+        (project.active_batch_progress.completed_images /
+          project.active_batch_progress.total_images) * 100,
+      )
+    : undefined;
   const selectedWorkflow =
     project.available_workflow_versions.find(
       (workflow) =>
@@ -1860,63 +1872,6 @@ function ProjectPage({
         .then(refreshWorkspace)
         .catch((error: Error) => onError(error.message));
   };
-  const importAnnotations = () => {
-    if (!importSource.trim()) return onError("Choose a workspace-local annotation file or directory.");
-    setImportResult("Import running…");
-    void api
-      .importAnnotations(project.id, importFormat, importSource, importDryRun)
-      .then((report) => {
-        setImportResult(
-          `${report.dry_run ? "Dry run" : "Imported"}: ${report.imported_count} accepted, ${report.skipped_count} skipped\n${[...report.warnings, ...report.issues.map((issue) => `${issue.record}: ${issue.message}`)].join("\n")}`,
-        );
-        if (!report.dry_run) void refreshWorkspace();
-      })
-      .catch((error: Error) => {
-        setImportResult("");
-        onError(error.message);
-      });
-  };
-  const addLabel = () => {
-    if (!labelTaskId || !newLabel.trim())
-      return onError("Choose a task and enter a Label id.");
-    void api
-      .addProjectLabel(project.id, labelTaskId, newLabel.trim())
-      .then(() => {
-        setNewLabel("");
-        void refreshWorkspace();
-      })
-      .catch((error: Error) => onError(error.message));
-  };
-  const saveSkills = () => {
-    const resolved = new Set(selectedSkillIds);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const id of [...resolved]) {
-        const skill = skillCatalog.find((item) => item.id === id);
-        const legacyPack =
-          skill?.kind === "pack" &&
-          project.enabled_skills.length === 1 &&
-          project.enabled_skills[0]?.id === id;
-        if (legacyPack) continue;
-        for (const requirement of skill?.capability_requirements ?? []) {
-          const dependency = requirement.split("@")[0];
-          if (!resolved.has(dependency)) {
-            resolved.add(dependency);
-            changed = true;
-          }
-        }
-      }
-    }
-    const enabled = [...resolved].sort().map((id) => {
-      const skill = skillCatalog.find((item) => item.id === id);
-      return { id, version: skill?.version ?? "1" };
-    });
-    void api
-      .setProjectSkills(project.id, enabled)
-      .then(refreshWorkspace)
-      .catch((error: Error) => onError(error.message));
-  };
   const runGuidedAction = (action: GuidedAction) => {
     if (!action.enabled) return;
     if (action.kind === "run_dataset") return startBatch();
@@ -1980,14 +1935,15 @@ function ProjectPage({
         <div className="guidance-actions">
           <button
             className="primary"
-            disabled={starting || !guidance.primary_action.enabled}
+            aria-disabled={starting || !guidance.primary_action.enabled}
+            aria-label={!guidance.primary_action.enabled && guidance.primary_action.disabled_reason ? `${guidance.primary_action.label} unavailable: ${guidance.primary_action.disabled_reason}` : undefined}
             title={guidance.primary_action.disabled_reason}
-            onClick={() => runGuidedAction(guidance.primary_action)}
+            onClick={() => !starting && guidance.primary_action.enabled && runGuidedAction(guidance.primary_action)}
           >
             {starting ? "Starting…" : guidance.primary_action.label}
           </button>
           {guidance.secondary_actions.slice(0, 2).map((action) => (
-            <button key={`${action.kind}:${action.destination}`} disabled={!action.enabled} title={action.disabled_reason} onClick={() => runGuidedAction(action)}>{action.label}</button>
+            <button key={`${action.kind}:${action.destination}`} aria-disabled={!action.enabled} aria-label={!action.enabled && action.disabled_reason ? `${action.label} unavailable: ${action.disabled_reason}` : undefined} title={action.disabled_reason} onClick={() => action.enabled && runGuidedAction(action)}>{action.label}</button>
           ))}
           {project.available_workflow_versions.some((workflow) => workflow.status === "published") && <button onClick={onOpenWorkflows}>Improve automation</button>}
         </div>
@@ -2004,7 +1960,7 @@ function ProjectPage({
         <div className="section-heading"><div><span className="eyebrow">Project journey</span><h2 id="project-journey-title">From data to compatible export</h2></div><small>Server-owned state · updated {new Date(guidance.updated_at).toLocaleString()}</small></div>
         <ol className="journey-timeline">
           {guidance.journey.map((step, index) => <li key={step.id} className={step.state}>
-            <button onClick={() => openJourneyStep(step)} disabled={!step.destination} aria-label={`${step.label}: ${step.detail}`}>
+            <button onClick={() => step.destination && openJourneyStep(step)} aria-disabled={!step.destination} aria-label={`${step.label}: ${step.detail}${step.destination ? "" : ". No action is available yet."}`}>
               <i aria-hidden="true">{step.state === "complete" ? "✓" : index + 1}</i>
               <span><strong>{step.label}</strong><small>{step.detail}</small></span>
               <b>{step.state.replaceAll("_", " ")}</b>
@@ -2024,10 +1980,6 @@ function ProjectPage({
                   value={`${project.active_batch_progress.completed_images}/${project.active_batch_progress.total_images}`}
                 />
               )}
-              <Fact
-                label="Progress events"
-                value={String(project.active_batch.event_sequence)}
-              />
               <div className="button-row" aria-label="Active Batch controls">
                 {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" /> Pause</button>}
                 {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" /> Resume</button>}
@@ -2084,11 +2036,17 @@ function ProjectPage({
                 visibleStatus.replaceAll("_", " ")}
             </small>
           </div>
-          <div className="progress-track">
+          <div
+            className={`progress-track${activeProgress === undefined ? " indeterminate" : ""}`}
+            role="progressbar"
+            aria-label="Active Run progress"
+            aria-valuemin={activeProgress === undefined ? undefined : 0}
+            aria-valuemax={activeProgress === undefined ? undefined : 100}
+            aria-valuenow={activeProgress}
+            aria-valuetext={activeProgress === undefined ? "Current stage is active; image progress is not available for this Run" : `${project.active_batch_progress?.completed_images} of ${project.active_batch_progress?.total_images} images complete`}
+          >
             <i
-              style={{
-                width: `${Math.min(100, Math.max(6, runEvents.length * 3))}%`,
-              }}
+              style={activeProgress === undefined ? undefined : { width: `${activeProgress}%` }}
             />
           </div>
           <pre>
@@ -2112,28 +2070,8 @@ function ProjectPage({
       </div>
 
       <details className="advanced-project-details" id="project-advanced-details">
-        <summary><span><strong>Advanced Project Details</strong><small>Schema, model bindings, Skills, versions, import, and image records</small></span><b aria-hidden="true">⌄</b></summary>
+        <summary><span><strong>Current Project configuration</strong><small>Read-only schema, Automation, model, Skill, and image records</small></span><b aria-hidden="true">⌄</b></summary>
         <div className="project-overview-grid">
-        <Panel title="Run configuration" eyebrow="Immutable Workflow selection">
-          <label>
-            Workflow Version for next Run
-            <select
-              value={workflowKey}
-              disabled={Boolean(activeRun || project.active_batch)}
-              onChange={(event) => setWorkflowKey(event.target.value)}
-            >
-              {project.available_workflow_versions.map((workflow) => (
-                <option
-                  key={`${workflow.workflow_id}:${workflow.version}`}
-                  value={`${workflow.workflow_id}:${workflow.version}`}
-                >
-                  {workflow.name} · v{workflow.version}
-                </option>
-              ))}
-            </select>
-          </label>
-          <small>The Guidance action starts the Dataset with this exact immutable Version.</small>
-        </Panel>
         <Panel title="Dataset" eyebrow="Project-owned">
           <Fact label="Root" value={project.dataset.root} />
           <Fact label="Images" value={project.dataset.image_count} />
@@ -2150,7 +2088,7 @@ function ProjectPage({
           <Fact label="Version" value={`v${project.active_workflow.version}`} />
           <Fact label="Nodes" value={project.active_workflow.nodes.length} />
           <Fact label="Source" value={project.active_workflow.source} />
-          <button onClick={onOpenWorkflows}>View Workflow definition</button>
+          <button onClick={onOpenWorkflows}>Open Automation editor</button>
         </Panel>
         <Panel title="Enabled Skills" eyebrow="Domain extensions">
           {project.enabled_skills.length ? (
@@ -2175,32 +2113,7 @@ function ProjectPage({
               detail="Stable schema and hash visuals remain available."
             />
           )}
-          <details className="advanced-settings">
-            <summary>Configure Capability and Domain Skills</summary>
-            <div className="skill-picker">
-              {skillCatalog.map((skill) => (
-                <label className="checkbox-line" key={skill.id}>
-                  <input
-                    type="checkbox"
-                    checked={selectedSkillIds.includes(skill.id)}
-                    onChange={(event) =>
-                      setSelectedSkillIds((current) =>
-                        event.target.checked
-                          ? [...new Set([...current, skill.id])]
-                          : current.filter((id) => id !== skill.id),
-                      )
-                    }
-                  />
-                  <span>
-                    <strong>{skill.display_name}</strong>
-                    <small>{skill.kind} · {skill.id}@{skill.version}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <small>Required Capability Skills are added automatically. Rust Registry validation blocks missing or incompatible versions.</small>
-            <button className="form-submit-action" onClick={saveSkills}>Save Project Skills</button>
-          </details>
+          <button onClick={() => onOpenBuild("pipeline")}>Edit Skills in Automation</button>
         </Panel>
         <Panel title="Model Bindings" eyebrow="Node execution">
           {project.model_bindings.map((binding) => (
@@ -2229,36 +2142,7 @@ function ProjectPage({
               </article>
             ))}
           </div>
-          <div className="schema-label-authoring">
-            <label>
-              Task
-              <select
-                aria-label="Label task"
-                value={labelTaskId}
-                onChange={(event) => setLabelTaskId(event.target.value)}
-              >
-                {project.annotation_schema.map((task) => (
-                  <option key={task.id} value={task.id}>
-                    {task.id} · {task.kind}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              New Label id
-              <input
-                value={newLabel}
-                placeholder="vehicle"
-                onChange={(event) => setNewLabel(event.target.value)}
-              />
-            </label>
-            <button
-              onClick={addLabel}
-              disabled={!labelTaskId || !newLabel.trim()}
-            >
-              Add Label to Project Schema
-            </button>
-          </div>
+          <button onClick={() => onOpenBuild("labels")}>Edit Labels in Build</button>
         </Panel>
         <Panel title="Versions, Runs & Reviews" eyebrow="Project outputs">
           <Fact
@@ -2276,28 +2160,6 @@ function ProjectPage({
           />
           <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Open Export workspace</button>
         </Panel>
-        <Panel title="Annotation import" eyebrow="Dry-run first · compatibility report">
-          <label>
-            Format
-            <select value={importFormat} onChange={(event) => setImportFormat(event.target.value)}>
-              <option value="native">AnnotAgent Native</option>
-              <option value="coco">COCO</option>
-              <option value="labelme">LabelMe</option>
-              <option value="yolo_detection">YOLO detection</option>
-              <option value="yolo_segmentation">YOLO segmentation</option>
-            </select>
-          </label>
-          <label>
-            Workspace-local file or directory
-            <input value={importSource} onChange={(event) => setImportSource(event.target.value)} placeholder="/workspace/project/import/annotations.json" />
-          </label>
-          <label className="checkbox-line">
-            <input type="checkbox" checked={importDryRun} onChange={(event) => setImportDryRun(event.target.checked)} />
-            Dry run without persistence
-          </label>
-          <button onClick={importAnnotations}>{importDryRun ? "Preview import" : "Import to Review"}</button>
-          {importResult && <pre className="import-report" aria-live="polite">{importResult}</pre>}
-        </Panel>
         </div>
         <ProjectAgentActivity projectId={project.id} onError={onError} />
       <Panel title="Dataset images" eyebrow={`${images.length} visible`}>
@@ -2313,9 +2175,10 @@ function ProjectPage({
                 <Status status={image.status} />
               </div>
               <button
-                disabled={Boolean(startingImageId || project.active_batch || project.active_run) || !selectedPublishedWorkflow}
+                aria-disabled={Boolean(startingImageId || project.active_batch || project.active_run) || !selectedPublishedWorkflow}
+                aria-label={!selectedPublishedWorkflow ? `Run ${image.name} unavailable: publish an Automation first` : project.active_batch || project.active_run ? `Run ${image.name} unavailable: another Run is active` : undefined}
                 title={!selectedPublishedWorkflow ? "Publish an Automation before running this image." : undefined}
-                onClick={() => startImageRun(image)}
+                onClick={() => !(startingImageId || project.active_batch || project.active_run) && selectedPublishedWorkflow && startImageRun(image)}
               >
                 {startingImageId === image.image_id ? "Starting…" : "Run this image"}
               </button>
@@ -4043,6 +3906,10 @@ function WorkflowsPage({
               title={draft.name}
               eyebrow={`${draft.status} · autosaved Automation Draft`}
             >
+              {!immutable && <label className="workflow-draft-name">
+                Draft name
+                <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              </label>}
               {draft.label_pipeline && (
                 <LabelPipelineEditor
                   draft={draft}
@@ -4059,9 +3926,8 @@ function WorkflowsPage({
                 {!draft.nodes.length && <Empty title="No Automation steps" detail="Start from a template or preview an AnnotAgent recommendation." />}
               </div>
               <details className="advanced-graph">
-                <summary>View technical graph</summary>
-                <p>These technical nodes and connections edit the same autosaved Draft shown above.</p>
-                <div className="button-row"><button onClick={addNode} disabled={immutable}>Add node</button><button onClick={addEdge} disabled={immutable || draft.nodes.length < 2}>Add connection</button></div>
+                <summary>View technical graph (read-only)</summary>
+                <p><strong>Inspection only.</strong> Graph-safe port selection, cycle checks, and undo are not released. Edit this Draft through the guided Automation Recipe controls.</p>
               <div className="workflow-nodes editable-workflow">
                 {draft.nodes.map((node, index) => (
                   <article key={node.id}>
@@ -4073,7 +3939,7 @@ function WorkflowsPage({
                         Node ID
                         <input
                           value={node.id}
-                          disabled={immutable}
+                          disabled
                           onChange={(event) =>
                             updateNode(index, { id: event.target.value })
                           }
@@ -4084,7 +3950,7 @@ function WorkflowsPage({
                           Node type
                           <select
                             value={node.node_type}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateNode(index, {
                                 node_type: event.target.value,
@@ -4105,7 +3971,7 @@ function WorkflowsPage({
                           Model binding
                           <select
                             value={node.model_binding ?? ""}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateNode(index, {
                                 model_binding: event.target.value || undefined,
@@ -4124,7 +3990,7 @@ function WorkflowsPage({
                           Fallback node
                           <input
                             value={node.fallback ?? ""}
-                            disabled={immutable}
+                            disabled
                             placeholder="none"
                             onChange={(event) =>
                               updateNode(index, {
@@ -4139,7 +4005,7 @@ function WorkflowsPage({
                             type="number"
                             min="0"
                             value={node.max_retries}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateNode(index, {
                                 max_retries: Number(event.target.value),
@@ -4152,7 +4018,7 @@ function WorkflowsPage({
                         Depends on
                         <input
                           value={node.depends_on.join(", ")}
-                          disabled={immutable}
+                          disabled
                           onChange={(event) =>
                             updateNode(index, {
                               depends_on: event.target.value
@@ -4168,7 +4034,7 @@ function WorkflowsPage({
                           Validators
                           <input
                             value={node.validators.join(", ")}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateNode(index, {
                                 validators: event.target.value
@@ -4183,7 +4049,7 @@ function WorkflowsPage({
                           Refiners
                           <input
                             value={node.refiners.join(", ")}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateNode(index, {
                                 refiners: event.target.value
@@ -4199,7 +4065,7 @@ function WorkflowsPage({
                         <input
                           type="checkbox"
                           checked={node.review_gate}
-                          disabled={immutable}
+                          disabled
                           onChange={(event) =>
                             updateNode(index, {
                               review_gate: event.target.checked,
@@ -4212,7 +4078,7 @@ function WorkflowsPage({
                         Parameters (JSON)
                         <textarea
                           value={JSON.stringify(node.parameters, null, 2)}
-                          disabled={immutable}
+                          disabled
                           onChange={(event) => {
                             try {
                               updateNode(index, {
@@ -4240,13 +4106,6 @@ function WorkflowsPage({
                             .join(", ") || "none"}
                         </span>
                       </div>
-                      <button
-                        className="danger"
-                        onClick={() => removeNode(index)}
-                        disabled={immutable}
-                      >
-                        Delete node
-                      </button>
                     </div>
                   </article>
                 ))}
@@ -4261,7 +4120,7 @@ function WorkflowsPage({
                           From node
                           <input
                             value={edge.from_node}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateEdge(index, {
                                 from_node: event.target.value,
@@ -4273,7 +4132,7 @@ function WorkflowsPage({
                           From port
                           <input
                             value={edge.from_port}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateEdge(index, {
                                 from_port: event.target.value,
@@ -4285,7 +4144,7 @@ function WorkflowsPage({
                           To node
                           <input
                             value={edge.to_node}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateEdge(index, { to_node: event.target.value })
                             }
@@ -4295,7 +4154,7 @@ function WorkflowsPage({
                           To port
                           <input
                             value={edge.to_port}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateEdge(index, { to_port: event.target.value })
                             }
@@ -4305,7 +4164,7 @@ function WorkflowsPage({
                           Gate route
                           <input
                             value={edge.route ?? ""}
-                            disabled={immutable}
+                            disabled
                             onChange={(event) =>
                               updateEdge(index, {
                                 route: event.target.value || undefined,
@@ -4314,13 +4173,6 @@ function WorkflowsPage({
                           />
                         </label>
                       </div>
-                      <button
-                        className="danger"
-                        onClick={() => removeEdge(index)}
-                        disabled={immutable}
-                      >
-                        Delete connection
-                      </button>
                     </div>
                   </article>
                 ))}
@@ -4505,36 +4357,16 @@ function pipelineStepOverview(steps: PipelineStep[], targetLabel: string): strin
 
 function ExpertGraphEditor({
   draft,
-  immutable,
-  onChange,
 }: {
   draft: WorkflowDraft;
   immutable: boolean;
   onChange: (draft: WorkflowDraft) => void;
 }) {
-  const [raw, setRaw] = useState(() => JSON.stringify(draft.label_pipeline, null, 2));
-  const [error, setError] = useState("");
-  useEffect(() => {
-    setRaw(JSON.stringify(draft.label_pipeline, null, 2));
-    setError("");
-  }, [draft.id, draft.label_pipeline]);
-  const apply = () => {
-    try {
-      const next = JSON.parse(raw) as NonNullable<WorkflowDraft["label_pipeline"]>;
-      if (!Array.isArray(next.shared_stages) || !Array.isArray(next.label_pipelines))
-        throw new Error("Technical graph must contain shared_stages and label_pipelines arrays.");
-      onChange({ ...draft, label_pipeline: next });
-      setError("");
-    } catch (reason) {
-      setError((reason as Error).message);
-    }
-  };
+  const raw = JSON.stringify(draft.label_pipeline, null, 2);
   return <details className="advanced-graph">
-    <summary>View technical graph</summary>
-    <p>This is the same autosaved Workflow Definition shown by the guided Recipe. Applying valid JSON changes the current Draft; it never publishes.</p>
-    <textarea aria-label="Technical graph JSON" value={raw} readOnly={immutable} onChange={(event) => setRaw(event.target.value)} />
-    {error && <small className="field-error" role="alert">{error}</small>}
-    {!immutable && <button onClick={apply}>Apply technical graph to Draft</button>}
+    <summary>View technical graph (read-only)</summary>
+    <p><strong>Inspection only.</strong> Graph-safe editing remains unreleased. Use the guided Pipeline controls above; static validation still checks the resulting Draft before Sample Test.</p>
+    <textarea aria-label="Technical graph JSON" value={raw} readOnly />
   </details>;
 }
 
@@ -5350,8 +5182,8 @@ function workflowCatalogModelOptions(catalog?: WorkflowCatalog) {
   return models;
 }
 
-function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
-  const capability = nodeType === "vlm_detection.detect"
+export function workflowNodeModelCapability(nodeType: string): string | undefined {
+  return nodeType === "vlm_detection.detect"
     ? "vision_language"
     : nodeType === "capability.segment"
     ? "prompted_segmentation"
@@ -5360,6 +5192,10 @@ function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
     : nodeType.includes("detect")
       ? "object_detection"
       : undefined;
+}
+
+function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
+  const capability = workflowNodeModelCapability(nodeType);
   if (!capability) return undefined;
   const model = workflowCatalogModelOptions(catalog).find((candidate) =>
     candidate.capabilities.includes(capability),
@@ -8001,6 +7837,7 @@ function parseDetectionEvidence(value: unknown): DetectionEvidenceDto[] {
       : {};
     return [{
       source_model_id: evidence.source_model_id,
+      source_model_display_name: typeof evidence.source_model_display_name === "string" ? evidence.source_model_display_name : undefined,
       source_artifact_id: typeof evidence.source_artifact_id === "string" ? evidence.source_artifact_id : "unknown",
       bbox: [rect.x, rect.y, rect.width, rect.height],
       score: {
@@ -8016,10 +7853,16 @@ function parseDetectionEvidence(value: unknown): DetectionEvidenceDto[] {
   });
 }
 
-function sourceModelLabel(modelId: string): string {
-  if (modelId.toLowerCase().includes("rfdetr")) return "RF-DETR";
-  if (modelId.toLowerCase().includes("locate")) return "LocateAnything";
-  return modelId;
+function sourceModelLabel(
+  evidence: DetectionEvidenceDto,
+  models: ModelBinding[] = [],
+): string {
+  return evidence.source_model_display_name ??
+    models.find((model) =>
+      model.id === evidence.source_model_id ||
+      model.model === evidence.source_model_id,
+    )?.model ??
+    evidence.source_model_id.replaceAll("_", " ").replaceAll("-", " ");
 }
 
 function evidenceIdentity(item: DetectionEvidenceDto): string {
@@ -8041,8 +7884,8 @@ function artifactMarkSummary(mark: ArtifactMark): string {
   const source = sources[0];
   if (!source) return mark.confidence === undefined ? "Bounding box" : `Bounding box · ${Math.round(mark.confidence * 100)}%`;
   return source.score.value == null
-    ? `${sourceModelLabel(source.source_model_id)} · score not provided`
-    : `${sourceModelLabel(source.source_model_id)} · ${scoreSemanticsLabel(source.score.semantics)} ${source.score.value.toFixed(2)}`;
+    ? `${sourceModelLabel(source)} · score not provided`
+    : `${sourceModelLabel(source)} · ${scoreSemanticsLabel(source.score.semantics)} ${source.score.value.toFixed(2)}`;
 }
 
 export function artifactDetectionMarks(
@@ -8252,7 +8095,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageId
       {selectedMark?.evidence.length ? <section className="evidence-inspector" aria-label="Detection evidence inspector">
         <header><span className="eyebrow">Evidence inspector</span><strong>{artifactMarkSummary(selectedMark)}</strong></header>
         <div>{uniqueEvidence(selectedMark.evidence).map((item) => <article key={evidenceIdentity(item)}>
-          <span><strong>{sourceModelLabel(item.source_model_id)}</strong><small>{item.source_capability.replaceAll("_", " ")}</small></span>
+          <span><strong>{sourceModelLabel(item)}</strong><small>{item.source_capability.replaceAll("_", " ")}</small></span>
           <span><strong>{item.score.value == null ? "Score not provided" : item.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(item.score.semantics)}</small></span>
           <code>[{item.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
           {(item.query_id || item.model_label) && <small>{item.query_id ? `Query · ${item.query_id}` : ""}{item.query_id && item.model_label ? " · " : ""}{item.model_label ? `Model label · ${item.model_label}` : ""}</small>}
@@ -8288,6 +8131,7 @@ function reviewReasonExplanation(item: ReviewItem) {
 function ReviewPage({
   project,
   projects,
+  models,
   events,
   route,
   onNavigate,
@@ -8296,6 +8140,7 @@ function ReviewPage({
 }: {
   project?: ProjectSummary;
   projects: ProjectSummary[];
+  models: ModelBinding[];
   events: RunEvent[];
   route: Extract<WorkspaceRoute, { kind: "review" | "projectReview" }>;
   onNavigate: (path: string, replace?: boolean) => boolean;
@@ -8522,7 +8367,7 @@ function ReviewPage({
     }, null, 2));
     setEditing(true);
     setReason("shifted");
-    if (!note.trim()) setNote(`Used the ${sourceModelLabel(evidence.source_model_id)} source box.`);
+    if (!note.trim()) setNote(`Used the ${sourceModelLabel(evidence, models)} source box.`);
   };
   const undo = () => {
     const previous = past.at(-1);
@@ -9000,10 +8845,10 @@ function ReviewPage({
             {selected.detection_evidence?.length ? <section className="review-evidence" aria-label="Source model evidence">
               <header><span className="eyebrow">Source evidence</span><strong>{uniqueEvidence(selected.detection_evidence).length} detector result{uniqueEvidence(selected.detection_evidence).length === 1 ? "" : "s"}</strong></header>
               <div>{uniqueEvidence(selected.detection_evidence).map((evidence) => <article key={evidenceIdentity(evidence)}>
-                <span><strong>{sourceModelLabel(evidence.source_model_id)}</strong><small>{evidence.source_capability.replaceAll("_", " ")}</small></span>
+                <span><strong>{sourceModelLabel(evidence, models)}</strong><small>{evidence.source_capability.replaceAll("_", " ")}</small></span>
                 <span><strong>{evidence.score.value == null ? "Score not provided" : evidence.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(evidence.score.semantics)}</small></span>
                 <code>[{evidence.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
-                <button onClick={() => useEvidenceBox(evidence)}>Use {sourceModelLabel(evidence.source_model_id)} box</button>
+                <button onClick={() => useEvidenceBox(evidence)}>Use {sourceModelLabel(evidence, models)} box</button>
               </article>)}</div>
               {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
             </section> : null}
@@ -9035,7 +8880,7 @@ function ReviewPage({
             <details className="review-execution-details">
               <summary>Execution details</summary>
               <div className="fact-grid">
-                <Fact label="Refinement" value={selected.refinement_chain?.map((refiner) => refiner === "sam_prompted_refiner" ? "SAM 2.1 multi-prompt" : refiner === "ball_foreground_refiner" ? "Local foreground fallback (no SAM)" : refiner).join(" → ") || "None recorded"} />
+                <Fact label="Refinement" value={selected.refinement_chain?.map((refiner) => refiner.replaceAll("_", " ")).join(" → ") || "None recorded"} />
                 <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
                 <Fact label="Task" value={draft.task_id} />
                 <Fact label="Status" value={draft.review_status} />
@@ -9975,13 +9820,14 @@ function CreateProject({
           ? "bounding_box"
           : customKind;
   const specialistModel = modelRegistry.find((model) =>
-    model.enabled && model.capabilities?.includes("object_detection") &&
+    model.enabled && model.availability_group === "ready" && model.capabilities?.includes("object_detection") &&
     (model.label_space?.length ?? 0) > 0 &&
     model.label_space?.some((label) => label.toLowerCase() === resolvedLabelId.toLowerCase()),
   );
   const openVocabularyModel = modelRegistry.find((model) =>
-    model.enabled && model.capabilities?.includes("open_vocabulary_detection"),
+    model.enabled && model.availability_group === "ready" && model.capabilities?.includes("open_vocabulary_detection"),
   );
+  const boundingBoxRequiresReview = kind === "bounding_box";
   const finish = async (customize: boolean) => {
     if (!projectName.trim() || !labelName.trim()) return;
     setBusy(true);
@@ -10035,7 +9881,7 @@ function CreateProject({
             max_cost_per_image: maximumCost.trim() || undefined,
             max_latency_ms: priority === "faster" ? 1_000 : priority === "accuracy" ? 10_000 : 4_000,
             minimum_accuracy: priority === "faster" ? 0.75 : priority === "accuracy" ? 0.92 : 0.85,
-            require_review_gate: Number(targetReviewRate) > 0,
+            require_review_gate: boundingBoxRequiresReview || Number(targetReviewRate) > 0,
           },
           DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
           agentModel.id,
@@ -10096,14 +9942,14 @@ function CreateProject({
         </div>}
 
         {step === 2 && <div className="wizard-step">
-          <label>Image file or folder<input autoFocus value={dataSource} onChange={(event) => setDataSource(event.target.value)} placeholder="/workspace/dataset/images" /></label>
-          <div className="wizard-summary"><strong>{dataSource.trim() ? "Ready to scan this source" : "You can add data later"}</strong><span>PNG and JPEG · recursive folder discovery · content duplicates skipped</span><small>Decode errors and actual imported/duplicate counts are reported by the real import operation when you finish setup.</small></div>
+          <label>Advanced server-local image path<input autoFocus value={dataSource} onChange={(event) => setDataSource(event.target.value)} placeholder="/workspace/dataset/images" /></label>
+          <div className="wizard-summary"><strong>{dataSource.trim() ? "Ready to ask the local server to scan this path" : "You can add data later"}</strong><span>This is not a browser file picker · PNG and JPEG · recursive discovery · content duplicates skipped</span><small>The path must be readable by the local AnnotAgent process. Decode errors and actual imported/duplicate counts are reported by the real import operation.</small></div>
         </div>}
 
         {step === 3 && <div className="wizard-step">
           <div className="choice-grid priority-grid" role="radiogroup" aria-label="Automation priority">
             {([
-              ["faster", "Faster", "More parallel work and a lower acceptance threshold"],
+              ["faster", "Faster", "Lower latency while keeping the same Review safeguards"],
               ["balanced", "Balanced", "Recommended trade-off for a first Project"],
               ["accuracy", "Higher accuracy", "More conservative automatic acceptance"],
             ] as const).map(([value, title, detail]) => <label key={value} className={priority === value ? "selected" : ""}>
@@ -10114,7 +9960,7 @@ function CreateProject({
           <details className="advanced-settings"><summary>Cost, review, and local constraints</summary><div className="form-grid">
             <label>Maximum expected cost<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder="Optional" /></label>
             <label>Target human review rate (%)<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
-            <div className="wizard-fact"><span>Registered detection models</span><strong>{modelRegistry.filter((model) => model.enabled && model.role === "detection").length || "None enabled"}</strong></div>
+            <div className="wizard-fact"><span>Ready detection models</span><strong>{modelRegistry.filter((model) => model.enabled && model.availability_group === "ready" && model.role === "detection").length || "None ready"}</strong></div>
             <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} /> Offline only</label>
           </div></details>
         </div>}
@@ -10122,23 +9968,23 @@ function CreateProject({
         {step === 4 && <div className="wizard-step">
           <div className="recommendation-card">
             <span className="status status-auto-accepted">Recommended</span>
-            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? "Use your trained detector first" : "Find objects by description"}</h3>
+            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? "Use your trained detector first" : openVocabularyModel ? "Find candidate objects by description" : "Configure a compatible detector in Automation"}</h3>
             <ol>
               {kind === "bounding_box" && specialistModel ? <>
                 <li>Use <strong>{specialistModel.model}</strong> for repeated {labelName} labeling.</li>
                 <li>{openVocabularyModel ? <>Ask <strong>{openVocabularyModel.model}</strong> only when the specialist result is uncertain.</> : "Route uncertain detector results to Review until an open-vocabulary fallback is configured."}</li>
               </> : kind === "bounding_box" && openVocabularyModel ? <>
-                <li>Use <strong>{openVocabularyModel.model}</strong> to find {labelName} from a text description.</li>
-                <li>No training data is required.</li>
+                <li>Use <strong>{openVocabularyModel.model}</strong> to propose coarse {labelName} candidate boxes from a text description.</li>
+                <li>Require Human Review until this exact model and node have Project geometry calibration evidence.</li>
               </> : kind === "bounding_box" ? <>
-                <li>Use a registered open-vocabulary detector to find {labelName} from its description.</li>
-                <li>No training data is required. Configure the Worker before a live Run.</li>
+                <li>No Ready detector currently satisfies this Project's bounding-box operation.</li>
+                <li>Choose a compatible Model Profile or install a verified Expert Model before Sample Test.</li>
               </> : <li>Bind a compatible <strong>Registry Model Profile</strong> in Automation before publishing.</li>}
-              {kind === "bounding_box" && <li>Keep the detector output as editable bounding boxes.</li>}
-              <li>Automatically accept high-confidence results.</li>
-              <li>Send uncertain results to Review.</li>
+              {kind === "bounding_box" && <li>Keep detector output as editable candidates and route every initial box to Review; a semantic or relative score is not geometry proof.</li>}
+              {kind !== "bounding_box" && <li>Apply the Draft's validated confidence and Review policy.</li>}
+              <li>Sample Test the exact Draft before activation.</li>
             </ol>
-            <div className="recommendation-estimate"><span><b>{priority === "faster" ? "Low" : priority === "accuracy" ? "Higher" : "Medium"}</b> latency</span><span><b>Low</b> setup effort</span><span><b>{targetReviewRate || "10"}%</b> target review</span></div>
+            <div className="recommendation-estimate"><span><b>{priority === "faster" ? "Low" : priority === "accuracy" ? "Higher" : "Medium"}</b> latency</span><span><b>{specialistModel || openVocabularyModel || kind !== "bounding_box" ? "Low" : "Model required"}</b> setup effort</span><span><b>{boundingBoxRequiresReview ? "100" : targetReviewRate || "10"}%</b> initial target review</span></div>
           </div>
           <div className="inline-model-connection">
             <div><span className="eyebrow">Registry-first execution</span><strong>Bind in Automation</strong></div>

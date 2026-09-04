@@ -491,6 +491,9 @@ main { min-width: 0; padding-bottom: 48px; }
 .run-progress small { margin: 4px 0 0 15px; color: var(--aa-text-muted); }
 .progress-track { height: 7px; background: var(--aa-surface-muted); border-radius: var(--aa-radius-pill); overflow: hidden; }
 .progress-track i { display: block; height: 100%; background: var(--aa-primary); transition: width var(--aa-duration-normal) var(--aa-ease); }
+.progress-track.indeterminate i { width: 34%; animation: indeterminate-progress 1.4s ease-in-out infinite; }
+@keyframes indeterminate-progress { from { transform: translateX(-105%); } to { transform: translateX(295%); } }
+button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .run-progress pre { margin: 0; color: var(--aa-teal-text); font-size: 9px; max-height: 58px; overflow: hidden; }
 .image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .image-grid article { overflow: hidden; }

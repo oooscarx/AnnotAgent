@@ -10,7 +10,8 @@ This file describes the current product, not the target state.
 - Workflow Draft writes use optimistic concurrency and Sample Tests are immutable, exact-revision evidence. Automatic field-level merging is intentionally not attempted; a conflict can be compared, reloaded, or preserved as a new Draft.
 - Results is now an explicit final-Annotation projection and Debug retains intermediate Artifacts. Legacy Runs without one authoritative stable Image relation fail closed rather than guessing an image.
 - Review scope, local draft isolation, score provenance, revision history, and decision navigation are covered. The App-level navigation boundary and browser-close handling guard unsaved Review edits.
-- Some controls are dead, misleading, duplicated, or expose Labs behavior without sufficient qualification.
+- Free-form technical graph mutation remains intentionally unavailable; the technical graph is a read-only Draft projection until typed ports, cycle prevention, deletion constraints, and undo are implemented together.
+- Browser upload/chooser transport is not implemented. The only current manual source field is explicitly an advanced server-local path read by the local AnnotAgent process.
 - Large server/application/frontend modules and unbounded/N+1 summary queries remain. Batch image summaries currently resolve child results individually and are scheduled for the M9 bounded-query pass.
 - The Web production bundle currently warns about a JavaScript chunk above 500 kB.
 - Real provider/model checks are environment-dependent and remain outside offline acceptance until explicitly provisioned.

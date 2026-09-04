@@ -1459,6 +1459,7 @@ export interface StoredPayloadRefDto {
 
 export interface DetectionEvidenceDto {
   source_model_id: string;
+  source_model_display_name?: string;
   source_artifact_id: string;
   bbox: [number, number, number, number];
   score: DetectionScoreDto;

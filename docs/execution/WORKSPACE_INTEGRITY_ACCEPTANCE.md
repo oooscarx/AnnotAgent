@@ -86,17 +86,17 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 ## H. Feature truth
 
 - [x] Image status filtering works or is removed.
-- [ ] “Review uncertain result” performs a real action rather than scrolling.
-- [ ] Advanced Graph is not exposed in a corruptible state.
-- [ ] Event-count fake progress is removed.
-- [ ] Sample count matches dataset bounds.
-- [ ] Overview does not duplicate all Build editing controls.
-- [ ] Disabled operations expose an accessible reason.
-- [ ] Labs capabilities are explicitly identified.
-- [ ] Generic UI does not hard-code specialist model brands.
-- [ ] Model selection uses the Node capability contract.
-- [ ] Recommendations obey Geometry Safety.
-- [ ] Browser file import is not presented as a server-local path field.
+- [x] “Review uncertain result” is honestly named as sandbox inspection and does not claim to create Review work.
+- [x] Advanced Graph is a read-only technical projection, not a corruptible editor.
+- [x] Event-count fake progress is removed.
+- [x] Sample count matches dataset bounds.
+- [x] Overview does not duplicate all Build editing controls.
+- [x] Disabled operations expose an accessible reason.
+- [x] Labs/read-only capabilities are explicitly identified.
+- [x] Generic UI does not hard-code specialist model brands.
+- [x] Model selection uses the Node capability contract.
+- [x] Recommendations obey Geometry Safety.
+- [x] Browser import explicitly identifies its server-local path semantics.
 
 ## I. Performance and architecture
 

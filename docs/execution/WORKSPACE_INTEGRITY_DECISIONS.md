@@ -83,3 +83,19 @@ A Project ID in a URL or request body is a scope assertion, never an ownership a
 ## D-021 — Geometry evidence does not redefine confidence
 
 Choosing a detector's source box changes only Annotation geometry. The source model, capability, score value, and score semantics remain typed evidence in provenance and attributes. Generic Annotation confidence is unchanged unless a separate explicit quality policy computes it. Review item identity is also the lifecycle boundary for every local edit field, preventing notes, reasons, and history from crossing between items.
+
+## D-022 — Unreleased mutation is read-only, not disabled theater
+
+The technical Workflow graph remains useful for inspection, but free-form mutation is not safe until typed ports, cycle prevention, deletion constraints, and undo ship as one coherent editor contract. The graph is therefore a read-only, explicitly qualified projection. Overview likewise links to the unique Build editors instead of duplicating mutation controls.
+
+## D-023 — UI labels describe the real side effect
+
+Sample Test uncertainty inspection does not create formal Review work, so it is named as inspection. Execution progress is numeric only when the server provides a real numerator and denominator; an active single-image Run is indeterminate. Errors are scoped to the route that produced them and Retry refetches that view instead of reloading the application.
+
+## D-024 — Semantic confidence never proves bbox geometry
+
+New-Project recommendations may use only Ready models compatible with the exact node capability. Open-vocabulary/VLM detections are coarse candidates, and a semantic confidence score cannot auto-approve their geometry. Every generated bbox proposal therefore includes Human Review unless a future geometry-specific validator produces separately typed evidence.
+
+## D-025 — Local paths must identify their execution boundary
+
+A browser text field cannot be presented as a native file chooser. Until a real upload/chooser protocol exists, AnnotAgent exposes the source only as an advanced server-local path and states that the local server process reads it. Unsupported operating-system actions such as “Open folder” are absent rather than simulated.

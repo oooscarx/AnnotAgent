@@ -15,11 +15,21 @@ import {
   guidedWorkflowNodes,
   geometrySemanticsLabel,
   scoreSemanticsLabel,
+  workflowNodeModelCapability,
   workflowNodeTitle,
 } from "./App";
 import type { Annotation, PipelineArtifact, PipelineStep } from "./types";
 
 describe("Label Pipeline product helpers", () => {
+  it("selects models from the exact node capability contract", () => {
+    expect(workflowNodeModelCapability("vlm_detection.detect")).toBe("vision_language");
+    expect(workflowNodeModelCapability("yolo_detection.detect")).toBe("object_detection");
+    expect(workflowNodeModelCapability("capability.detect")).toBe("object_detection");
+    expect(workflowNodeModelCapability("classification.classify")).toBe("classification");
+    expect(workflowNodeModelCapability("capability.segment")).toBe("prompted_segmentation");
+    expect(workflowNodeModelCapability("core.crop")).toBeUndefined();
+  });
+
   it("keeps Crop in Core and classification/detection outputs typed", () => {
     expect(pipelineNodeOutput("core.crop")).toEqual({
       port: "crops",

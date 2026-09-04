@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M7 — Review integrity.
-- Next milestone: M8 — Feature truth and guided UX.
+- Completed milestone: M8 — Feature truth and guided UX.
+- Next milestone: M9 — service queries and incremental extraction.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -116,6 +116,18 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Evidence: formatting passed; the focused Server ownership/decision/revision test passed; 60 Web unit tests, Web typecheck and production build passed; all 41 Chromium E2E journeys passed, including item-state isolation, unsaved-discard protection, score semantics, revision UI, and bidirectional Run/Review navigation.
 - Milestone commit subject: `fix(review): preserve ownership edits and provenance across review navigation`.
 
+## M8 exit
+
+- Added the control-by-control `FEATURE_TRUTH_MATRIX.md`, including prerequisites, persistence, refresh/error behavior, coverage, and honest ready/Labs/hidden/remove status.
+- Removed duplicated Overview mutation entry points; the Overview configuration summary is read-only and links to the canonical Automation and Label editors.
+- Technical graph editing is read-only until its complete safety contract exists. Sample uncertainty is described as sandbox inspection rather than a fake Review action.
+- Sample Test count is bounded by the actual Project image set. Dataset progress uses exact persisted counts, while an active single-image Run is explicitly indeterminate rather than derived from event volume.
+- Blocked journey actions remain keyboard-focusable with `aria-disabled` and an explicit prerequisite. Errors are route-scoped and Retry refetches only the current view.
+- Model names come from Registry/evidence metadata, node compatibility uses the exact capability contract, and New Project bbox recommendations require Ready models plus Human Review under Geometry Safety.
+- Browser path fields now identify themselves as advanced server-local sources and explicitly say they are not browser file pickers.
+- Evidence: 61 Web unit tests, Web typecheck, production build, and all 42 Chromium E2E journeys passed. The production build retains the tracked 577.73 kB bundle warning.
+- Milestone commit subject: `refactor(product): expose only complete and recoverable workspace actions`.
+
 ## Next exit
 
-M8 removes or repairs misleading controls, distinguishes Labs/read-only surfaces, makes progress and sample bounds truthful, and audits capability language and accessibility.
+M9 adds bounded, paginated summary queries and ownership indexes, proves query behavior at 100/1000-record scale, and incrementally extracts critical frontend route, server route, and application service modules without behavior regression.
