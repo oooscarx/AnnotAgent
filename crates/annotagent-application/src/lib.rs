@@ -1788,6 +1788,67 @@ fn adopt_builder_working_draft_identity(
     Ok(())
 }
 
+fn persist_discovered_conversion_fragments(
+    session: &mut AgentSession,
+    tool_name: &str,
+    provider_call_id: &str,
+    result: &annotagent_core::AgentToolResult,
+    context_revision: &str,
+    node_definitions: &[annotagent_core::NodeDefinition],
+) -> Result<()> {
+    let paths_value = match tool_name {
+        "find_artifact_conversion_path" => result.model_payload.get("paths"),
+        "find_geometry_refinement_path" => result.model_payload.get("registered_conversion_paths"),
+        _ => None,
+    };
+    let Some(paths_value) = paths_value else {
+        return Ok(());
+    };
+    let paths =
+        serde_json::from_value::<Vec<annotagent_core::ConversionPath>>(paths_value.clone())?;
+    for path in paths {
+        let identity = serde_json::to_vec(&json!({
+            "context_revision": context_revision,
+            "from": path.from,
+            "to": path.to,
+            "steps": path.steps,
+        }))?;
+        let digest = annotagent_image_tools::sha256(&identity);
+        let observation = annotagent_core::ObservationRef {
+            id: provider_call_id.to_owned(),
+            tool_name: tool_name.to_owned(),
+            original_call_id: provider_call_id.to_owned(),
+            context_revision: context_revision.to_owned(),
+        };
+        let mut fragment = annotagent_core::PipelineFragment::from_conversion_path(
+            format!("conversion-{}", &digest[..16]),
+            context_revision,
+            &path,
+            node_definitions,
+            observation.clone(),
+        )?;
+        if tool_name == "find_geometry_refinement_path" {
+            fragment
+                .required_skills
+                .extend(node_definitions.iter().filter_map(|definition| {
+                    definition
+                        .id
+                        .strip_prefix("robocup.")
+                        .map(|_| "robocup".to_owned())
+                }));
+        }
+        let mut candidate = fragment.partial_candidate(format!(
+            "{} to {} Registry conversion",
+            format!("{:?}", fragment.from_artifact).to_lowercase(),
+            format!("{:?}", fragment.to_artifact).to_lowercase()
+        ));
+        candidate.evidence.push(observation);
+        session.record_pipeline_fragment(fragment);
+        session.record_plan_candidate(candidate);
+    }
+    Ok(())
+}
+
 /// Re-evaluates only unresolved bindings on a persisted Draft after the human has completed a
 /// setup action. Manual node/configuration edits and the Draft identity are preserved. The Agent
 /// remains read-only with respect to installation: it can observe newly Available profiles and
@@ -13229,6 +13290,17 @@ impl LocalApplication {
                 {
                     break;
                 }
+                if success {
+                    let provider_call_id = call.id.to_string();
+                    persist_discovered_conversion_fragments(
+                        &mut session,
+                        &call.name,
+                        &provider_call_id,
+                        &result,
+                        &context_revision,
+                        &input.node_catalog,
+                    )?;
+                }
                 self.store.save_agent_session(&session)?;
                 messages.push(ModelMessage {
                     role: ModelRole::Tool,
@@ -21427,6 +21499,21 @@ export:
             .find(|step| step.tool_name == "find_geometry_refinement_path")
             .expect("persisted conversion-path observation");
         assert_eq!(path.result["model_payload"]["runnable"], json!(true));
+        assert_eq!(report.session.discovered_conversion_paths.len(), 1);
+        assert_eq!(report.session.plan_candidates.len(), 1);
+        assert_eq!(
+            report.session.plan_candidates[0].source,
+            annotagent_core::PipelineCandidateSource::ConversionPath
+        );
+        let persisted = application
+            .store
+            .get_agent_session(report.session.id)
+            .expect("persisted Builder Session");
+        assert_eq!(
+            persisted.discovered_conversion_paths,
+            report.session.discovered_conversion_paths
+        );
+        assert_eq!(persisted.plan_candidates, report.session.plan_candidates);
         let draft = &report.suggestion.expect("salvaged Draft").draft;
         assert!(
             draft
@@ -21439,6 +21526,95 @@ export:
                 .iter()
                 .map(|node| node.node_type.as_str())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn conversion_discovery_persists_fragment_and_candidate_before_materialization() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "fragment-persistence",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let input = application
+            .workflow_advisor_input_for_label(
+                "fragment-persistence",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder input");
+        let (nodes, _) = application
+            .workflow_catalog(&settings)
+            .expect("Workflow Registry");
+        let paths = annotagent_core::ArtifactConversionRegistry::default().find_conversion_path(
+            ArtifactKind::DetectionSet,
+            ArtifactKind::DetectionSet,
+            &nodes,
+        );
+        assert_eq!(paths.len(), 1);
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            PipelineBuilderConstraints::default().agent_budget(),
+        )
+        .with_project("fragment-persistence")
+        .with_builder_progress(
+            annotagent_core::PipelineBuilderBudget::default(),
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        session.set_builder_working_draft(
+            "working-draft",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            "registry-revision",
+        );
+        persist_discovered_conversion_fragments(
+            &mut session,
+            "find_geometry_refinement_path",
+            "scripted-call-3",
+            &annotagent_core::AgentToolResult::summary(
+                "Found typed refinement",
+                json!({"registered_conversion_paths": paths, "runnable": true}),
+            ),
+            "registry-revision",
+            &input.node_catalog,
+        )
+        .expect("persist conversion path");
+        application
+            .store
+            .save_agent_session(&session)
+            .expect("save Builder Session");
+
+        let restored = application
+            .store
+            .get_agent_session(session.id)
+            .expect("restore Builder Session");
+        assert_eq!(restored.discovered_conversion_paths.len(), 1);
+        assert_eq!(restored.plan_candidates.len(), 1);
+        let fragment = restored
+            .working_memory
+            .as_ref()
+            .and_then(|memory| memory.conversion_paths.values().next())
+            .expect("persisted Fragment");
+        assert_eq!(
+            fragment
+                .node_blueprints
+                .iter()
+                .map(|node| node.node_type.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "core.detections_to_box_prompts",
+                "capability.segment",
+                "core.mask_to_bbox",
+            ]
+        );
+        assert_eq!(
+            restored.plan_candidates[0].fragment_ids.as_slice(),
+            std::slice::from_ref(&fragment.id)
         );
     }
 

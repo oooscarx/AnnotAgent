@@ -145,6 +145,20 @@ pub struct PipelineFragment {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactEndpoint {
+    pub node_id: String,
+    pub port_id: String,
+    pub artifact_type: ArtifactKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterializedFragment {
+    pub entry_node_id: String,
+    pub output: ArtifactEndpoint,
+    pub added_node_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelinePlanCandidate {
     pub id: PlanCandidateId,
@@ -188,6 +202,338 @@ impl PipelinePlanCandidate {
                     && !binding.fixture_only
                     && binding.availability == "available"
             })
+    }
+}
+
+impl PipelineFragment {
+    pub fn from_conversion_path(
+        id: impl Into<String>,
+        context_revision: impl Into<String>,
+        path: &crate::ConversionPath,
+        node_definitions: &[crate::NodeDefinition],
+        source_observation: ObservationRef,
+    ) -> CoreResult<Self> {
+        if path.steps.is_empty() {
+            return Err(CoreError::Validation(
+                "Pipeline Fragment requires at least one conversion step".to_owned(),
+            ));
+        }
+        let id = id.into();
+        let mut nodes: Vec<WorkflowDraftNode> = Vec::with_capacity(path.steps.len());
+        let mut edges = Vec::with_capacity(path.steps.len().saturating_sub(1));
+        let mut required_model_capabilities = BTreeSet::new();
+        for (index, step) in path.steps.iter().enumerate() {
+            let definition = node_definitions
+                .iter()
+                .find(|definition| definition.id == step.node_id)
+                .ok_or_else(|| {
+                    CoreError::Validation(format!(
+                        "conversion step {:?} is not in the Node Registry",
+                        step.node_id
+                    ))
+                })?;
+            definition.validate().map_err(CoreError::Validation)?;
+            let input = definition
+                .input_ports
+                .iter()
+                .find(|port| port.artifact_type == step.from)
+                .ok_or_else(|| {
+                    CoreError::Validation(format!(
+                        "conversion step {:?} has no {:?} input",
+                        step.node_id, step.from
+                    ))
+                })?;
+            let output = definition
+                .output_ports
+                .iter()
+                .find(|port| port.artifact_type == step.to)
+                .ok_or_else(|| {
+                    CoreError::Validation(format!(
+                        "conversion step {:?} has no {:?} output",
+                        step.node_id, step.to
+                    ))
+                })?;
+            for additional in &step.additional_inputs {
+                if !definition
+                    .input_ports
+                    .iter()
+                    .any(|port| port.artifact_type == *additional)
+                {
+                    return Err(CoreError::Validation(format!(
+                        "conversion step {:?} is missing additional {:?} input",
+                        step.node_id, additional
+                    )));
+                }
+            }
+            if let Some(capability) = definition.required_model_capability {
+                required_model_capabilities.insert(capability);
+            }
+            let node_id = format!(
+                "fragment-{}-{}",
+                index + 1,
+                definition.id.replace(['.', '_'], "-")
+            );
+            let node = WorkflowDraftNode {
+                id: node_id.clone(),
+                node_type: definition.id.clone(),
+                kind: workflow_kind_for_definition(definition),
+                depends_on: if index == 0 {
+                    Vec::new()
+                } else {
+                    vec![nodes[index - 1].id.clone()]
+                },
+                inputs: definition
+                    .input_ports
+                    .iter()
+                    .map(|port| crate::NodePort {
+                        id: port.name.clone(),
+                        artifact_type: port.artifact_type,
+                        required: port.required,
+                        multiple: port.cardinality == crate::PortCardinality::Many,
+                    })
+                    .collect(),
+                outputs: definition
+                    .output_ports
+                    .iter()
+                    .map(|port| crate::NodePort {
+                        id: port.name.clone(),
+                        artifact_type: port.artifact_type,
+                        required: port.required,
+                        multiple: port.cardinality == crate::PortCardinality::Many,
+                    })
+                    .collect(),
+                ..WorkflowDraftNode::default()
+            };
+            if let Some(previous) = nodes.last() {
+                let previous_output = previous
+                    .outputs
+                    .iter()
+                    .find(|port| port.artifact_type == step.from)
+                    .ok_or_else(|| {
+                        CoreError::Validation(format!(
+                            "fragment step {:?} cannot consume the previous output",
+                            step.node_id
+                        ))
+                    })?;
+                edges.push(WorkflowEdge {
+                    from_node: previous.id.clone(),
+                    from_port: previous_output.id.clone(),
+                    to_node: node_id,
+                    to_port: input.name.clone(),
+                    route: None,
+                });
+            }
+            let _ = output;
+            nodes.push(node);
+        }
+        let fragment = Self {
+            id,
+            context_revision: context_revision.into(),
+            from_artifact: path.from,
+            to_artifact: path.to,
+            node_blueprints: nodes,
+            edge_blueprints: edges,
+            required_model_capabilities,
+            required_skills: BTreeSet::new(),
+            source_observation_ids: vec![source_observation.original_call_id],
+            created_at: Utc::now(),
+        };
+        fragment.validate_against_registry(node_definitions)?;
+        Ok(fragment)
+    }
+
+    pub fn validate_against_registry(
+        &self,
+        node_definitions: &[crate::NodeDefinition],
+    ) -> CoreResult<()> {
+        if self.node_blueprints.is_empty() {
+            return Err(CoreError::Validation(
+                "Pipeline Fragment has no node blueprints".to_owned(),
+            ));
+        }
+        for node in &self.node_blueprints {
+            let definition = node_definitions
+                .iter()
+                .find(|definition| definition.id == node.node_type)
+                .ok_or_else(|| {
+                    CoreError::Validation(format!(
+                        "Pipeline Fragment node {:?} is no longer registered",
+                        node.node_type
+                    ))
+                })?;
+            if node.inputs.iter().any(|port| {
+                !definition.input_ports.iter().any(|definition_port| {
+                    definition_port.name == port.id
+                        && definition_port.artifact_type == port.artifact_type
+                })
+            }) || node.outputs.iter().any(|port| {
+                !definition.output_ports.iter().any(|definition_port| {
+                    definition_port.name == port.id
+                        && definition_port.artifact_type == port.artifact_type
+                })
+            }) {
+                return Err(CoreError::Validation(format!(
+                    "Pipeline Fragment node {:?} no longer matches its Registry contract",
+                    node.node_type
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn materialize_into(
+        &self,
+        draft: &mut WorkflowDraft,
+        primary_input: &ArtifactEndpoint,
+        auxiliary_inputs: &BTreeMap<ArtifactKind, ArtifactEndpoint>,
+    ) -> CoreResult<MaterializedFragment> {
+        if primary_input.artifact_type != self.from_artifact {
+            return Err(CoreError::Validation(format!(
+                "Pipeline Fragment requires {:?}, received {:?}",
+                self.from_artifact, primary_input.artifact_type
+            )));
+        }
+        let existing_ids = draft
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if let Some(collision) = self
+            .node_blueprints
+            .iter()
+            .find(|node| existing_ids.contains(node.id.as_str()))
+        {
+            return Err(CoreError::Validation(format!(
+                "Pipeline Fragment node id {:?} already exists in the Draft",
+                collision.id
+            )));
+        }
+        let first = self.node_blueprints.first().ok_or_else(|| {
+            CoreError::Validation("Pipeline Fragment has no entry node".to_owned())
+        })?;
+        let first_input = first
+            .inputs
+            .iter()
+            .find(|port| port.artifact_type == self.from_artifact)
+            .ok_or_else(|| {
+                CoreError::Validation("Pipeline Fragment entry contract is invalid".to_owned())
+            })?;
+        let mut new_edges = self.edge_blueprints.clone();
+        new_edges.push(WorkflowEdge {
+            from_node: primary_input.node_id.clone(),
+            from_port: primary_input.port_id.clone(),
+            to_node: first.id.clone(),
+            to_port: first_input.id.clone(),
+            route: None,
+        });
+        for node in &self.node_blueprints {
+            for input in node.inputs.iter().filter(|input| input.required) {
+                let connected = new_edges
+                    .iter()
+                    .any(|edge| edge.to_node == node.id && edge.to_port == input.id);
+                if connected {
+                    continue;
+                }
+                let auxiliary = auxiliary_inputs.get(&input.artifact_type).ok_or_else(|| {
+                    CoreError::Validation(format!(
+                        "Pipeline Fragment node {:?} requires auxiliary {:?} input",
+                        node.node_type, input.artifact_type
+                    ))
+                })?;
+                new_edges.push(WorkflowEdge {
+                    from_node: auxiliary.node_id.clone(),
+                    from_port: auxiliary.port_id.clone(),
+                    to_node: node.id.clone(),
+                    to_port: input.id.clone(),
+                    route: None,
+                });
+            }
+        }
+        let last = self.node_blueprints.last().ok_or_else(|| {
+            CoreError::Validation("Pipeline Fragment has no output node".to_owned())
+        })?;
+        let output = last
+            .outputs
+            .iter()
+            .find(|port| port.artifact_type == self.to_artifact)
+            .ok_or_else(|| {
+                CoreError::Validation("Pipeline Fragment output contract is invalid".to_owned())
+            })?;
+        let added_node_ids = self
+            .node_blueprints
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        draft.nodes.extend(self.node_blueprints.clone());
+        draft.edges.extend(new_edges);
+        for node in &mut draft.nodes {
+            node.depends_on = draft
+                .edges
+                .iter()
+                .filter(|edge| edge.to_node == node.id)
+                .map(|edge| edge.from_node.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+        }
+        draft.status = WorkflowDraftStatus::Editing;
+        draft.updated_at = Utc::now();
+        Ok(MaterializedFragment {
+            entry_node_id: first.id.clone(),
+            output: ArtifactEndpoint {
+                node_id: last.id.clone(),
+                port_id: output.id.clone(),
+                artifact_type: output.artifact_type,
+            },
+            added_node_ids,
+        })
+    }
+
+    #[must_use]
+    pub fn partial_candidate(&self, name: impl Into<String>) -> PipelinePlanCandidate {
+        let now = Utc::now();
+        PipelinePlanCandidate {
+            id: format!("candidate-{}", self.id),
+            name: name.into(),
+            source: PipelineCandidateSource::ConversionPath,
+            status: PipelineCandidateStatus::Blocked,
+            sufficiency: CandidateSufficiency::Partial,
+            fragment_ids: vec![self.id.clone()],
+            node_blueprints: self.node_blueprints.clone(),
+            edge_blueprints: self.edge_blueprints.clone(),
+            model_bindings: Vec::new(),
+            skill_bindings: Vec::new(),
+            evidence: Vec::new(),
+            unresolved_bindings: self
+                .required_model_capabilities
+                .iter()
+                .map(|capability| format!("{capability:?} model binding is unresolved"))
+                .collect(),
+            output_artifact: self.to_artifact,
+            geometry_safety: CandidateGeometrySafety::Unsafe,
+            has_review_path: false,
+            has_commit_path: false,
+            registry_revision: self.context_revision.clone(),
+            score: PlanCandidateScore::default(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+fn workflow_kind_for_definition(definition: &crate::NodeDefinition) -> WorkflowNodeKind {
+    match definition.category {
+        crate::NodeCategory::Input => WorkflowNodeKind::ImageInput,
+        crate::NodeCategory::ImagePreparation | crate::NodeCategory::ResultTransform => {
+            WorkflowNodeKind::Transform
+        }
+        crate::NodeCategory::ModelInference => WorkflowNodeKind::VisionModel,
+        crate::NodeCategory::EvidenceAndValidation => WorkflowNodeKind::Validator,
+        crate::NodeCategory::HumanAndOutput => match definition.side_effect {
+            crate::NodeSideEffect::HumanSuspension => WorkflowNodeKind::HumanReview,
+            crate::NodeSideEffect::AnnotationCommit => WorkflowNodeKind::Commit,
+            crate::NodeSideEffect::None => WorkflowNodeKind::Transform,
+        },
     }
 }
 
@@ -3249,5 +3595,185 @@ mod tests {
             session.outcome,
             Some(PipelineBuilderOutcome::ProviderSetupRequired)
         );
+    }
+
+    #[test]
+    fn conversion_path_becomes_a_contract_checked_materializable_fragment() {
+        let port = |name: &str, artifact_type: ArtifactKind| crate::PortDefinition {
+            name: name.to_owned(),
+            artifact_type,
+            required: true,
+            cardinality: crate::PortCardinality::Many,
+        };
+        let definition =
+            |id: &str,
+             inputs: Vec<crate::PortDefinition>,
+             output: crate::PortDefinition,
+             capability: Option<ModelCapability>| crate::NodeDefinition {
+                id: id.to_owned(),
+                display_name: id.to_owned(),
+                category: if capability.is_some() {
+                    crate::NodeCategory::ModelInference
+                } else {
+                    crate::NodeCategory::ResultTransform
+                },
+                input_ports: inputs,
+                output_ports: vec![output],
+                config_schema: serde_json::json!({"type": "object"}),
+                required_model_capability: capability,
+                cardinality: crate::NodeCardinality::ManyToMany,
+                side_effect: crate::NodeSideEffect::None,
+                dry_run_supported: true,
+                expert_only: false,
+            };
+        let definitions = vec![
+            definition(
+                "core.detections_to_box_prompts",
+                vec![port("detections", ArtifactKind::DetectionSet)],
+                port("prompts", ArtifactKind::BoxPromptSet),
+                None,
+            ),
+            definition(
+                "capability.segment",
+                vec![
+                    port("prompts", ArtifactKind::BoxPromptSet),
+                    port("images", ArtifactKind::Image),
+                ],
+                port("masks", ArtifactKind::MaskSet),
+                Some(ModelCapability::PromptedSegmentation),
+            ),
+            definition(
+                "core.mask_to_bbox",
+                vec![port("masks", ArtifactKind::MaskSet)],
+                port("detections", ArtifactKind::DetectionSet),
+                None,
+            ),
+        ];
+        let path = crate::ConversionPath {
+            from: ArtifactKind::DetectionSet,
+            to: ArtifactKind::DetectionSet,
+            steps: vec![
+                crate::ArtifactConversion {
+                    from: ArtifactKind::DetectionSet,
+                    to: ArtifactKind::BoxPromptSet,
+                    node_id: "core.detections_to_box_prompts".to_owned(),
+                    additional_inputs: Vec::new(),
+                },
+                crate::ArtifactConversion {
+                    from: ArtifactKind::BoxPromptSet,
+                    to: ArtifactKind::MaskSet,
+                    node_id: "capability.segment".to_owned(),
+                    additional_inputs: vec![ArtifactKind::Image],
+                },
+                crate::ArtifactConversion {
+                    from: ArtifactKind::MaskSet,
+                    to: ArtifactKind::DetectionSet,
+                    node_id: "core.mask_to_bbox".to_owned(),
+                    additional_inputs: Vec::new(),
+                },
+            ],
+        };
+        let fragment = PipelineFragment::from_conversion_path(
+            "sam-refinement",
+            "registry-1",
+            &path,
+            &definitions,
+            ObservationRef {
+                id: "observation-1".to_owned(),
+                tool_name: "find_geometry_refinement_path".to_owned(),
+                original_call_id: "call-1".to_owned(),
+                context_revision: "registry-1".to_owned(),
+            },
+        )
+        .expect("typed Fragment");
+        assert_eq!(fragment.node_blueprints.len(), 3);
+        assert_eq!(fragment.edge_blueprints.len(), 2);
+        assert!(
+            fragment
+                .required_model_capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+        );
+        fragment
+            .validate_against_registry(&definitions)
+            .expect("Registry contract remains valid");
+        let candidate = fragment.partial_candidate("Prompted segmentation refinement");
+        assert_eq!(candidate.fragment_ids, ["sam-refinement"]);
+        assert_eq!(candidate.status, PipelineCandidateStatus::Blocked);
+        assert_eq!(candidate.unresolved_bindings.len(), 1);
+
+        let now = Utc::now();
+        let mut draft = WorkflowDraft {
+            schema_version: crate::WORKFLOW_SCHEMA_VERSION,
+            id: "working".to_owned(),
+            project_id: "project".to_owned(),
+            name: "Working Draft".to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: vec![
+                WorkflowDraftNode {
+                    id: "image".to_owned(),
+                    node_type: "core.image_input".to_owned(),
+                    kind: WorkflowNodeKind::ImageInput,
+                    outputs: vec![crate::NodePort {
+                        id: "image".to_owned(),
+                        artifact_type: ArtifactKind::Image,
+                        required: true,
+                        multiple: false,
+                    }],
+                    ..WorkflowDraftNode::default()
+                },
+                WorkflowDraftNode {
+                    id: "detector".to_owned(),
+                    node_type: "vlm_detection.detect".to_owned(),
+                    kind: WorkflowNodeKind::VisionLanguageModel,
+                    outputs: vec![crate::NodePort {
+                        id: "detections".to_owned(),
+                        artifact_type: ArtifactKind::DetectionSet,
+                        required: true,
+                        multiple: true,
+                    }],
+                    ..WorkflowDraftNode::default()
+                },
+            ],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let materialized = fragment
+            .materialize_into(
+                &mut draft,
+                &ArtifactEndpoint {
+                    node_id: "detector".to_owned(),
+                    port_id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                },
+                &BTreeMap::from([(
+                    ArtifactKind::Image,
+                    ArtifactEndpoint {
+                        node_id: "image".to_owned(),
+                        port_id: "image".to_owned(),
+                        artifact_type: ArtifactKind::Image,
+                    },
+                )]),
+            )
+            .expect("materialized Fragment");
+        assert_eq!(materialized.added_node_ids.len(), 3);
+        assert_eq!(
+            materialized.output.artifact_type,
+            ArtifactKind::DetectionSet
+        );
+        assert_eq!(draft.edges.len(), 4);
+        assert!(draft.edges.iter().any(|edge| {
+            edge.from_node == "image"
+                && edge.to_node == "fragment-2-capability-segment"
+                && edge.to_port == "images"
+        }));
     }
 }

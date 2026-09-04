@@ -1,5 +1,18 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M2 — 2026-09-05
+
+1. `conversion_path_becomes_a_contract_checked_materializable_fragment` converts the registered
+   DetectionSet → BoxPromptSet → MaskSet → DetectionSet path into three node blueprints and two
+   internal edges, then materializes it with the detector input and Image auxiliary edge.
+2. The same test verifies the Fragment declares PromptedSegmentation, returns a DetectionSet output,
+   creates a partial blocked Candidate, and checks every port against the current Node Registry.
+3. `conversion_discovery_persists_fragment_and_candidate_before_materialization` exercises the
+   Application capture boundary and restores the exact three-node Fragment plus Candidate from the
+   SQLite Session store before any final Draft exists.
+4. Focused strict Clippy passes. No template, model brand, secret, inference output, publication,
+   remote mutation or push is involved in conversion materialization.
+
 ## Builder Plan Preservation M1 — 2026-09-05
 
 1. `builder_working_plan_round_trips_fragments_candidates_and_selection` proves Build Mode, Working

@@ -61,3 +61,21 @@ Status: complete.
   instead of creating an unrelated Draft at the end of discovery.
 - Core serialization, SQLite round-trip, Application multi-turn editing and focused strict Clippy
   pass. Conversion observations are converted into fragments in Milestone 2.
+
+## Milestone 2 — conversion path materialization (2026-09-05)
+
+Status: complete.
+
+- `PipelineFragment::from_conversion_path` converts every registered conversion step into a
+  concrete node/edge blueprint and rejects missing nodes, incompatible ports and absent declared
+  auxiliary inputs.
+- `PipelineFragment::materialize_into` attaches the primary Artifact and required auxiliary
+  Artifacts to an editable Draft, updates dependencies and returns the exact typed output endpoint.
+- Successful artifact and geometry path Tool Results are captured immediately after the auditable
+  Tool step. A context-derived deterministic Fragment ID prevents duplicate discovery from
+  multiplying equivalent plans.
+- Every captured Fragment creates a persisted partial Plan Candidate with its Observation source and
+  unresolved capability binding. Binding and full-graph completion are performed by the M3
+  synthesizer rather than hidden in the conversion registry.
+- Core materialization and Application persistence tests pass; the original M0 regression still
+  reaches the expected final missing-segmentation assertion until candidate synthesis/salvage land.

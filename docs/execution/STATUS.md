@@ -2,6 +2,15 @@
 
 Last updated: 2026-09-03 CST
 
+## Builder Plan Preservation M2 — 2026-09-05
+
+- Registry Artifact conversion paths now become typed Pipeline Fragments with concrete node and edge
+  blueprints, model-capability requirements, source Observation references and deterministic IDs.
+- Fragment materialization wires both the primary Artifact and declared auxiliary inputs, including
+  the Image input required by prompted segmentation, and fails closed on Registry contract drift.
+- Builder conversion Tool success immediately persists both the Fragment and a partial Candidate in
+  Working Memory. Focused Core/Application tests and strict Clippy pass.
+
 ## Builder Plan Preservation M1 — 2026-09-05
 
 - Pipeline Builder Sessions now persist an explicit Build Mode and create a Working Draft at
