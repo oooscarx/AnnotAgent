@@ -3432,20 +3432,45 @@ async fn suggest_workflow(
                             "Provider setup required: configure a credential before starting Pipeline Builder",
                         )
                     })?;
+            let builder_api_key = credential.expose_secret().to_owned();
             let provider = OpenAiCompatibleProvider::new_with_api_key(
                 selected_model
                     .openai_compatible_config()
                     .map_err(ApiError::bad_request)?,
-                Some(credential.expose_secret().to_owned()),
+                Some(builder_api_key.clone()),
             )
             .map_err(ApiError::bad_request)?;
+            let mut runtime_provider_credentials =
+                BTreeMap::from([(selected_model.provider.id, builder_api_key)]);
+            for runtime_provider in state
+                .application
+                .store()
+                .list_provider_profiles()
+                .map_err(ApiError::internal)?
+            {
+                if runtime_provider.adapter == ProviderAdapterKind::Mock
+                    || runtime_provider.credential_ref.is_none()
+                    || runtime_provider_credentials.contains_key(&runtime_provider.id)
+                {
+                    continue;
+                }
+                if let Ok(Some(runtime_credential)) =
+                    resolve_provider_credential(&state, &runtime_provider).await
+                {
+                    runtime_provider_credentials.insert(
+                        runtime_provider.id,
+                        runtime_credential.expose_secret().to_owned(),
+                    );
+                }
+            }
             let report = state
                 .application
-                .run_workflow_advisor_with_selected_model_from_draft(
+                .run_workflow_advisor_with_selected_model_from_draft_and_runtime_credentials(
                     &request.project_id,
                     &settings,
                     &selected_model,
                     &provider,
+                    &runtime_provider_credentials,
                     &workflow_constraints,
                     target,
                     request.builder_constraints.clone(),

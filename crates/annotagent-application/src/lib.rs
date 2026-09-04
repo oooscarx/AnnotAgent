@@ -9921,6 +9921,91 @@ impl LocalApplication {
             suggestion,
             provider,
             Some(selected_model),
+            None,
+            builder_constraints,
+            base_draft_id.is_some(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Run a Registry-backed Builder while supplying caller-resolved credentials for model
+    /// Providers that may be exercised by the Agent's sandbox Dry Run. Provider credentials are
+    /// intentionally resolved by the Server and are never persisted in the Agent Session.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_workflow_advisor_with_selected_model_from_draft_and_runtime_credentials(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        selected_model: &PipelineBuilderModelRuntime,
+        provider: &dyn VisionModelProvider,
+        runtime_provider_credentials: &BTreeMap<ProviderId, String>,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        builder_constraints: PipelineBuilderConstraints,
+        base_draft_id: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
+        let input = self.workflow_advisor_input_for_label(
+            project_id,
+            settings,
+            constraints.clone(),
+            target.map(|value| value.0),
+            target.map(|value| value.1),
+        )?;
+        let suggestion = if let Some(draft_id) = base_draft_id {
+            let draft = self.store.get_workflow_draft(draft_id)?;
+            if draft.project_id != project_id {
+                bail!("retry Draft does not belong to the requested Project");
+            }
+            if matches!(
+                draft.status,
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
+            ) {
+                bail!("retry requires an editable Draft");
+            }
+            let unresolved_model_bindings = draft
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    node.unresolved_model_requirement
+                        .as_ref()
+                        .map(|requirement| requirement.reason.clone())
+                })
+                .collect::<Vec<_>>();
+            WorkflowSuggestion {
+                estimated_model_calls_per_image: draft
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.model_binding.is_some() || node.model_profile_binding.is_some()
+                    })
+                    .count(),
+                draft,
+                rationale: vec![
+                    "Retry continues from the latest persisted editable Draft.".to_owned(),
+                ],
+                estimated_latency_ms: None,
+                estimated_cost_tier: "unresolved".to_owned(),
+                unresolved_model_bindings,
+                warnings: Vec::new(),
+                alternatives: Vec::new(),
+            }
+        } else if let Some((task_id, label)) = target {
+            self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
+        } else {
+            self.suggest_workflow_preview(project_id, settings, constraints)?
+        };
+        self.run_workflow_advisor_loop(
+            project_id,
+            settings,
+            constraints,
+            target,
+            input,
+            suggestion,
+            provider,
+            Some(selected_model),
+            Some(runtime_provider_credentials),
             builder_constraints,
             base_draft_id.is_some(),
             cancellation,
@@ -9950,6 +10035,7 @@ impl LocalApplication {
             safe_suggestion,
             provider,
             None,
+            None,
             builder_constraints,
             false,
             cancellation,
@@ -9968,6 +10054,7 @@ impl LocalApplication {
         safe_suggestion: WorkflowSuggestion,
         provider: &dyn VisionModelProvider,
         selected_model: Option<&PipelineBuilderModelRuntime>,
+        runtime_provider_credentials: Option<&BTreeMap<ProviderId, String>>,
         builder_constraints: PipelineBuilderConstraints,
         resume_existing_draft: bool,
         cancellation: CancellationToken,
@@ -12606,13 +12693,56 @@ impl LocalApplication {
                             .ok_or_else(|| anyhow!("create a Draft before Dry Run"))?;
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         let image_indices = bounded_image_indices(&call.arguments)?;
-                        let report = self
-                            .dry_run_workflow_samples(
+                        let report = if let Some(credentials) = runtime_provider_credentials {
+                            let (_, profiles) = self.resolved_workflow_draft_model_profiles(
+                                &suggestion.draft.id,
+                            )?;
+                            let provider = profiles.first();
+                            if profiles.iter().any(|profile| {
+                                provider.is_some_and(|first| {
+                                    profile.provider_id != first.provider_id
+                                        || profile.provider_adapter != first.provider_adapter
+                                })
+                            }) {
+                                bail!(
+                                    "Pipeline Builder Dry Run currently requires one Provider connection per Draft"
+                                );
+                            }
+                            let provider_kind = provider.map_or("core", |profile| {
+                                match profile.provider_adapter {
+                                    ProviderAdapterKind::Mock => "mock",
+                                    ProviderAdapterKind::OpenAiCompatible => "openai_compatible",
+                                }
+                            });
+                            let temporary_api_key = provider.and_then(|profile| {
+                                credentials
+                                    .get(&profile.provider_id)
+                                    .map(String::as_str)
+                            });
+                            if provider.is_some_and(|profile| {
+                                profile.provider_adapter != ProviderAdapterKind::Mock
+                            }) && temporary_api_key.is_none()
+                            {
+                                bail!(
+                                    "Provider credential is configured but unavailable to the Pipeline Builder Dry Run"
+                                );
+                            }
+                            self.dry_run_workflow_samples_with_provider(
+                                &suggestion.draft.id,
+                                settings,
+                                &image_indices,
+                                provider_kind,
+                                temporary_api_key,
+                            )
+                            .await?
+                        } else {
+                            self.dry_run_workflow_samples(
                                 &suggestion.draft.id,
                                 settings,
                                 &image_indices,
                             )
-                            .await?;
+                            .await?
+                        };
                         let observation = agent_dry_run_summary(&report, &suggestion.draft);
                         let result = annotagent_core::AgentToolResult::summary(
                             "Completed sandbox Dry Run",
@@ -22214,6 +22344,7 @@ export:
                 safe,
                 &provider,
                 Some(&selected_builder),
+                None,
                 builder_constraints,
                 false,
                 CancellationToken::new(),
