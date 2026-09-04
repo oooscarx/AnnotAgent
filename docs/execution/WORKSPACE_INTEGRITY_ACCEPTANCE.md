@@ -26,15 +26,15 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## C. Routing
 
-- [ ] Project Runs is a real Project child route.
-- [ ] Project Review is a real Project child route.
-- [ ] Project Run Detail retains the Project Shell.
-- [ ] Project Batch Detail is deep-linkable.
-- [ ] Global Runs remains a cross-project index.
-- [ ] Global Review remains a cross-project index.
-- [ ] Legacy URLs redirect to the real owner.
-- [ ] Unknown URLs show Not Found.
-- [ ] Back/Forward preserves the correct hierarchy.
+- [x] Project Runs is a real Project child route.
+- [x] Project Review is a real Project child route.
+- [x] Project Run Detail retains the Project Shell.
+- [x] Project Batch Detail is deep-linkable.
+- [x] Global Runs remains a cross-project index.
+- [x] Global Review remains a cross-project index.
+- [x] Legacy URLs redirect to the real owner.
+- [x] Unknown URLs show Not Found.
+- [x] Back/Forward preserves the correct hierarchy.
 
 ## D. State recovery
 

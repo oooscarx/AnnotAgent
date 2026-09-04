@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M2 — stable identity and API truth.
-- Next milestone: M3 — Project-scoped route model.
+- Completed milestone: M3 — Project-scoped route model.
+- Next milestone: M4 — execution and Results integrity.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -25,7 +25,7 @@ Last updated: 2026-09-04
 | Targeted integrity navigation tests | Passed as 11 normal + 6 expected failures |
 | Ignored Rust integrity probes run explicitly | Failed as intended: untrusted CORS preflight returned 200; health exposed workspace path |
 
-## Confirmed implementation facts
+## Baseline findings (historical)
 
 - `CorsLayer::permissive()` protects no localhost privilege boundary.
 - `/api/health` serializes absolute workspace and database paths.
@@ -53,7 +53,7 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 
 ## Next exit
 
-M3 makes Project-owned Runs, Batches, and Reviews real nested routes, adds canonical owner redirects and Not Found, and preserves typed route state.
+M4 separates Dataset Run and Image Run truth, exposes real per-image progress/status, binds previews to owned images, and keeps final Results distinct from intermediate Debug Artifacts.
 
 ## M2 exit
 
@@ -65,3 +65,13 @@ M3 makes Project-owned Runs, Batches, and Reviews real nested routes, adds canon
 - Project model summaries query only persisted bindings for that Project. Run model summaries are derived only from immutable published `ModelProfileSnapshot` records; the fabricated `default-vision` binding was removed.
 - Evidence: Rust formatting and warning-denying clippy passed; storage/application/server suites passed (including the 100-image batch, duplicate-name/rename API isolation, Project binding isolation, stable image identity, and foreign-image write barrier); Web unit tests passed with the M2 expected failures promoted to normal tests; Web typecheck/build passed.
 - Milestone commit subject: `fix(core): preserve stable ownership across projects runs and images`.
+
+## M3 exit
+
+- Added typed canonical routes for Project Run indexes/details, Dataset Batch details, and Project Review indexes/details. Project-owned navigation now retains the Project context switcher, Project sidebar state, and owner-specific breadcrumbs.
+- Global `/runs` and `/review` remain unscoped discovery destinations. Query-scoped legacy URLs are replaced with nested Project URLs, and legacy global detail URLs are replaced with the resolved owner's canonical path without adding a duplicate browser-history entry.
+- Added an honest Dataset Run detail surface backed by persisted Batch summaries, aggregate status, controls, and child Image Run links. Foreign-owner Run and Batch paths resolve to their actual Project owner.
+- Unknown paths and invalid typed Build/settings routes now render Not Found at the original URL instead of silently becoming Home. Malformed encoded path segments also fail closed.
+- Pipeline route parsing now retains Draft ID or immutable Workflow/version identity; typed route builders round-trip encoded Project, Run, Batch, Review, image, node, and Artifact identifiers.
+- Evidence: 14 navigation unit tests passed; all 55 Web unit tests passed; Web typecheck and production build passed; all 40 Chromium E2E journeys passed, including Project hierarchy, legacy owner resolution, Back/Forward, Batch deep-link, global discovery, and Not Found coverage.
+- Milestone commit subject: `refactor(web): keep project-owned work inside the project workspace`.

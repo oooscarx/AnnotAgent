@@ -18,6 +18,8 @@ export type WorkspaceRoute =
       projectId: string;
       step: BuildStep;
       draftId?: string;
+      workflowId?: string;
+      workflowVersion?: number;
     }
   | {
       kind: "runs";
@@ -30,6 +32,19 @@ export type WorkspaceRoute =
       artifactId?: string;
       view?: "results" | "debug";
     }
+  | { kind: "projectRuns"; canonicalPath: string; projectId: string; status?: string }
+  | {
+      kind: "projectRun";
+      canonicalPath: string;
+      projectId: string;
+      runId: string;
+      imageId?: string;
+      nodeId?: string;
+      artifactId?: string;
+      view?: "results" | "debug";
+    }
+  | { kind: "projectBatch"; canonicalPath: string; projectId: string; batchId: string }
+  | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string }
   | {
       kind: "review";
       canonicalPath: string;
@@ -40,7 +55,54 @@ export type WorkspaceRoute =
       kind: "settings";
       canonicalPath: string;
       section: SettingsSection;
-    };
+    }
+  | { kind: "notFound"; canonicalPath: string; invalidPath: string };
+
+type RunUrlContext = {
+  imageId?: string;
+  nodeId?: string;
+  artifactId?: string;
+  view?: "results" | "debug";
+};
+
+function runContextSearch(context: RunUrlContext): string {
+  const params = new URLSearchParams();
+  if (context.view === "debug" || context.nodeId || context.artifactId) params.set("view", "debug");
+  if (context.imageId) params.set("image", context.imageId);
+  if (context.nodeId) params.set("node", context.nodeId);
+  if (context.artifactId) params.set("artifact", context.artifactId);
+  return params.size ? `?${canonicalSearch(params)}` : "";
+}
+
+function canonicalSearch(params: URLSearchParams): string {
+  return params.toString().replaceAll("+", "%20");
+}
+
+function decodePathSegment(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
+export function projectRunsPath(projectId: string, status?: string): string {
+  const base = `/projects/${encodeURIComponent(projectId)}/runs`;
+  return status && status !== "all" ? `${base}?status=${encodeURIComponent(status)}` : base;
+}
+
+export function projectRunPath(projectId: string, runId: string, context: RunUrlContext = {}): string {
+  return `/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}${runContextSearch(context)}`;
+}
+
+export function projectBatchPath(projectId: string, batchId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/batches/${encodeURIComponent(batchId)}`;
+}
+
+export function projectReviewPath(projectId: string, reviewItemId?: string): string {
+  const base = `/projects/${encodeURIComponent(projectId)}/review`;
+  return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}` : base;
+}
 
 const BUILD_STEPS = new Set<BuildStep>([
   "data",
@@ -88,8 +150,8 @@ export function parseWorkspaceRoute(
   if (clean === "/models")
     return {
       kind: "settings",
-      section: "vision-workers",
-      canonicalPath: "/settings/vision-workers",
+      section: "models",
+      canonicalPath: "/settings/models",
     };
   if (clean === "/providers")
     return {
@@ -100,24 +162,35 @@ export function parseWorkspaceRoute(
   if (clean === "/skills")
     return {
       kind: "settings",
-      section: "vision-workers",
-      canonicalPath: "/settings/vision-workers",
+      section: "plugins",
+      canonicalPath: "/settings/plugins",
     };
   const legacyArtifact = clean.match(/^\/(?:artifacts|artifact-inspector)(?:\/([^/]+))?$/);
   if (legacyArtifact) {
     const context = new URLSearchParams();
     const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
-    if (projectId) context.set("project_id", projectId);
+    if (projectId)
+      return {
+        kind: "projectRuns",
+        projectId,
+        canonicalPath: projectRunsPath(projectId),
+      };
     context.set("view", "debug");
-    if (legacyArtifact[1]) context.set("artifact", decodeURIComponent(legacyArtifact[1]));
+    const artifactId = legacyArtifact[1]
+      ? decodePathSegment(legacyArtifact[1])
+      : undefined;
+    if (legacyArtifact[1] && !artifactId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    if (artifactId) context.set("artifact", artifactId);
     return {
       kind: "runs",
-      projectId,
-      artifactId: legacyArtifact[1]
-        ? decodeURIComponent(legacyArtifact[1])
-        : undefined,
+      artifactId,
       view: "debug",
-      canonicalPath: `/runs?${context.toString()}`,
+      canonicalPath: `/runs?${canonicalSearch(context)}`,
     };
   }
   if (clean === "/projects")
@@ -127,24 +200,125 @@ export function parseWorkspaceRoute(
       canonicalPath: params.get("new") === "1" ? "/projects?new=1" : "/projects",
     };
 
+  const projectRun = clean.match(/^\/projects\/([^/]+)\/runs\/([^/]+)$/);
+  if (projectRun) {
+    const projectId = decodePathSegment(projectRun[1]);
+    const runId = decodePathSegment(projectRun[2]);
+    if (!projectId || !runId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    const context: RunUrlContext = {
+      imageId: params.get("image") ?? undefined,
+      nodeId: params.get("node") ?? undefined,
+      artifactId: params.get("artifact") ?? undefined,
+      view: params.get("view") === "debug" || params.has("node") || params.has("artifact") ? "debug" : undefined,
+    };
+    return {
+      kind: "projectRun",
+      projectId,
+      runId,
+      ...context,
+      canonicalPath: projectRunPath(projectId, runId, context),
+    };
+  }
+  const projectRuns = clean.match(/^\/projects\/([^/]+)\/runs$/);
+  if (projectRuns) {
+    const projectId = decodePathSegment(projectRuns[1]);
+    if (!projectId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    const status = params.get("status") ?? undefined;
+    return { kind: "projectRuns", projectId, status, canonicalPath: projectRunsPath(projectId, status) };
+  }
+  const projectBatch = clean.match(/^\/projects\/([^/]+)\/batches\/([^/]+)$/);
+  if (projectBatch) {
+    const projectId = decodePathSegment(projectBatch[1]);
+    const batchId = decodePathSegment(projectBatch[2]);
+    if (!projectId || !batchId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    return {
+      kind: "projectBatch",
+      projectId,
+      batchId,
+      canonicalPath: projectBatchPath(projectId, batchId),
+    };
+  }
+  const projectReview = clean.match(/^\/projects\/([^/]+)\/review(?:\/([^/]+))?$/);
+  if (projectReview) {
+    const projectId = decodePathSegment(projectReview[1]);
+    const reviewItemId = projectReview[2]
+      ? decodePathSegment(projectReview[2])
+      : undefined;
+    if (!projectId || (projectReview[2] && !reviewItemId))
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    return {
+      kind: "projectReview",
+      projectId,
+      reviewItemId,
+      canonicalPath: projectReviewPath(projectId, reviewItemId),
+    };
+  }
+
   const build = clean.match(/^\/projects\/([^/]+)\/build\/([^/]+)$/);
   if (build) {
-    const projectId = decodeURIComponent(build[1]);
+    const projectId = decodePathSegment(build[1]);
     const candidate = build[2] as BuildStep;
-    const step = BUILD_STEPS.has(candidate) ? candidate : "data";
-    const draftId = step === "test" ? params.get("draft") ?? undefined : undefined;
-    const draftContext = draftId ? `?draft=${encodeURIComponent(draftId)}` : "";
+    if (!projectId || !BUILD_STEPS.has(candidate))
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    const step = candidate;
+    const draftId = step === "test" || step === "pipeline" ? params.get("draft") ?? undefined : undefined;
+    const workflowId = step === "pipeline" ? params.get("workflow") ?? undefined : undefined;
+    const parsedVersion = step === "pipeline" && params.get("version") ? Number(params.get("version")) : undefined;
+    const workflowVersion =
+      parsedVersion !== undefined &&
+      Number.isInteger(parsedVersion) &&
+      parsedVersion > 0
+        ? parsedVersion
+        : undefined;
+    const context = new URLSearchParams();
+    if (draftId) context.set("draft", draftId);
+    if (workflowId && workflowVersion) {
+      context.set("workflow", workflowId);
+      context.set("version", String(workflowVersion));
+    }
+    const draftContext = context.size ? `?${canonicalSearch(context)}` : "";
     return {
       kind: "build",
       projectId,
       step,
       draftId,
+      workflowId,
+      workflowVersion,
       canonicalPath: `/projects/${encodeURIComponent(projectId)}/build/${step}${draftContext}`,
     };
   }
   const projectExport = clean.match(/^\/projects\/([^/]+)\/export$/);
   if (projectExport) {
-    const projectId = decodeURIComponent(projectExport[1]);
+    const projectId = decodePathSegment(projectExport[1]);
+    if (!projectId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
     return {
       kind: "export",
       projectId,
@@ -153,7 +327,13 @@ export function parseWorkspaceRoute(
   }
   const project = clean.match(/^\/projects\/([^/]+)$/);
   if (project) {
-    const projectId = decodeURIComponent(project[1]);
+    const projectId = decodePathSegment(project[1]);
+    if (!projectId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
     return {
       kind: "project",
       projectId,
@@ -175,17 +355,55 @@ export function parseWorkspaceRoute(
       const value = params.get(key);
       if (value) context.set(key, value);
     }
-    const suffix = context.size ? `?${context.toString()}` : "";
+    const suffix = context.size ? `?${canonicalSearch(context)}` : "";
+    if (projectId) {
+      if (!run[1])
+        return {
+          kind: "projectRuns",
+          projectId,
+          status,
+          canonicalPath: projectRunsPath(projectId, status),
+        };
+      const runId = decodePathSegment(run[1]);
+      if (!runId)
+        return {
+          kind: "notFound",
+          invalidPath: `${clean}${search}`,
+          canonicalPath: `${clean}${search}`,
+        };
+      const runContext: RunUrlContext = {
+        imageId: params.get("image") ?? undefined,
+        nodeId: params.get("node") ?? undefined,
+        artifactId: params.get("artifact") ?? undefined,
+        view,
+      };
+      return {
+        kind: "projectRun",
+        projectId,
+        runId,
+        ...runContext,
+        canonicalPath: projectRunPath(projectId, runId, runContext),
+      };
+    }
+    const runId = run[1] ? decodePathSegment(run[1]) : undefined;
+    if (run[1] && !runId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
     return {
       kind: "runs",
-      runId: run[1] ? decodeURIComponent(run[1]) : undefined,
+      runId,
       projectId,
       status,
       imageId: params.get("image") ?? undefined,
       nodeId: params.get("node") ?? undefined,
       artifactId: params.get("artifact") ?? undefined,
       view,
-      canonicalPath: run[1] ? `/runs/${run[1]}${suffix}` : `/runs${suffix}`,
+      canonicalPath: runId
+        ? `/runs/${encodeURIComponent(runId)}${suffix}`
+        : `/runs${suffix}`,
     };
   }
   const review = clean.match(/^\/review(?:\/([^/]+))?$/);
@@ -194,18 +412,40 @@ export function parseWorkspaceRoute(
     const context = new URLSearchParams();
     if (projectId) context.set("project_id", projectId);
     const suffix = context.size ? `?${context.toString()}` : "";
+    const reviewItemId = review[1] ? decodePathSegment(review[1]) : undefined;
+    if (review[1] && !reviewItemId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    if (projectId)
+      return {
+        kind: "projectReview",
+        projectId,
+        reviewItemId,
+        canonicalPath: projectReviewPath(projectId, reviewItemId),
+      };
     return {
       kind: "review",
-      reviewItemId: review[1] ? decodeURIComponent(review[1]) : undefined,
+      reviewItemId,
       projectId,
-      canonicalPath: review[1] ? `/review/${review[1]}${suffix}` : `/review${suffix}`,
+      canonicalPath: reviewItemId
+        ? `/review/${encodeURIComponent(reviewItemId)}${suffix}`
+        : `/review${suffix}`,
     };
   }
   const settings = clean.match(/^\/settings(?:\/([^/]+))?$/);
   if (settings) {
     const legacy = settings[1] === "general" ? "storage" : settings[1];
     const candidate = (legacy ?? "providers") as SettingsSection;
-    const section = SETTINGS_SECTIONS.has(candidate) ? candidate : "providers";
+    if (!SETTINGS_SECTIONS.has(candidate))
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    const section = candidate;
     return {
       kind: "settings",
       section,
@@ -213,5 +453,5 @@ export function parseWorkspaceRoute(
         section === "providers" ? "/settings" : `/settings/${section}`,
     };
   }
-  return { kind: "home", canonicalPath: "/" };
+  return { kind: "notFound", invalidPath: `${clean}${search}`, canonicalPath: `${clean}${search}` };
 }

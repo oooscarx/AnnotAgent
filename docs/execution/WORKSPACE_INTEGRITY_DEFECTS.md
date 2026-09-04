@@ -34,21 +34,21 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 
 | ID | Defect / impact | Evidence / location | Repair and regression | Commit | Status |
 | --- | --- | --- | --- | --- | --- |
-| P2-01 | Project Runs/Review are filtered global pages, not child routes | `navigation.ts`, App links | Add ProjectShell route kinds/builders; expected-failure tests added | M3 | test-added |
+| P2-01 | Project Runs/Review are filtered global pages, not child routes | `navigation.ts`, App links | Typed Project child routes, Project-context shell state, and browser regressions pass | M3 | accepted |
 | P2-02 | Starting a dataset Run lands on a list, not the new execution | start handler uses `/runs?project_id=` | Return IDs and navigate directly to Batch Detail | M4 | reproduced |
-| P2-03 | Batch Detail has no deep link | route model lacks batch detail | Add stable batch route/API/view | M3/M4 | test-added |
-| P2-04 | Run/Review/back links lose Project scope | links use global paths/query filters | Owner-aware typed route builders | M3 | reproduced |
-| P2-05 | Run canonicalization drops `project_id` | current canonicalizer reconstructs partial route | Canonical nested route after owner resolution | M3 | test-added |
-| P2-06 | Legacy `/models` and `/skills` redirect to Vision Workers | `navigation.ts` | Redirect to `/settings/models` and `/settings/plugins` | M3 | test-added |
-| P2-07 | Unknown URLs silently become Home | navigation fallback | Explicit NotFound route | M3 | test-added |
-| P2-08 | Canonicalizer drops query state not typed in Route | route parser/builder | Typed query schema and round-trip tests | M3/M5 | test-added |
+| P2-03 | Batch Detail has no deep link | route model lacks batch detail | Stable Project Batch route and real persisted-summary view pass unit/E2E coverage | M3 | accepted |
+| P2-04 | Run/Review/back links lose Project scope | links use global paths/query filters | Owner-aware typed links and Back/Forward regression pass | M3 | accepted |
+| P2-05 | Run canonicalization drops `project_id` | current canonicalizer reconstructs partial route | Owner resolution replaces the alias with a canonical nested route and preserves typed context | M3 | accepted |
+| P2-06 | Legacy `/models` and `/skills` redirect to Vision Workers | `navigation.ts` | Redirects now target `/settings/models` and `/settings/plugins` | M3 | accepted |
+| P2-07 | Unknown URLs silently become Home | navigation fallback | Explicit NotFound route preserves the invalid URL | M3 | accepted |
+| P2-08 | Canonicalizer drops query state not typed in Route | route parser/builder | Current route identities are typed and round-trip; async ownership/selection recovery continues in M5 | M3/M5 | implementing |
 | P2-09 | Image/node/artifact selection repeatedly moves focus to H1 | route change focus effect treats query changes as page changes | Focus on pathname/page identity only | M5 | reproduced |
 | P2-10 | URL and localStorage compete as active Project truth | workspace selection bootstrap | URL/server owner first; localStorage preference only | M5 | reproduced |
 | P2-11 | Run image status filter is a dead control | control state is not applied to list | Implement server/client filtering or remove control | M8 | reproduced |
 | P2-12 | Selecting image/node/artifact forces Debug | coupled selection/view state | Preserve explicit view and validate query combinations | M5 | reproduced |
 | P2-13 | Image query lacks full type/ownership validation | loosely parsed query | Typed parse plus owner validation | M5 | reproduced |
 | P2-14 | Debug artifacts load only when checkpoint flag exists | conditional data fetch | Load inspector artifacts from capability/endpoint truth | M4/M5 | reproduced |
-| P2-15 | Pipeline URL omits selected Draft/version | route model has no identity query | Add `draft`/`workflow`/`version` URL state; tests added | M3/M5 | test-added |
+| P2-15 | Pipeline URL omits selected Draft/version | route model has no identity query | Parser/builders retain `draft` or `workflow`/`version`; UI state authority and stale-response safety continue in M5 | M3/M5 | implementing |
 | P2-16 | Stale async responses overwrite newly selected pages | effects lack cancellation/request identity | Route-aware query cache and AbortController | M5 | reproduced |
 | P2-17 | SSE invalidation and frequent polling duplicate synchronization | independent refresh loops | SSE invalidates cache; one bounded recovery poll | M5 | reproduced |
 | P2-18 | Advanced graph editor can create unsafe graphs | editor permits invalid connections/states | Move to read-only/Labs until graph-safe editing is complete | M8 | reproduced |
@@ -64,6 +64,6 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P2-28 | Generic role filtering can reject valid VLM detection models | selector uses broad role instead of node contract | Capability-contract compatibility query | M8 | reproduced |
 | P2-29 | New Project recommendations conflict with Geometry Safety | recommendation path omits safety constraints | Feed enforced contracts and block unsafe draft | M8 | reproduced |
 | P2-30 | Browser UI asks for server-local file paths | import UI exposes filesystem-path text | Upload/chooser protocol with explicit server-source alternative | M8 | reproduced |
-| P2-31 | Existing tests encode the wrong information architecture | tests expect query-scoped global pages | New expected-failure route tests added; replace old assertions in M3 | M3 | test-added |
+| P2-31 | Existing tests encode the wrong information architecture | tests expect query-scoped global pages | Old assertions now require nested ownership routes; full Web and E2E suites pass | M3 | accepted |
 | P2-32 | Summary/list APIs perform N+1 and unbounded loads | `run_summary` loads full history; lists unpaginated | Summary SQL, pagination, indexes, 1000-Run query budget | M9 | reproduced |
 | P2-33 | Huge frontend/server/application files amplify regression risk | App/server/application modules are oversized | Covered incremental feature extraction | M9 | reproduced |

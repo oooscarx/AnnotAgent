@@ -1,6 +1,6 @@
 # Workspace Integrity Blockers
 
-No implementation blocker currently prevents M0 or M1.
+No implementation blocker currently prevents M4.
 
 ## Input gaps
 
@@ -8,4 +8,3 @@ No implementation blocker currently prevents M0 or M1.
 - External provider, billable probe, and real model-weight tests require user-owned services/assets. They remain explicitly ignored and cannot count as release evidence until a safe non-billable fixture or user-authorized environment is available.
 
 These are tracked gaps, not permission to fabricate successful integrations or substitute mock behavior for real capability.
-

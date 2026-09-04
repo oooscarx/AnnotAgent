@@ -659,7 +659,7 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   await page.goto("/runs");
   const row = page.locator(".run-row").filter({ hasText: projectName });
   await row.click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}`));
   await expect(page.getByRole("button", { name: "Results", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Run result summary")).toContainText("Accepted");
   await expect(page.getByLabel("Run result summary")).toContainText("Needs review");
@@ -690,7 +690,7 @@ test("global Runs and Review ignore hidden active Project state", async ({ page 
 
   await page.goto(`/review?project_id=${projectId}`);
   await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
-  await expect(page).toHaveURL(new RegExp(`/review(?:/[^?]+)?\\?project_id=${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review$`));
 });
 
 test("Run URL refresh restores image and node context", async ({ page }) => {
@@ -726,7 +726,7 @@ test("Run URL refresh restores image and node context", async ({ page }) => {
   expect(zoomAlignment).toBeLessThanOrEqual(1);
   await page.screenshot({ path: `${screenshots}/08-run-debug.png`, fullPage: true });
   await page.reload();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=debug&image=0&node=core.image_input`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}\\?view=debug&image=0&node=core.image_input`));
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
 });
 
@@ -768,9 +768,82 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await expect(page.locator(".canvas-tools strong")).toHaveText("100%");
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByRole("button", { name: /Open run context/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}`));
   await page.getByRole("button", { name: /Review \d+ result/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/${reviewId}$`));
+});
+
+test("Project-owned routes preserve hierarchy, resolve owners, and expose Batch detail", async ({ page }) => {
+  await page.goto(`/projects/${projectId}/runs`);
+  await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
+  await expect(page.locator(".sidebar [aria-current='page']")).toHaveCount(1);
+  await expect(page.locator(".sidebar [aria-current='page']")).toContainText("Projects");
+  await page.locator(".run-row").filter({ hasText: projectName }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/projects/${projectId}/runs/${runId}$`),
+  );
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs$`));
+  await page.goForward();
+  await expect(page).toHaveURL(
+    new RegExp(`/projects/${projectId}/runs/${runId}$`),
+  );
+
+  await page.goto(`/projects/${emptyProjectId}/runs/${runId}`);
+  await expect(page).toHaveURL(
+    new RegExp(`/projects/${projectId}/runs/${runId}$`),
+  );
+  await page.goto(`/review/${reviewId}`);
+  await expect(page).toHaveURL(
+    new RegExp(`/projects/${projectId}/review/${reviewId}$`),
+  );
+
+  const batchId = randomUUID();
+  await page.route("**/api/batches", (route) =>
+    route.fulfill({
+      json: {
+        batches: [{
+          id: batchId,
+          project_id: projectId,
+          provider: "fixture",
+          status: "completed",
+          max_concurrency: 1,
+          workflow_version: "guided@1",
+          workflow_snapshot: { draft: { name: "Guided automation" } },
+          budget_ledger: {
+            consumed: {
+              input_tokens: 0,
+              output_tokens: 0,
+              total_tokens: 0,
+              request_count: 0,
+              image_count: 1,
+              cost: "0",
+            },
+          },
+          progress: {
+            total_images: 1,
+            pending_images: 0,
+            running_images: 0,
+            completed_images: 1,
+            failed_images: 0,
+            review_images: 0,
+            cancelled_images: 0,
+          },
+          child_run_ids: [runId],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }],
+      },
+    }),
+  );
+  await page.goto(`/projects/${projectId}/batches/${batchId}`);
+  await expect(page.getByText(`Dataset Run · ${batchId.slice(0, 8)}`)).toBeVisible();
+  await expect(page.getByLabel("Dataset Run progress")).toBeVisible();
+
+  await page.goto("/missing/deep-link");
+  await expect(page.getByRole("heading", { name: "Not Found", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This page does not exist" })).toBeVisible();
+  await expect(page).toHaveURL(/\/missing\/deep-link$/);
 });
 
 test("Review workspace has tablet and mobile layouts without horizontal overflow", async ({ page }) => {
@@ -1174,7 +1247,7 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await page.getByRole("dialog", { name: "Why is this result incorrect?" }).getByRole("button", { name: "Reject & next" }).click();
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue to export" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/review\\?project_id=${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review$`));
   await page.reload();
   await expect(page.getByLabel("Review progress")).toContainText("1 of 1 results reviewed");
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
@@ -1213,7 +1286,7 @@ test("Export readiness blocks unresolved reviews and persists a completed export
   await expect(page.getByText("1 annotation still requires a human decision.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Export AnnotAgent Native dataset" })).toBeDisabled();
   await page.getByRole("button", { name: "Resolve" }).click();
-  await expect(page).toHaveURL(new RegExp(`/review/${exportReviewId}\\?project_id=${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review$`));
   await page.getByRole("button", { name: "Accept and next" }).click();
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
   await page.getByRole("button", { name: "Continue to export" }).click();
@@ -1253,7 +1326,7 @@ test("Build and Runs state survives refresh plus browser history", async ({ page
 
   await page.goto(`/runs?project_id=${projectId}`);
   await page.getByLabel("Status filter").selectOption("completed");
-  await expect(page).toHaveURL(new RegExp(`/runs\\?project_id=${projectId}&status=completed$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs\\?status=completed$`));
   await page.reload();
   await expect(page.getByLabel("Project filter")).toHaveValue(projectId);
   await expect(page.getByLabel("Status filter")).toHaveValue("completed");
@@ -1333,8 +1406,8 @@ test("release surfaces keep one primary action and remain operable at compact vi
     `/projects/${projectId}/build/pipeline`,
     `/projects/${projectId}/build/test`,
     "/runs",
-    `/runs/${runId}`,
-    `/review?project_id=${projectId}`,
+    `/projects/${projectId}/runs/${runId}`,
+    `/projects/${projectId}/review`,
     `/projects/${projectId}/export`,
     "/settings",
   ];
@@ -1369,8 +1442,8 @@ test("release surfaces keep one primary action and remain operable at compact vi
     `/projects/${projectId}/build/labels`,
     `/projects/${projectId}/build/pipeline`,
     `/projects/${projectId}/build/test`,
-    `/runs/${runId}`,
-    `/review?project_id=${projectId}`,
+    `/projects/${projectId}/runs/${runId}`,
+    `/projects/${projectId}/review`,
     `/projects/${projectId}/export`,
   ]) {
     await page.goto(route);

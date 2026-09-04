@@ -47,3 +47,7 @@ The session cookie is HttpOnly, host-only, `SameSite=Strict`, and expires with t
 ## D-012 — Unresolved legacy ownership is explicit, never guessed
 
 Startup reconciliation assigns a null legacy `Run.project_id` only when the legacy display name has exactly one current Project owner. Ambiguous or deleted ownership remains orphaned. Required API identity fields use a namespaced `legacy-orphan:<run-id>` resolver token and an `ownership_status` flag, which cannot be mistaken for a valid Project route.
+
+## D-013 — Owner discovery replaces, rather than extends, browser history
+
+Global Run and Review detail URLs remain compatibility entry points because bookmarks can outlive the route migration. Once the stable owner is present in server state, the client uses `history.replaceState` to install the canonical nested Project URL while preserving typed image, node, Artifact, and view context. A mismatched Project/object URL is treated the same way. This prevents a foreign Project shell from displaying owned work and keeps Back from returning to a transient alias.

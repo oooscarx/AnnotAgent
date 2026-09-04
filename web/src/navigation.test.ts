@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkspaceRoute } from "./navigation";
+import {
+  parseWorkspaceRoute,
+  projectBatchPath,
+  projectReviewPath,
+  projectRunPath,
+  projectRunsPath,
+} from "./navigation";
 
 describe("guided workspace routing", () => {
   it("maps the five primary destinations", () => {
@@ -12,13 +18,13 @@ describe("guided workspace routing", () => {
 
   it("migrates legacy registry routes", () => {
     expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/");
-    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/vision-workers");
+    expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
     expect(parseWorkspaceRoute("/providers").canonicalPath).toBe("/settings");
     expect(parseWorkspaceRoute("/settings/providers").canonicalPath).toBe(
       "/settings",
     );
     expect(parseWorkspaceRoute("/skills").canonicalPath).toBe(
-      "/settings/vision-workers",
+      "/settings/plugins",
     );
     expect(
       parseWorkspaceRoute("/workflows", "?project_id=alpha").canonicalPath,
@@ -28,7 +34,7 @@ describe("guided workspace routing", () => {
     );
     expect(
       parseWorkspaceRoute("/artifact-inspector", "?project=alpha").canonicalPath,
-    ).toBe("/runs?project_id=alpha&view=debug");
+    ).toBe("/projects/alpha/runs");
   });
 
   it("keeps Expert Model Plugins as a durable Settings destination", () => {
@@ -93,29 +99,29 @@ describe("guided workspace routing", () => {
     });
   });
 
-  it("keeps global Project filters explicit in the URL", () => {
+  it("migrates query-scoped legacy links into the Project hierarchy", () => {
     expect(parseWorkspaceRoute("/runs", "?project_id=alpha&status=failed")).toMatchObject({
-      kind: "runs",
+      kind: "projectRuns",
       projectId: "alpha",
       status: "failed",
-      canonicalPath: "/runs?project_id=alpha&status=failed",
+      canonicalPath: "/projects/alpha/runs?status=failed",
     });
     expect(parseWorkspaceRoute("/review", "?project_id=alpha")).toMatchObject({
-      kind: "review",
+      kind: "projectReview",
       projectId: "alpha",
-      canonicalPath: "/review?project_id=alpha",
+      canonicalPath: "/projects/alpha/review",
     });
     expect(parseWorkspaceRoute("/review/item-1", "?project_id=alpha")).toMatchObject({
-      kind: "review",
+      kind: "projectReview",
       reviewItemId: "item-1",
       projectId: "alpha",
-      canonicalPath: "/review/item-1?project_id=alpha",
+      canonicalPath: "/projects/alpha/review/item-1",
     });
     expect(parseWorkspaceRoute("/runs")).not.toHaveProperty("projectId", "alpha");
     expect(parseWorkspaceRoute("/review")).not.toHaveProperty("projectId", "alpha");
   });
 
-  it.fails("models the Project-owned Run, Batch, and Review hierarchy in paths", () => {
+  it("models the Project-owned Run, Batch, and Review hierarchy in paths", () => {
     expect(parseWorkspaceRoute("/projects/project-a/runs")).toMatchObject({
       kind: "projectRuns",
       projectId: "project-a",
@@ -137,7 +143,7 @@ describe("guided workspace routing", () => {
     });
   });
 
-  it.fails("keeps Pipeline Draft and Published Version identity in the URL", () => {
+  it("keeps Pipeline Draft and Published Version identity in the URL", () => {
     expect(
       parseWorkspaceRoute(
         "/projects/project-a/build/pipeline",
@@ -161,15 +167,40 @@ describe("guided workspace routing", () => {
     });
   });
 
-  it.fails("does not silently rewrite an unknown deep link to Home", () => {
+  it("does not silently rewrite an unknown deep link to Home", () => {
     expect(parseWorkspaceRoute("/missing/deep-link")).toMatchObject({
       kind: "notFound",
       invalidPath: "/missing/deep-link",
     });
   });
 
-  it.fails("redirects legacy model and capability destinations to their real owners", () => {
+  it("redirects legacy model and capability destinations to their real owners", () => {
     expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
     expect(parseWorkspaceRoute("/skills").canonicalPath).toBe("/settings/plugins");
+  });
+
+  it("round-trips typed Project child route builders", () => {
+    const routes = [
+      projectRunsPath("project / one", "failed"),
+      projectRunPath("project / one", "run / one", {
+        imageId: "image / one",
+        nodeId: "detect ball",
+        artifactId: "artifact / one",
+        view: "debug",
+      }),
+      projectBatchPath("project / one", "batch / one"),
+      projectReviewPath("project / one", "review / one"),
+    ];
+    for (const path of routes) {
+      const url = new URL(path, "http://annotagent.local");
+      expect(parseWorkspaceRoute(url.pathname, url.search).canonicalPath).toBe(path);
+    }
+  });
+
+  it("keeps malformed path segments and build steps out of valid workspaces", () => {
+    expect(parseWorkspaceRoute("/projects/%E0%A4%A/runs").kind).toBe("notFound");
+    expect(parseWorkspaceRoute("/projects/demo/build/not-a-step").kind).toBe(
+      "notFound",
+    );
   });
 });

@@ -17,9 +17,9 @@ This ledger is the durable execution plan for the workspace-integrity program. T
 | --- | --- | --- | --- | --- |
 | M0 | Baseline, audit, expected-failure regressions | Full baseline plus executable ownership, routing, and security failures | `test(integrity): reproduce workspace ownership and navigation failures` | Complete |
 | M1 | Same-origin security boundary | Strict Origin/Host, session, CSRF, privileged confirmation, resource limits, plugin policy | `fix(security): protect privileged localhost APIs from cross-origin access` | Complete |
-| M2 | Stable identity and API truth | Stable Project/Run/Review/Image IDs, real bindings, migrations, API tests | `fix(core): preserve stable ownership across projects runs and images` | Next |
-| M3 | Project route model | GlobalShell, ProjectShell, canonical nested routes, redirects, Not Found | `refactor(web): keep project-owned work inside the project workspace` | Pending |
-| M4 | Execution and result integrity | Batch/Image detail, real progress, final projection, artifact ownership | `fix(run): separate dataset execution final results and debug artifacts` | Pending |
+| M2 | Stable identity and API truth | Stable Project/Run/Review/Image IDs, real bindings, migrations, API tests | `fix(core): preserve stable ownership across projects runs and images` | Complete |
+| M3 | Project route model | GlobalShell, ProjectShell, canonical nested routes, redirects, Not Found | `refactor(web): keep project-owned work inside the project workspace` | Complete |
+| M4 | Execution and result integrity | Batch/Image detail, real progress, final projection, artifact ownership | `fix(run): separate dataset execution final results and debug artifacts` | Next |
 | M5 | Recoverable frontend state | Route-aware cache, cancellation, URL selections, SSE invalidation | `fix(web): restore project run workflow and review context from URLs` | Pending |
 | M6 | Workflow lifecycle | Draft revision, optimistic concurrency, immutable content-addressed sample tests | `fix(workflow): bind publication to the exact tested draft revision` | Pending |
 | M7 | Review integrity | Scoped endpoints, item-keyed edits, guards, provenance, navigation | `fix(review): preserve ownership edits and provenance across review navigation` | Pending |

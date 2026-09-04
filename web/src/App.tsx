@@ -12,6 +12,10 @@ import { deriveProjectRunView } from "./runState";
 import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
+  projectBatchPath,
+  projectReviewPath,
+  projectRunPath,
+  projectRunsPath,
   type SettingsSection,
   type WorkspaceRoute,
 } from "./navigation";
@@ -86,7 +90,9 @@ import type {
   VerifiedModelBundlePackage,
 } from "./types";
 
-const PAGE_TITLES: Record<ProductPage | "project" | "build" | "export", string> = {
+type WorkspacePage = ProductPage | "project" | "build" | "export" | "notFound";
+
+const PAGE_TITLES: Record<WorkspacePage, string> = {
   home: "Home",
   projects: "Projects",
   project: "Project",
@@ -95,6 +101,7 @@ const PAGE_TITLES: Record<ProductPage | "project" | "build" | "export", string> 
   runs: "Runs",
   review: "Review",
   settings: "Settings",
+  notFound: "Not Found",
 };
 
 const DEFAULT_PIPELINE_BUILDER_CONSTRAINTS: PipelineBuilderConstraints = {
@@ -323,18 +330,28 @@ export function App() {
     pageTitleRef.current?.focus();
   }, [route.canonicalPath]);
 
-  const routeProjectId =
-    route.kind === "project" || route.kind === "build" || route.kind === "export"
-      ? route.projectId
-      : "";
-  const routeRun = route.kind === "runs" && route.runId
+  const routeProjectId = (() => {
+    switch (route.kind) {
+      case "project":
+      case "build":
+      case "export":
+      case "projectRuns":
+      case "projectRun":
+      case "projectBatch":
+      case "projectReview":
+        return route.projectId;
+      default:
+        return "";
+    }
+  })();
+  const routeRun =
+    (route.kind === "runs" || route.kind === "projectRun") && route.runId
     ? runs.find((run) => run.id === route.runId)
     : undefined;
   const routeRunProject = projectForRun(projects, routeRun);
-  const routeScopeProjectId =
-    route.kind === "runs" || route.kind === "review" ? route.projectId ?? "" : "";
-  const projectId = routeProjectId || routeRunProject?.id || routeScopeProjectId;
+  const projectId = routeProjectId || routeRunProject?.id || "";
   const selectedProject = projects.find((project) => project.id === projectId);
+  const isProjectWorkspace = Boolean(routeProjectId);
   const setProjectContext = (id: string) => {
     setActiveProjectId(id);
     if (id) window.localStorage.setItem("annotagent.activeProjectId", id);
@@ -346,24 +363,53 @@ export function App() {
   };
   const switchProject = (id: string) => {
     setProjectContext(id);
+    if (!id) {
+      navigate("/projects");
+      return;
+    }
     if (route.kind === "export")
-      navigate(id ? `/projects/${encodeURIComponent(id)}/export` : "/projects");
+      navigate(`/projects/${encodeURIComponent(id)}/export`);
     else if (route.kind === "build")
-      navigate(id ? `/projects/${encodeURIComponent(id)}/build/${route.step}` : "/projects");
+      navigate(`/projects/${encodeURIComponent(id)}/build/${route.step}`);
+    else if (
+      route.kind === "projectRuns" ||
+      route.kind === "projectRun" ||
+      route.kind === "projectBatch"
+    )
+      navigate(projectRunsPath(id));
+    else if (route.kind === "projectReview")
+      navigate(projectReviewPath(id));
     else if (route.kind === "project") openProject(id);
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
     if (resolved && resolved !== activeProjectId) setProjectContext(resolved);
   }, [routeProjectId, routeRunProject?.id]);
-  const page =
-    route.kind === "home" ||
-    route.kind === "projects" ||
-    route.kind === "runs" ||
-    route.kind === "review" ||
-    route.kind === "settings"
-      ? route.kind
-      : route.kind;
+  useEffect(() => {
+    if (
+      route.kind === "runs" &&
+      route.runId &&
+      routeRunProject
+    ) {
+      navigate(
+        projectRunPath(routeRunProject.id, route.runId, {
+          imageId: route.imageId,
+          nodeId: route.nodeId,
+          artifactId: route.artifactId,
+          view: route.view,
+        }),
+        true,
+      );
+    }
+  }, [route.kind, routeRun?.id, routeRunProject?.id]);
+  const page: WorkspacePage =
+    route.kind === "projectRuns" ||
+    route.kind === "projectRun" ||
+    route.kind === "projectBatch"
+      ? "runs"
+      : route.kind === "projectReview"
+        ? "review"
+        : route.kind;
 
   return (
     <div className="app-shell">
@@ -402,8 +448,12 @@ export function App() {
                   ? route.kind === "projects" ||
                     route.kind === "project" ||
                     route.kind === "build" ||
-                    route.kind === "export"
-                  : page === item.page
+                    route.kind === "export" ||
+                    route.kind === "projectRuns" ||
+                    route.kind === "projectRun" ||
+                    route.kind === "projectBatch" ||
+                    route.kind === "projectReview"
+                  : !isProjectWorkspace && page === item.page
               }
               href={item.href}
               onClick={() => navigate(item.href)}
@@ -429,7 +479,7 @@ export function App() {
             <span className="product-tagline">{PRODUCT_TAGLINE}</span>
             <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
           </div>
-          {(route.kind === "project" || route.kind === "build" || route.kind === "export") && <div className="project-switch">
+          {routeProjectId && <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
               const profile = visualProfilesForSkills([skill.id])[0];
               return (
@@ -514,9 +564,11 @@ export function App() {
             onOpenBuild={(step) =>
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}`)
             }
-            onOpenRun={(runId) => navigate(`/runs/${encodeURIComponent(runId)}`)}
+            onOpenRun={(runId) =>
+              navigate(projectRunPath(route.projectId, runId))
+            }
             onOpenReview={() =>
-              navigate(`/review?project_id=${encodeURIComponent(route.projectId)}`)
+              navigate(projectReviewPath(route.projectId))
             }
             onNavigate={navigate}
             onError={setError}
@@ -551,7 +603,7 @@ export function App() {
               navigate(`/projects/${encodeURIComponent(route.projectId)}/build/${step}${step === "test" && draftId ? `?draft=${encodeURIComponent(draftId)}` : ""}`, replace)
             }
             onOpenRuns={() =>
-              navigate(`/runs?project_id=${encodeURIComponent(route.projectId)}`)
+              navigate(projectRunsPath(route.projectId))
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
@@ -566,7 +618,7 @@ export function App() {
             onError={setError}
           />
         )}
-        {loaded && route.kind === "runs" && (
+        {loaded && (route.kind === "runs" || route.kind === "projectRuns" || route.kind === "projectRun") && (
           <RunsPage
             runs={runs}
             projects={projects}
@@ -577,7 +629,17 @@ export function App() {
             onError={setError}
           />
         )}
-        {loaded && route.kind === "review" && (
+        {loaded && route.kind === "projectBatch" && (
+          <BatchDetailWorkspace
+            route={route}
+            runs={runs}
+            projects={projects}
+            onNavigate={navigate}
+            onRefresh={refresh}
+            onError={setError}
+          />
+        )}
+        {loaded && (route.kind === "review" || route.kind === "projectReview") && (
           <ReviewPage
             project={selectedProject}
             projects={projects}
@@ -596,6 +658,9 @@ export function App() {
             }
             onError={setError}
           />
+        )}
+        {loaded && route.kind === "notFound" && (
+          <NotFoundPage invalidPath={route.invalidPath} onNavigate={navigate} />
         )}
       </main>
     </div>
@@ -1636,9 +1701,9 @@ function ProjectPage({
           version: Number(selectedPublishedWorkflow.version),
         },
       )
-      .then(async () => {
+      .then(async ({ batch }) => {
         await refreshWorkspace();
-        onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`);
+        onNavigate(projectBatchPath(project.id, batch.id));
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setStarting(false));
@@ -1740,7 +1805,7 @@ function ProjectPage({
       <nav className="section-tabs" aria-label={`${project.name} workspace`}>
         <button className="active" aria-current="page">Overview</button>
         <button onClick={() => onOpenBuild("data")}>Build</button>
-        <button onClick={() => onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`)}>Runs</button>
+        <button onClick={() => onNavigate(projectRunsPath(project.id))}>Runs</button>
         <button onClick={onOpenReview}>Review</button>
         <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Export</button>
       </nav>
@@ -2188,8 +2253,8 @@ function ProjectExportPage({
       <nav className="section-tabs" aria-label={`${project.name} workspace`}>
         <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>Overview</button>
         <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/data`)}>Build</button>
-        <button onClick={() => onNavigate(`/runs?project_id=${encodeURIComponent(project.id)}`)}>Runs</button>
-        <button onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Review</button>
+        <button onClick={() => onNavigate(projectRunsPath(project.id))}>Runs</button>
+        <button onClick={() => onNavigate(projectReviewPath(project.id))}>Review</button>
         <button className="active" aria-current="page">Export</button>
       </nav>
       {!activeReadiness ? (
@@ -6756,7 +6821,10 @@ function RunsPage({
   runs: HistoryRun[];
   projects: ProjectSummary[];
   activeProject?: ProjectSummary;
-  route: Extract<WorkspaceRoute, { kind: "runs" }>;
+  route: Extract<
+    WorkspaceRoute,
+    { kind: "runs" | "projectRuns" | "projectRun" }
+  >;
   onNavigate: (path: string, replace?: boolean) => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
@@ -6765,20 +6833,45 @@ function RunsPage({
   useEffect(() => {
     void api.batches().then((value) => setBatches(value.batches)).catch((error: Error) => onError(error.message));
   }, [runs.length, runs[0]?.updated_at]);
-  const run = runs.find((item) => item.id === route.runId);
-  if (route.runId && run)
+  const detailRoute =
+    route.kind === "runs" || route.kind === "projectRun" ? route : undefined;
+  const routeRunId = detailRoute?.runId;
+  const run = runs.find((item) => item.id === routeRunId);
+  const runOwner = run
+    ? projects.find((item) => item.project_id === run.project_id)
+    : undefined;
+  useEffect(() => {
+    if (
+      route.kind === "projectRun" &&
+      runOwner &&
+      route.projectId !== runOwner.id
+    )
+      onNavigate(
+        projectRunPath(runOwner.id, route.runId, {
+          imageId: route.imageId,
+          nodeId: route.nodeId,
+          artifactId: route.artifactId,
+          view: route.view,
+        }),
+        true,
+      );
+  }, [route.kind, routeRunId, runOwner?.id]);
+  if (detailRoute && routeRunId && run)
     return (
       <RunDetailWorkspace
         run={run}
-        project={projects.find((item) => item.project_id === run.project_id)}
-        route={route}
+        project={runOwner}
+        route={detailRoute}
         onNavigate={onNavigate}
         onRefresh={onRefresh}
         onError={onError}
       />
     );
   const projectRuns = runsForContext(runs, scopeProject);
-  const statusFilter = route.status ?? "all";
+  const statusFilter =
+    route.kind === "runs" || route.kind === "projectRuns"
+      ? route.status ?? "all"
+      : "all";
   const projectBatches = batches.filter(
     (batch) => !scopeProject || batch.project_id === scopeProject.id,
   );
@@ -6800,9 +6893,12 @@ function RunsPage({
   ])];
   const setListFilters = (projectId: string, status: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
     if (status !== "all") params.set("status", status);
-    onNavigate(`/runs${params.size ? `?${params.toString()}` : ""}`);
+    onNavigate(
+      projectId
+        ? projectRunsPath(projectId, status)
+        : `/runs${params.size ? `?${params.toString()}` : ""}`,
+    );
   };
   return (
     <section className="page-stack">
@@ -6835,11 +6931,11 @@ function RunsPage({
         <div className="runs-table">
           {visibleExecutions.map((execution) => execution.kind === "batch"
             ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={runs} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} />
-            : <RunHistoryRow key={execution.run.id} run={execution.run} onNavigate={onNavigate} />)}
+            : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} />)}
           {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
       </Panel>
-      {route.runId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
+      {routeRunId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
     </section>
   );
 }
@@ -6875,22 +6971,160 @@ function BatchRunGroup({
     </summary>
     <div className="batch-run-children">
       <div className="batch-run-explanation"><strong>One Dataset Run</strong><span>AnnotAgent created {batch.progress.total_images} image Runs so each image keeps its own Artifacts, errors, Replay and Review history.</span></div>
-      {childRuns.map((run, index) => <RunHistoryRow key={run.id} run={run} onNavigate={onNavigate} childLabel={`Image ${index + 1} of ${batch.progress.total_images}`} />)}
+      <button className="text-button" onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>Open Dataset Run detail →</button>
+      {childRuns.map((run, index) => <RunHistoryRow key={run.id} run={run} projectId={project?.id} onNavigate={onNavigate} childLabel={`Image ${index + 1} of ${batch.progress.total_images}`} />)}
       {childRuns.length === 0 && <Empty title="No image Runs recorded" detail="This Dataset Run stopped before an image Run was created." />}
     </div>
   </details>;
 }
 
+function BatchDetailWorkspace({
+  route,
+  runs,
+  projects,
+  onNavigate,
+  onRefresh,
+  onError,
+}: {
+  route: Extract<WorkspaceRoute, { kind: "projectBatch" }>;
+  runs: HistoryRun[];
+  projects: ProjectSummary[];
+  onNavigate: (path: string, replace?: boolean) => void;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [batches, setBatches] = useState<DatasetBatchSummary[]>();
+  const [busy, setBusy] = useState(false);
+  const load = () =>
+    api
+      .batches()
+      .then((value) => setBatches(value.batches));
+  useEffect(() => {
+    setBatches(undefined);
+    void load().catch((error: Error) => onError(error.message));
+  }, [route.batchId, runs.length, runs[0]?.updated_at]);
+  const batch = batches?.find((candidate) => candidate.id === route.batchId);
+  const owner = batch
+    ? projects.find((project) => project.id === batch.project_id)
+    : projects.find((project) => project.id === route.projectId);
+  useEffect(() => {
+    if (batch && batch.project_id !== route.projectId)
+      onNavigate(projectBatchPath(batch.project_id, batch.id), true);
+  }, [batch?.id, batch?.project_id, route.projectId]);
+  if (!batches)
+    return <div className="loading-banner" role="status">Loading Dataset Run…</div>;
+  if (!batch)
+    return (
+      <section className="page-stack">
+        <ProjectBreadcrumb
+          project={owner}
+          current="Dataset Run not found"
+          onOpenProjects={() => onNavigate("/projects")}
+          onOpenProject={owner ? () => onNavigate(`/projects/${encodeURIComponent(owner.id)}`) : undefined}
+        />
+        <Empty
+          title="Dataset Run not found"
+          detail="The linked Batch is not available in this workspace."
+        />
+      </section>
+    );
+  if (batch.project_id !== route.projectId)
+    return <div className="loading-banner" role="status">Opening the owning Project…</div>;
+  const childRuns = batch.child_run_ids.flatMap((id) => {
+    const run = runs.find((candidate) => candidate.id === id);
+    return run ? [run] : [];
+  });
+  const workflowName =
+    childRuns[0]?.workflow_name ??
+    batch.workflow_snapshot.workflow?.draft?.name ??
+    batch.workflow_snapshot.draft?.name ??
+    "Published workflow";
+  const workflowVersion =
+    childRuns[0]?.workflow_version ??
+    batch.workflow_version.split("@").at(-1) ??
+    "unknown";
+  const control = (action: "pause" | "resume" | "cancel") => {
+    setBusy(true);
+    void api
+      .controlBatch(batch.id, action)
+      .then(() => Promise.all([load(), onRefresh()]))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const progress = batch.progress;
+  return (
+    <section className="page-stack batch-detail-page">
+      <ProjectBreadcrumb
+        project={owner}
+        current={`Dataset Run ${batch.id.slice(0, 8)}`}
+        onOpenProjects={() => onNavigate("/projects")}
+        onOpenProject={owner ? () => onNavigate(`/projects/${encodeURIComponent(owner.id)}`) : undefined}
+      />
+      <button
+        className="text-button run-back"
+        onClick={() => onNavigate(projectRunsPath(batch.project_id))}
+      >
+        ← Run history
+      </button>
+      <div className="toolbar-panel run-detail-header">
+        <div>
+          <span className="eyebrow">Dataset Run · {batch.id.slice(0, 8)}</span>
+          <h2>{workflowName}@v{workflowVersion}</h2>
+          <div className="context-line">
+            <Status status={batch.status} />
+            <span>{progress.completed_images}/{progress.total_images} images completed</span>
+            <span>{batch.max_concurrency} concurrent</span>
+          </div>
+        </div>
+        <div className="button-row">
+          {batch.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
+          {batch.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
+          {(batch.status === "running" || batch.status === "paused" || batch.status === "pending") && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
+        </div>
+      </div>
+      <dl className="run-result-metrics" aria-label="Dataset Run progress">
+        <div><dt>Total</dt><dd>{progress.total_images}</dd><small>images</small></div>
+        <div><dt>Completed</dt><dd>{progress.completed_images}</dd><small>ready</small></div>
+        <div><dt>Running</dt><dd>{progress.running_images}</dd><small>in progress</small></div>
+        <div><dt>Review</dt><dd>{progress.review_images}</dd><small>needs attention</small></div>
+        <div><dt>Failed</dt><dd>{progress.failed_images}</dd><small>images</small></div>
+        <div><dt>Pending</dt><dd>{progress.pending_images}</dd><small>queued</small></div>
+      </dl>
+      <Panel title="Image Runs" eyebrow={`${childRuns.length} of ${progress.total_images} created`}>
+        <div className="runs-table">
+          {childRuns.map((run, index) => (
+            <RunHistoryRow
+              key={run.id}
+              run={run}
+              projectId={owner?.id}
+              onNavigate={onNavigate}
+              childLabel={`Image ${index + 1} of ${progress.total_images}`}
+            />
+          ))}
+          {childRuns.length === 0 && (
+            <Empty
+              title="No image Runs recorded"
+              detail="This Dataset Run has not created an image Run yet."
+            />
+          )}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
 function RunHistoryRow({
   run,
+  projectId,
   onNavigate,
   childLabel,
 }: {
   run: HistoryRun;
+  projectId?: string;
   onNavigate: (path: string) => void;
   childLabel?: string;
 }) {
-  return <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(`/runs/${run.id}`)}>
+  return <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>
     <span className="event-rail" />
     <div><strong>{childLabel ?? run.project_name}</strong><small>{run.workflow_name}@v{run.workflow_version}</small><code>{run.model_identity} · {run.artifact_count} Artifacts</code>{run.terminal_reason && <small className="run-reason">{run.terminal_reason}</small>}</div>
     <div className="run-usage"><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div>
@@ -6909,7 +7143,7 @@ function RunDetailWorkspace({
 }: {
   run: HistoryRun;
   project?: ProjectSummary;
-  route: Extract<WorkspaceRoute, { kind: "runs" }>;
+  route: Extract<WorkspaceRoute, { kind: "runs" | "projectRun" }>;
   onNavigate: (path: string, replace?: boolean) => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
@@ -6924,6 +7158,23 @@ function RunDetailWorkspace({
   const [runReview, setRunReview] = useState<ReviewItem>();
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const runPath = (context: {
+    imageId?: string;
+    nodeId?: string;
+    artifactId?: string;
+    view?: "results" | "debug";
+  } = {}) =>
+    project
+      ? projectRunPath(project.id, run.id, context)
+      : `/runs/${encodeURIComponent(run.id)}${(() => {
+          const params = new URLSearchParams();
+          if (context.view === "debug" || context.nodeId || context.artifactId)
+            params.set("view", "debug");
+          if (context.imageId) params.set("image", context.imageId);
+          if (context.nodeId) params.set("node", context.nodeId);
+          if (context.artifactId) params.set("artifact", context.artifactId);
+          return params.size ? `?${params.toString()}` : "";
+        })()}`;
   useEffect(() => {
     setInspection(undefined);
     setAnnotationInspection(undefined);
@@ -6946,11 +7197,15 @@ function RunDetailWorkspace({
     if (view !== "debug") return;
     void api.runDebugSummary(run.id).then(setDebugSummary).catch((error: Error) => onError(error.message));
     if (!route.nodeId && inspection?.nodes[0]) {
-      const params = new URLSearchParams({ view: "debug" });
       const imageIndex = inspection.image_index ?? annotationInspection?.image_index;
-      if (imageIndex !== undefined) params.set("image", String(imageIndex));
-      params.set("node", inspection.nodes[0].node_id);
-      onNavigate(`/runs/${run.id}?${params.toString()}`, true);
+      onNavigate(
+        runPath({
+          view: "debug",
+          imageId: imageIndex === undefined ? undefined : String(imageIndex),
+          nodeId: inspection.nodes[0].node_id,
+        }),
+        true,
+      );
     }
   }, [view, run.id, route.nodeId, inspection, annotationInspection?.image_index]);
   const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
@@ -6974,20 +7229,24 @@ function RunDetailWorkspace({
     previewProjectId && runImageIndex !== undefined && (inspection || runAnnotations.length),
   );
   const setContext = (context: { image?: number; node?: string; artifact?: string }) => {
-    const params = new URLSearchParams();
-    params.set("view", "debug");
-    params.set("image", String(context.image ?? selectedImageIndex));
-    if (context.node ?? selectedNode?.node_id) params.set("node", context.node ?? selectedNode!.node_id);
-    if (context.artifact) params.set("artifact", context.artifact);
-    onNavigate(`/runs/${run.id}?${params.toString()}`);
+    onNavigate(
+      runPath({
+        view: "debug",
+        imageId: String(context.image ?? selectedImageIndex),
+        nodeId: context.node ?? selectedNode?.node_id,
+        artifactId: context.artifact,
+      }),
+    );
   };
   const setView = (next: "results" | "debug") => {
-    const params = new URLSearchParams();
-    if (next === "debug") params.set("view", "debug");
-    if (runImageIndex !== undefined) params.set("image", String(selectedImageIndex));
-    if (next === "debug" && selectedNode) params.set("node", selectedNode.node_id);
-    const query = params.size ? `?${params.toString()}` : "";
-    onNavigate(`/runs/${run.id}${query}`);
+    onNavigate(
+      runPath({
+        view: next,
+        imageId:
+          runImageIndex === undefined ? undefined : String(selectedImageIndex),
+        nodeId: next === "debug" ? selectedNode?.node_id : undefined,
+      }),
+    );
   };
   const control = (action: "pause" | "resume" | "cancel") => {
     setBusy(true);
@@ -7007,7 +7266,8 @@ function RunDetailWorkspace({
     : run.current_node
       ? `Current: ${run.current_node}`
       : "No node trace";
-  const setResultImage = (image: number) => onNavigate(`/runs/${run.id}?image=${image}`);
+  const setResultImage = (image: number) =>
+    onNavigate(runPath({ imageId: String(image) }));
   const resultHeadline = run.status === "running"
     ? "Run in progress"
     : run.status === "paused"
@@ -7025,7 +7285,7 @@ function RunDetailWorkspace({
         onOpenProjects={() => onNavigate("/projects")}
         onOpenProject={project ? () => onNavigate(`/projects/${encodeURIComponent(project.id)}`) : undefined}
       />
-      <button className="text-button run-back" onClick={() => onNavigate("/runs")}>← Run history</button>
+      <button className="text-button run-back" onClick={() => onNavigate(project ? projectRunsPath(project.id) : "/runs")}>← Run history</button>
       <nav className="run-view-tabs" aria-label="Run workspace view">
         <button className={view === "results" ? "active" : ""} aria-current={view === "results" ? "page" : undefined} onClick={() => setView("results")}>Results</button>
         <button className={view === "debug" ? "active" : ""} aria-current={view === "debug" ? "page" : undefined} onClick={() => setView("debug")}>Debug</button>
@@ -7034,8 +7294,8 @@ function RunDetailWorkspace({
         {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>}
         <div className="button-row">
           {project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Improve automation</button>}
-          {runReview && <button onClick={() => onNavigate(`/review/${runReview.id}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
-          {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button>}
+          {runReview && <button onClick={() => onNavigate(project ? projectReviewPath(project.id, runReview.id) : `/review/${encodeURIComponent(runReview.id)}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
+          {!runReview && Boolean(resultSummary?.needs_review_count) && project && <button onClick={() => onNavigate(projectReviewPath(project.id))}>Open Review inbox</button>}
           {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
           {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
           {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
@@ -7055,7 +7315,7 @@ function RunDetailWorkspace({
             <div>{visibleImages.filter((image) => runImageIndex === undefined || image.index === runImageIndex).map((image) => <button key={image.index} className={image.index === selectedImageIndex ? "active" : ""} onClick={() => setResultImage(image.index)}><img src={image.url} alt="" /><span><strong>{image.name}</strong><small>{resultSummary?.failed_count ? "Failed" : resultSummary?.no_target_count ? "No target found" : resultSummary?.needs_review_count ? "Needs review" : "Ready"}</small></span></button>)}</div>
           </aside>
           <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">Result Preview</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label="Result labels">{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}{canPreview && (resultSummary?.result_count ?? runAnnotations.length) > 0 ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={previewArtifacts} annotations={runAnnotations} imageIndex={selectedImageIndex} /> : resultSummary ? <Empty title={resultSummary.no_target_count ? "No target found" : resultSummary.failed_count ? "No result produced" : "No visual result"} detail={resultSummary.no_target_count ? "The automation completed successfully and found no matching target in this image." : resultSummary.failed_count ? "Open Debug to inspect the failed step and available repair action." : "This result has no bounding-box or Crop preview."} /> : <Empty title="Loading results" detail="Reading persisted Annotations and result Artifacts." />}</main>
-          <aside className="panel run-needs-attention"><span className="eyebrow">Needs Attention</span>{runReview ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>{runReview.review_reason.replaceAll("_", " ")}</p><button className="primary" onClick={() => onNavigate(`/review/${runReview.id}`)}>Review result</button></> : resultSummary?.needs_review_count && project ? <><h3>{resultSummary.needs_review_count} result needs a decision</h3><p>Open the Project Review inbox to inspect the uncertain result.</p><button className="primary" onClick={() => onNavigate(`/review?project_id=${encodeURIComponent(project.id)}`)}>Open Review inbox</button></> : resultSummary?.failed_count ? <><h3>Run needs repair</h3><p>{run.terminal_reason ?? "A Pipeline step did not produce a usable result."}</p><button className="primary" onClick={() => setView("debug")}>Open Debug</button></> : <div className="positive-empty"><strong>No results need attention</strong><span>{resultSummary?.no_target_count ? "The empty result is valid." : "All results passed the configured gates."}</span></div>}</aside>
+          <aside className="panel run-needs-attention"><span className="eyebrow">Needs Attention</span>{runReview ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>{runReview.review_reason.replaceAll("_", " ")}</p><button className="primary" onClick={() => onNavigate(project ? projectReviewPath(project.id, runReview.id) : `/review/${encodeURIComponent(runReview.id)}`)}>Review result</button></> : resultSummary?.needs_review_count && project ? <><h3>{resultSummary.needs_review_count} result needs a decision</h3><p>Open the Project Review inbox to inspect the uncertain result.</p><button className="primary" onClick={() => onNavigate(projectReviewPath(project.id))}>Open Review inbox</button></> : resultSummary?.failed_count ? <><h3>Run needs repair</h3><p>{run.terminal_reason ?? "A Pipeline step did not produce a usable result."}</p><button className="primary" onClick={() => setView("debug")}>Open Debug</button></> : <div className="positive-empty"><strong>No results need attention</strong><span>{resultSummary?.no_target_count ? "The empty result is valid." : "All results passed the configured gates."}</span></div>}</aside>
         </div>
       </> : <>
         <div className="debug-summary-strip" aria-label="Run debug summary"><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0} steps complete</span><span>{debugSummary?.failed_node_count ?? 0} failed</span><span>{debugSummary?.issues.length ?? 0} issues</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
@@ -7650,7 +7910,7 @@ function ReviewPage({
   project?: ProjectSummary;
   projects: ProjectSummary[];
   events: RunEvent[];
-  route: Extract<WorkspaceRoute, { kind: "review" }>;
+  route: Extract<WorkspaceRoute, { kind: "review" | "projectReview" }>;
   onNavigate: (path: string, replace?: boolean) => void;
   onError: (value: string) => void;
 }) {
@@ -7691,16 +7951,40 @@ function ReviewPage({
   const scopedProject = route.projectId
     ? projects.find((candidate) => candidate.id === route.projectId) ?? project
     : undefined;
+  const routeReviewProject = projectForReview(projects, routeReview);
   const visibleReviews = scopedProject
     ? reviews.filter(
         (review) => review.project_id === scopedProject.project_id,
       )
     : reviews;
   const selected =
-    routeReview ?? visibleReviews.find((review) => review.id === selectedId) ?? visibleReviews[0];
+    routeReview &&
+    (!scopedProject || routeReview.project_id === scopedProject.project_id)
+      ? routeReview
+      : visibleReviews.find((review) => review.id === selectedId) ??
+        visibleReviews[0];
   const reviewProject = projectForReview(projects, selected) ?? scopedProject;
-  const reviewHref = (reviewId: string) =>
-    `/review/${reviewId}${route.projectId ? `?project_id=${encodeURIComponent(route.projectId)}` : ""}`;
+  const reviewHref = (reviewId: string, item?: ReviewItem) => {
+    const owner = projectForReview(
+      projects,
+      item ?? reviews.find((review) => review.id === reviewId),
+    );
+    if (owner) return projectReviewPath(owner.id, reviewId);
+    if (route.projectId) return projectReviewPath(route.projectId, reviewId);
+    return `/review/${encodeURIComponent(reviewId)}`;
+  };
+  useEffect(() => {
+    if (
+      route.reviewItemId &&
+      routeReviewProject &&
+      (route.kind !== "projectReview" ||
+        route.projectId !== routeReviewProject.id)
+    )
+      onNavigate(
+        projectReviewPath(routeReviewProject.id, route.reviewItemId),
+        true,
+      );
+  }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
   const refresh = () => {
     setQueueLoaded(false);
     return api
@@ -7709,8 +7993,12 @@ function ReviewPage({
         setReviews(value.reviews);
         setProgress(value.progress);
         const first = value.reviews[0];
-        if (!value.reviews.some((review) => review.id === selectedId) && first)
-          onNavigate(reviewHref(first.id), true);
+        if (
+          route.reviewItemId &&
+          !value.reviews.some((review) => review.id === selectedId) &&
+          first
+        )
+          onNavigate(reviewHref(first.id, first), true);
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setQueueLoaded(true));
@@ -7912,7 +8200,7 @@ function ReviewPage({
   const moveQueueSelection = (item?: ReviewItem) => {
     if (!item) return;
     setSelectedId(item.id);
-    onNavigate(reviewHref(item.id));
+    onNavigate(reviewHref(item.id, item));
   };
   const decideAndAdvance = async (
     decision: "accept" | "reject",
@@ -7948,10 +8236,10 @@ function ReviewPage({
       setProgress(queue.progress);
       if (outcome.next_review) {
         setSelectedId(outcome.next_review.id);
-        onNavigate(reviewHref(outcome.next_review.id), true);
+        onNavigate(reviewHref(outcome.next_review.id, outcome.next_review), true);
       } else {
         setSelectedId("");
-        onNavigate(`/review?project_id=${encodeURIComponent(reviewProject.id)}`, true);
+        onNavigate(projectReviewPath(reviewProject.id), true);
       }
     } catch (error) {
       onError((error as Error).message);
@@ -8042,7 +8330,7 @@ function ReviewPage({
             value={scopedProject?.id ?? ""}
             onChange={(event) =>
               onNavigate(event.target.value
-                ? `/review?project_id=${encodeURIComponent(event.target.value)}`
+                ? projectReviewPath(event.target.value)
                 : "/review")
             }
           >
@@ -8060,7 +8348,7 @@ function ReviewPage({
               className={selected?.id === review.id ? "active" : ""}
               onClick={() => {
                 setSelectedId(review.id);
-                onNavigate(reviewHref(review.id));
+                onNavigate(reviewHref(review.id, review));
               }}
             >
               <span aria-hidden="true">
@@ -8265,7 +8553,7 @@ function ReviewPage({
               </article>)}</div>
               {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
             </section> : null}
-            <button onClick={() => onNavigate(`/runs/${selected.run_id}?node=${encodeURIComponent(selected.source_node ?? "")}${selected.source_artifact_id ? `&artifact=${encodeURIComponent(selected.source_artifact_id)}` : ""}`)}>Open run context</button>
+            <button onClick={() => onNavigate(reviewProject ? projectRunPath(reviewProject.id, selected.run_id, { nodeId: selected.source_node, artifactId: selected.source_artifact_id, view: "debug" }) : `/runs/${encodeURIComponent(selected.run_id)}`)}>Open run context</button>
             {reviewProject && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>Improve automation</button>}
             {editing && <section className="review-edit-details" aria-label="Annotation edit details">
               <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
@@ -9536,6 +9824,36 @@ function Status({ status }: { status: string }) {
     </span>
   );
 }
+function NotFoundPage({
+  invalidPath,
+  onNavigate,
+}: {
+  invalidPath: string;
+  onNavigate: (path: string) => void;
+}) {
+  return (
+    <section className="page-stack">
+      <div className="toolbar-panel">
+        <div>
+          <span className="eyebrow">404 · Workspace route</span>
+          <h2>This page does not exist</h2>
+          <p>
+            AnnotAgent kept the requested address visible instead of silently
+            sending you somewhere unrelated.
+          </p>
+          <code>{invalidPath}</code>
+        </div>
+        <div className="button-row">
+          <button onClick={() => window.history.back()}>Go back</button>
+          <button className="primary" onClick={() => onNavigate("/projects")}>
+            Open Projects
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Empty({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="empty" role="status">
