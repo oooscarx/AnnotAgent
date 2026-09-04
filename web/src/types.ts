@@ -99,6 +99,16 @@ export interface HistoryRun {
   provider: string;
   model: string;
   status: RunStatus;
+  progress?: {
+    total_images: number;
+    pending_images: number;
+    running_images: number;
+    completed_images: number;
+    failed_images: number;
+    review_images: number;
+    cancelled_images: number;
+  };
+  result_summary?: RunResultSummary;
   controllable: boolean;
   input_tokens: number;
   output_tokens: number;
@@ -149,8 +159,38 @@ export interface DatasetBatchSummary {
     cancelled_images: number;
   };
   child_run_ids: string[];
+  images: BatchImageSummary[];
   created_at: string;
   updated_at: string;
+}
+
+export interface BatchImageSummary {
+  image_id: string;
+  position: number;
+  name: string;
+  status:
+    | "pending"
+    | "leased"
+    | "running"
+    | "ready"
+    | "no_target"
+    | "needs_review"
+    | "failed"
+    | "cancelled";
+  execution_status: string;
+  child_run_id?: string;
+  annotation_count: number;
+  review_count: number;
+  review_ids: string[];
+  failure?: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    request_count: number;
+    image_count: number;
+    cost: string;
+  };
 }
 
 export type WorkflowStatus =
@@ -1460,6 +1500,7 @@ export interface RunNodeArtifactInspection {
   workflow_version: number;
   content_hash: string;
   project_id: string;
+  image_id?: string;
   image_index?: number;
   nodes: {
     node_id: string;
@@ -1504,6 +1545,7 @@ export interface ImageItem {
 export interface RunAnnotationInspection {
   run_id: string;
   project_id: string;
+  image_id?: string;
   image_index?: number;
   annotations: Annotation[];
 }
@@ -1522,6 +1564,19 @@ export interface RunResultSummary {
   cache_hit_count: number;
   duration_ms: number;
   usage: { input_tokens: number; output_tokens: number; estimated_cost: string };
+  image: {
+    image_id: string;
+    status: string;
+    annotation_count: number;
+    review_count: number;
+    failure?: string;
+  };
+  projection: {
+    committed_annotation_ids: string[];
+    review_candidate_ids: string[];
+    no_target_image_ids: string[];
+    failed_image_ids: string[];
+  };
   image_index?: number;
   labels: { label: string; count: number }[];
 }

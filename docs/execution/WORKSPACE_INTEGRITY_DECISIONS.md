@@ -51,3 +51,11 @@ Startup reconciliation assigns a null legacy `Run.project_id` only when the lega
 ## D-013 — Owner discovery replaces, rather than extends, browser history
 
 Global Run and Review detail URLs remain compatibility entry points because bookmarks can outlive the route migration. Once the stable owner is present in server state, the client uses `history.replaceState` to install the canonical nested Project URL while preserving typed image, node, Artifact, and view context. A mismatched Project/object URL is treated the same way. This prevents a foreign Project shell from displaying owned work and keeps Back from returning to a transient alias.
+
+## D-014 — Dataset Runs aggregate; Image Runs inspect exactly one image
+
+A Dataset Batch owns ordering, aggregate progress, scheduling, budget, and child Run links. Each child Image Run owns exactly one stable Image ID and exposes that identity in Results and Debug. Image search and status filtering belong on Batch detail, never as a fake multi-image browser inside an Image Run.
+
+## D-015 — Pass-through nodes create a new Artifact producer identity
+
+When a Core node validates, gates, or otherwise passes through a typed Pipeline Artifact, its output reference names the current node and declared output port. Retaining the upstream port makes downstream typed routing silently skip valid data and destroys provenance. Internal subject/parent references remain unchanged so fan-out/fan-in lineage is preserved.

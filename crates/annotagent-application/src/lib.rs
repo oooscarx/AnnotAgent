@@ -21,9 +21,9 @@ use annotagent_core::LicensePermission;
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
     AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationFailureClass,
-    AnnotationSource, ArtifactContract, ArtifactKind, AttributeDefinition, AttributeValue,
-    BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchImageStatus,
-    BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
+    AnnotationId, AnnotationSource, ArtifactContract, ArtifactKind, AttributeDefinition,
+    AttributeValue, BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint,
+    BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
     CandidateGeometryQualityReport, CapabilityDeclarationSource, CheckpointIdentity,
     ContractDataType, CredentialReference, CredentialSource, DatasetExporter, DatasetImporter,
     DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport, ExportRequest,
@@ -4589,6 +4589,7 @@ fn node_artifact_inspection(
     run_id: RunId,
     workflow: &PublishedWorkflowVersion,
     checkpoint: &DagCheckpoint,
+    image_id: Option<ImageId>,
     image_index: Option<usize>,
 ) -> RunNodeArtifactInspection {
     let nodes = workflow
@@ -4631,6 +4632,7 @@ fn node_artifact_inspection(
         workflow_version: workflow.version,
         content_hash: workflow.content_hash.clone(),
         project_id: workflow.project_id.clone(),
+        image_id,
         image_index,
         nodes,
     }
@@ -4639,9 +4641,16 @@ fn node_artifact_inspection(
 #[derive(Debug, Clone, Serialize)]
 pub struct StartedRun {
     pub run_id: RunId,
+    pub image_id: ImageId,
     pub image_path: PathBuf,
     pub status: RunStatus,
     pub idempotent: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunImageSelection<'a> {
+    pub project_path: &'a Path,
+    pub image_path: Option<&'a Path>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4651,6 +4660,7 @@ pub struct RunNodeArtifactInspection {
     pub workflow_version: u32,
     pub content_hash: String,
     pub project_id: String,
+    pub image_id: Option<ImageId>,
     pub image_index: Option<usize>,
     pub nodes: Vec<NodeArtifactInspection>,
 }
@@ -4659,6 +4669,7 @@ pub struct RunNodeArtifactInspection {
 pub struct RunAnnotationInspection {
     pub run_id: RunId,
     pub project_id: String,
+    pub image_id: Option<ImageId>,
     pub image_index: Option<usize>,
     pub annotations: Vec<Annotation>,
 }
@@ -4713,8 +4724,27 @@ pub struct RunResultSummary {
     pub cache_hit_count: usize,
     pub duration_ms: u64,
     pub usage: UsageSummary,
+    pub image: RunImageSummary,
+    pub projection: RunResultProjection,
     pub image_index: Option<usize>,
     pub labels: Vec<RunResultLabelSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunImageSummary {
+    pub image_id: ImageId,
+    pub status: String,
+    pub annotation_count: usize,
+    pub review_count: usize,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RunResultProjection {
+    pub committed_annotation_ids: Vec<AnnotationId>,
+    pub review_candidate_ids: Vec<AnnotationId>,
+    pub no_target_image_ids: Vec<ImageId>,
+    pub failed_image_ids: Vec<ImageId>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -7789,6 +7819,7 @@ impl LocalApplication {
         let project_path = self.project_path(project_id)?;
         let project_root = project_path.parent().unwrap_or(&self.workspace);
         let stable_id = stable_project_id(project_root);
+        let run_statuses = self.store.latest_project_image_run_statuses(stable_id)?;
         self.list_project_images(project_id)?
             .into_iter()
             .enumerate()
@@ -7824,7 +7855,10 @@ impl LocalApplication {
                     path_snapshot: relative_path,
                     content_hash,
                     size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-                    status: "ready".to_owned(),
+                    status: run_statuses
+                        .get(&stored.image_id)
+                        .cloned()
+                        .unwrap_or_else(|| "ready".to_owned()),
                 })
             })
             .collect()
@@ -7877,25 +7911,25 @@ impl LocalApplication {
         let history = self.store.history(run_id)?;
         let inspection = self.inspect_run_annotations(run_id)?;
         let pipeline_inspection = self.inspect_run_pipeline_artifacts(run_id).ok();
-        let results = inspection
+        let committed = inspection
             .annotations
-            .iter()
-            .filter(|annotation| annotation.review_status != ReviewStatus::Rejected)
-            .collect::<Vec<_>>();
-        let mut result_count = results.len();
-        let mut ready_count = results
             .iter()
             .filter(|annotation| {
                 matches!(
                     annotation.review_status,
-                    ReviewStatus::Draft | ReviewStatus::AutoAccepted | ReviewStatus::HumanAccepted
-                )
+                    ReviewStatus::AutoAccepted | ReviewStatus::HumanAccepted
+                ) || (annotation.review_status == ReviewStatus::Draft
+                    && history.run.status == RunStatus::Completed)
             })
-            .count();
-        let mut needs_review_count = results
+            .collect::<Vec<_>>();
+        let review_candidates = inspection
+            .annotations
             .iter()
             .filter(|annotation| annotation.review_status == ReviewStatus::NeedsReview)
-            .count();
+            .collect::<Vec<_>>();
+        let result_count = committed.len() + review_candidates.len();
+        let ready_count = committed.len();
+        let needs_review_count = review_candidates.len();
         let failed_count = usize::from(matches!(
             history.run.status,
             RunStatus::Partial
@@ -7904,101 +7938,12 @@ impl LocalApplication {
                 | RunStatus::Interrupted
         ));
         let mut label_counts = BTreeMap::<String, usize>::new();
-        for annotation in &results {
+        for annotation in committed.iter().chain(&review_candidates) {
             let label = annotation
                 .label
                 .as_ref()
                 .map_or_else(|| annotation.task_id.to_string(), ToString::to_string);
             *label_counts.entry(label).or_default() += 1;
-        }
-        if result_count == 0 {
-            let mut detections = BTreeMap::new();
-            let mut classifications = BTreeMap::new();
-            let mut candidates = BTreeMap::new();
-            if let Some(pipeline) = pipeline_inspection.as_ref() {
-                for artifact in pipeline.nodes.iter().flat_map(|node| &node.outputs) {
-                    match artifact {
-                        PipelineArtifact::DetectionSet(set) => {
-                            for detection in &set.detections {
-                                detections.insert(
-                                    detection.detection_id.clone(),
-                                    (
-                                        detection.project_label.as_ref().map_or_else(
-                                            || {
-                                                detection
-                                                    .model_label
-                                                    .clone()
-                                                    .unwrap_or_else(|| "unlabeled".to_owned())
-                                            },
-                                            ToString::to_string,
-                                        ),
-                                        sample_test_outcome_status(Some(set.validation_state)),
-                                    ),
-                                );
-                            }
-                        }
-                        PipelineArtifact::ClassificationSet(set) => {
-                            for classification in &set.classifications {
-                                classifications.insert(
-                                    classification.id.clone(),
-                                    (
-                                        classification.label.to_string(),
-                                        sample_test_outcome_status(Some(set.validation_state)),
-                                    ),
-                                );
-                            }
-                        }
-                        PipelineArtifact::AnnotationCandidateSet(set) => {
-                            for candidate in &set.candidates {
-                                candidates.insert(
-                                    candidate.id.clone(),
-                                    (
-                                        candidate.label.to_string(),
-                                        sample_test_outcome_status(candidate.validation_state),
-                                    ),
-                                );
-                            }
-                        }
-                        PipelineArtifact::CandidateClusterSet(set) => {
-                            for candidate in &set.candidates {
-                                candidates.insert(
-                                    candidate.id.clone(),
-                                    (
-                                        candidate.target_label.to_string(),
-                                        sample_test_outcome_status(Some(set.validation_state)),
-                                    ),
-                                );
-                            }
-                        }
-                        PipelineArtifact::Image(_)
-                        | PipelineArtifact::BoxPromptSet(_)
-                        | PipelineArtifact::PointPromptSet(_)
-                        | PipelineArtifact::MaskSet(_)
-                        | PipelineArtifact::SemanticMask(_)
-                        | PipelineArtifact::PolygonSet(_)
-                        | PipelineArtifact::CropSet(_) => {}
-                    }
-                }
-            }
-            let outcomes = if !candidates.is_empty() {
-                candidates
-            } else if !classifications.is_empty() {
-                classifications
-            } else {
-                detections
-            };
-            result_count = outcomes.len();
-            ready_count = outcomes
-                .values()
-                .filter(|(_, status)| *status == SampleTestOutcomeStatus::ReadyToAccept)
-                .count();
-            needs_review_count = outcomes
-                .values()
-                .filter(|(_, status)| *status == SampleTestOutcomeStatus::NeedsReview)
-                .count();
-            for (label, _) in outcomes.into_values() {
-                *label_counts.entry(label).or_default() += 1;
-            }
         }
         let no_target_count = usize::from(
             result_count == 0
@@ -8008,6 +7953,52 @@ impl LocalApplication {
                     RunStatus::Completed | RunStatus::CompletedWithReview
                 ),
         );
+        let image_id = inspection
+            .image_id
+            .ok_or_else(|| anyhow!("run {run_id} has no stable Image identity"))?;
+        let projection = RunResultProjection {
+            committed_annotation_ids: committed.iter().map(|annotation| annotation.id).collect(),
+            review_candidate_ids: review_candidates
+                .iter()
+                .map(|annotation| annotation.id)
+                .collect(),
+            no_target_image_ids: (no_target_count > 0)
+                .then_some(image_id)
+                .into_iter()
+                .collect(),
+            failed_image_ids: (failed_count > 0).then_some(image_id).into_iter().collect(),
+        };
+        let image_status = if failed_count > 0 {
+            "failed"
+        } else if needs_review_count > 0 {
+            "needs_review"
+        } else if result_count == 0
+            && matches!(
+                history.run.status,
+                RunStatus::Completed | RunStatus::CompletedWithReview
+            )
+        {
+            "no_target"
+        } else if matches!(
+            history.run.status,
+            RunStatus::Completed | RunStatus::CompletedWithReview
+        ) {
+            "ready"
+        } else {
+            match history.run.status {
+                RunStatus::Pending => "pending",
+                RunStatus::Running => "running",
+                RunStatus::Paused => "paused",
+                RunStatus::AwaitingReview => "needs_review",
+                RunStatus::Cancelled => "cancelled",
+                RunStatus::BudgetExceeded
+                | RunStatus::Interrupted
+                | RunStatus::Partial
+                | RunStatus::Failed => "failed",
+                RunStatus::Completed | RunStatus::CompletedWithReview => unreachable!(),
+            }
+        }
+        .to_owned();
         let fallback_count = history
             .run
             .workflow_snapshot_json
@@ -8037,6 +8028,18 @@ impl LocalApplication {
             cache_hit_count,
             duration_ms: history_run_duration_ms(&history.run),
             usage: history_usage_summary(&history),
+            image: RunImageSummary {
+                image_id,
+                status: image_status,
+                annotation_count: result_count,
+                review_count: needs_review_count,
+                failure: if failed_count > 0 {
+                    history.run.terminal_reason.clone()
+                } else {
+                    None
+                },
+            },
+            projection,
             image_index: inspection.image_index,
             labels: label_counts
                 .into_iter()
@@ -8288,22 +8291,7 @@ impl LocalApplication {
             .into_iter()
             .find(|run| run.id == run_id)
             .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
-        let snapshot: serde_json::Value = serde_json::from_str(
-            history
-                .workflow_snapshot_json
-                .as_deref()
-                .ok_or_else(|| anyhow!("run {run_id} has no Workflow checkpoint"))?,
-        )?;
-        let image_index = snapshot
-            .pointer("/image/sha256")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|sha256| {
-                snapshot
-                    .pointer("/selected_workflow/project_id")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|project_id| self.image_index_by_sha256(project_id, sha256).ok())
-            })
-            .flatten();
+        let image_index = self.inspect_run_annotations(run_id)?.image_index;
         self.inspect_run_pipeline_artifacts_from_history(&history, image_index)
     }
 
@@ -8331,10 +8319,45 @@ impl LocalApplication {
                 .cloned()
                 .ok_or_else(|| anyhow!("run {run_id} has no completed node checkpoint"))?,
         )?;
+        let run_image_ids = self.store.run_image_ids(run_id)?;
+        let image_id = (run_image_ids.len() == 1)
+            .then(|| run_image_ids.iter().next().copied())
+            .flatten()
+            .ok_or_else(|| {
+                anyhow!(
+                    "run {run_id} must own exactly one Image before its Artifacts can be inspected"
+                )
+            })?;
+        for artifact in checkpoint
+            .traces
+            .iter()
+            .flat_map(|trace| {
+                trace
+                    .input_pipeline_artifacts
+                    .iter()
+                    .chain(&trace.output_pipeline_artifacts)
+            })
+            .chain(
+                checkpoint
+                    .node_outputs
+                    .values()
+                    .flat_map(|output| &output.pipeline_artifacts),
+            )
+        {
+            if artifact.image_id() != image_id {
+                bail!(
+                    "run {run_id} Artifact {} belongs to foreign Image {} instead of {}",
+                    artifact.reference().artifact_id,
+                    artifact.image_id(),
+                    image_id
+                );
+            }
+        }
         Ok(node_artifact_inspection(
             run_id,
             &workflow,
             &checkpoint,
+            Some(image_id),
             image_index,
         ))
     }
@@ -8369,31 +8392,31 @@ impl LocalApplication {
                     .then(|| entry.file_name().to_string_lossy().into_owned())
             })
             .ok_or_else(|| anyhow!("Project for run {run_id} is no longer available"))?;
-        let annotation_image_id = history
+        let run_image_ids = self.store.run_image_ids(run_id)?;
+        let image_id = (run_image_ids.len() == 1)
+            .then(|| run_image_ids.iter().next().copied())
+            .flatten()
+            .ok_or_else(|| anyhow!("run {run_id} must own exactly one Image"))?;
+        if let Some(foreign) = history
             .annotations
-            .first()
-            .map(|annotation| annotation.image_id);
+            .iter()
+            .find(|annotation| annotation.image_id != image_id)
+        {
+            bail!(
+                "run {run_id} annotation {} belongs to foreign Image {} instead of {}",
+                foreign.id,
+                foreign.image_id,
+                image_id
+            );
+        }
         let image_index = self
-            .inspect_run_pipeline_artifacts(run_id)
-            .ok()
-            .and_then(|inspection| inspection.image_index)
-            .or_else(|| {
-                history
-                    .model_messages
-                    .iter()
-                    .filter(|entry| {
-                        annotation_image_id.is_none() || entry.image_id == annotation_image_id
-                    })
-                    .find_map(|entry| extract_sha256(&entry.message.content))
-                    .and_then(|sha256| {
-                        self.image_index_by_sha256(&project_id, sha256)
-                            .ok()
-                            .flatten()
-                    })
-            });
+            .list_project_image_summaries(&project_id)?
+            .iter()
+            .position(|image| image.image_id == image_id);
         Ok(RunAnnotationInspection {
             run_id,
             project_id,
+            image_id: Some(image_id),
             image_index,
             annotations: history.annotations,
         })
@@ -8728,6 +8751,7 @@ impl LocalApplication {
                 run_id,
                 &workflow,
                 &result.checkpoint,
+                Some(image_id),
                 Some(image_index),
             ),
             sandbox: true,
@@ -15194,10 +15218,43 @@ impl LocalApplication {
         idempotency_key: Option<&str>,
         workflow: Option<(&str, u32)>,
     ) -> Result<StartedRun> {
-        let canonical = project_path
+        self.start_selected_image_run(
+            RunImageSelection {
+                project_path,
+                image_path: None,
+            },
+            provider,
+            settings,
+            temporary_api_key,
+            idempotency_key,
+            workflow,
+        )
+    }
+
+    pub fn start_selected_image_run(
+        &self,
+        selection: RunImageSelection<'_>,
+        provider: &str,
+        settings: Settings,
+        temporary_api_key: Option<String>,
+        idempotency_key: Option<&str>,
+        workflow: Option<(&str, u32)>,
+    ) -> Result<StartedRun> {
+        let canonical = selection
+            .project_path
             .canonicalize()
-            .with_context(|| format!("cannot access {}", project_path.display()))?;
+            .with_context(|| format!("cannot access {}", selection.project_path.display()))?;
         ensure_within(&self.workspace, &canonical)?;
+        let canonical_image = selection
+            .image_path
+            .map(|path| {
+                let image = path
+                    .canonicalize()
+                    .with_context(|| format!("cannot access {}", path.display()))?;
+                ensure_within(canonical.parent().unwrap_or(&self.workspace), &image)?;
+                Ok::<_, anyhow::Error>(image)
+            })
+            .transpose()?;
         self.ensure_no_active_batch(&canonical)?;
         let published_workflow = workflow
             .map(|(workflow_id, version)| {
@@ -15241,7 +15298,7 @@ impl LocalApplication {
             temporary_api_key,
             self.store.clone(),
             &self.skills,
-            None,
+            canonical_image.as_deref(),
             None,
             published_workflow,
         )?;
@@ -15283,6 +15340,7 @@ impl LocalApplication {
     ) -> Result<StartedRun> {
         let run_id = prepared.request.run_id;
         let project_id = prepared.request.project_id;
+        let image_id = prepared.request.image_id;
         let image_path = prepared.image_path.clone();
         let control = prepared.runtime.control();
         let mut active = self
@@ -15307,8 +15365,16 @@ impl LocalApplication {
             )? {
                 RunStartReservation::Reserved => {}
                 RunStartReservation::Idempotent { run_id, status } => {
+                    let existing_image_id = self
+                        .store
+                        .run_image_ids(run_id)?
+                        .iter()
+                        .next()
+                        .copied()
+                        .unwrap_or(image_id);
                     return Ok(StartedRun {
                         run_id,
+                        image_id: existing_image_id,
                         image_path,
                         status,
                         idempotent: true,
@@ -15322,6 +15388,7 @@ impl LocalApplication {
                 }
             }
         }
+        self.store.register_run_image(run_id, image_id, "pending")?;
         let mut events = prepared.runtime.subscribe();
         let event_sender = self.event_sender.clone();
         tokio::spawn(async move {
@@ -15353,6 +15420,7 @@ impl LocalApplication {
         );
         Ok(StartedRun {
             run_id,
+            image_id,
             image_path,
             status: RunStatus::Pending,
             idempotent: false,
@@ -16143,11 +16211,6 @@ fn find_or_generate_image(project_path: &Path, project: &ProjectSchema) -> Resul
     let path = root.join("synthetic-robocup.png");
     generate_synthetic_robocup(&path).map_err(|error| anyhow!(error))?;
     Ok(path)
-}
-
-fn extract_sha256(content: &str) -> Option<&str> {
-    let value = content.split_once("sha256=")?.1.split(';').next()?.trim();
-    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(value)
 }
 
 fn supported_images(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
@@ -19779,6 +19842,7 @@ export:
             .inspect_run_pipeline_artifacts(started.run_id)
             .expect("Pipeline Artifact inspection");
         assert_eq!(inspection.image_index, Some(0));
+        assert_eq!(inspection.image_id, Some(result.committed[0].image_id));
         let classifier_inspection = inspection
             .nodes
             .iter()
@@ -19801,7 +19865,26 @@ export:
         assert_eq!(result_summary.ready_count, 1);
         assert_eq!(result_summary.needs_review_count, 0);
         assert_eq!(result_summary.no_target_count, 0);
+        assert_eq!(result_summary.image.image_id, result.committed[0].image_id);
+        assert_eq!(result_summary.image.status, "ready");
+        assert_eq!(result_summary.image.annotation_count, 1);
+        assert_eq!(
+            result_summary.projection.committed_annotation_ids,
+            vec![result.committed[0].id]
+        );
+        assert!(result_summary.projection.review_candidate_ids.is_empty());
+        assert!(result_summary.projection.no_target_image_ids.is_empty());
+        assert!(result_summary.projection.failed_image_ids.is_empty());
         assert_eq!(result_summary.labels[0].label, "day");
+        let mut foreign_history = history.clone();
+        let mut foreign_snapshot = snapshot.clone();
+        foreign_snapshot["checkpoint"]["node_outputs"]["classifier"]["pipeline_artifacts"][0]["artifact"]
+            ["image_id"] = json!(ImageId::new());
+        foreign_history.run.workflow_snapshot_json = Some(foreign_snapshot.to_string());
+        let ownership_error = application
+            .inspect_run_pipeline_artifacts_from_history(&foreign_history.run, Some(0))
+            .expect_err("foreign Artifact must not be projected into the Run");
+        assert!(ownership_error.to_string().contains("foreign Image"));
         let debug_summary = application
             .run_debug_summary(started.run_id)
             .expect("Run debug summary");

@@ -794,6 +794,24 @@ impl PipelineArtifact {
         }
     }
 
+    /// Mutable access used by pass-through Core nodes to give their output a new, auditable
+    /// producer identity instead of leaking the upstream port into downstream routing.
+    pub const fn reference_mut(&mut self) -> &mut ArtifactRef {
+        match self {
+            Self::Image(artifact) => &mut artifact.reference,
+            Self::DetectionSet(artifact) => &mut artifact.reference,
+            Self::BoxPromptSet(artifact) => &mut artifact.reference,
+            Self::PointPromptSet(artifact) => &mut artifact.reference,
+            Self::MaskSet(artifact) => &mut artifact.reference,
+            Self::SemanticMask(artifact) => &mut artifact.reference,
+            Self::PolygonSet(artifact) => &mut artifact.reference,
+            Self::CandidateClusterSet(artifact) => &mut artifact.reference,
+            Self::CropSet(artifact) => &mut artifact.reference,
+            Self::ClassificationSet(artifact) => &mut artifact.reference,
+            Self::AnnotationCandidateSet(artifact) => &mut artifact.reference,
+        }
+    }
+
     #[must_use]
     pub const fn image_id(&self) -> ImageId {
         match self {

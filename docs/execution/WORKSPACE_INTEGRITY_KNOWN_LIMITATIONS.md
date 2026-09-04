@@ -8,9 +8,9 @@ This file describes the current product, not the target state.
 - Project-scoped Runs, Batch detail, and Review now have canonical nested routes. Older global detail aliases depend on the dashboard's current ownership summary to resolve their canonical owner.
 - The route model preserves Draft/version/image/node/artifact identities, but request cancellation and stale-response protection are not yet complete.
 - Workflow Draft writes are last-write-wins and sample-test history is mutable.
-- Results and Debug artifact projections are not yet proven distinct for every workflow.
+- Results is now an explicit final-Annotation projection and Debug retains intermediate Artifacts. Legacy Runs without one authoritative stable Image relation fail closed rather than guessing an image.
 - Review local edit state and cross-project enforcement are not yet fully covered.
 - Some controls are dead, misleading, duplicated, or expose Labs behavior without sufficient qualification.
-- Large server/application/frontend modules and unbounded/N+1 summary queries remain.
+- Large server/application/frontend modules and unbounded/N+1 summary queries remain. Batch image summaries currently resolve child results individually and are scheduled for the M9 bounded-query pass.
 - The Web production bundle currently warns about a JavaScript chunk above 500 kB.
 - Real provider/model checks are environment-dependent and remain outside offline acceptance until explicitly provisioned.

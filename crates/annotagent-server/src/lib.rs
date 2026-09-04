@@ -16,12 +16,12 @@ use std::{
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, ApplyPipelineImprovementRequest,
     CreatePipelineImprovementRequest, DatasetCoordinator, DetectionWorkerSettings,
-    GeometryCalibrationRequest, LocalApplication, ModelBinding, ProjectSummary, Settings,
-    WorkflowVersion, stable_project_id, validate_settings,
+    GeometryCalibrationRequest, LocalApplication, ModelBinding, ProjectSummary, RunResultSummary,
+    Settings, WorkflowVersion, stable_project_id, validate_settings,
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
-    ArtifactValidationState, AttributeDefinition, AutoAcceptEligibility, BatchId,
+    ArtifactValidationState, AttributeDefinition, AutoAcceptEligibility, BatchId, BatchProgress,
     BindingMutationActor, BoxPrompt, BoxPromptSetArtifact, CandidateAgreement,
     CapabilityDeclarationSource, ContractEvidenceSource, CorrectionFeatures, CorrectionRecord,
     CredentialReference, CredentialSource, DetectionEvidence, EnabledSkillConfig,
@@ -2984,6 +2984,8 @@ struct RunSummary {
     provider: String,
     model: String,
     status: RunStatus,
+    progress: BatchProgress,
+    result_summary: Option<RunResultSummary>,
     controllable: bool,
     input_tokens: u64,
     output_tokens: u64,
@@ -3239,6 +3241,19 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     };
     let controllable = state.application.is_run_controllable(run.id);
     let model_identity = format!("{}/{}", run.provider, run.model);
+    let result_summary = state.application.run_result_summary(run.id).ok();
+    let image_status = result_summary
+        .as_ref()
+        .map(|summary| summary.image.status.as_str());
+    let progress = BatchProgress {
+        total_images: 1,
+        pending_images: u64::from(image_status == Some("pending")),
+        running_images: u64::from(image_status == Some("running")),
+        completed_images: u64::from(matches!(image_status, Some("ready" | "no_target"))),
+        failed_images: u64::from(image_status == Some("failed")),
+        review_images: u64::from(image_status == Some("needs_review")),
+        cancelled_images: u64::from(image_status == Some("cancelled")),
+    };
     Ok(RunSummary {
         id: run.id,
         run_id: run.id,
@@ -3257,6 +3272,8 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
         provider: run.provider,
         model: run.model,
         status: run.status,
+        progress,
+        result_summary,
         controllable,
         input_tokens: totals.input_tokens,
         output_tokens: totals.output_tokens,
@@ -4879,6 +4896,7 @@ fn resolve_project_image_reference(
 #[serde(deny_unknown_fields)]
 struct StartRunRequest {
     idempotency_key: Option<String>,
+    image_id: Option<ImageId>,
     workflow_id: String,
     version: u32,
 }
@@ -5038,23 +5056,42 @@ async fn start_run(
     let selected_workflow = Some((request.workflow_id.as_str(), request.version));
     let (provider, api_key) =
         resolve_published_runtime_provider(&state, &request.workflow_id, request.version).await?;
-    let started = state
-        .application
-        .start_run_path_with_settings_idempotent_workflow(
-            &project_path,
+    let selected_image_path = request
+        .image_id
+        .map(|image_id| state.application.project_image_path(&project_id, image_id))
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    let started = if let Some(image_path) = selected_image_path.as_deref() {
+        state.application.start_selected_image_run(
+            annotagent_application::RunImageSelection {
+                project_path: &project_path,
+                image_path: Some(image_path),
+            },
             &provider,
             settings,
             api_key,
             idempotency_key.as_deref(),
             selected_workflow,
         )
-        .map_err(|error| {
-            if let Some(conflict) = error.downcast_ref::<ActiveRunExists>() {
-                ApiError::active_run(conflict)
-            } else {
-                ApiError::bad_request(error)
-            }
-        })?;
+    } else {
+        state
+            .application
+            .start_run_path_with_settings_idempotent_workflow(
+                &project_path,
+                &provider,
+                settings,
+                api_key,
+                idempotency_key.as_deref(),
+                selected_workflow,
+            )
+    }
+    .map_err(|error| {
+        if let Some(conflict) = error.downcast_ref::<ActiveRunExists>() {
+            ApiError::active_run(conflict)
+        } else {
+            ApiError::bad_request(error)
+        }
+    })?;
     Ok((StatusCode::ACCEPTED, Json(json!(started))))
 }
 
@@ -5136,29 +5173,64 @@ async fn list_batches(State(state): State<ServerState>) -> ApiResult<Json<Value>
         .map_err(ApiError::internal)?;
     let batches = batches
         .into_iter()
-        .map(|batch| {
-            let progress = state
-                .application
-                .store()
-                .batch_progress(batch.id)
-                .map_err(ApiError::internal)?;
-            let child_run_ids = state
-                .application
-                .store()
-                .list_batch_images(batch.id)
-                .map_err(ApiError::internal)?
-                .into_iter()
-                .filter_map(|image| image.child_run_id)
-                .collect::<Vec<_>>();
-            let mut summary = serde_json::to_value(batch).map_err(ApiError::internal)?;
-            if let Value::Object(fields) = &mut summary {
-                fields.insert("progress".to_owned(), json!(progress));
-                fields.insert("child_run_ids".to_owned(), json!(child_run_ids));
-            }
-            Ok(summary)
-        })
+        .map(|batch| batch_summary_value(&state, &batch))
         .collect::<ApiResult<Vec<_>>>()?;
     Ok(Json(json!({"batches": batches})))
+}
+
+fn batch_summary_value(
+    state: &ServerState,
+    batch: &annotagent_core::BatchRecord,
+) -> ApiResult<Value> {
+    let progress = state
+        .application
+        .store()
+        .batch_progress(batch.id)
+        .map_err(ApiError::internal)?;
+    let images = state
+        .application
+        .store()
+        .list_batch_images(batch.id)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|image| {
+            let result = image
+                .child_run_id
+                .and_then(|run_id| state.application.run_result_summary(run_id).ok());
+            let execution_status = serde_json::to_value(image.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "unknown".to_owned());
+            let status = result
+                .as_ref()
+                .map_or_else(|| execution_status.clone(), |summary| summary.image.status.clone());
+            json!({
+                "image_id": image.image_id,
+                "position": image.position,
+                "name": Path::new(&image.image_path).file_name().unwrap_or_default().to_string_lossy(),
+                "status": status,
+                "execution_status": execution_status,
+                "child_run_id": image.child_run_id,
+                "annotation_count": result.as_ref().map_or(0, |summary| summary.image.annotation_count),
+                "review_count": result.as_ref().map_or(0, |summary| summary.image.review_count),
+                "review_ids": result.as_ref().map_or_else(Vec::new, |summary| summary.projection.review_candidate_ids.clone()),
+                "failure": result.as_ref().and_then(|summary| summary.image.failure.clone()).or(image.error),
+                "usage": image.actual_usage,
+            })
+        })
+        .collect::<Vec<_>>();
+    let child_run_ids = images
+        .iter()
+        .filter_map(|image| image.get("child_run_id").cloned())
+        .filter(|run_id| !run_id.is_null())
+        .collect::<Vec<_>>();
+    let mut summary = serde_json::to_value(batch).map_err(ApiError::internal)?;
+    if let Value::Object(fields) = &mut summary {
+        fields.insert("progress".to_owned(), json!(progress));
+        fields.insert("child_run_ids".to_owned(), Value::Array(child_run_ids));
+        fields.insert("images".to_owned(), Value::Array(images));
+    }
+    Ok(summary)
 }
 
 async fn get_batch(
@@ -5181,8 +5253,9 @@ async fn get_batch(
         .store()
         .batch_progress(batch_id)
         .map_err(ApiError::internal)?;
+    let batch = batch_summary_value(&state, &checkpoint.batch)?;
     Ok(Json(
-        json!({"checkpoint": checkpoint, "progress": progress, "events": events}),
+        json!({"batch": batch, "checkpoint": checkpoint, "progress": progress, "events": events}),
     ))
 }
 
@@ -11491,7 +11564,17 @@ export:
                 .as_str()
                 .is_some_and(|status| !matches!(status, "pending" | "running"))
             {
-                assert_eq!(detail["progress"]["completed_images"], json!(1));
+                assert_eq!(
+                    detail["progress"]["completed_images"]
+                        .as_u64()
+                        .unwrap_or_default()
+                        + detail["progress"]["review_images"]
+                            .as_u64()
+                            .unwrap_or_default(),
+                    1,
+                    "{detail:#}"
+                );
+                assert!(detail["batch"]["images"][0]["image_id"].is_string());
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -12638,11 +12721,27 @@ export:
             .await,
         )
         .await;
-        assert_eq!(result_summary["result_count"], json!(1));
+        assert_eq!(
+            result_summary["result_count"],
+            json!(1),
+            "{result_summary:#}"
+        );
         assert_eq!(result_summary["ready_count"], json!(1));
         assert_eq!(result_summary["needs_review_count"], json!(0));
         assert_eq!(result_summary["no_target_count"], json!(0));
         assert_eq!(result_summary["labels"][0]["label"], json!("day"));
+        assert_eq!(result_summary["image"]["image_id"], started["image_id"]);
+        assert_eq!(result_summary["image"]["annotation_count"], json!(1));
+        assert_eq!(
+            result_summary["projection"]["committed_annotation_ids"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            result_summary["projection"]["review_candidate_ids"],
+            json!([])
+        );
         let debug_summary = response_json(
             request(
                 &service,
@@ -12689,7 +12788,7 @@ export:
         )
         .await;
         assert_eq!(ready["ready"], json!(true));
-        assert_eq!(ready["accepted_annotations"], json!(0));
+        assert_eq!(ready["accepted_annotations"], json!(1));
         assert_eq!(ready["unresolved_reviews"], json!(0));
         assert_eq!(ready["recommended_format"], json!("native"));
 
@@ -12779,7 +12878,7 @@ export:
         )
         .await;
         assert_eq!(ready["ready"], json!(true));
-        assert_eq!(ready["accepted_annotations"], json!(1));
+        assert_eq!(ready["accepted_annotations"], json!(2));
         assert_eq!(ready["unresolved_reviews"], json!(0));
         let exported = request(
             &service,
@@ -12791,7 +12890,7 @@ export:
         assert_eq!(exported.status(), StatusCode::OK);
         let exported = response_json(exported).await;
         assert_eq!(exported["format"], json!("native"));
-        assert_eq!(exported["report"]["exported_count"], json!(1));
+        assert_eq!(exported["report"]["exported_count"], json!(2));
         assert!(exported["output_path"].is_string());
         assert!(
             exported["report"]["output_files"]
@@ -12814,6 +12913,60 @@ export:
         )
         .await;
         assert_eq!(persisted["last_export"]["format"], json!("native"));
+
+        generate_synthetic_robocup(&temp.path().join("http-label/images/selected.png"))
+            .expect("second sample image");
+        let images = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/http-label/images",
+                None,
+            )
+            .await,
+        )
+        .await;
+        let selected_image_id = images["images"]
+            .as_array()
+            .and_then(|images| {
+                images
+                    .iter()
+                    .find(|image| image["name"] == json!("selected.png"))
+            })
+            .and_then(|image| image["image_id"].as_str())
+            .expect("stable selected Image id")
+            .to_owned();
+        let selected_run = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/http-label/runs",
+                Some(json!({
+                    "workflow_id": workflow_id,
+                    "version": version,
+                    "image_id": selected_image_id
+                })),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(selected_run["image_id"], json!(selected_image_id));
+        let selected_run_id = selected_run["run_id"].as_str().expect("selected Run id");
+        wait_for_status(&application, selected_run_id, RunStatus::Completed).await;
+        let selected_result = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{selected_run_id}/result-summary"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            selected_result["image"]["image_id"],
+            json!(selected_image_id)
+        );
     }
 
     #[tokio::test]

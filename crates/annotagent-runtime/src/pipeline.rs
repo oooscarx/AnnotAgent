@@ -2077,6 +2077,7 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         set_candidate_state(&mut artifacts, ArtifactValidationState::NeedsReview);
         "review"
     };
+    rebind_pipeline_outputs(context, &mut artifacts, "candidates")?;
     Ok(DagNodeOutput {
         pipeline_artifacts: artifacts,
         route: Some(route.to_owned()),
@@ -2094,6 +2095,22 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         ]),
         ..DagNodeOutput::default()
     })
+}
+
+fn rebind_pipeline_outputs(
+    context: &DagNodeContext<'_>,
+    artifacts: &mut [PipelineArtifact],
+    preferred_port: &str,
+) -> Result<(), DagNodeFailure> {
+    let artifact_count = artifacts.len();
+    for (index, artifact) in artifacts.iter_mut().enumerate() {
+        let mut reference = output_reference(context, preferred_port, artifact.artifact_type())?;
+        if artifact_count > 1 {
+            reference.artifact_id = format!("{}:{index}", reference.artifact_id);
+        }
+        *artifact.reference_mut() = reference;
+    }
+    Ok(())
 }
 
 fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {

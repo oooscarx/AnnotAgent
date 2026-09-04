@@ -15,8 +15,8 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | --- | --- | --- | --- | --- | --- |
 | P1-01 | Run stable Project ID is dropped from API, causing name-based ownership | server `RunSummary`; Web `HistoryRun`; `workspaceContext.ts` | Required Run owner identity is carried end-to-end; duplicate-name and rename API/Web regressions pass | M2 | accepted |
 | P1-02 | Every Project can display the same global model bindings | server project summary cloned registry bindings | Project-scoped persisted binding query and API isolation regression pass | M2 | accepted |
-| P1-03 | Run artifact may overlay an image from another Project | Run/image selection lacks authoritative owner validation | Bind artifact/image/run/project on server and reject mismatch | M4 | reproduced |
-| P1-04 | Results can flatten intermediate artifacts into final output | result projection consumes broad artifact collections | Store/query explicit final projection; test intermediate artifacts stay Debug-only | M4 | reproduced |
+| P1-03 | Run artifact may overlay an image from another Project | Run/image selection lacks authoritative owner validation | Server requires one Run-owned stable Image ID for annotations and every Pipeline Artifact; canvas URL and route canonicalization use only that ID | M4 | accepted |
+| P1-04 | Results can flatten intermediate artifacts into final output | result projection consumes broad artifact collections | Explicit `RunResultProjection` plus E2E proving candidate-cluster evidence stays Debug-only while one final Review candidate appears in Results | M4 | accepted |
 | P1-05 | Project-scoped Review can include another Project | global review source plus client filtering | Scoped Review endpoint and server owner check | M7 | reproduced |
 | P1-06 | Annotation creation on an empty Run can accept a foreign Image | ownership validation was conditional on prior annotations | Authoritative Run–Image write barrier and empty-Run regression pass | M2 | accepted |
 | P1-07 | Annotation import selects Run by `project_name` | legacy name lookup in import path | Import now selects only exact stable Project ownership | M2 | accepted |
@@ -26,7 +26,7 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P1-11 | Selecting a source box overwrites generic annotation confidence | review editor conflates provenance with quality score | Separate source/model/reviewer scores and provenance | M7 | reproduced |
 | P1-12 | Local review edit state leaks between items | edit state is not keyed/reset by review item | Item-keyed draft state and unsaved guard | M7 | reproduced |
 | P1-13 | Run Detail downloads the global Review queue | client finds run item after global list fetch | Run-scoped review summary/detail endpoint | M7/M9 | reproduced |
-| P1-14 | Every image displays the aggregate Run status | UI projects Run status over all images | Persist/serve per-image execution status | M4 | reproduced |
+| P1-14 | Every image displays the aggregate Run status | UI projects Run status over all images | Latest stable Image/Run status query, Batch image summaries, and Project image-card regression | M4 | accepted |
 | P1-15 | Image identity is a mutable sorted index | DTO/UI derived image key from ordering | Migration 15, UUID APIs, hash-guarded delete, and duplicate-content batch regression pass | M2 | accepted |
 | P1-16 | Top-level association still falls back to `project_name` | `workspaceContext.ts` and related selectors | Name fallback is migration-only; source scan and rename/duplicate regressions pass | M2 | accepted |
 
@@ -35,7 +35,7 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | ID | Defect / impact | Evidence / location | Repair and regression | Commit | Status |
 | --- | --- | --- | --- | --- | --- |
 | P2-01 | Project Runs/Review are filtered global pages, not child routes | `navigation.ts`, App links | Typed Project child routes, Project-context shell state, and browser regressions pass | M3 | accepted |
-| P2-02 | Starting a dataset Run lands on a list, not the new execution | start handler uses `/runs?project_id=` | Return IDs and navigate directly to Batch Detail | M4 | reproduced |
+| P2-02 | Starting a dataset Run lands on a list, not the new execution | start handler uses `/runs?project_id=` | Dataset and single-image starts return stable identities and navigate directly to their detail routes | M4 | accepted |
 | P2-03 | Batch Detail has no deep link | route model lacks batch detail | Stable Project Batch route and real persisted-summary view pass unit/E2E coverage | M3 | accepted |
 | P2-04 | Run/Review/back links lose Project scope | links use global paths/query filters | Owner-aware typed links and Back/Forward regression pass | M3 | accepted |
 | P2-05 | Run canonicalization drops `project_id` | current canonicalizer reconstructs partial route | Owner resolution replaces the alias with a canonical nested route and preserves typed context | M3 | accepted |
@@ -44,7 +44,7 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P2-08 | Canonicalizer drops query state not typed in Route | route parser/builder | Current route identities are typed and round-trip; async ownership/selection recovery continues in M5 | M3/M5 | implementing |
 | P2-09 | Image/node/artifact selection repeatedly moves focus to H1 | route change focus effect treats query changes as page changes | Focus on pathname/page identity only | M5 | reproduced |
 | P2-10 | URL and localStorage compete as active Project truth | workspace selection bootstrap | URL/server owner first; localStorage preference only | M5 | reproduced |
-| P2-11 | Run image status filter is a dead control | control state is not applied to list | Implement server/client filtering or remove control | M8 | reproduced |
+| P2-11 | Run image status filter is a dead control | control state is not applied to list | Removed from single-image Run; real status filtering now lives on Dataset Batch images | M4 | accepted |
 | P2-12 | Selecting image/node/artifact forces Debug | coupled selection/view state | Preserve explicit view and validate query combinations | M5 | reproduced |
 | P2-13 | Image query lacks full type/ownership validation | loosely parsed query | Typed parse plus owner validation | M5 | reproduced |
 | P2-14 | Debug artifacts load only when checkpoint flag exists | conditional data fetch | Load inspector artifacts from capability/endpoint truth | M4/M5 | reproduced |

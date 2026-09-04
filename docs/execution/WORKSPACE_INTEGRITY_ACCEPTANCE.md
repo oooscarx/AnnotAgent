@@ -40,7 +40,7 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 - [ ] Pipeline refresh preserves the exact Draft.
 - [ ] Test refresh preserves the exact Draft and Sample Test.
-- [ ] Run refresh preserves Image, View, Node, and Artifact.
+- [x] Run refresh preserves Image, View, Node, and Artifact.
 - [ ] Review refresh preserves the Item.
 - [ ] A stale request cannot overwrite a newly selected Project.
 - [ ] SSE reconnection resynchronizes server truth.
@@ -49,15 +49,15 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## E. Run and results
 
-- [ ] Start Dataset Run navigates directly to Batch Detail.
-- [ ] Start Image Run navigates directly to Run Detail.
-- [ ] Batch progress is a real aggregate.
-- [ ] Every image has its own status.
-- [ ] Results shows only the final projection.
-- [ ] Debug shows all intermediate artifacts.
-- [ ] One Run's artifacts cannot be overlaid on another image.
-- [ ] No Target is a valid result.
-- [ ] Review links are Run-scoped.
+- [x] Start Dataset Run navigates directly to Batch Detail.
+- [x] Start Image Run navigates directly to Run Detail.
+- [x] Batch progress is a real aggregate.
+- [x] Every image has its own status.
+- [x] Results shows only the final projection.
+- [x] Debug shows all intermediate artifacts.
+- [x] One Run's artifacts cannot be overlaid on another image.
+- [x] No Target is a valid result.
+- [x] Review links are Run-scoped.
 - [x] Model bindings show the real frozen snapshot.
 
 ## F. Workflow
@@ -85,7 +85,7 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## H. Feature truth
 
-- [ ] Image status filtering works or is removed.
+- [x] Image status filtering works or is removed.
 - [ ] “Review uncertain result” performs a real action rather than scrolling.
 - [ ] Advanced Graph is not exposed in a corruptible state.
 - [ ] Event-count fake progress is removed.
@@ -118,8 +118,8 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] Refresh recovery for Build/Test/Run/Review.
 - [ ] Slow-request race.
 - [ ] Two-tab Draft conflict.
-- [ ] Final result vs intermediate artifact.
-- [ ] Mixed batch status/progress.
+- [x] Final result vs intermediate artifact.
+- [x] Mixed batch status/progress.
 - [ ] Cross-project object attack.
 - [ ] Malicious browser Origin.
 - [ ] Feature-truth audit.

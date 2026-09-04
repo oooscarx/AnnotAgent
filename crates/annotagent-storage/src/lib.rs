@@ -1935,6 +1935,63 @@ impl SqliteStore {
         })
     }
 
+    /// Return the persisted image execution rows for one Run. The status is the latest
+    /// task-level state written for that exact Run/Image pair.
+    pub fn run_images(&self, run_id: RunId) -> Result<Vec<(ImageId, String)>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT image_id, status FROM run_images WHERE run_id = ?1 ORDER BY image_id",
+            )?;
+            statement
+                .query_map([run_id.to_string()], |row| {
+                    let image_id = row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    Ok((image_id, row.get(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(StorageError::from)
+        })
+    }
+
+    /// Resolve the newest Run status independently for every image in a Project.
+    /// Display ordering never participates in this association.
+    pub fn latest_project_image_run_statuses(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<BTreeMap<ImageId, String>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT ri.image_id, r.status
+                 FROM run_images ri
+                 JOIN runs r ON r.id = ri.run_id
+                 WHERE r.project_id = ?1
+                 ORDER BY r.updated_at DESC, r.id DESC",
+            )?;
+            let rows = statement
+                .query_map([project_id.to_string()], |row| {
+                    let image_id = row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    Ok((image_id, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut statuses = BTreeMap::new();
+            for (image_id, status) in rows {
+                statuses.entry(image_id).or_insert(status);
+            }
+            Ok(statuses)
+        })
+    }
+
     pub fn list_task_runs(&self, run_id: RunId) -> Result<Vec<HistoryTaskRun>, StorageError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -3497,6 +3554,10 @@ impl RuntimeStore for SqliteStore {
                 "UPDATE runs SET status = ?2, terminal_reason = ?3, updated_at = ?4 WHERE id = ?1",
                 params![run_id.to_string(), status, reason, Utc::now().to_rfc3339()],
             )?;
+            transaction.execute(
+                "UPDATE run_images SET status = ?2 WHERE run_id = ?1",
+                params![run_id.to_string(), status],
+            )?;
             if matches!(
                 status.as_str(),
                 "pending" | "running" | "paused" | "awaiting_review"
@@ -4114,6 +4175,20 @@ mod tests {
         assert_eq!(
             store.run_image_ids(run_id).expect("owned images"),
             BTreeSet::from([image_id])
+        );
+        store
+            .set_run_status(run_id, RunStatus::CompletedWithReview, None)
+            .await
+            .expect("update Run and image status");
+        assert_eq!(
+            store.run_images(run_id).expect("Run image summary"),
+            vec![(image_id, "completed_with_review".to_owned())]
+        );
+        assert_eq!(
+            store
+                .latest_project_image_run_statuses(project_id)
+                .expect("latest Project image statuses"),
+            BTreeMap::from([(image_id, "completed_with_review".to_owned())])
         );
         assert_eq!(
             store

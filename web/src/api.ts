@@ -570,16 +570,18 @@ export const api = {
     projectId: string,
     workflow: { workflow_id: string; version: number },
     idempotencyKey: string = crypto.randomUUID(),
+    imageId?: string,
   ) =>
     request<{
       run_id: string;
+      image_id: string;
       image_path: string;
       status: string;
       idempotent: boolean;
     }>(`/api/projects/${projectId}/runs`, {
       method: "POST",
       headers: { "idempotency-key": idempotencyKey },
-      body: JSON.stringify(workflow),
+      body: JSON.stringify({ ...workflow, ...(imageId ? { image_id: imageId } : {}) }),
     }),
   startBatch: (
     projectId: string,
@@ -604,6 +606,12 @@ export const api = {
     request<{ events: RunEvent[] }>(`/api/runs/${runId}/events`),
   runs: () => request<{ runs: HistoryRun[] }>("/api/runs"),
   batches: () => request<{ batches: DatasetBatchSummary[] }>("/api/batches"),
+  batch: (batchId: string) =>
+    request<{
+      batch: DatasetBatchSummary;
+      progress: DatasetBatchSummary["progress"];
+      events: unknown[];
+    }>(`/api/batches/${batchId}`),
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
   workflowDrafts: (projectId?: string) =>
     request<{

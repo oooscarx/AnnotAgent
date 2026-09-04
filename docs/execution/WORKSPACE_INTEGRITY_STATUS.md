@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M3 — Project-scoped route model.
-- Next milestone: M4 — execution and Results integrity.
+- Completed milestone: M4 — execution and Results integrity.
+- Next milestone: M5 — recoverable frontend state.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -51,10 +51,6 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Security evidence: 28 server tests passed, 47 Web unit tests passed, all workspace tests passed, and 39 Playwright tests passed including malicious Origin/session/CSRF coverage.
 - Milestone commit subject: `fix(security): protect privileged localhost APIs from cross-origin access`.
 
-## Next exit
-
-M4 separates Dataset Run and Image Run truth, exposes real per-image progress/status, binds previews to owned images, and keeps final Results distinct from intermediate Debug Artifacts.
-
 ## M2 exit
 
 - Added migration 15 for Project-scoped image identities and ownership indexes while preserving existing image rows.
@@ -75,3 +71,18 @@ M4 separates Dataset Run and Image Run truth, exposes real per-image progress/st
 - Pipeline route parsing now retains Draft ID or immutable Workflow/version identity; typed route builders round-trip encoded Project, Run, Batch, Review, image, node, and Artifact identifiers.
 - Evidence: 14 navigation unit tests passed; all 55 Web unit tests passed; Web typecheck and production build passed; all 40 Chromium E2E journeys passed, including Project hierarchy, legacy owner resolution, Back/Forward, Batch deep-link, global discovery, and Not Found coverage.
 - Milestone commit subject: `refactor(web): keep project-owned work inside the project workspace`.
+
+## M4 exit
+
+- Dataset execution and image execution now have distinct detail surfaces. Starting a Dataset Run opens its Batch detail directly; starting an individual Project image opens the exact Image Run directly.
+- Batch detail reads the durable Batch endpoint, shows aggregate counters, usage/cost, controls, filters, and one independently derived status/result/review/failure summary per stable Image ID.
+- `RunResultProjection` explicitly names committed Annotation IDs, current Review-candidate IDs, valid no-target images, and failed images. Results renders only those final Annotations; intermediate detections, crops, masks, fallbacks, evidence, and validators remain in Debug.
+- Image Run inspection requires exactly one authoritative Run-owned Image ID. Foreign Annotation or Pipeline Artifact image identities fail closed, and the Web canvas loads only the stable owned Image URL. The fake multi-image search/filter inside Image Run was removed.
+- Fixed pass-through Artifact identity at Confidence Gate: output Artifacts are rebound to the gate's declared output port, so a valid classifier → gate → Commit pipeline now persists its final Annotation instead of reporting a false empty completion.
+- Project image cards now report each image's latest persisted Run status rather than repeating an aggregate Project status.
+- Evidence: 99 Core tests, the full Runtime and Storage suites, 60 Application tests (one billable check ignored), 29 Server tests, 55 Web unit tests, Web typecheck/build, and all 40 Chromium E2E journeys passed. The E2E suite explicitly proves final-vs-intermediate projection, stable Image URL restoration, mixed-status Dataset detail, and single-image Debug behavior.
+- Milestone commit subject: `fix(run): separate dataset execution final results and debug artifacts`.
+
+## Next exit
+
+M5 makes every durable frontend selection URL/server reconstructible, prevents stale async responses from replacing a newer route, and turns SSE into cache invalidation rather than competing state.

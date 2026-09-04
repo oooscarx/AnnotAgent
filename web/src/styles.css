@@ -267,6 +267,10 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .run-image-browser button span, .run-node-timeline button span { min-width: 0; display: grid; }
 .run-image-browser button strong, .run-image-browser button small { overflow: hidden; text-overflow: ellipsis; }
 .run-image-browser button.active, .run-node-timeline button.active, .artifact-choice button.active { border-color: var(--aa-primary); background: var(--aa-primary-soft); }
+.run-image-identity { display: grid; align-content: start; gap: 10px; overflow: hidden; }
+.run-image-identity > img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.run-image-identity > strong, .run-image-identity > code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.run-image-identity > code { color: var(--aa-text-muted); font-size: 9px; white-space: nowrap; }
 .run-node-timeline button { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; width: 100%; padding: 8px; text-align: left; align-items: center; }
 .run-node-timeline button > span:first-child { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; background: var(--aa-surface-raised); }
 .run-node-timeline button > span:nth-child(2) { overflow: hidden; }
@@ -492,9 +496,14 @@ main { min-width: 0; padding-bottom: 48px; }
 .image-grid article { overflow: hidden; }
 .image-grid img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: var(--aa-surface-muted); }
 .image-grid article > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; }
+.image-grid article > button { width: calc(100% - 28px); margin: 0 14px 14px; }
 .image-grid strong, .image-grid small { display: block; min-width: 0; }
 .image-grid strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .image-grid small { color: var(--aa-text-muted); margin-top: 3px; font-size: 10px; }
+.batch-image-toolbar { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 12px; }
+.batch-image-toolbar label { min-width: min(100%, 240px); }
+.batch-image-runs .run-row:disabled { cursor: default; opacity: 0.72; }
+.batch-image-runs code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .review-layout { display: grid; grid-template-columns: minmax(210px, 15rem) minmax(0, 1fr) minmax(270px, var(--aa-inspector-width, 21rem)); align-items: start; gap: 14px; width: min(100%, var(--aa-content-max, 96rem)); margin-inline: auto; padding: 18px; min-height: calc(100vh - 94px); }
 .review-layout.inspector-collapsed { grid-template-columns: minmax(210px, 15rem) minmax(0, 1fr); }

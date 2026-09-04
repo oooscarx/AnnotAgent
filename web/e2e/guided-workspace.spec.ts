@@ -693,19 +693,16 @@ test("global Runs and Review ignore hidden active Project state", async ({ page 
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review$`));
 });
 
-test("Run URL refresh restores image and node context", async ({ page }) => {
+test("Run URL refresh restores its one stable image and node context", async ({ page }) => {
   await page.goto(`/runs/${runId}?image=0&node=core.image_input`);
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
   const nodeInspector = page.getByRole("region", { name: "Node inspector" });
   await expect(nodeInspector).toBeVisible();
   await expect(nodeInspector.locator(".run-node-metrics article")).toHaveCount(3);
   await expect(nodeInspector.locator(".node-payload-section").filter({ has: page.getByText("Output", { exact: true }) })).toHaveAttribute("open", "");
-  const imageControlGaps = await page.locator(".run-image-browser input, .run-image-browser select, .run-image-browser > div > button").evaluateAll((elements) =>
-    elements.slice(1).map((element, index) =>
-      element.getBoundingClientRect().top - elements[index].getBoundingClientRect().bottom,
-    ),
-  );
-  expect(imageControlGaps.every((gap) => gap >= 7)).toBeTruthy();
+  await expect(page.locator(".run-image-identity")).toContainText(reviewImageId);
+  await expect(page.getByLabel("Search run images")).toHaveCount(0);
+  await expect(page.getByLabel("Image status filter")).toHaveCount(0);
   const pipelineTextFits = await page.locator(".run-node-timeline button strong, .run-node-timeline button small").evaluateAll((elements) =>
     elements.every((element) => {
       const bounds = element.getBoundingClientRect();
@@ -726,7 +723,7 @@ test("Run URL refresh restores image and node context", async ({ page }) => {
   expect(zoomAlignment).toBeLessThanOrEqual(1);
   await page.screenshot({ path: `${screenshots}/08-run-debug.png`, fullPage: true });
   await page.reload();
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}\\?view=debug&image=0&node=core.image_input`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}\\?view=debug&image=${reviewImageId}&node=core.image_input`));
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
 });
 
@@ -799,10 +796,10 @@ test("Project-owned routes preserve hierarchy, resolve owners, and expose Batch 
   );
 
   const batchId = randomUUID();
-  await page.route("**/api/batches", (route) =>
+  await page.route("**/api/batches/**", (route) =>
     route.fulfill({
       json: {
-        batches: [{
+        batch: {
           id: batchId,
           project_id: projectId,
           provider: "fixture",
@@ -816,29 +813,61 @@ test("Project-owned routes preserve hierarchy, resolve owners, and expose Batch 
               output_tokens: 0,
               total_tokens: 0,
               request_count: 0,
-              image_count: 1,
+              image_count: 2,
               cost: "0",
             },
           },
           progress: {
-            total_images: 1,
+            total_images: 2,
             pending_images: 0,
             running_images: 0,
             completed_images: 1,
-            failed_images: 0,
+            failed_images: 1,
             review_images: 0,
             cancelled_images: 0,
           },
           child_run_ids: [runId],
+          images: [{
+            image_id: reviewImageId,
+            position: 0,
+            name: "sample.png",
+            status: "ready",
+            execution_status: "completed",
+            child_run_id: runId,
+            annotation_count: 1,
+            review_count: 0,
+            review_ids: [],
+            usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, request_count: 0, image_count: 1, cost: "0" },
+          }, {
+            image_id: randomUUID(),
+            position: 1,
+            name: "failed.png",
+            status: "failed",
+            execution_status: "failed",
+            annotation_count: 0,
+            review_count: 0,
+            review_ids: [],
+            failure: "provider unavailable",
+            usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, request_count: 0, image_count: 0, cost: "0" },
+          }],
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        }],
+        },
+        progress: {
+          total_images: 2, pending_images: 0, running_images: 0,
+          completed_images: 1, failed_images: 1, review_images: 0, cancelled_images: 0,
+        },
+        events: [],
       },
     }),
   );
   await page.goto(`/projects/${projectId}/batches/${batchId}`);
   await expect(page.getByText(`Dataset Run · ${batchId.slice(0, 8)}`)).toBeVisible();
   await expect(page.getByLabel("Dataset Run progress")).toBeVisible();
+  await expect(page.locator(".batch-image-runs .run-row")).toHaveCount(2);
+  await page.getByLabel("Filter Dataset Run images").selectOption("failed");
+  await expect(page.locator(".batch-image-runs .run-row")).toHaveCount(1);
+  await expect(page.locator(".batch-image-runs .run-row")).toContainText("provider unavailable");
 
   await page.goto("/missing/deep-link");
   await expect(page.getByRole("heading", { name: "Not Found", level: 1 })).toBeVisible();
@@ -1013,9 +1042,15 @@ export:
   });
   expect(imported.ok()).toBeTruthy();
   const state = await dashboard(request);
-  const mixedImageId = randomUUID();
+  const mixedImagesResponse = await request.get(`/api/projects/${mixedProjectId}/images`);
+  expect(mixedImagesResponse.ok()).toBeTruthy();
+  const mixedImageId = (await mixedImagesResponse.json()).images[0].image_id as string;
   const mixedRun = {
     id: mixedRunId,
+    run_id: mixedRunId,
+    project_id: mixedProjectId,
+    ownership_status: "resolved",
+    image_id: mixedImageId,
     project_name: mixedProjectName,
     workflow_name: "Specialist with open-vocabulary fallback",
     workflow_version: "1",
@@ -1133,6 +1168,7 @@ export:
     workflow_version: 1,
     content_hash: "fixture",
     project_id: mixedProjectId,
+    image_id: mixedImageId,
     image_index: 0,
     nodes: [{
       node_id: "match",
@@ -1151,10 +1187,12 @@ export:
   } }));
   await page.route(`**/api/runs/${mixedRunId}/result-summary`, (route) => route.fulfill({ json: {
     run_id: mixedRunId, project_id: mixedProjectId, status: "completed_with_review", image_count: 1,
-    result_count: 2, ready_count: 1, needs_review_count: 1, no_target_count: 0, failed_count: 0,
+    result_count: 1, ready_count: 0, needs_review_count: 1, no_target_count: 0, failed_count: 0,
     fallback_count: 1, cache_hit_count: 2, duration_ms: 42,
+    image: { image_id: mixedImageId, status: "needs_review", annotation_count: 1, review_count: 1 },
+    projection: { committed_annotation_ids: [], review_candidate_ids: [mixedReviewId], no_target_image_ids: [], failed_image_ids: [] },
     usage: { input_tokens: 0, output_tokens: 0, estimated_cost: "0" }, image_index: 0,
-    labels: [{ label: "ball", count: 2 }],
+    labels: [{ label: "ball", count: 1 }],
   } }));
   await page.route(`**/api/runs/${mixedRunId}/debug-summary`, (route) => route.fulfill({ json: {
     run_id: mixedRunId, workflow_id: "mixed-detection", workflow_version: 1, node_count: 1,
@@ -1162,7 +1200,7 @@ export:
     usage: { input_tokens: 0, output_tokens: 0, estimated_cost: "0" },
   } }));
   await page.route(`**/api/runs/${mixedRunId}/annotations`, (route) => route.fulfill({ json: {
-    run_id: mixedRunId, project_id: mixedProjectId, image_index: 0, annotations: [annotation],
+    run_id: mixedRunId, project_id: mixedProjectId, image_id: mixedImageId, image_index: 0, annotations: [annotation],
   } }));
   await page.route("**/api/reviews**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -1173,20 +1211,22 @@ export:
 
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.goto(`/runs/${mixedRunId}`);
+  await expect(page.getByText("2 models agree · IoU 0.78", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".run-result-preview svg g")).toHaveCount(1);
+  await expect(page.getByText("Fallbacks")).toBeVisible();
+  await expect(page.getByText("Cache hits")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+
+  const debugUrl = `/runs/${mixedRunId}?view=debug&image=${mixedImageId}&node=match`;
+  await page.goto(debugUrl);
   await expect(page.getByText("2 models agree · IoU 0.78", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("2 models disagree on location", { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel("Detection evidence inspector")).toContainText("RF-DETR");
   await expect(page.getByLabel("Detection evidence inspector")).toContainText("LocateAnything");
   await expect(page.getByLabel("Detection evidence inspector")).toContainText("Score not provided");
-  await expect(page.getByText("Fallbacks")).toBeVisible();
-  await expect(page.getByText("Cache hits")).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-
-  const debugUrl = `/runs/${mixedRunId}?view=debug&image=0&node=match`;
-  await page.goto(debugUrl);
   await expect(page.getByLabel("Evidence decision")).toContainText("geometry conflict");
   await page.reload();
-  await expect(page).toHaveURL(new RegExp(`view=debug&image=0&node=match$`));
+  await expect(page).toHaveURL(new RegExp(`view=debug&image=${mixedImageId}&node=match$`));
   await expect(page.getByLabel("Evidence decision")).toContainText("Detector boxes disagree");
 
   await page.goto(`/review/${mixedReviewId}?project_id=${mixedProjectId}`);
@@ -1477,13 +1517,14 @@ test("primary journey controls, focus, and annotation alternatives work from the
 
   const fixture = await findCropRun(request, cropProjectId);
   expect(fixture?.run.id).toBe(cropRunId);
-  await page.goto(`/runs/${cropRunId}?image=${fixture!.inspection.image_index}`);
+  await page.goto(`/runs/${cropRunId}?image=${fixture!.inspection.image_id}`);
   const annotationList = page.getByRole("list", { name: "Run result annotations" });
   await expect(annotationList).toBeVisible();
   const annotation = annotationList.getByRole("button").first();
   await annotation.focus();
   await page.keyboard.press("Enter");
   await expect(annotation).toHaveAttribute("aria-pressed", "true");
+  await page.goto(`/runs/${cropRunId}?view=debug&image=${fixture!.inspection.image_id}&node=${fixture!.cropNode.node_id}`);
   const cropMode = page.getByRole("button", { name: /Crop \(1\)/ });
   await cropMode.focus();
   await page.keyboard.press("Enter");
