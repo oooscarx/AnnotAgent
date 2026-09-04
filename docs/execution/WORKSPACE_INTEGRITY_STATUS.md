@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M1 — localhost security boundary.
-- Next milestone: M2 — stable identity and API truth.
+- Completed milestone: M2 — stable identity and API truth.
+- Next milestone: M3 — Project-scoped route model.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -53,4 +53,15 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 
 ## Next exit
 
-M2 carries stable Project, Run, Review, and Image identity through storage, API DTOs, and frontend associations; removes mutable-name ownership; and records compatible migrations.
+M3 makes Project-owned Runs, Batches, and Reviews real nested routes, adds canonical owner redirects and Not Found, and preserves typed route state.
+
+## M2 exit
+
+- Added migration 15 for Project-scoped image identities and ownership indexes while preserving existing image rows.
+- `ProjectSummary`, `RunSummary`, `ReviewSummary`, and `ImageSummary` now expose their stable owner/object IDs. New Run and Web associations use `project_id`; mutable display names remain display-only.
+- Duplicate Project names remain isolated and renaming a Project display name does not detach its historical Runs. Legacy null ownership is reconciled only when a display name has exactly one current owner; unresolved history receives an explicit `legacy-orphan:<run-id>` API identity rather than a guessed Project.
+- Formal single-image and batch execution reuse stable Project image identities. Image content and delete APIs use UUIDs; delete requires the content hash observed by the caller. Numeric image URLs are read-only compatibility references and are no longer emitted.
+- Annotation writes now require an authoritative Run–Image relation even when the Run has no annotations. Annotation import, export, Project summaries, and frontend selectors no longer use `project_name` fallback.
+- Project model summaries query only persisted bindings for that Project. Run model summaries are derived only from immutable published `ModelProfileSnapshot` records; the fabricated `default-vision` binding was removed.
+- Evidence: Rust formatting and warning-denying clippy passed; storage/application/server suites passed (including the 100-image batch, duplicate-name/rename API isolation, Project binding isolation, stable image identity, and foreign-image write barrier); Web unit tests passed with the M2 expected failures promoted to normal tests; Web typecheck/build passed.
+- Milestone commit subject: `fix(core): preserve stable ownership across projects runs and images`.

@@ -93,7 +93,7 @@ export function ImproveAutomationPanel({
   onError: (message: string) => void;
 }) {
   const projectRuns = useMemo(
-    () => runs.filter((run) => run.project_name === project.name && !["running", "paused", "pending"].includes(run.status)),
+    () => runs.filter((run) => run.project_id === project.project_id && !["running", "paused", "pending"].includes(run.status)),
     [project.name, runs],
   );
   const published = workflows.filter((workflow) => workflow.status === "published" && workflow.source.startsWith("published draft"));

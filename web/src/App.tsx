@@ -854,7 +854,7 @@ function BuildData({
   const removeImage = (image: ImageItem) => {
     setBusy(true);
     void api
-      .removeImage(project.id, image.index)
+      .removeImage(project.id, image.image_id, image.content_hash)
       .then(() => Promise.all([load(), onRefresh()]))
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
@@ -887,7 +887,7 @@ function BuildData({
       </Panel>
       <Panel title="Project images" eyebrow={`${images.length} registered · ${project.dataset.root}`}>
         {images.length ? <div className="build-image-list">
-          {images.map((image) => <article key={image.index}>
+          {images.map((image) => <article key={image.image_id}>
             <img src={image.url} alt="" />
             <span><strong>{image.name}</strong><small>{image.path} · {(image.size_bytes / 1024).toFixed(1)} KB</small></span>
             <button className="danger-text" disabled={busy} onClick={() => removeImage(image)} aria-label={`Remove ${image.name} from Project`}>Remove</button>
@@ -1592,7 +1592,7 @@ function ProjectPage({
         <div className="loading-banner" role="status">Loading Project guidance…</div>
       </section>
     );
-  const projectRuns = runs.filter((run) => run.project_name === project.name);
+  const projectRuns = runs.filter((run) => run.project_id === project.project_id);
   const restoredRun = deriveProjectRunView(project);
   const activeRun = restoredRun.activeRunId;
   const runEvents = events.filter((event) => event.run_id === activeRun);
@@ -6770,7 +6770,7 @@ function RunsPage({
     return (
       <RunDetailWorkspace
         run={run}
-        project={projects.find((item) => item.name === run.project_name)}
+        project={projects.find((item) => item.project_id === run.project_id)}
         route={route}
         onNavigate={onNavigate}
         onRefresh={onRefresh}
@@ -7693,9 +7693,7 @@ function ReviewPage({
     : undefined;
   const visibleReviews = scopedProject
     ? reviews.filter(
-        (review) =>
-          review.project_id === scopedProject.id ||
-          (!review.project_id && review.project_name === scopedProject.name),
+        (review) => review.project_id === scopedProject.project_id,
       )
     : reviews;
   const selected =

@@ -562,8 +562,8 @@ export const api = {
       `/api/projects/${projectId}/import`,
       { method: "POST", body: JSON.stringify({ source }) },
     ),
-  removeImage: (projectId: string, index: number) =>
-    request<{ removed: string }>(`/api/projects/${projectId}/images/${index}`, {
+  removeImage: (projectId: string, imageId: string, expectedContentHash: string) =>
+    request<{ removed: string }>(`/api/projects/${projectId}/images/${imageId}?expected_content_hash=${encodeURIComponent(expectedContentHash)}`, {
       method: "DELETE",
     }),
   startRun: (

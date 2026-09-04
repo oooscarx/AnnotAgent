@@ -623,7 +623,11 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
     return current.runs.find((run: { id: string }) => run.id === runId)?.status;
   }, { timeout: 30_000 }).toMatch(/completed|completed_with_review/);
   const annotationId = randomUUID();
-  reviewImageId = randomUUID();
+  const completedState = await dashboard(request);
+  reviewImageId = completedState.runs.find(
+    (run: { id: string; image_id?: string }) => run.id === runId,
+  )?.image_id ?? "";
+  expect(reviewImageId).toBeTruthy();
   const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
     data: {
       annotation: {

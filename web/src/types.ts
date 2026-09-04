@@ -83,6 +83,14 @@ export type ReviewStatus =
 
 export interface HistoryRun {
   id: string;
+  run_id: string;
+  project_id: string;
+  project_scope_id?: string;
+  ownership_status: "resolved" | "legacy_orphan";
+  batch_id?: string;
+  image_id?: string;
+  workflow_version_id?: string;
+  frozen_model_bindings: ModelBinding[];
   project_name: string;
   workflow_name: string;
   workflow_version: string;
@@ -581,6 +589,7 @@ export interface WorkflowSummary {
 
 export interface ProjectSummary {
   id: string;
+  project_id: string;
   name: string;
   description?: string;
   dataset: {
@@ -664,6 +673,10 @@ export interface ProjectSummary {
     created_at: string;
     updated_at: string;
   };
+  active_batch_id?: string;
+  active_run_id?: string;
+  last_execution_id?: string;
+  default_workflow_version_id?: string;
 }
 
 export interface ProjectWorkspaceSummary {
@@ -1475,10 +1488,16 @@ export interface NodeReplayReport {
 }
 
 export interface ImageItem {
+  image_id: string;
+  project_id: string;
+  display_index: number;
   index: number;
   name: string;
   path: string;
+  path_snapshot: string;
+  content_hash: string;
   size_bytes: number;
+  status: string;
   url: string;
 }
 
@@ -1603,10 +1622,13 @@ export interface Annotation {
 
 export interface ReviewItem {
   id: string;
+  review_id: string;
+  annotation_id: string;
   run_id: string;
-  project_id?: string;
+  project_id: string;
   project_name: string;
   annotation: Annotation;
+  image_id: string;
   workflow_id?: string;
   workflow_version: number;
   image_index?: number;

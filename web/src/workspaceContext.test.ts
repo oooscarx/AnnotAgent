@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { HistoryRun, ProjectSummary, ReviewItem } from "./types";
 import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
 
-const project = { id: "ball", name: "Ball Project" } as ProjectSummary;
-const other = { id: "other", name: "Other Project" } as ProjectSummary;
-const run = { id: "run-1", project_name: project.name, status: "completed" } as HistoryRun;
-const running = { id: "run-2", project_name: project.name, status: "running" } as HistoryRun;
-const foreign = { id: "run-3", project_name: other.name, status: "completed" } as HistoryRun;
+const project = { id: "ball", project_id: "ball", name: "Ball Project" } as ProjectSummary;
+const other = { id: "other", project_id: "other", name: "Other Project" } as ProjectSummary;
+const run = { id: "run-1", project_id: project.project_id, project_name: project.name, status: "completed" } as HistoryRun;
+const running = { id: "run-2", project_id: project.project_id, project_name: project.name, status: "running" } as HistoryRun;
+const foreign = { id: "run-3", project_id: other.project_id, project_name: other.name, status: "completed" } as HistoryRun;
 
 describe("workspace Project context", () => {
   it("recovers a Project from a Run", () => {
@@ -28,9 +28,9 @@ describe("workspace Project context", () => {
     expect(runsForContext([run, running, foreign], project, "running").map((item) => item.id)).toEqual(["run-2"]);
   });
 
-  it.fails("keeps duplicate Project names isolated by stable Run.project_id", () => {
-    const first = { id: "project-a", name: "Duplicate" } as ProjectSummary;
-    const second = { id: "project-b", name: "Duplicate" } as ProjectSummary;
+  it("keeps duplicate Project names isolated by stable Run.project_id", () => {
+    const first = { id: "project-a", project_id: "project-a", name: "Duplicate" } as ProjectSummary;
+    const second = { id: "project-b", project_id: "project-b", name: "Duplicate" } as ProjectSummary;
     const ownedRun = {
       id: "run-b",
       project_id: second.id,
@@ -43,8 +43,8 @@ describe("workspace Project context", () => {
     expect(runsForContext([ownedRun], second)).toEqual([ownedRun]);
   });
 
-  it.fails("does not lose Run ownership when a Project is renamed", () => {
-    const renamed = { id: "project-a", name: "Renamed" } as ProjectSummary;
+  it("does not lose Run ownership when a Project is renamed", () => {
+    const renamed = { id: "project-a", project_id: "project-a", name: "Renamed" } as ProjectSummary;
     const historicalRun = {
       id: "run-a",
       project_id: renamed.id,

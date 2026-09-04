@@ -51,6 +51,8 @@ const PIPELINE_IMPROVEMENT_MIGRATION: &str =
     include_str!("../../../migrations/0012_pipeline_improvements.sql");
 const RUST_PLUGIN_MIGRATION: &str = include_str!("../../../migrations/0013_rust_plugins.sql");
 const MODEL_BUNDLE_MIGRATION: &str = include_str!("../../../migrations/0014_model_bundles.sql");
+const WORKSPACE_IDENTITY_MIGRATION: &str =
+    include_str!("../../../migrations/0015_workspace_identity.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -132,6 +134,19 @@ pub struct HistoryTaskRun {
     pub status: TaskRunStatus,
     pub reason: Option<String>,
     pub updated_at: String,
+}
+
+/// Durable Project-scoped identity for an imported image. `image_id` is derived from the
+/// Project namespace and content digest, so display order and filename changes cannot retarget
+/// annotations or Runs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredProjectImage {
+    pub image_id: ImageId,
+    pub project_id: ProjectId,
+    pub relative_path: String,
+    pub sha256: String,
+    pub metadata_json: String,
+    pub imported_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -399,6 +414,20 @@ impl SqliteStore {
                 params!["model_bundle_provisioning", Utc::now().to_rfc3339()],
             )?;
             transaction.commit()?;
+            let has_workspace_identity = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 15)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_workspace_identity {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute_batch(WORKSPACE_IDENTITY_MIGRATION)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (15, ?1, ?2)",
+                    params!["project_scoped_workspace_identity", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
             Ok(())
         })
     }
@@ -1774,6 +1803,138 @@ impl SqliteStore {
         })
     }
 
+    /// Assign legacy Runs to a Project only after the application has established that the
+    /// legacy display name has exactly one owner. Existing stable ownership is never rewritten.
+    pub fn backfill_legacy_run_project_id(
+        &self,
+        project_id: ProjectId,
+        unique_legacy_project_name: &str,
+    ) -> Result<usize, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .execute(
+                    "UPDATE runs SET project_id = ?1 WHERE project_id IS NULL AND project_name = ?2",
+                    params![project_id.to_string(), unique_legacy_project_name],
+                )
+                .map_err(StorageError::from)
+        })
+    }
+
+    /// Insert or resolve a durable Project-scoped image identity based on its content digest.
+    pub fn ensure_project_image(
+        &self,
+        project_id: ProjectId,
+        relative_path: &str,
+        sha256: &str,
+        metadata_json: &str,
+    ) -> Result<StoredProjectImage, StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let existing_id = transaction
+                .query_row(
+                    "SELECT id FROM images
+                     WHERE project_id = ?1 AND relative_path = ?2
+                     ORDER BY imported_at DESC LIMIT 1",
+                    params![project_id.to_string(), relative_path],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let image_id = if let Some(id) = existing_id {
+                id.parse().map_err(|error| {
+                    StorageError::InvalidEnum(format!("stored ImageId is invalid: {error}"))
+                })?
+            } else {
+                ImageId(Uuid::new_v5(&project_id.0, relative_path.as_bytes()))
+            };
+            let imported_at = Utc::now().to_rfc3339();
+            transaction.execute(
+                "INSERT INTO images (id, project_id, relative_path, sha256, metadata_json, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                   project_id = excluded.project_id,
+                   relative_path = excluded.relative_path,
+                   sha256 = excluded.sha256,
+                   metadata_json = excluded.metadata_json",
+                params![
+                    image_id.to_string(),
+                    project_id.to_string(),
+                    relative_path,
+                    sha256,
+                    metadata_json,
+                    imported_at,
+                ],
+            )?;
+            let stored = transaction.query_row(
+                "SELECT id, project_id, relative_path, sha256, metadata_json, imported_at
+                 FROM images WHERE id = ?1",
+                [image_id.to_string()],
+                stored_project_image_from_row,
+            )?;
+            transaction.commit()?;
+            Ok(stored)
+        })
+    }
+
+    pub fn get_project_image(
+        &self,
+        project_id: ProjectId,
+        image_id: ImageId,
+    ) -> Result<Option<StoredProjectImage>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT id, project_id, relative_path, sha256, metadata_json, imported_at
+                     FROM images WHERE project_id = ?1 AND id = ?2",
+                    params![project_id.to_string(), image_id.to_string()],
+                    stored_project_image_from_row,
+                )
+                .optional()
+                .map_err(StorageError::from)
+        })
+    }
+
+    pub fn register_run_image(
+        &self,
+        run_id: RunId,
+        image_id: ImageId,
+        status: &str,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO run_images (run_id, image_id, status) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(run_id, image_id) DO UPDATE SET status = excluded.status",
+                params![run_id.to_string(), image_id.to_string(), status],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Authoritative image ownership for a Run, including evidence from legacy tables.
+    pub fn run_image_ids(&self, run_id: RunId) -> Result<BTreeSet<ImageId>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT image_id FROM run_images WHERE run_id = ?1
+                 UNION SELECT image_id FROM task_runs WHERE run_id = ?1
+                 UNION SELECT image_id FROM annotations WHERE run_id = ?1
+                 UNION SELECT image_id FROM vision_artifacts WHERE run_id = ?1
+                 UNION SELECT image_id FROM model_messages WHERE run_id = ?1 AND image_id IS NOT NULL
+                 UNION SELECT image_id FROM batch_images WHERE child_run_id = ?1",
+            )?;
+            statement
+                .query_map([run_id.to_string()], |row| {
+                    row.get::<_, String>(0)?.parse().map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                })?
+                .collect::<Result<BTreeSet<_>, _>>()
+                .map_err(StorageError::from)
+        })
+    }
+
     pub fn list_task_runs(&self, run_id: RunId) -> Result<Vec<HistoryTaskRun>, StorageError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -2982,6 +3143,23 @@ fn history_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRun>
     })
 }
 
+fn stored_project_image_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredProjectImage> {
+    let image_id = row.get::<_, String>(0)?.parse().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let project_id = row.get::<_, String>(1)?.parse().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(StoredProjectImage {
+        image_id,
+        project_id,
+        relative_path: row.get(2)?,
+        sha256: row.get(3)?,
+        metadata_json: row.get(4)?,
+        imported_at: row.get(5)?,
+    })
+}
+
 fn append_json_references(
     connection: &Connection,
     sql: &str,
@@ -3353,7 +3531,13 @@ impl RuntimeStore for SqliteStore {
             .unwrap_or("failed")
             .to_owned();
         self.with_connection(|connection| {
-            connection.execute(
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute(
+                "INSERT INTO run_images (run_id, image_id, status) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(run_id, image_id) DO UPDATE SET status = excluded.status",
+                params![run_id.to_string(), image_id.to_string(), status],
+            )?;
+            transaction.execute(
                 "INSERT INTO task_runs (run_id, image_id, task_id, status, reason, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(run_id, image_id, task_id) DO UPDATE SET
@@ -3369,6 +3553,7 @@ impl RuntimeStore for SqliteStore {
                     Utc::now().to_rfc3339()
                 ],
             )?;
+            transaction.commit()?;
             Ok(())
         })
         .map_err(|error| error.to_string())
@@ -3828,6 +4013,114 @@ mod tests {
                 "missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn project_images_keep_stable_ids_without_collapsing_duplicate_content() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let project_id = ProjectId::new();
+        let first = store
+            .ensure_project_image(project_id, "images/a.png", "same-hash", "{}")
+            .expect("first image");
+        let duplicate_content = store
+            .ensure_project_image(project_id, "images/b.png", "same-hash", "{}")
+            .expect("second path");
+        let changed = store
+            .ensure_project_image(project_id, "images/a.png", "new-hash", "{\"revision\":2}")
+            .expect("changed content at stable path");
+
+        assert_ne!(first.image_id, duplicate_content.image_id);
+        assert_eq!(first.image_id, changed.image_id);
+        assert_eq!(changed.sha256, "new-hash");
+        assert_eq!(
+            store
+                .get_project_image(project_id, first.image_id)
+                .expect("lookup")
+                .expect("stored image"),
+            changed
+        );
+    }
+
+    #[test]
+    fn workspace_identity_migration_preserves_every_legacy_image_row() {
+        let temp = tempfile::tempdir().expect("temporary database");
+        let path = temp.path().join("history.db");
+        let connection = Connection::open(&path).expect("legacy database");
+        connection
+            .execute_batch(INITIAL_MIGRATION)
+            .expect("legacy schema");
+        let project_id = ProjectId::new();
+        for sha256 in ["old-hash", "new-hash"] {
+            connection
+                .execute(
+                    "INSERT INTO images
+                     (id, project_id, relative_path, sha256, metadata_json, imported_at)
+                     VALUES (?1, ?2, 'images/replaced.png', ?3, '{}', ?4)",
+                    params![
+                        ImageId::new().to_string(),
+                        project_id.to_string(),
+                        sha256,
+                        Utc::now().to_rfc3339(),
+                    ],
+                )
+                .expect("legacy image row");
+        }
+        drop(connection);
+
+        let store = SqliteStore::open(&path).expect("migrated database");
+        let count = store
+            .with_connection(|connection| {
+                Ok(connection.query_row(
+                    "SELECT COUNT(*) FROM images WHERE project_id = ?1",
+                    [project_id.to_string()],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .expect("preserved row count");
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn run_image_ownership_is_registered_independently_of_annotations() {
+        let store = SqliteStore::open_in_memory().expect("in-memory database");
+        let run_id = RunId::new();
+        let project_id = ProjectId::new();
+        let image_id = ImageId::new();
+        store
+            .create_run(&RunRecord {
+                id: run_id,
+                project_id,
+                project_name: "duplicate display name".to_owned(),
+                skill_id: "none".to_owned(),
+                provider: "core".to_owned(),
+                model: "none".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json: "{}".to_owned(),
+                workflow_snapshot_json: None,
+            })
+            .await
+            .expect("create run");
+        store
+            .set_task_run_status(
+                run_id,
+                image_id,
+                &TaskId::from("objects"),
+                TaskRunStatus::Pending,
+                None,
+            )
+            .await
+            .expect("register task image");
+
+        assert_eq!(
+            store.run_image_ids(run_id).expect("owned images"),
+            BTreeSet::from([image_id])
+        );
+        assert_eq!(
+            store
+                .backfill_legacy_run_project_id(ProjectId::new(), "duplicate display name")
+                .expect("backfill"),
+            0
+        );
     }
 
     #[test]

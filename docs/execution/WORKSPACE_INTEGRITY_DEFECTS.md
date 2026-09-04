@@ -13,13 +13,13 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 
 | ID | Defect / impact | Evidence / location | Repair and regression | Commit | Status |
 | --- | --- | --- | --- | --- | --- |
-| P1-01 | Run stable Project ID is dropped from API, causing name-based ownership | server `RunSummary`; Web `HistoryRun`; `workspaceContext.ts` | Carry `project_id` end-to-end; duplicate-name and rename tests already added | M2 | test-added |
-| P1-02 | Every Project can display the same global model bindings | server project summary clones registry bindings | Query Project bindings by stable ID; API isolation test | M2 | reproduced |
+| P1-01 | Run stable Project ID is dropped from API, causing name-based ownership | server `RunSummary`; Web `HistoryRun`; `workspaceContext.ts` | Required Run owner identity is carried end-to-end; duplicate-name and rename API/Web regressions pass | M2 | accepted |
+| P1-02 | Every Project can display the same global model bindings | server project summary cloned registry bindings | Project-scoped persisted binding query and API isolation regression pass | M2 | accepted |
 | P1-03 | Run artifact may overlay an image from another Project | Run/image selection lacks authoritative owner validation | Bind artifact/image/run/project on server and reject mismatch | M4 | reproduced |
 | P1-04 | Results can flatten intermediate artifacts into final output | result projection consumes broad artifact collections | Store/query explicit final projection; test intermediate artifacts stay Debug-only | M4 | reproduced |
 | P1-05 | Project-scoped Review can include another Project | global review source plus client filtering | Scoped Review endpoint and server owner check | M7 | reproduced |
-| P1-06 | Annotation creation on an empty Run can accept a foreign Image | ownership validation is not uniform | Require image-run-project relation on every write | M4/M7 | reproduced |
-| P1-07 | Annotation import selects Run by `project_name` | legacy name lookup in import path | Require stable target IDs; reject ambiguous legacy payload | M2 | reproduced |
+| P1-06 | Annotation creation on an empty Run can accept a foreign Image | ownership validation was conditional on prior annotations | Authoritative Run–Image write barrier and empty-Run regression pass | M2 | accepted |
+| P1-07 | Annotation import selects Run by `project_name` | legacy name lookup in import path | Import now selects only exact stable Project ownership | M2 | accepted |
 | P1-08 | Publish does not require a persisted test for the exact current Draft | publication contract lacks exact-test gate | Enforce passing content-hash/revision record | M6 | reproduced |
 | P1-09 | Timestamp freshness and one-row UPSERT overwrite Sample Test history | `workflow_sample_tests` primary key/UPSERT by draft | Append immutable executions with content hash | M6 | reproduced |
 | P1-10 | Autosave is last-write-wins | `save_workflow_draft` UPSERT has no expected revision | Server revision + optimistic concurrency/409 | M6 | reproduced |
@@ -27,8 +27,8 @@ Status vocabulary: `reproduced`, `test-added`, `implementing`, `fixed`, `accepte
 | P1-12 | Local review edit state leaks between items | edit state is not keyed/reset by review item | Item-keyed draft state and unsaved guard | M7 | reproduced |
 | P1-13 | Run Detail downloads the global Review queue | client finds run item after global list fetch | Run-scoped review summary/detail endpoint | M7/M9 | reproduced |
 | P1-14 | Every image displays the aggregate Run status | UI projects Run status over all images | Persist/serve per-image execution status | M4 | reproduced |
-| P1-15 | Image identity is a mutable sorted index | DTO/UI derive image key from ordering | Stable persisted `ImageId` plus migration | M2 | reproduced |
-| P1-16 | Top-level association still falls back to `project_name` | `workspaceContext.ts` and related selectors | Remove fallback after migration; rename/duplicate tests | M2 | test-added |
+| P1-15 | Image identity is a mutable sorted index | DTO/UI derived image key from ordering | Migration 15, UUID APIs, hash-guarded delete, and duplicate-content batch regression pass | M2 | accepted |
+| P1-16 | Top-level association still falls back to `project_name` | `workspaceContext.ts` and related selectors | Name fallback is migration-only; source scan and rename/duplicate regressions pass | M2 | accepted |
 
 ## P2 — Routing, recovery, performance, and feature truth
 

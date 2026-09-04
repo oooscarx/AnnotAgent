@@ -39,3 +39,11 @@ The current `.annotplugin` verifier checks package digest, file checksums, manif
 ## D-010 — Local session security is memory-only
 
 The session cookie is HttpOnly, host-only, `SameSite=Strict`, and expires with the browser/server session. CSRF and one-time privileged tokens are never persisted. This intentionally makes restart recovery a fresh handshake while leaving workspace data and credentials untouched.
+
+## D-011 — Image identity is Project path identity with content revision evidence
+
+`ImageId` is a UUIDv5 in the stable Project namespace using the persisted Project-relative path. List position is never identity. This allows two intentional files with identical bytes to remain distinct—a requirement exercised by the 100-image batch—while a content replacement at the same logical path retains the image identity and changes `content_hash`. Deletes require the caller's observed hash, and historical execution records retain their path/hash snapshot. Import still deduplicates matching content as a product policy; direct Project datasets are represented truthfully rather than collapsed.
+
+## D-012 — Unresolved legacy ownership is explicit, never guessed
+
+Startup reconciliation assigns a null legacy `Run.project_id` only when the legacy display name has exactly one current Project owner. Ambiguous or deleted ownership remains orphaned. Required API identity fields use a namespaced `legacy-orphan:<run-id>` resolver token and an `ownership_status` flag, which cannot be mistaken for a valid Project route.

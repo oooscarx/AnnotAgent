@@ -2484,6 +2484,8 @@ pub struct BallRecoveryInput {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectSummary {
     pub id: String,
+    /// Canonical URL/API identity. Kept separate from the mutable display name.
+    pub project_id: String,
     pub name: String,
     pub description: Option<String>,
     pub dataset: ProjectDatasetSummary,
@@ -2506,6 +2508,10 @@ pub struct ProjectSummary {
     pub active_batch_progress: Option<BatchProgress>,
     pub active_run: Option<HistoryRun>,
     pub last_run: Option<HistoryRun>,
+    pub active_batch_id: Option<BatchId>,
+    pub active_run_id: Option<RunId>,
+    pub last_execution_id: Option<RunId>,
+    pub default_workflow_version_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2553,6 +2559,20 @@ pub struct ImageImportReport {
     pub corrupt: Vec<ImageImportIssue>,
     pub unsupported_files: u64,
     pub supported_formats: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectImageSummary {
+    pub image_id: ImageId,
+    pub project_id: String,
+    pub display_index: usize,
+    /// Compatibility alias; this is presentation state and never image identity.
+    pub index: usize,
+    pub name: String,
+    pub path_snapshot: String,
+    pub content_hash: String,
+    pub size_bytes: u64,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4892,11 +4912,27 @@ impl<'a> DatasetCoordinator<'a> {
             .context("project path is outside the workspace")?
             .to_string_lossy()
             .into_owned();
+        let project_root = project_path.parent().unwrap_or(&self.application.workspace);
+        let stable_scope_id = stable_project_id(project_root);
         let image_records = images
             .iter()
             .map(|path| {
+                let bytes = std::fs::read(path)
+                    .with_context(|| format!("cannot read Project image {}", path.display()))?;
+                let content_hash = annotagent_image_tools::sha256(&bytes);
+                let project_relative_path = path
+                    .strip_prefix(project_root)
+                    .context("image path is outside the Project root")?
+                    .to_string_lossy()
+                    .into_owned();
+                let stored = self.application.store.ensure_project_image(
+                    stable_scope_id,
+                    &project_relative_path,
+                    &content_hash,
+                    &serde_json::json!({ "size_bytes": bytes.len() }).to_string(),
+                )?;
                 Ok((
-                    ImageId::new(),
+                    stored.image_id,
                     path.strip_prefix(&self.application.workspace)
                         .context("image path is outside the workspace")?
                         .to_string_lossy()
@@ -5381,7 +5417,7 @@ const fn batch_image_status(status: RunStatus) -> BatchImageStatus {
 
 #[derive(Clone)]
 struct ManagedRun {
-    project_name: String,
+    project_id: ProjectId,
     control: RunControl,
     result: watch::Receiver<Option<Result<ImageRunResult, String>>>,
 }
@@ -5527,7 +5563,7 @@ impl LocalApplication {
         let (event_sender, _) = broadcast::channel(1024);
         let plugin_registry = PluginRegistry::open(workspace.join(".annotagent/plugins"))?;
         let model_bundle_registry = ModelBundleRegistry::open(workspace.join(".annotagent"))?;
-        Ok(Self {
+        let application = Self {
             workspace,
             database_path,
             store,
@@ -5538,7 +5574,42 @@ impl LocalApplication {
             event_sender,
             active: Mutex::new(HashMap::new()),
             agent_cancellations: Mutex::new(HashMap::new()),
-        })
+        };
+        application.reconcile_legacy_project_ownership()?;
+        Ok(application)
+    }
+
+    /// One-time-compatible legacy resolver. A display name is accepted only when exactly one
+    /// current Project owns it; ambiguous or deleted Project history remains explicitly orphaned.
+    fn reconcile_legacy_project_ownership(&self) -> Result<()> {
+        let mut owners = BTreeMap::<String, Vec<ProjectId>>::new();
+        for entry in std::fs::read_dir(&self.workspace)? {
+            let entry = entry?;
+            if entry.file_type()?.is_symlink() || !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let project_path = entry.path().join("project.yaml");
+            if !project_path.is_file() {
+                continue;
+            }
+            let Ok(yaml) = std::fs::read_to_string(&project_path) else {
+                continue;
+            };
+            let Ok(project) = ProjectSchema::from_yaml(&yaml) else {
+                continue;
+            };
+            owners
+                .entry(project.project.name)
+                .or_default()
+                .push(stable_project_id(&entry.path().canonicalize()?));
+        }
+        for (legacy_name, project_ids) in owners {
+            if let [project_id] = project_ids.as_slice() {
+                self.store
+                    .backfill_legacy_run_project_id(*project_id, &legacy_name)?;
+            }
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -6082,12 +6153,8 @@ impl LocalApplication {
         run_id: RunId,
         mut annotation: Annotation,
     ) -> Result<Annotation> {
-        let existing = self.store.list_annotations(run_id)?;
-        if !existing.is_empty()
-            && !existing
-                .iter()
-                .any(|item| item.image_id == annotation.image_id)
-        {
+        let run_images = self.store.run_image_ids(run_id)?;
+        if !run_images.contains(&annotation.image_id) {
             bail!("new annotation image_id does not belong to this Run");
         }
         annotation.source = AnnotationSource::Human;
@@ -6114,11 +6181,12 @@ impl LocalApplication {
         ensure_within(&self.workspace, &source)?;
         let project_path = self.project_path(project_id)?;
         let (schema, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let stable_id = stable_project_id(project_path.parent().unwrap_or(&self.workspace));
         let mut project_runs = self
             .store
             .list_runs()?
             .into_iter()
-            .filter(|run| run.project_name == schema.project.name)
+            .filter(|run| run.project_id == Some(stable_id))
             .collect::<Vec<_>>();
         project_runs.sort_by(|left, right| left.created_at.cmp(&right.created_at));
         let mut run_by_image = BTreeMap::new();
@@ -7192,14 +7260,14 @@ impl LocalApplication {
         Ok(context)
     }
 
-    pub fn active_run_for_project(&self, project_name: &str) -> Result<Option<RunId>> {
+    pub fn active_run_for_project(&self, project_id: ProjectId) -> Result<Option<RunId>> {
         Ok(self
             .active
             .lock()
             .map_err(|_| anyhow!("active run lock poisoned"))?
             .iter()
             .find_map(|(run_id, managed)| {
-                (managed.project_name == project_name && managed.is_active()).then_some(*run_id)
+                (managed.project_id == project_id && managed.is_active()).then_some(*run_id)
             }))
     }
 
@@ -7346,10 +7414,7 @@ impl LocalApplication {
             .store
             .list_runs()?
             .into_iter()
-            .filter(|run| {
-                run.project_id == Some(stable_id)
-                    || (run.project_id.is_none() && run.project_name == project.project.name)
-            })
+            .filter(|run| run.project_id == Some(stable_id))
             .collect::<Vec<_>>();
         let active_run = project_runs
             .iter()
@@ -7425,37 +7490,9 @@ impl LocalApplication {
                 node_count: workflow.nodes.len(),
             })
             .collect();
-        let model_bindings = active_run
-            .as_ref()
-            .or(last_run.as_ref())
-            .as_ref()
-            .map(|run| {
-                vec![ModelBinding {
-                    id: "default-vision".to_owned(),
-                    provider: run.provider.clone(),
-                    model: run.model.clone(),
-                    role: "vision".to_owned(),
-                    scope: "latest_run".to_owned(),
-                    health_status: if run.status == RunStatus::Failed {
-                        "degraded".to_owned()
-                    } else {
-                        "unknown".to_owned()
-                    },
-                    health_detail: Some("health at execution time was not recorded".to_owned()),
-                    availability_group: ModelAvailabilityGroup::ConfiguredUnavailable,
-                    capabilities: Vec::new(),
-                    score_semantics: None,
-                    model_version: None,
-                    endpoint: None,
-                    enabled: None,
-                    license_summary: None,
-                    architecture: None,
-                    checkpoint_sha256: None,
-                    label_space: Vec::new(),
-                    cost_per_request: None,
-                }]
-            })
-            .unwrap_or_default();
+        // Registry-backed Project bindings are attached by the server from their exact Project
+        // scope. Never infer configuration from the most recent Run.
+        let model_bindings = Vec::new();
         let review_count = project_runs
             .iter()
             .map(|run| self.store.list_annotations(run.id))
@@ -7507,6 +7544,7 @@ impl LocalApplication {
         };
         Ok(ProjectSummary {
             id: project_id.to_owned(),
+            project_id: project_id.to_owned(),
             name: project.project.name.clone(),
             description: None,
             dataset: ProjectDatasetSummary {
@@ -7559,6 +7597,12 @@ impl LocalApplication {
             review_count,
             readiness,
             blocking_issues,
+            active_batch_id: active_batch.as_ref().map(|batch| batch.id),
+            active_run_id: active_run.as_ref().map(|run| run.id),
+            last_execution_id: active_run.as_ref().or(last_run.as_ref()).map(|run| run.id),
+            default_workflow_version_id: default_workflow_version
+                .as_ref()
+                .map(|workflow| format!("{}@{}", workflow.workflow_id, workflow.version)),
             default_workflow_version,
             active_batch,
             active_batch_progress,
@@ -7674,10 +7718,7 @@ impl LocalApplication {
             .store
             .list_runs()?
             .into_iter()
-            .filter(|run| {
-                run.project_id == Some(stable_id)
-                    || (run.project_id.is_none() && run.project_name == summary.name)
-            })
+            .filter(|run| run.project_id == Some(stable_id))
             .collect::<Vec<_>>();
         let has_completed_run = project_runs.iter().any(|run| {
             matches!(
@@ -7739,6 +7780,97 @@ impl LocalApplication {
         let mut images: Vec<_> = supported_images(&root).collect();
         images.sort();
         Ok(images)
+    }
+
+    pub fn list_project_image_summaries(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ProjectImageSummary>> {
+        let project_path = self.project_path(project_id)?;
+        let project_root = project_path.parent().unwrap_or(&self.workspace);
+        let stable_id = stable_project_id(project_root);
+        self.list_project_images(project_id)?
+            .into_iter()
+            .enumerate()
+            .map(|(display_index, path)| {
+                let bytes = std::fs::read(&path)
+                    .with_context(|| format!("cannot read Project image {}", path.display()))?;
+                let content_hash = annotagent_image_tools::sha256(&bytes);
+                let relative_path = path
+                    .strip_prefix(project_root)
+                    .context("Project image is outside its Project root")?
+                    .to_string_lossy()
+                    .into_owned();
+                let metadata_json = serde_json::json!({
+                    "size_bytes": bytes.len(),
+                })
+                .to_string();
+                let stored = self.store.ensure_project_image(
+                    stable_id,
+                    &relative_path,
+                    &content_hash,
+                    &metadata_json,
+                )?;
+                Ok(ProjectImageSummary {
+                    image_id: stored.image_id,
+                    project_id: project_id.to_owned(),
+                    display_index,
+                    index: display_index,
+                    name: path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    path_snapshot: relative_path,
+                    content_hash,
+                    size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                    status: "ready".to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn project_image_path(&self, project_id: &str, image_id: ImageId) -> Result<PathBuf> {
+        // Reconcile the live dataset before lookup so pre-migration workspaces receive identities
+        // lazily without changing their files.
+        self.list_project_image_summaries(project_id)?;
+        let project_path = self.project_path(project_id)?;
+        let project_root = project_path.parent().unwrap_or(&self.workspace);
+        let stable_id = stable_project_id(project_root);
+        let stored = self
+            .store
+            .get_project_image(stable_id, image_id)?
+            .context("image_id was not found in this Project")?;
+        let path = project_root.join(stored.relative_path);
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("cannot access Project image {}", path.display()))?;
+        ensure_within(project_root, &canonical)?;
+        Ok(canonical)
+    }
+
+    pub fn remove_project_image_by_id(
+        &self,
+        project_id: &str,
+        image_id: ImageId,
+        expected_content_hash: &str,
+    ) -> Result<String> {
+        let summary = self
+            .list_project_image_summaries(project_id)?
+            .into_iter()
+            .find(|image| image.image_id == image_id)
+            .context("image_id was not found in this Project")?;
+        if summary.content_hash != expected_content_hash {
+            bail!("Project image changed since it was loaded; refresh before removing it");
+        }
+        let canonical = self.project_image_path(project_id, image_id)?;
+        let name = canonical
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        std::fs::remove_file(canonical)?;
+        Ok(name)
     }
 
     pub fn run_result_summary(&self, run_id: RunId) -> Result<RunResultSummary> {
@@ -8047,10 +8179,7 @@ impl LocalApplication {
         let mut unresolved_reviews = 0_usize;
         let mut selected_runs = BTreeMap::<usize, (HistoryRun, Vec<Annotation>)>::new();
         for run in self.store.list_runs()? {
-            let belongs_to_project = run.project_id.as_ref().map_or_else(
-                || run.project_name == schema.project.name,
-                |run_project_id| *run_project_id == stable_id,
-            );
+            let belongs_to_project = run.project_id == Some(stable_id);
             if !belongs_to_project {
                 continue;
             }
@@ -15153,7 +15282,7 @@ impl LocalApplication {
         idempotency_key: Option<&str>,
     ) -> Result<StartedRun> {
         let run_id = prepared.request.run_id;
-        let project_name = prepared.request.project.project.name.clone();
+        let project_id = prepared.request.project_id;
         let image_path = prepared.image_path.clone();
         let control = prepared.runtime.control();
         let mut active = self
@@ -15162,9 +15291,9 @@ impl LocalApplication {
             .map_err(|_| anyhow!("active run lock poisoned"))?;
         if enforce_project_exclusivity {
             if idempotency_key.is_none()
-                && let Some((active_run_id, managed)) = active.iter().find(|(_, managed)| {
-                    managed.project_name == project_name && managed.is_active()
-                })
+                && let Some((active_run_id, managed)) = active
+                    .iter()
+                    .find(|(_, managed)| managed.project_id == project_id && managed.is_active())
             {
                 return Err(anyhow!(ActiveRunExists {
                     active_run_id: *active_run_id,
@@ -15217,7 +15346,7 @@ impl LocalApplication {
         active.insert(
             run_id,
             ManagedRun {
-                project_name,
+                project_id,
                 control,
                 result,
             },
@@ -15704,6 +15833,32 @@ fn prepare_run_with_settings(
     });
     let model_image = to_model_image("full-image", &image, model_image_max_dimension)
         .map_err(|error| anyhow!(error))?;
+    let project_root = project_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()
+        .context("cannot canonicalize project root")?;
+    let project_id = stable_project_id(&project_root);
+    let image_id = if let Some(image_id) = image_id_override {
+        image_id
+    } else {
+        let bytes = std::fs::read(&image_path)
+            .with_context(|| format!("cannot read Project image {}", image_path.display()))?;
+        let content_hash = annotagent_image_tools::sha256(&bytes);
+        let relative_path = image_path
+            .strip_prefix(&project_root)
+            .context("Run image is outside the Project root")?
+            .to_string_lossy()
+            .into_owned();
+        store
+            .ensure_project_image(
+                project_id,
+                &relative_path,
+                &content_hash,
+                &serde_json::json!({ "size_bytes": bytes.len() }).to_string(),
+            )?
+            .image_id
+    };
     let runtime: Arc<dyn ApplicationImageRuntime> = if let Some(published) = published_workflow {
         let enabled_ids = project
             .project
@@ -15791,12 +15946,6 @@ fn prepare_run_with_settings(
             .with_workflow_snapshot_json(Some(serde_json::to_string(&compatibility_snapshot)?)),
         )
     };
-    let project_root = project_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .canonicalize()
-        .context("cannot canonicalize project root")?;
-    let project_id = stable_project_id(&project_root);
     Ok(PreparedRun {
         runtime,
         request: ImageRunRequest {
@@ -15804,7 +15953,7 @@ fn prepare_run_with_settings(
             project_id,
             project_root,
             project: Arc::new(project),
-            image_id: image_id_override.unwrap_or_default(),
+            image_id,
             image,
             model_image: Some(model_image),
         },
@@ -17259,9 +17408,11 @@ impl TerminalEvent for RunEvent {
 #[cfg(test)]
 mod tests {
     use annotagent_core::{
-        LabelId, NodePort, TaskId, WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
+        AnnotationId, AnnotationProvenance, AnnotationValue, LabelId, NodePort, TaskId,
+        WorkflowDraftNode, WorkflowEdge, WorkflowNodeKind,
     };
     use annotagent_provider::MockToolCall;
+    use annotagent_runtime::RunRecord;
     use axum::{
         Json, Router,
         http::{HeaderMap, StatusCode, header},
@@ -22467,6 +22618,52 @@ export:
         );
     }
 
+    #[tokio::test]
+    async fn human_annotation_rejects_foreign_image_even_when_run_has_no_annotations() {
+        let temp = tempfile::tempdir().expect("temp");
+        let workspace = temp.path().join("workspace");
+        let app = LocalApplication::new(&workspace).expect("app");
+        app.create_project("generic", GENERIC_PROJECT)
+            .expect("project");
+        let run_id = RunId::new();
+        let project_path = app.project_path("generic").expect("project path");
+        app.store()
+            .create_run(&RunRecord {
+                id: run_id,
+                project_id: stable_project_id(project_path.parent().expect("project root")),
+                project_name: "Generic inspection".to_owned(),
+                skill_id: "none".to_owned(),
+                provider: "core".to_owned(),
+                model: "none".to_owned(),
+                status: RunStatus::Pending,
+                project_schema_json: "{}".to_owned(),
+                workflow_snapshot_json: None,
+            })
+            .await
+            .expect("create empty run");
+        let annotation = Annotation {
+            id: AnnotationId::new(),
+            image_id: ImageId::new(),
+            task_id: TaskId::from("objects"),
+            label: Some(LabelId::from("ball")),
+            value: AnnotationValue::BoundingBox {
+                rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).expect("bbox"),
+            },
+            attributes: BTreeMap::new(),
+            confidence: None,
+            source: AnnotationSource::Human,
+            review_status: ReviewStatus::Draft,
+            provenance: AnnotationProvenance::default(),
+            created_at: chrono::Utc::now(),
+        };
+
+        let error = app
+            .create_human_annotation(run_id, annotation)
+            .await
+            .expect_err("foreign image must be rejected");
+        assert!(error.to_string().contains("does not belong to this Run"));
+    }
+
     #[test]
     fn project_summary_separates_project_skill_and_workflow() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
@@ -23260,7 +23457,13 @@ export:
         application.active.lock().expect("active runs").insert(
             active_run_id,
             ManagedRun {
-                project_name: summary.name,
+                project_id: stable_project_id(
+                    application
+                        .project_path(&summary.id)
+                        .expect("Project path")
+                        .parent()
+                        .expect("Project root"),
+                ),
                 control: RunControl::new(),
                 result,
             },

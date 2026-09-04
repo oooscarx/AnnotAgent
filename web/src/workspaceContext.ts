@@ -5,7 +5,7 @@ export function projectForRun(
   run?: HistoryRun,
 ): ProjectSummary | undefined {
   return run
-    ? projects.find((project) => project.name === run.project_name)
+    ? projects.find((project) => project.project_id === run.project_id)
     : undefined;
 }
 
@@ -15,9 +15,7 @@ export function projectForReview(
 ): ProjectSummary | undefined {
   if (!review) return undefined;
   return projects.find(
-    (project) =>
-      project.id === review.project_id ||
-      (!review.project_id && project.name === review.project_name),
+    (project) => project.project_id === review.project_id,
   );
 }
 
@@ -28,7 +26,7 @@ export function runsForContext(
 ): HistoryRun[] {
   return runs.filter(
     (run) =>
-      (!project || run.project_name === project.name) &&
+      (!project || run.project_id === project.project_id) &&
       (status === "all" || run.status === status),
   );
 }

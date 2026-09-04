@@ -33,15 +33,16 @@ use annotagent_core::{
     ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineImprovementId, PipelineImprovementPolicy,
-    PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectModelBinding,
-    ProjectSchema, ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy,
-    ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus, ProviderId,
-    ProviderProfile, PublishedWorkflowVersion, RequiredGeometryQuality, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope, SecretStore,
-    SecretStoreError, SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind, UsageTotals,
-    VisionCapability, VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus,
-    WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence,
-    check_model_compatibility, effective_model_quality_contracts,
+    PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectId,
+    ProjectModelBinding, ProjectSchema, ProtocolFeatures, ProviderAdapterKind,
+    ProviderConnectionPolicy, ProviderErrorDetails, ProviderHealthSnapshot, ProviderHealthStatus,
+    ProviderId, ProviderProfile, PublishedWorkflowVersion, RequiredGeometryQuality, ReviewStatus,
+    RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope,
+    SecretStore, SecretStoreError, SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind,
+    UsageTotals, VisionCapability, VisionInferenceRequest, VisionModelBackend,
+    VisionModelHealthStatus, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind,
+    build_geometry_correction_evidence, check_model_compatibility,
+    effective_model_quality_contracts,
 };
 use annotagent_image_tools::{load_image, to_model_image};
 use annotagent_model_bundle::{
@@ -2758,6 +2759,105 @@ fn registry_model_bindings(state: &ServerState) -> ApiResult<Vec<ModelBinding>> 
         .collect())
 }
 
+fn project_registry_model_bindings(
+    state: &ServerState,
+    project_id: &str,
+) -> ApiResult<Vec<ModelBinding>> {
+    let project_path = state
+        .application
+        .project_path(project_id)
+        .map_err(ApiError::not_found)?;
+    let stable_id = stable_project_id(
+        project_path
+            .parent()
+            .unwrap_or(state.application.workspace()),
+    );
+    state
+        .application
+        .store()
+        .list_project_model_bindings(stable_id)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .map(|binding| {
+            let model = state
+                .application
+                .store()
+                .get_model_profile(binding.model_profile_id, None)
+                .map_err(ApiError::internal)?;
+            let provider = state
+                .application
+                .store()
+                .get_provider_profile(model.provider_id)
+                .map_err(ApiError::internal)?;
+            let mut summary = registry_model_binding(&model, &provider);
+            summary.id = binding.id.to_string();
+            summary.role = serde_json::to_value(binding.role)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "primary_inference".to_owned());
+            summary.scope = format!("project_binding:{project_id}@{}", model.revision);
+            Ok(summary)
+        })
+        .collect()
+}
+
+fn frozen_model_binding(profile: &ModelProfileSnapshot) -> ModelBinding {
+    let capabilities = profile
+        .task_capabilities
+        .iter()
+        .filter_map(|capability| {
+            serde_json::to_value(capability)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+        })
+        .collect::<Vec<_>>();
+    let role = if profile
+        .task_capabilities
+        .contains(&ModelCapability::ObjectDetection)
+        || profile
+            .task_capabilities
+            .contains(&ModelCapability::OpenVocabularyDetection)
+    {
+        "detection"
+    } else if profile
+        .task_capabilities
+        .contains(&ModelCapability::ImageClassification)
+    {
+        "classification"
+    } else if profile.task_capabilities.iter().any(|capability| {
+        matches!(
+            capability,
+            ModelCapability::SemanticSegmentation
+                | ModelCapability::PromptedSegmentation
+                | ModelCapability::InstanceSegmentation
+        )
+    }) {
+        "segmentation"
+    } else {
+        "primary_inference"
+    };
+    ModelBinding {
+        id: profile.model_profile_id.to_string(),
+        provider: profile.provider_id.to_string(),
+        model: profile.remote_model_id.clone(),
+        role: role.to_owned(),
+        scope: format!("run_snapshot@{}", profile.revision),
+        health_status: "frozen".to_owned(),
+        health_detail: Some("immutable execution-time Model Profile snapshot".to_owned()),
+        availability_group: annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
+        capabilities,
+        score_semantics: None,
+        model_version: Some(format!("revision {}", profile.revision)),
+        endpoint: Some(profile.provider_base_url.to_string()),
+        enabled: None,
+        license_summary: None,
+        architecture: None,
+        checkpoint_sha256: None,
+        label_space: Vec::new(),
+        cost_per_request: None,
+    }
+}
+
 fn worker_model_binding(worker: &DetectionWorkerSettings) -> ModelBinding {
     let manifest = worker.expert_manifest().ok();
     let capabilities = manifest
@@ -2859,9 +2959,8 @@ fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
         .application
         .list_projects()
         .map_err(ApiError::internal)?;
-    let registry_bindings = registry_model_bindings(state)?;
     for project in &mut projects {
-        project.model_bindings.clone_from(&registry_bindings);
+        project.model_bindings = project_registry_model_bindings(state, &project.id)?;
     }
     Ok(projects)
 }
@@ -2869,6 +2968,14 @@ fn product_projects(state: &ServerState) -> ApiResult<Vec<ProjectSummary>> {
 #[derive(Debug, Serialize)]
 struct RunSummary {
     id: RunId,
+    run_id: RunId,
+    project_id: String,
+    project_scope_id: Option<ProjectId>,
+    ownership_status: &'static str,
+    batch_id: Option<BatchId>,
+    image_id: Option<ImageId>,
+    workflow_version_id: Option<String>,
+    frozen_model_bindings: Vec<ModelBinding>,
     project_name: String,
     workflow_name: String,
     workflow_version: String,
@@ -2922,6 +3029,73 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let explicitly_selected = workflow_snapshot
         .as_ref()
         .is_some_and(|snapshot| !snapshot["selected_workflow"].is_null());
+    let published_workflow = workflow_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.get("selected_workflow"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<PublishedWorkflowVersion>(value).ok());
+    let frozen_model_bindings = published_workflow
+        .as_ref()
+        .map(|workflow| {
+            workflow
+                .snapshot
+                .model_profiles
+                .iter()
+                .map(frozen_model_binding)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let resolved_project_id = run.project_id.and_then(|stable_id| {
+        state
+            .application
+            .list_projects()
+            .ok()?
+            .into_iter()
+            .find(|project| {
+                state
+                    .application
+                    .project_path(&project.id)
+                    .ok()
+                    .and_then(|path| path.parent().map(stable_project_id))
+                    == Some(stable_id)
+            })
+            .map(|project| project.id)
+    });
+    let ownership_status = if resolved_project_id.is_some() {
+        "resolved"
+    } else {
+        "legacy_orphan"
+    };
+    // Keep the field required without guessing an owner by mutable name. The namespaced token is
+    // an explicit legacy resolver identity and cannot collide with a valid Project route id.
+    let project_id = resolved_project_id.unwrap_or_else(|| format!("legacy-orphan:{}", run.id));
+    let image_ids = state
+        .application
+        .store()
+        .run_image_ids(run.id)
+        .map_err(ApiError::internal)?;
+    let image_id = (image_ids.len() == 1)
+        .then(|| image_ids.iter().next().copied())
+        .flatten();
+    let batch_id = state
+        .application
+        .store()
+        .list_batches(false)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find_map(|batch| {
+            state
+                .application
+                .store()
+                .list_batch_images(batch.id)
+                .ok()?
+                .iter()
+                .any(|image| image.child_run_id == Some(run.id))
+                .then_some(batch.id)
+        });
+    let workflow_version_id = published_workflow
+        .as_ref()
+        .map(|workflow| format!("{}@{}", workflow.workflow_id, workflow.version));
     let workflow_name = if explicitly_selected {
         workflow_snapshot
             .as_ref()
@@ -3067,35 +3241,19 @@ fn run_summary(state: &ServerState, run: HistoryRun) -> ApiResult<RunSummary> {
     let model_identity = format!("{}/{}", run.provider, run.model);
     Ok(RunSummary {
         id: run.id,
+        run_id: run.id,
+        project_id,
+        project_scope_id: run.project_id,
+        ownership_status,
+        batch_id,
+        image_id,
+        workflow_version_id,
+        frozen_model_bindings: frozen_model_bindings.clone(),
         project_name: run.project_name,
         workflow_name,
         workflow_version,
         skill_versions,
-        model_bindings: vec![ModelBinding {
-            id: "default-vision".to_owned(),
-            provider: run.provider.clone(),
-            model: run.model.clone(),
-            role: "vision".to_owned(),
-            scope: "run_snapshot".to_owned(),
-            health_status: if run.status == RunStatus::Failed {
-                "degraded".to_owned()
-            } else {
-                "unknown".to_owned()
-            },
-            health_detail: terminal_reason.clone(),
-            availability_group:
-                annotagent_application::ModelAvailabilityGroup::ConfiguredUnavailable,
-            capabilities: Vec::new(),
-            score_semantics: None,
-            model_version: None,
-            endpoint: None,
-            enabled: None,
-            license_summary: None,
-            architecture: None,
-            checkpoint_sha256: None,
-            label_space: Vec::new(),
-            cost_per_request: None,
-        }],
+        model_bindings: frozen_model_bindings,
         provider: run.provider,
         model: run.model,
         status: run.status,
@@ -3139,10 +3297,7 @@ struct ProjectWorkflow {
 async fn list_projects(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
     let projects = product_projects(&state)?;
     let runs = product_runs(&state)?;
-    let models = {
-        let settings = state.settings.read().await;
-        vec![workspace_model_binding(&settings)]
-    };
+    let models = registry_model_bindings(&state)?;
     let installed_skills = state
         .application
         .layered_skills()
@@ -4441,13 +4596,13 @@ async fn get_project(
         .application
         .get_project(&project_id)
         .map_err(ApiError::not_found)?;
-    project.model_bindings = registry_model_bindings(&state)?;
+    project.model_bindings = project_registry_model_bindings(&state, &project_id)?;
     Ok(Json(json!(project)))
 }
 
 async fn guidance_context(state: &ServerState, project_id: &str) -> ApiResult<(Settings, bool)> {
     let settings = state.settings.read().await.clone();
-    let workspace_model_connected = registry_model_bindings(state)?
+    let workspace_model_connected = project_registry_model_bindings(state, project_id)?
         .iter()
         .any(|binding| binding.health_status == "healthy");
     state
@@ -4491,21 +4646,8 @@ async fn get_project_summary(
         .application
         .project_workspace_summary(&project_id, &settings, workspace_model_connected)
         .map_err(ApiError::internal)?;
-    let binding = workspace_model_binding(&settings);
-    summary.project.model_bindings = vec![binding.clone()];
+    summary.project.model_bindings = project_registry_model_bindings(&state, &project_id)?;
     summary.project.readiness = summary.readiness.readiness;
-    for node in &mut summary.project.active_workflow.nodes {
-        if node.model_binding.is_some() {
-            node.model_binding = Some(binding.id.clone());
-        }
-    }
-    for workflow in &mut summary.project.available_workflow_versions {
-        for node in &mut workflow.nodes {
-            if node.model_binding.is_some() {
-                node.model_binding = Some(binding.id.clone());
-            }
-        }
-    }
     Ok(Json(json!(summary)))
 }
 
@@ -4654,45 +4796,52 @@ async fn list_images(
 ) -> ApiResult<Json<Value>> {
     let images = state
         .application
-        .list_project_images(&project_id)
-        .map_err(ApiError::not_found)?;
-    let project = state
-        .application
-        .get_project(&project_id)
+        .list_project_image_summaries(&project_id)
         .map_err(ApiError::not_found)?;
     Ok(Json(json!({
-        "images": images.iter().enumerate().map(|(index, path)| json!({
-            "index": index,
-            "name": path.file_name().unwrap_or_default().to_string_lossy(),
-            "path": format!("{}/{}", project.dataset.root.trim_end_matches('/'), path.file_name().unwrap_or_default().to_string_lossy()),
-            "size_bytes": path.metadata().map(|metadata| metadata.len()).unwrap_or_default(),
-            "url": format!("/api/projects/{project_id}/images/{index}/content"),
+        "images": images.iter().map(|image| json!({
+            "image_id": image.image_id,
+            "project_id": image.project_id,
+            "display_index": image.display_index,
+            "index": image.index,
+            "name": image.name,
+            "path_snapshot": image.path_snapshot,
+            "path": image.path_snapshot,
+            "content_hash": image.content_hash,
+            "size_bytes": image.size_bytes,
+            "status": image.status,
+            "url": format!("/api/projects/{project_id}/images/{}/content", image.image_id),
         })).collect::<Vec<_>>()
     })))
 }
 
+#[derive(Debug, Deserialize)]
+struct RemoveImageQuery {
+    expected_content_hash: String,
+}
+
 async fn remove_image(
     State(state): State<ServerState>,
-    AxumPath((project_id, index)): AxumPath<(String, usize)>,
+    AxumPath((project_id, image_reference)): AxumPath<(String, String)>,
+    Query(query): Query<RemoveImageQuery>,
 ) -> ApiResult<Json<Value>> {
+    let image_id = resolve_project_image_reference(&state, &project_id, &image_reference)?;
     let removed = state
         .application
-        .remove_project_image(&project_id, index)
+        .remove_project_image_by_id(&project_id, image_id, &query.expected_content_hash)
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!({ "removed": removed })))
 }
 
 async fn image_content(
     State(state): State<ServerState>,
-    AxumPath((project_id, index)): AxumPath<(String, usize)>,
+    AxumPath((project_id, image_reference)): AxumPath<(String, String)>,
 ) -> ApiResult<Response> {
+    let image_id = resolve_project_image_reference(&state, &project_id, &image_reference)?;
     let path = state
         .application
-        .list_project_images(&project_id)
-        .map_err(ApiError::not_found)?
-        .get(index)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found("image index was not found"))?;
+        .project_image_path(&project_id, image_id)
+        .map_err(ApiError::not_found)?;
     let content_type = match path.extension().and_then(|value| value.to_str()) {
         Some(extension) if extension.eq_ignore_ascii_case("png") => "image/png",
         _ => "image/jpeg",
@@ -4703,6 +4852,27 @@ async fn image_content(
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     Ok(response)
+}
+
+fn resolve_project_image_reference(
+    state: &ServerState,
+    project_id: &str,
+    image_reference: &str,
+) -> ApiResult<ImageId> {
+    if let Ok(image_id) = image_reference.parse::<ImageId>() {
+        return Ok(image_id);
+    }
+    // Explicit legacy resolver for old bookmarked numeric URLs. New API responses never emit it.
+    let index = image_reference
+        .parse::<usize>()
+        .map_err(|_| ApiError::bad_request("image reference must be a stable image UUID"))?;
+    state
+        .application
+        .list_project_image_summaries(project_id)
+        .map_err(ApiError::not_found)?
+        .get(index)
+        .map(|image| image.image_id)
+        .ok_or_else(|| ApiError::not_found("legacy image index was not found"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -5447,7 +5617,7 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
         if annotations.is_empty() {
             continue;
         }
-        let project_id = run
+        let project_route_id = run
             .project_id
             .as_ref()
             .and_then(|id| project_ids.get(id))
@@ -5462,7 +5632,7 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
                     .and_then(Value::as_str)
                     .map(str::to_owned)
             });
-        let indexed_image = project_id
+        let indexed_image = project_route_id
             .and_then(|project_id| image_indices.get(project_id))
             .and_then(|indices| {
                 image_sha256
@@ -5513,6 +5683,8 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
         let fallback_workflow_version =
             serde_json::from_str::<ProjectSchema>(&run.project_schema_json)
                 .map_or(0, |schema| schema.version);
+        let review_project_id =
+            project_route_id.map_or_else(|| format!("legacy-orphan:{}", run.id), str::to_owned);
         for annotation in annotations {
             let annotation_validation_issues = persisted_validation_issues
                 .iter()
@@ -5621,9 +5793,12 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             );
             reviews.push(json!({
                     "id": annotation.id,
+                    "review_id": annotation.id,
+                    "annotation_id": annotation.id,
                     "run_id": run.id,
-                    "project_id": project_id,
+                    "project_id": review_project_id,
                     "project_name": run.project_name,
+                    "image_id": annotation.image_id,
                     "annotation": annotation,
                     "workflow_id": inspection.as_ref().map(|value| value.workflow_id.as_str()),
                     "workflow_version": inspection.as_ref().map_or_else(
@@ -9099,6 +9274,7 @@ mod tests {
     use annotagent_core::RunStatus;
     use annotagent_image_tools::{generate_synthetic_inspection, generate_synthetic_robocup};
     use annotagent_provider::InMemorySecretStore;
+    use annotagent_runtime::RunRecord;
     use axum::body::to_bytes;
     use futures::StreamExt;
     use serde_json::json;
@@ -9344,10 +9520,12 @@ mod tests {
     async fn web_plugin_install_inspects_but_rejects_untrusted_native_packages() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
-        let service = router(
-            test_state(application, Arc::new(InMemorySecretStore::default())).await,
-            None,
-        );
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
+        let service = router(state, None);
         let package = plugin_package(&temp);
 
         let (status, inspected) = call_bytes(
@@ -10024,6 +10202,17 @@ export:
             updated_at: now,
         };
         let frozen = ModelProfileSnapshot::frozen(&model, &provider).expect("snapshot");
+        let summary = frozen_model_binding(&frozen);
+        assert_eq!(summary.id, model.id.to_string());
+        assert_eq!(summary.provider, provider.id.to_string());
+        assert_eq!(summary.model, "remote-draft-model");
+        assert_eq!(summary.scope, "run_snapshot@1");
+        assert_eq!(
+            summary.endpoint.as_deref(),
+            Some("https://provider.example/v1")
+        );
+        assert_eq!(summary.capabilities, vec!["image_classification"]);
+        assert_ne!(summary.id, "default-vision");
 
         let (provider_kind, credential) = resolve_runtime_model_profiles(&state, &[frozen], true)
             .await
@@ -10774,17 +10963,150 @@ export:
                 .unwrap_or_default()
                 > 0
         );
+        let image_id = images["images"][0]["image_id"]
+            .as_str()
+            .expect("stable image id");
+        let content_hash = images["images"][0]["content_hash"]
+            .as_str()
+            .expect("content hash");
         let removed = response_json(
             request(
                 &service,
                 axum::http::Method::DELETE,
-                "/api/projects/guided-api/images/0",
+                &format!(
+                    "/api/projects/guided-api/images/{image_id}?expected_content_hash={content_hash}"
+                ),
                 None,
             )
             .await,
         )
         .await;
         assert_eq!(removed["removed"], json!("incoming.png"));
+    }
+
+    #[tokio::test]
+    async fn run_api_uses_stable_project_ownership_across_duplicate_names_and_rename() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let yaml = r"
+version: 1
+project:
+  name: Duplicate display name
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        application
+            .create_project("project-a", yaml)
+            .expect("Project A");
+        application
+            .create_project("project-b", yaml)
+            .expect("Project B");
+        let mut expected = BTreeMap::new();
+        for route_id in ["project-a", "project-b"] {
+            let path = application.project_path(route_id).expect("Project path");
+            let run_id = RunId::new();
+            application
+                .store()
+                .create_run(&RunRecord {
+                    id: run_id,
+                    project_id: stable_project_id(path.parent().expect("Project root")),
+                    project_name: "Duplicate display name".to_owned(),
+                    skill_id: "none".to_owned(),
+                    provider: "core".to_owned(),
+                    model: "none".to_owned(),
+                    status: RunStatus::Completed,
+                    project_schema_json: yaml.to_owned(),
+                    workflow_snapshot_json: None,
+                })
+                .await
+                .expect("Run");
+            expected.insert(run_id.to_string(), route_id.to_owned());
+        }
+        let project_a_path = application
+            .project_path("project-a")
+            .expect("Project A path");
+        std::fs::write(
+            project_a_path,
+            yaml.replace("Duplicate display name", "Renamed Project"),
+        )
+        .expect("rename display name");
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
+        let model = application
+            .store()
+            .list_model_profiles(None, false)
+            .expect("Model Profiles")
+            .into_iter()
+            .next()
+            .expect("test Model Profile");
+        let project_a_scope = stable_project_id(
+            application
+                .project_path("project-a")
+                .expect("Project A path")
+                .parent()
+                .expect("Project A root"),
+        );
+        application
+            .store()
+            .save_project_model_binding(
+                &ProjectModelBinding {
+                    id: ModelBindingId::new(),
+                    project_id: project_a_scope,
+                    capability: *model
+                        .task_capabilities
+                        .iter()
+                        .next()
+                        .expect("test capability"),
+                    role: ModelBindingRole::PrimaryInference,
+                    match_kind: ModelBindingMatch::Capability,
+                    model_profile_id: model.id,
+                    locked: false,
+                    created_at: Utc::now(),
+                },
+                BindingMutationActor::User,
+            )
+            .expect("Project binding");
+        let service = router(state, None);
+        let response =
+            response_json(request(&service, axum::http::Method::GET, "/api/runs", None).await)
+                .await;
+        for run in response["runs"].as_array().expect("Runs") {
+            let run_id = run["run_id"].as_str().expect("run_id");
+            assert_eq!(run["project_id"], json!(expected[run_id]));
+            assert_eq!(run["ownership_status"], json!("resolved"));
+        }
+        let projects =
+            response_json(request(&service, axum::http::Method::GET, "/api/projects", None).await)
+                .await;
+        let projects = projects["projects"].as_array().expect("Projects");
+        let project_a = projects
+            .iter()
+            .find(|project| project["project_id"] == "project-a")
+            .expect("A");
+        let project_b = projects
+            .iter()
+            .find(|project| project["project_id"] == "project-b")
+            .expect("B");
+        assert_eq!(
+            project_a["model_bindings"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            project_a["model_bindings"][0]["scope"],
+            json!("project_binding:project-a@1")
+        );
+        assert_eq!(project_b["model_bindings"], json!([]));
     }
 
     #[tokio::test]
@@ -11230,16 +11552,8 @@ export:
         );
         assert_eq!(project["active_workflow"]["status"], json!("draft"));
         assert!(project["default_workflow_version"].is_null());
-        assert!(
-            project["model_bindings"]
-                .as_array()
-                .is_some_and(|bindings| {
-                    bindings.iter().any(|binding| {
-                        binding["model"] == json!("Mock Vision Language (offline)")
-                            && binding["scope"] == json!("registry_profile@1")
-                    })
-                })
-        );
+        assert_eq!(project["project_id"], json!("review-demo"));
+        assert_eq!(project["model_bindings"], json!([]));
 
         let workflows =
             response_json(request(&service, axum::http::Method::GET, "/api/workflows", None).await)
@@ -11288,10 +11602,8 @@ export:
                 .await;
         assert_eq!(runs["runs"][0]["workflow_version"], json!("1"));
         assert_eq!(runs["runs"][0]["skill_versions"][0], json!("robocup@1"));
-        assert_eq!(
-            runs["runs"][0]["model_bindings"][0]["scope"],
-            json!("run_snapshot")
-        );
+        assert_eq!(runs["runs"][0]["project_id"], json!("review-demo"));
+        assert_eq!(runs["runs"][0]["model_bindings"], json!([]));
         let run_response = request(
             &service,
             axum::http::Method::GET,
@@ -12382,7 +12694,13 @@ export:
         assert_eq!(ready["recommended_format"], json!("native"));
 
         let annotation_id = uuid::Uuid::new_v4();
-        let image_id = uuid::Uuid::new_v4();
+        let image_id = application
+            .store()
+            .run_image_ids(run_id.parse().expect("Run id"))
+            .expect("Run images")
+            .into_iter()
+            .next()
+            .expect("Run image");
         let created_annotation = request(
             &service,
             axum::http::Method::POST,

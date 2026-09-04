@@ -15,14 +15,14 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## B. Ownership
 
-- [ ] Run APIs include `project_id`.
-- [ ] Normal object association never uses `project_name`.
-- [ ] Projects with duplicate names stay isolated.
-- [ ] Historical Runs remain openable after a Project rename.
-- [ ] Reviews are bound to Project and Run.
-- [ ] Images use stable IDs.
-- [ ] A foreign Image ID cannot be written into a Run.
-- [ ] Import never guesses a Run by name.
+- [x] Run APIs include `project_id`.
+- [x] Normal object association never uses `project_name`.
+- [x] Projects with duplicate names stay isolated.
+- [x] Historical Runs remain openable after a Project rename.
+- [x] Reviews are bound to Project and Run.
+- [x] Images use stable IDs.
+- [x] A foreign Image ID cannot be written into a Run.
+- [x] Import never guesses a Run by name.
 
 ## C. Routing
 
@@ -58,7 +58,7 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 - [ ] One Run's artifacts cannot be overlaid on another image.
 - [ ] No Target is a valid result.
 - [ ] Review links are Run-scoped.
-- [ ] Model bindings show the real frozen snapshot.
+- [x] Model bindings show the real frozen snapshot.
 
 ## F. Workflow
 
