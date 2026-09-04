@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
@@ -34,6 +34,7 @@ import {
 import type {
   AgentSession,
   Annotation,
+  AnnotationRevision,
   CorrectionMemoryRecord,
   DatasetBatchSummary,
   DetectionWorkerTestResult,
@@ -244,10 +245,20 @@ export function App() {
   const hasConnectedRef = useRef(false);
   const needsReconnectSyncRef = useRef(false);
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
+  const navigationGuardRef = useRef<(() => boolean) | undefined>(undefined);
+  const acceptedLocationRef = useRef(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  );
+
+  const setNavigationGuard = useCallback((guard?: () => boolean) => {
+    navigationGuardRef.current = guard;
+  }, []);
 
   const navigate = (path: string, replace = false) => {
+    if (navigationGuardRef.current && !navigationGuardRef.current()) return false;
     if (replace) window.history.replaceState({}, "", path);
     else window.history.pushState({}, "", path);
+    acceptedLocationRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     setRoute(
       parseWorkspaceRoute(
         window.location.pathname,
@@ -255,10 +266,16 @@ export function App() {
         window.location.hash,
       ),
     );
+    return true;
   };
 
   useEffect(() => {
-    const restore = () =>
+    const restore = () => {
+      if (navigationGuardRef.current && !navigationGuardRef.current()) {
+        window.history.pushState({}, "", acceptedLocationRef.current);
+        return;
+      }
+      acceptedLocationRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       setRoute(
         parseWorkspaceRoute(
           window.location.pathname,
@@ -266,6 +283,7 @@ export function App() {
           window.location.hash,
         ),
       );
+    };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
@@ -396,28 +414,26 @@ export function App() {
     else window.localStorage.removeItem("annotagent.preferredProjectId");
   };
   const openProject = (id: string) => {
-    setProjectContext(id);
-    navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects");
+    if (navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects"))
+      setProjectContext(id);
   };
   const switchProject = (id: string) => {
-    setProjectContext(id);
-    if (!id) {
-      navigate("/projects");
-      return;
-    }
-    if (route.kind === "export")
-      navigate(`/projects/${encodeURIComponent(id)}/export`);
-    else if (route.kind === "build")
-      navigate(`/projects/${encodeURIComponent(id)}/build/${route.step}`);
-    else if (
+    let destination = "/projects";
+    if (id && route.kind === "export")
+      destination = `/projects/${encodeURIComponent(id)}/export`;
+    else if (id && route.kind === "build")
+      destination = `/projects/${encodeURIComponent(id)}/build/${route.step}`;
+    else if (id && (
       route.kind === "projectRuns" ||
       route.kind === "projectRun" ||
       route.kind === "projectBatch"
-    )
-      navigate(projectRunsPath(id));
-    else if (route.kind === "projectReview")
-      navigate(projectReviewPath(id));
-    else if (route.kind === "project") openProject(id);
+    ))
+      destination = projectRunsPath(id);
+    else if (id && route.kind === "projectReview")
+      destination = projectReviewPath(id);
+    else if (id && route.kind === "project")
+      destination = `/projects/${encodeURIComponent(id)}`;
+    if (navigate(destination)) setProjectContext(id);
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
@@ -702,6 +718,7 @@ export function App() {
             events={events}
             route={route}
             onNavigate={navigate}
+            onNavigationGuardChange={setNavigationGuard}
             onError={setError}
           />
         )}
@@ -8274,13 +8291,15 @@ function ReviewPage({
   events,
   route,
   onNavigate,
+  onNavigationGuardChange,
   onError,
 }: {
   project?: ProjectSummary;
   projects: ProjectSummary[];
   events: RunEvent[];
   route: Extract<WorkspaceRoute, { kind: "review" | "projectReview" }>;
-  onNavigate: (path: string, replace?: boolean) => void;
+  onNavigate: (path: string, replace?: boolean) => boolean;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   onError: (value: string) => void;
 }) {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
@@ -8312,6 +8331,9 @@ function ReviewPage({
   >([]);
   const [correctionSkillId, setCorrectionSkillId] = useState("");
   const [note, setNote] = useState("");
+  const [revisionHistory, setRevisionHistory] = useState<AnnotationRevision[]>([]);
+  const [revisionHistoryOpen, setRevisionHistoryOpen] = useState(false);
+  const [revisionHistoryLoading, setRevisionHistoryLoading] = useState(false);
   const [images, setImages] = useState<ImageItem[]>([]);
   const queueLoadGeneration = useRef(0);
   const itemLoadGeneration = useRef(0);
@@ -8328,12 +8350,13 @@ function ReviewPage({
         (review) => review.project_id === scopedProject.project_id,
       )
     : reviews;
-  const selected =
-    routeReview &&
-    (!scopedProject || routeReview.project_id === scopedProject.project_id)
+  const selected = route.reviewItemId
+    ? routeReview &&
+      (!scopedProject || routeReview.project_id === scopedProject.project_id)
       ? routeReview
-      : visibleReviews.find((review) => review.id === selectedId) ??
-        visibleReviews[0];
+      : undefined
+    : visibleReviews.find((review) => review.id === selectedId) ??
+      visibleReviews[0];
   const reviewProject = projectForReview(projects, selected) ?? scopedProject;
   const reviewHref = (reviewId: string, item?: ReviewItem) => {
     const owner = projectForReview(
@@ -8366,13 +8389,6 @@ function ReviewPage({
         if (generation !== queueLoadGeneration.current) return;
         setReviews(value.reviews);
         setProgress(value.progress);
-        const first = value.reviews[0];
-        if (
-          route.reviewItemId &&
-          !value.reviews.some((review) => review.id === selectedId) &&
-          first
-        )
-          onNavigate(reviewHref(first.id, first), true);
       })
       .catch((error: Error) => {
         if (generation === queueLoadGeneration.current && !isAbortError(error)) onError(error.message);
@@ -8385,9 +8401,17 @@ function ReviewPage({
     if (!route.reviewItemId) return;
     const reviewId = route.reviewItemId;
     const generation = ++itemLoadGeneration.current;
-    const key = queryKeys.review(reviewId);
+    const key = queryKeys.review(reviewId, route.projectId);
     void workspaceQueries
-      .load(key, (signal) => api.review(reviewId, signal), { force: true })
+      .load(
+        key,
+        (signal) => api.review(
+          reviewId,
+          signal,
+          route.kind === "projectReview" ? route.projectId : undefined,
+        ),
+        { force: true },
+      )
       .then((review) =>
         generation === itemLoadGeneration.current && setReviews((items) =>
           items.some((item) => item.id === review.id) ? items : [review, ...items],
@@ -8397,7 +8421,7 @@ function ReviewPage({
         if (generation === itemLoadGeneration.current && !isAbortError(error)) onError(error.message);
       });
     return () => workspaceQueries.abort(key);
-  }, [route.reviewItemId]);
+  }, [route.kind, route.reviewItemId, route.projectId]);
   useEffect(() => {
     void refresh();
     const key = queryKeys.reviewQueue(route.projectId);
@@ -8458,6 +8482,12 @@ function ReviewPage({
     setIsNew(false);
     setEditing(false);
     setRejectOpen(false);
+    setRejectReason("wrong_object");
+    setReason("other");
+    setNote("");
+    setCorrectionSkillId("");
+    setRevisionHistory([]);
+    setRevisionHistoryOpen(false);
   }, [selected?.id]);
   const beginEdit = () => {
     if (!draft) return;
@@ -8473,7 +8503,14 @@ function ReviewPage({
     edit({
       ...draft,
       value: { kind: "bounding_box", rect: evidence.bbox },
-      confidence: evidence.score.value ?? undefined,
+      provenance: {
+        ...draft.provenance,
+        selected_geometry_evidence: {
+          source_model_id: evidence.source_model_id,
+          source_capability: evidence.source_capability,
+          score: evidence.score,
+        },
+      },
       attributes: {
         ...draft.attributes,
         selected_detection_evidence: evidence,
@@ -8588,10 +8625,37 @@ function ReviewPage({
       attributesText !== JSON.stringify(selected.annotation.attributes ?? {}, null, 2)
     )),
   );
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedAnnotationChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedAnnotationChanges]);
+  useEffect(() => {
+    onNavigationGuardChange(() =>
+      !hasUnsavedAnnotationChanges ||
+      window.confirm("Discard unsaved Review changes and leave this result?"),
+    );
+    return () => onNavigationGuardChange();
+  }, [hasUnsavedAnnotationChanges, onNavigationGuardChange]);
+  const navigateFromReview = (path: string, replace?: boolean) =>
+    onNavigate(path, replace);
   const moveQueueSelection = (item?: ReviewItem) => {
     if (!item) return;
-    setSelectedId(item.id);
-    onNavigate(reviewHref(item.id, item));
+    if (onNavigate(reviewHref(item.id, item))) setSelectedId(item.id);
+  };
+  const openRevisionHistory = () => {
+    if (!draft || !reviewProject) return;
+    setRevisionHistoryOpen(true);
+    setRevisionHistoryLoading(true);
+    void api
+      .revisions(draft.id, reviewProject.id)
+      .then(({ revisions }) => setRevisionHistory(revisions))
+      .catch((error: Error) => onError(`Revision history: ${error.message}`))
+      .finally(() => setRevisionHistoryLoading(false));
   };
   const decideAndAdvance = async (
     decision: "accept" | "reject",
@@ -8720,7 +8784,7 @@ function ReviewPage({
             aria-label="Project filter"
             value={scopedProject?.id ?? ""}
             onChange={(event) =>
-              onNavigate(event.target.value
+              navigateFromReview(event.target.value
                 ? projectReviewPath(event.target.value)
                 : "/review")
             }
@@ -8738,8 +8802,7 @@ function ReviewPage({
               aria-pressed={selected?.id === review.id}
               className={selected?.id === review.id ? "active" : ""}
               onClick={() => {
-                setSelectedId(review.id);
-                onNavigate(reviewHref(review.id, review));
+                moveQueueSelection(review);
               }}
             >
               <span aria-hidden="true">
@@ -8866,7 +8929,7 @@ function ReviewPage({
           <span className="eyebrow">Inbox complete</span>
           <h2>{progress.total_count > 0 ? "Review complete" : "Nothing needs review"}</h2>
           <p>{progress.total_count > 0 ? `All ${progress.total_count} queued results have a human decision.` : "Uncertain results will appear here when an Automation routes them to Human Review."}</p>
-          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => onNavigate(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}/export`)}>Continue to export</button>}
+          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => navigateFromReview(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}/export`)}>Continue to export</button>}
         </section> : <section className="review-complete panel" aria-busy="true">
           <span className="eyebrow">Review inbox</span>
           <h2>Loading review results…</h2>
@@ -8944,8 +9007,8 @@ function ReviewPage({
               </article>)}</div>
               {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
             </section> : null}
-            <button onClick={() => onNavigate(reviewProject ? projectRunPath(reviewProject.id, selected.run_id, { nodeId: selected.source_node, artifactId: selected.source_artifact_id, view: "debug" }) : `/runs/${encodeURIComponent(selected.run_id)}`)}>Open run context</button>
-            {reviewProject && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>Improve automation</button>}
+            <button onClick={() => navigateFromReview(reviewProject ? projectRunPath(reviewProject.id, selected.run_id, { nodeId: selected.source_node, artifactId: selected.source_artifact_id, view: "debug" }) : `/runs/${encodeURIComponent(selected.run_id)}`)}>Open run context</button>
+            {reviewProject && <button onClick={() => navigateFromReview(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>Improve automation</button>}
             {editing && <section className="review-edit-details" aria-label="Annotation edit details">
               <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
               <label>
@@ -8981,9 +9044,36 @@ function ReviewPage({
                 Attributes (JSON)
                 <textarea aria-label="Annotation attributes JSON" value={attributesText} onChange={(event) => setAttributesText(event.target.value)} />
               </label>}
-              <button onClick={() => api.revisions(draft.id).then((value) => alert(JSON.stringify(value.revisions, null, 2)))}>View revision history</button>
+              <button
+                aria-expanded={revisionHistoryOpen}
+                aria-controls="review-revision-history"
+                onClick={openRevisionHistory}
+              >View revision history</button>
               <Trace events={events.filter((event) => event.run_id === selected.run_id)} />
             </details>
+            {revisionHistoryOpen && <section
+              id="review-revision-history"
+              className="review-revision-drawer"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="review-revision-title"
+            >
+              <header>
+                <span><span className="eyebrow">Audit history</span><h3 id="review-revision-title">Annotation revisions</h3></span>
+                <button aria-label="Close revision history" onClick={() => setRevisionHistoryOpen(false)}>×</button>
+              </header>
+              {revisionHistoryLoading ? <p role="status">Loading revisions…</p> : revisionHistory.length ? <ol>
+                {[...revisionHistory].reverse().map((revision) => <li key={revision.revision_id}>
+                  <header><strong>{revision.reason?.replaceAll("_", " ") ?? "Annotation updated"}</strong><time dateTime={revision.created_at}>{new Date(revision.created_at).toLocaleString()}</time></header>
+                  <dl>
+                    <div><dt>Actor</dt><dd>{revision.actor}</dd></div>
+                    <div><dt>Label</dt><dd>{revision.before?.label ?? "None"} → {revision.after?.label ?? "None"}</dd></div>
+                    <div><dt>Status</dt><dd>{revision.before?.review_status?.replaceAll("_", " ") ?? "created"} → {revision.after?.review_status?.replaceAll("_", " ") ?? "deleted"}</dd></div>
+                    <div><dt>Geometry</dt><dd>{revision.before?.value.kind ?? "none"} → {revision.after?.value.kind ?? "none"}</dd></div>
+                  </dl>
+                </li>)}
+              </ol> : <p>No revisions have been recorded for this annotation.</p>}
+            </section>}
           </>
         )}
       </aside>}

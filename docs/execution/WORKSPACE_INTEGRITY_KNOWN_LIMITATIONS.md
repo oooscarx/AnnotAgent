@@ -9,7 +9,7 @@ This file describes the current product, not the target state.
 - Route resources now have cancellation, request generations, deduplication, and precise Run-event invalidation. Agent sessions still require bounded exponential polling because the SSE protocol does not yet publish Agent-session events.
 - Workflow Draft writes use optimistic concurrency and Sample Tests are immutable, exact-revision evidence. Automatic field-level merging is intentionally not attempted; a conflict can be compared, reloaded, or preserved as a new Draft.
 - Results is now an explicit final-Annotation projection and Debug retains intermediate Artifacts. Legacy Runs without one authoritative stable Image relation fail closed rather than guessing an image.
-- Review local edit state and cross-project enforcement are not yet fully covered.
+- Review scope, local draft isolation, score provenance, revision history, and decision navigation are covered. The App-level navigation boundary and browser-close handling guard unsaved Review edits.
 - Some controls are dead, misleading, duplicated, or expose Labs behavior without sufficient qualification.
 - Large server/application/frontend modules and unbounded/N+1 summary queries remain. Batch image summaries currently resolve child results individually and are scheduled for the M9 bounded-query pass.
 - The Web production bundle currently warns about a JavaScript chunk above 500 kB.

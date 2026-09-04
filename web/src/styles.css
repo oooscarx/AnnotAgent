@@ -595,6 +595,17 @@ main { min-width: 0; padding-bottom: 48px; }
 .review-execution-details > * + * { margin-top: 10px; }
 .review-execution-details .trace-panel { grid-template-columns: 1fr; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .review-execution-details .trace-strip { max-height: 250px; }
+.review-revision-drawer { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-raised); box-shadow: var(--aa-shadow-md); }
+.review-revision-drawer > header, .review-revision-drawer li > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.review-revision-drawer h3 { margin: 4px 0 0; font-size: 17px; }
+.review-revision-drawer > header > button { min-width: 34px; min-height: 34px; padding: 0; font-size: 20px; }
+.review-revision-drawer ol { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.review-revision-drawer li { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface); }
+.review-revision-drawer time { color: var(--aa-text-muted); font-size: 11px; white-space: nowrap; }
+.review-revision-drawer dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.review-revision-drawer dl > div { min-width: 0; }
+.review-revision-drawer dt { color: var(--aa-text-muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.review-revision-drawer dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
 .review-footer-stack { display: grid; gap: 10px; min-width: 0; }
 .review-action-bar { position: absolute; inset: auto 0 0; z-index: 4; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--aa-border-strong); border-radius: var(--aa-radius-md); background: color-mix(in srgb, var(--aa-surface) 94%, transparent); box-shadow: var(--aa-shadow-md); backdrop-filter: blur(12px); }
 .review-shortcuts { margin-right: auto; color: var(--aa-text-muted); font-size: 9px; white-space: nowrap; }

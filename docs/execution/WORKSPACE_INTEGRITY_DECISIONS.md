@@ -75,3 +75,11 @@ Every Sample Test is an append-only execution record. Publication selects eviden
 ## D-019 — Draft conflicts preserve both branches
 
 Draft content uses an atomic expected-revision write boundary. Within one tab, superseded autosaves are aborted and late responses are generation-guarded. Across tabs, a stale write returns 409 and the editor stops autosaving until the user compares local/server snapshots and either reloads the server copy or persists local work as a new Draft. Silent last-write-wins and destructive automatic merge are both rejected.
+
+## D-020 — Review ownership is resolved from the persisted Run
+
+A Project ID in a URL or request body is a scope assertion, never an ownership assignment. Review reads, queue navigation, decisions, and revision history resolve the Annotation's persisted Run and its stable Project owner, then return 404 for a mismatched Project route. This keeps global Review useful for discovery while preventing a client from moving or displaying a Review under another Project.
+
+## D-021 — Geometry evidence does not redefine confidence
+
+Choosing a detector's source box changes only Annotation geometry. The source model, capability, score value, and score semantics remain typed evidence in provenance and attributes. Generic Annotation confidence is unchanged unless a separate explicit quality policy computes it. Review item identity is also the lifecycle boundary for every local edit field, preventing notes, reasons, and history from crossing between items.

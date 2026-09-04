@@ -22,8 +22,8 @@ This ledger is the durable execution plan for the workspace-integrity program. T
 | M4 | Execution and result integrity | Batch/Image detail, real progress, final projection, artifact ownership | `fix(run): separate dataset execution final results and debug artifacts` | Complete |
 | M5 | Recoverable frontend state | Route-aware cache, cancellation, URL selections, SSE invalidation | `fix(web): restore project run workflow and review context from URLs` | Complete |
 | M6 | Workflow lifecycle | Draft revision, optimistic concurrency, immutable content-addressed sample tests | `fix(workflow): bind publication to the exact tested draft revision` | Complete |
-| M7 | Review integrity | Scoped endpoints, item-keyed edits, guards, provenance, navigation | `fix(review): preserve ownership edits and provenance across review navigation` | Next |
-| M8 | Feature truth and guided UX | Truth matrix, remove dead/fake controls, accessibility and honest capability language | `refactor(product): expose only complete and recoverable workspace actions` | Pending |
+| M7 | Review integrity | Scoped endpoints, item-keyed edits, guards, provenance, navigation | `fix(review): preserve ownership edits and provenance across review navigation` | Complete |
+| M8 | Feature truth and guided UX | Truth matrix, remove dead/fake controls, accessibility and honest capability language | `refactor(product): expose only complete and recoverable workspace actions` | Next |
 | M9 | Bounded queries and modularity | Summary SQL, pagination, indexes, N+1 removal, incremental route/service extraction | `refactor(architecture): isolate workspace features and bounded summary queries` | Pending |
 | M10 | Release verification | Rust/Web/Playwright/security/performance/responsive/keyboard/docs acceptance | `test(release): validate project-scoped workspace integrity alpha` | Pending |
 

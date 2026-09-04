@@ -166,7 +166,8 @@ export const queryKeys = {
   runDebug: (runId: string) => `run/${runId}/debug`,
   runAnnotations: (runId: string) => `run/${runId}/annotations`,
   reviewQueue: (projectId?: string) => `review-queue/${projectId ?? "global"}`,
-  review: (reviewId: string) => `review/${reviewId}`,
+  review: (reviewId: string, projectId?: string) =>
+    `review/${projectId ?? "global"}/${reviewId}`,
   workflowDrafts: (projectId: string) => `project/${projectId}/workflow-drafts`,
   workflowDraft: (draftId: string) => `workflow-draft/${draftId}`,
   sampleTest: (draftId: string) => `sample-test/${draftId}`,

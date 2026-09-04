@@ -6166,6 +6166,30 @@ impl LocalApplication {
         Ok(annotation)
     }
 
+    pub fn revise_annotation(
+        &self,
+        annotation: &Annotation,
+        reason: Option<&str>,
+    ) -> Result<annotagent_core::AnnotationRevision> {
+        let (run_id, persisted) = self
+            .store
+            .find_annotation(annotation.id)?
+            .ok_or_else(|| anyhow!("annotation {} was not found", annotation.id))?;
+        if annotation.image_id != persisted.image_id {
+            bail!("annotation image_id is immutable during Review");
+        }
+        if !self
+            .store
+            .run_image_ids(run_id)?
+            .contains(&annotation.image_id)
+        {
+            bail!("annotation image_id does not belong to its source Run");
+        }
+        self.store
+            .update_annotation(annotation, reason)
+            .map_err(Into::into)
+    }
+
     pub async fn import_project_annotations(
         &self,
         project_id: &str,

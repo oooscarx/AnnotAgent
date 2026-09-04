@@ -4,8 +4,8 @@ Last updated: 2026-09-04
 
 ## Current position
 
-- Completed milestone: M6 — Workflow lifecycle and concurrency.
-- Next milestone: M7 — Review integrity.
+- Completed milestone: M7 — Review integrity.
+- Next milestone: M8 — Feature truth and guided UX.
 - Overall state: implementation in progress; not release-ready.
 - Remote state: unchanged; no push is authorized.
 - Data state: no user data, Run history, credentials, plugins, or model bundles were modified.
@@ -105,6 +105,17 @@ All required ledgers are present, the master prompt is preserved byte-for-byte, 
 - Evidence: 61 Application tests plus one ignored billable test, 30 Server tests, 20 Storage unit tests plus 16 integration tests, 60 Web unit tests, Web typecheck/build, and all 41 Chromium E2E journeys passed, including the real two-tab conflict/recovery path.
 - Milestone commit subject: `fix(workflow): bind publication to the exact tested draft revision`.
 
+## M7 exit
+
+- Added Project-scoped Review list, detail, navigation, decision, and revision endpoints plus a Run-scoped Review endpoint. Project ownership is derived from the persisted Run; route/body Project IDs are checks and cannot assign ownership.
+- Annotation revision and decision writes now reject Image ID changes and verify the Annotation Image still belongs to its source Run.
+- Review item identity atomically resets draft, undo/redo, note, reject/correction reason, Skill reason, editing state, and revision-history state. Unsaved geometry/field edits guard item, Project, Run, Improve, Export, and browser-close navigation.
+- Selecting detector evidence changes geometry and records typed score semantics in provenance; it no longer overwrites the Annotation's generic confidence summary.
+- Revision History is an accessible, inspectable UI region with actor, time, reason, and before/after label/status/geometry rather than an alert containing raw JSON.
+- Run ↔ Review links remain canonical Project-owned routes. A Project A Review route receives 404 for a Project B item, and queue advance remains inside the authoritative Project.
+- Evidence: formatting passed; the focused Server ownership/decision/revision test passed; 60 Web unit tests, Web typecheck and production build passed; all 41 Chromium E2E journeys passed, including item-state isolation, unsaved-discard protection, score semantics, revision UI, and bidirectional Run/Review navigation.
+- Milestone commit subject: `fix(review): preserve ownership edits and provenance across review navigation`.
+
 ## Next exit
 
-M7 binds every Review read/mutation to its real Project and Run, isolates per-item edits, preserves source score semantics, and replaces alert-based revision history with durable UI.
+M8 removes or repairs misleading controls, distinguishes Labs/read-only surfaces, makes progress and sample bounds truthful, and audits capability language and accessibility.

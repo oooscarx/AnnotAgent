@@ -74,14 +74,14 @@ Release is blocked until every item below has executable evidence. `[ ]` means n
 
 ## G. Review
 
-- [ ] A Project A route cannot display a Project B Review.
-- [ ] Item changes do not leak note or reason state.
-- [ ] Unsaved bbox changes have navigation protection.
-- [ ] Source-box selection preserves score semantics.
-- [ ] Revision History uses a proper UI.
-- [ ] Review ↔ Run navigation preserves context.
-- [ ] Run Detail does not download the global Review queue.
-- [ ] Accept & Next uses the correct Project queue.
+- [x] A Project A route cannot display a Project B Review.
+- [x] Item changes do not leak note or reason state.
+- [x] Unsaved bbox changes have navigation protection.
+- [x] Source-box selection preserves score semantics.
+- [x] Revision History uses a proper UI.
+- [x] Review ↔ Run navigation preserves context.
+- [x] Run Detail does not download the global Review queue.
+- [x] Accept & Next uses the correct Project queue.
 
 ## H. Feature truth
 

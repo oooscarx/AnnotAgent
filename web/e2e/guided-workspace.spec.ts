@@ -1218,7 +1218,8 @@ export:
     provenance: {},
     created_at: new Date().toISOString(),
   };
-  const progress = { reviewed_count: 0, total_count: 1, remaining_count: 1, current_position: 1 };
+  const secondReviewId = randomUUID();
+  const progress = { reviewed_count: 0, total_count: 2, remaining_count: 2, current_position: 1 };
   const review = {
     id: mixedReviewId,
     run_id: mixedRunId,
@@ -1243,6 +1244,25 @@ export:
       title: "Needs review",
       summary: "RF-DETR and LocateAnything disagree on the object's location.",
       details: ["Bounding-box IoU: 0.12", "Choose one source box or merge the result manually."],
+    },
+  };
+  const secondReview = {
+    ...review,
+    id: secondReviewId,
+    review_id: secondReviewId,
+    annotation_id: secondReviewId,
+    annotation: {
+      ...annotation,
+      id: secondReviewId,
+      label: "goal",
+      attributes: { fixture: "second-review" },
+    },
+    review_reason: "low_confidence",
+    review_explanation: {
+      code: "low_confidence",
+      title: "Confidence needs review",
+      summary: "This independent fixture must not inherit edits from the first item.",
+      details: [],
     },
   };
 
@@ -1289,11 +1309,20 @@ export:
   await page.route(`**/api/runs/${mixedRunId}/annotations`, (route) => route.fulfill({ json: {
     run_id: mixedRunId, project_id: mixedProjectId, image_id: mixedImageId, image_index: 0, annotations: [annotation],
   } }));
-  await page.route("**/api/reviews**", (route) => {
+  await page.route("**/*reviews**", (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith(`/${mixedReviewId}/revisions`)) return route.fulfill({ json: { revisions: [{
+      revision_id: randomUUID(), annotation_id: mixedReviewId, parent_revision_id: null,
+      before: { label: "football", value: annotation.value, attributes: {}, confidence: null, review_status: "pending" },
+      after: { label: "ball", value: annotation.value, attributes: {}, confidence: null, review_status: "pending" },
+      actor: "runtime", reason: "candidate_created", created_at: new Date().toISOString(),
+    }] } });
+    if (path.endsWith(`/${secondReviewId}/revisions`)) return route.fulfill({ json: { revisions: [] } });
     if (path.endsWith(`/${mixedReviewId}`)) return route.fulfill({ json: review });
-    if (path.endsWith(`/${mixedReviewId}/next`)) return route.fulfill({ json: { progress } });
-    return route.fulfill({ json: { reviews: [review], progress } });
+    if (path.endsWith(`/${secondReviewId}`)) return route.fulfill({ json: secondReview });
+    if (path.endsWith(`/${mixedReviewId}/next`)) return route.fulfill({ json: { next_review: secondReview, progress } });
+    if (path.endsWith(`/${secondReviewId}/next`)) return route.fulfill({ json: { previous_review: review, progress: { ...progress, current_position: 2 } } });
+    return route.fulfill({ json: { reviews: [review, secondReview], progress } });
   });
 
   await page.setViewportSize({ width: 1024, height: 900 });
@@ -1321,11 +1350,40 @@ export:
   await expect(page.getByLabel("Source model evidence")).toContainText("2 detector results");
   await page.getByRole("button", { name: "Use RF-DETR box" }).click();
   await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+  await expect(page.locator(".review-essential-facts")).toContainText("Not provided");
   await page.getByText("Execution details").click();
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("rfdetr-specialist-v1");
   await page.getByRole("button", { name: "Use LocateAnything box" }).click();
+  await expect(page.locator(".review-essential-facts")).toContainText("Not provided");
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("locate-anything-v1");
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("0.72");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.dismiss();
+  });
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
+  await page.getByRole("button", { name: "View revision history" }).click();
+  const revisionHistory = page.getByRole("dialog", { name: "Annotation revisions" });
+  await expect(revisionHistory).toContainText("candidate created");
+  await expect(revisionHistory).toContainText("football → ball");
+  await page.getByRole("button", { name: "Close revision history" }).click();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.dismiss();
+  });
+  await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
+  await expect(page.getByLabel("Annotation attributes JSON")).toContainText("locate-anything-v1");
+
+  page.once("dialog", async (dialog) => dialog.accept());
+  await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${secondReviewId}$`));
+  await page.getByRole("button", { name: "Edit E" }).click();
+  await expect(page.getByLabel("Reviewer note")).toHaveValue("");
+  await expect(page.getByLabel("Annotation attributes JSON")).toContainText("second-review");
+  await expect(page.getByLabel("Annotation attributes JSON")).not.toContainText("locate-anything-v1");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
 

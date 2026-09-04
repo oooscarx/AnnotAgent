@@ -1,5 +1,6 @@
 import type {
   Annotation,
+  AnnotationRevision,
   AgentSession,
   CorrectionMemoryRecord,
   DashboardData,
@@ -889,14 +890,25 @@ export const api = {
     ),
   reviews: (projectId?: string, signal?: AbortSignal) =>
     request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
-      `/api/reviews${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      projectId
+        ? `/api/projects/${encodeURIComponent(projectId)}/reviews`
+        : "/api/reviews",
       { signal },
     ),
-  review: (id: string, signal?: AbortSignal) =>
-    request<ReviewItem>(`/api/reviews/${id}`, { signal }),
+  review: (id: string, signal?: AbortSignal, projectId?: string) =>
+    request<ReviewItem>(projectId
+      ? `/api/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(id)}`
+      : `/api/reviews/${encodeURIComponent(id)}`, { signal }),
   reviewNext: (id: string, projectId?: string) =>
     request<ReviewNavigation>(
-      `/api/reviews/${id}/next${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+      projectId
+        ? `/api/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(id)}/next`
+        : `/api/reviews/${encodeURIComponent(id)}/next`,
+    ),
+  runReviews: (runId: string, signal?: AbortSignal) =>
+    request<{ reviews: ReviewItem[]; progress: ReviewQueueProgress }>(
+      `/api/runs/${encodeURIComponent(runId)}/reviews`,
+      { signal },
     ),
   revise: (annotation: Annotation, reason: string) =>
     request(`/api/annotations/${annotation.id}`, {
@@ -936,11 +948,10 @@ export const api = {
     queueProjectId?: string,
   ) =>
     request<ReviewDecisionOutcome>(
-      `/api/reviews/${id}/${decision}-and-next`,
+      `/api/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(id)}/${decision}-and-next`,
       {
         method: "POST",
         body: JSON.stringify({
-          project_id: projectId,
           decision,
           reason_code: reasonCode,
           note,
@@ -949,8 +960,10 @@ export const api = {
         }),
       },
     ),
-  revisions: (id: string) =>
-    request<{ revisions: unknown[] }>(`/api/annotations/${id}/revisions`),
+  revisions: (id: string, projectId?: string) =>
+    request<{ revisions: AnnotationRevision[] }>(projectId
+      ? `/api/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(id)}/revisions`
+      : `/api/annotations/${encodeURIComponent(id)}/revisions`),
   skills: () => request<SkillDetail[]>("/api/skills"),
   agentSessions: (projectId: string, signal?: AbortSignal) =>
     request<{ sessions: AgentSession[] }>(

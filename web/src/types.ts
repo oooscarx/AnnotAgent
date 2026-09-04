@@ -1690,6 +1690,17 @@ export interface Annotation {
   created_at: string;
 }
 
+export interface AnnotationRevision {
+  revision_id: string;
+  annotation_id: string;
+  parent_revision_id?: string;
+  before?: Pick<Annotation, "label" | "value" | "attributes" | "confidence" | "review_status">;
+  after?: Pick<Annotation, "label" | "value" | "attributes" | "confidence" | "review_status">;
+  actor: "human" | "runtime" | "import";
+  reason?: string;
+  created_at: string;
+}
+
 export interface ReviewItem {
   id: string;
   review_id: string;
