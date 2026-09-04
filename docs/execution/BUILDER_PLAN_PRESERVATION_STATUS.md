@@ -36,12 +36,7 @@ modified by this milestone.
 
 ## Remaining milestones
 
-- Milestone 1: durable Build Mode, Working Draft, Plan Candidate, Fragment, Working Memory and API.
-- Milestone 2: conversion-path blueprint and materialization.
-- Milestone 3: registry-driven synthesis and deterministic ranking.
-- Milestone 4: reserved-budget DraftSalvage and structured outcomes.
-- Milestone 5: prompt, API, UI and build-mode product flow.
-- Milestone 6: current-project real Builder validation and release regression.
+All six milestones are complete.
 
 ## Milestone 1 — durable working plans (2026-09-05)
 
@@ -146,3 +141,24 @@ Status: complete.
 - Focused Application regression tests, Server request decoding, TUI status, strict focused Clippy,
   Web typecheck and all 62 Web unit tests pass. No publication, formal Run, credential, remote or
   push was performed.
+
+## Milestone 6 — current Project and release validation (2026-09-05)
+
+Status: complete.
+
+- Runtime supplements model-directed discovery with deterministic Registry conversion synthesis at
+  salvage. The supplement is goal-, capability-, contract- and availability-driven; it contains no
+  EfficientSAM, SAM, Qwen or RoboCup branch.
+- The Builder Context and product readiness summary now count verified Ready local Expert Model
+  Instances, eliminating the contradictory state where a working prompted segmenter appeared
+  unavailable to the model and as `None ready` in the GUI.
+- The final current-project GLM session selected the Registry-synthesized Qwen → box prompts →
+  prompted segmentation → mask-to-bbox → geometry evaluation/decision → Review → Commit plan.
+  The Draft passed static validation, and a real one-image Sample Test exercised both Qwen and the
+  Ready local EfficientSAM process with zero node failures.
+- Browser reload recovered the same selected Draft and persisted Sample Test. Candidate,
+  selection, bindings, alternatives, planning state and salvage outcome remain visible.
+- The release suite passes strict Rust formatting/Clippy, all workspace tests and build, both
+  architecture scans, Web typecheck/62 unit tests/build, all 43 Chromium E2E scenarios and diff
+  checks. No Workflow was published, no full dataset Run was started, no remote was changed and no
+  push occurred.

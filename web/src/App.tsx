@@ -3065,7 +3065,8 @@ function WorkflowsPage({
     const editableBase = buildMode.kind === "repair_draft" || buildMode.kind === "resolve_bindings"
       ? draft
       : undefined;
-    void Promise.resolve(editableBase)
+    const comparisonBase = buildMode.kind === "from_scratch" ? draft : editableBase;
+    void Promise.resolve(comparisonBase)
       .then(async (baseDraft) => {
         const proposal = await api.suggestWorkflow(
           activeProjectId,
@@ -3082,16 +3083,17 @@ function WorkflowsPage({
           buildMode,
         );
         setAdvisorProposal(proposal);
-        setDraft(proposal.draft);
         persistedDrafts.current.set(proposal.draft.id, JSON.stringify(proposal.draft));
         setAdvisorProposalRecovered(false);
         setActiveAgentSession(proposal.agent_session);
+        const compareDistinctDrafts = Boolean(baseDraft && baseDraft.id !== proposal.draft.id);
+        if (!compareDistinctDrafts) setDraft(proposal.draft);
         onSelectContext({
-          draftId: proposal.draft.id,
+          draftId: compareDistinctDrafts ? baseDraft?.id : proposal.draft.id,
           agentSessionId: proposal.agent_session?.id,
         }, true);
-        setShowProposalComparison(Boolean(baseDraft));
-        if (baseDraft && baseDraft.id !== proposal.draft.id) {
+        setShowProposalComparison(compareDistinctDrafts);
+        if (compareDistinctDrafts && baseDraft) {
           const diff = await api.workflowDraftDiff(baseDraft.id, proposal.draft.id);
           setProposalDiff(diff);
           setSelectedProposalChanges(pipelineDiffChangeIds(diff));
@@ -3635,7 +3637,23 @@ function WorkflowsPage({
             <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
             <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />Allow configured external APIs</label>
             <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
-            <div className="agent-worker-summary"><span>Available local workers</span><strong>{activeProject?.model_bindings.filter((model) => model.scope === "workspace_worker" && model.availability_group === "ready").map((model) => model.id).join(", ") || "None ready"}</strong></div>
+            <div className="agent-worker-summary">
+              <span>Available local expert models</span>
+              <strong>
+                {catalog?.expert_models
+                  .filter(
+                    (model) =>
+                      model.availability === "available" &&
+                      model.availability_evidence.health_passed &&
+                      model.availability_evidence.protocol_compatible &&
+                      model.availability_evidence.contracts_validated &&
+                      model.availability_evidence.sample_conversion_passed &&
+                      model.availability_evidence.weights_ready,
+                  )
+                  .map((model) => model.display_name)
+                  .join(", ") || "None ready"}
+              </strong>
+            </div>
           </fieldset>
           <details className="project-model-choices">
             <summary>Project model choices</summary>
@@ -9172,9 +9190,9 @@ function AgentSessionTrace({
   const maximumCalls = session.builder_budget?.max_total_tool_calls ?? session.budget.max_tool_calls;
   const remainingCalls = session.remaining_tool_calls ?? Math.max(0, maximumCalls - totalCalls);
   const reservedCalls = session.builder_budget
-    ? session.builder_budget.reserved_materialization_calls
-      + session.builder_budget.reserved_validation_calls
-      + session.builder_budget.reserved_finalization_calls
+    ? (session.builder_budget.reserved_materialization_calls ?? 0)
+      + (session.builder_budget.reserved_validation_calls ?? 0)
+      + (session.builder_budget.reserved_finalization_calls ?? session.reserved_finalization_calls ?? 0)
     : session.reserved_finalization_calls ?? 0;
   const progress = Math.min(100, Math.round((totalCalls / Math.max(1, maximumCalls)) * 100));
   const needsSetup = ["provider_setup_required", "blocked_draft_ready"].includes(session.outcome ?? "");

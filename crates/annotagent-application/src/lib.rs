@@ -22,47 +22,47 @@ use annotagent_core::LicensePermission;
 use annotagent_core::{
     AdditionalUsage, AgentBudget, AgentDryRunSummary, AgentKind, AgentModelCall,
     AgentModelSelection, AgentSession, AgentSessionStatus, Annotation, AnnotationFailureClass,
-    AnnotationId, AnnotationSource, ArtifactContract, ArtifactKind, AttributeDefinition,
-    AttributeValue, BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchImageCheckpoint,
-    BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord, BatchStatus, BatchUsage, Budget,
-    CandidateGeometryQualityReport, CapabilityDeclarationSource, CheckpointIdentity,
-    ContractDataType, CredentialReference, CredentialSource, DatasetExporter, DatasetImporter,
-    DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport, ExportRequest,
-    FullRunEstimate, GenerationDefaults, GeometryCalibrationKey, GeometryCalibrationReport,
-    GeometryCalibrationStaleness, GeometryCalibrationStatus, GeometryCorrectionReason, ImageId,
-    ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
-    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata, ModelAvailability,
-    ModelAvailabilityEvidence, ModelAvailabilityStatus, ModelBinding as PipelineModelBinding,
-    ModelBindingId, ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability,
-    ModelConnection, ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract,
-    ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot, ModelProfileStatus,
-    ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory,
-    NodeDefinition, NodePort, NodeRegistry, NodeSideEffect, NormalizedRect, ObjectSizeBucket,
-    PIPELINE_IMPROVEMENT_SCHEMA_VERSION, PipelineArtifact, PipelineBuilderConstraints,
-    PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
-    PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGeometryMetrics,
-    PipelineGeometrySizeMetrics, PipelineGrammarValidator, PipelineImprovementDiagnosis,
-    PipelineImprovementId, PipelineImprovementPolicy, PipelineImprovementSession,
-    PipelineImprovementStatus, PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality,
-    PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
-    ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
-    ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
-    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedModelAssetReference,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
-    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
-    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
-    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
-    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
-    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
-    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
-    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftNode,
-    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
-    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
-    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
-    WorkflowVersionComparison, all_artifact_kinds, center_shift, compare_pipeline_geometry_metrics,
-    rect_iou, resolve_model_binding,
+    AnnotationId, AnnotationSource, ArtifactContract, ArtifactConversionRegistry, ArtifactKind,
+    AttributeDefinition, AttributeValue, BatchBudgetLedger, BatchBudgetLimits, BatchId,
+    BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
+    BatchStatus, BatchUsage, Budget, CandidateGeometryQualityReport, CapabilityDeclarationSource,
+    CheckpointIdentity, ContractDataType, CredentialReference, CredentialSource, DatasetExporter,
+    DatasetImporter, DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport,
+    ExportRequest, FullRunEstimate, GenerationDefaults, GeometryCalibrationKey,
+    GeometryCalibrationReport, GeometryCalibrationStaleness, GeometryCalibrationStatus,
+    GeometryCorrectionReason, ImageId, ImportIssue, ImportReport, ImportRequest, InputModality,
+    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
+    LicenseMetadata, ModelAvailability, ModelAvailabilityEvidence, ModelAvailabilityStatus,
+    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
+    ModelBindingSource, ModelCapability, ModelConnection, ModelInputContract, ModelLimits,
+    ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
+    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
+    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
+    NodeSideEffect, NormalizedRect, ObjectSizeBucket, PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
+    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
+    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
+    PipelineDraftTools, PipelineGeometryMetrics, PipelineGeometrySizeMetrics,
+    PipelineGrammarValidator, PipelineImprovementDiagnosis, PipelineImprovementId,
+    PipelineImprovementPolicy, PipelineImprovementSession, PipelineImprovementStatus,
+    PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality, PortDefinition,
+    PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId, ProjectModelBinding,
+    ProjectSchema, ProjectSnapshot, PromptContract, PromptKind, ProtocolFeatures,
+    ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus,
+    ProviderId, ProviderProfile, PublishedModelAssetReference, PublishedWorkflowVersion,
+    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
+    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
+    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
+    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
+    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
+    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
+    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
+    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
+    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
+    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
+    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
+    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
+    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, center_shift,
+    compare_pipeline_geometry_metrics, rect_iou, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -1904,6 +1904,100 @@ fn persist_discovered_conversion_fragments(
             format!("{:?}", fragment.from_artifact).to_lowercase(),
             format!("{:?}", fragment.to_artifact).to_lowercase()
         ));
+        candidate.evidence.push(observation);
+        session.record_pipeline_fragment(fragment);
+        session.record_plan_candidate(candidate);
+    }
+    Ok(())
+}
+
+fn persist_registry_conversion_fragments(
+    session: &mut AgentSession,
+    input: &WorkflowAdvisorInput,
+    nodes: &NodeRegistry,
+) -> Result<()> {
+    let targets_detection_geometry = input.target_task_id.as_ref().is_some_and(|target_task_id| {
+        input
+            .project_schema
+            .tasks
+            .iter()
+            .any(|task| task.id == *target_task_id && task.kind == TaskKind::BoundingBox)
+    });
+    if !targets_detection_geometry {
+        return Ok(());
+    }
+
+    let has_available_prompted_segmenter =
+        input.expert_models.iter().any(|model| {
+            model.availability == ModelAvailability::Available
+                && model.availability_evidence.available()
+                && model.checkpoint.is_some()
+                && !matches!(&model.connection, ModelConnection::Mock { .. })
+                && model
+                    .capabilities
+                    .contains(&ModelCapability::PromptedSegmentation)
+        }) || compatible_builder_models(input, Some(ModelCapability::PromptedSegmentation))
+            .into_iter()
+            .any(|profile| {
+                input
+                    .provider_profiles
+                    .iter()
+                    .find(|provider| provider.id == profile.provider_id)
+                    .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
+            });
+    if !has_available_prompted_segmenter {
+        return Ok(());
+    }
+
+    let context_revision = session
+        .working_memory
+        .as_ref()
+        .map(|memory| memory.context_revision.clone())
+        .ok_or_else(|| anyhow!("Pipeline Builder Session has no Registry context revision"))?;
+    let node_definitions = nodes.definitions();
+    let paths = ArtifactConversionRegistry::default().find_conversion_path(
+        ArtifactKind::DetectionSet,
+        ArtifactKind::DetectionSet,
+        nodes,
+    );
+    for path in paths {
+        let identity = serde_json::to_vec(&json!({
+            "context_revision": context_revision,
+            "from": path.from,
+            "to": path.to,
+            "steps": path.steps,
+        }))?;
+        let digest = annotagent_image_tools::sha256(&identity);
+        let fragment_id = format!("conversion-{}", &digest[..16]);
+        if session
+            .working_memory
+            .as_ref()
+            .is_some_and(|memory| memory.conversion_paths.contains_key(&fragment_id))
+        {
+            continue;
+        }
+        let observation_id = format!("registry-synthesis-{}", &digest[..16]);
+        let observation = annotagent_core::ObservationRef {
+            id: observation_id.clone(),
+            tool_name: "registry_pipeline_synthesis".to_owned(),
+            original_call_id: observation_id,
+            context_revision: context_revision.clone(),
+        };
+        let fragment = annotagent_core::PipelineFragment::from_conversion_path(
+            fragment_id,
+            &context_revision,
+            &path,
+            &node_definitions,
+            observation.clone(),
+        )?;
+        if !fragment
+            .required_model_capabilities
+            .contains(&ModelCapability::PromptedSegmentation)
+        {
+            continue;
+        }
+        let mut candidate =
+            fragment.partial_candidate("Registry-derived detection geometry refinement".to_owned());
         candidate.evidence.push(observation);
         session.record_pipeline_fragment(fragment);
         session.record_plan_candidate(candidate);
@@ -9535,6 +9629,15 @@ impl LocalApplication {
                 && node.required_model_capability.is_some()
                 && annotagent_core::model_profile_satisfies_node_contract(node, model)
         };
+        let compatible_expert = |node: &NodeDefinition, model: &ExpertModelManifest| {
+            model.availability == ModelAvailability::Available
+                && model.availability_evidence.available()
+                && model.checkpoint.is_some()
+                && !matches!(&model.connection, ModelConnection::Mock { .. })
+                && node
+                    .required_model_capability
+                    .is_some_and(|capability| model.capabilities.contains(&capability))
+        };
         let node_catalog = input
             .node_catalog
             .iter()
@@ -9569,7 +9672,11 @@ impl LocalApplication {
                     || input
                         .model_profiles
                         .iter()
-                        .any(|model| compatible(node, model)),
+                        .any(|model| compatible(node, model))
+                    || input
+                        .expert_models
+                        .iter()
+                        .any(|model| compatible_expert(node, model)),
             })
             .collect::<Vec<_>>();
         let model_profiles = input
@@ -9619,6 +9726,13 @@ impl LocalApplication {
                             .iter()
                             .filter(|model| compatible(node, model))
                             .map(|model| model.id.to_string())
+                            .chain(
+                                input
+                                    .expert_models
+                                    .iter()
+                                    .filter(|model| compatible_expert(node, model))
+                                    .map(|model| model.model_id.clone()),
+                            )
                             .collect(),
                     )
                 })
@@ -9629,11 +9743,16 @@ impl LocalApplication {
             .iter()
             .filter_map(|node| {
                 let capability = node.required_model_capability?;
-                (!input.model_profiles.iter().any(|model| compatible(node, model))).then(|| {
+                (!input.model_profiles.iter().any(|model| compatible(node, model))
+                    && !input
+                        .expert_models
+                        .iter()
+                        .any(|model| compatible_expert(node, model)))
+                .then(|| {
                     annotagent_core::CapabilityRequirement {
                         node_id: node.id.clone(),
                         capability: serialized_enum_name(&capability),
-                        reason: "No available, credential-configured Model Profile satisfies this Node Definition"
+                        reason: "No available Provider Model Profile or verified local Model Instance satisfies this Node Definition"
                             .to_owned(),
                     }
                 })
@@ -11141,9 +11260,10 @@ impl LocalApplication {
                 annotagent_core::PipelineBuildMode::FromScratch
                     | annotagent_core::PipelineBuildMode::ImproveExisting { .. }
             );
+            let discovery_limit_reached =
+                current.is_none() && session.usage.tool_calls >= forced_progress_deadline;
             if runtime_materializes_discovery
-                && (session.usage.tool_calls >= forced_progress_deadline
-                    || has_complete_runnable_candidate)
+                && (discovery_limit_reached || has_complete_runnable_candidate)
             {
                 if let annotagent_core::BuildFeasibility::Unsupported { reasons, .. } = &feasibility
                 {
@@ -11160,19 +11280,23 @@ impl LocalApplication {
                         target.map(|(task_id, _)| task_id),
                         target.map(|(_, label)| label),
                     )?;
-                    if !has_complete_runnable_candidate {
-                        synthesize_registry_plan_candidates(
-                            &mut session,
-                            &safe_suggestion,
-                            &fresh_input,
-                            &feasibility,
-                            builder_constraints.priority,
-                        )?;
-                    }
+                    // A capable model may never call the exact path-discovery tool before the
+                    // bounded discovery phase ends. The Runtime still owns deterministic graph
+                    // composition: derive typed fragments from the live Registry, then rank the
+                    // baseline and every compatible refinement without guessing model brands.
+                    persist_registry_conversion_fragments(&mut session, &fresh_input, &nodes)?;
+                    let salvage_seed = current.as_ref().unwrap_or(&safe_suggestion).clone();
+                    synthesize_registry_plan_candidates(
+                        &mut session,
+                        &salvage_seed,
+                        &fresh_input,
+                        &feasibility,
+                        builder_constraints.priority,
+                    )?;
                     let (created, salvage_validation) = salvage_best_discovered_plan(
                         self,
                         &mut session,
-                        &safe_suggestion,
+                        &salvage_seed,
                         &fresh_input,
                         settings,
                         &models,
@@ -22469,6 +22593,145 @@ export:
             Some(annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized)
         );
         assert!(report.validation.is_some_and(|report| report.valid));
+    }
+
+    #[tokio::test]
+    async fn registry_synthesizes_geometry_path_when_model_never_calls_path_discovery() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "runtime-registry-synthesis",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-no-path-discovery");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-runtime-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-runtime-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut registry_provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider Profile");
+        registry_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        registry_provider.credential_ref = Some(CredentialReference {
+            provider_id: registry_provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_RUNTIME_SYNTHESIS_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&registry_provider)
+            .expect("non-Mock Registry Provider");
+
+        let step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".to_owned()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.to_owned(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+            },
+        };
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                step("get_pipeline_builder_context", json!({})),
+                step("inspect_project", json!({})),
+                step("inspect_label", json!({})),
+                step("list_enabled_skills", json!({})),
+                step("list_node_definitions", json!({})),
+                step(
+                    "list_compatible_models",
+                    json!({"node_type": "vlm_detection.detect"}),
+                ),
+                step(
+                    "list_compatible_models",
+                    json!({"node_type": "capability.segment"}),
+                ),
+                step("list_pipeline_templates", json!({})),
+            ],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "runtime-registry-synthesis",
+                &settings,
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Runtime Registry synthesis report");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert!(!report.session.steps.iter().any(|step| {
+            matches!(
+                step.tool_name.as_str(),
+                "find_artifact_conversion_path" | "find_geometry_refinement_path"
+            )
+        }));
+        assert_eq!(report.session.discovered_conversion_paths.len(), 1);
+        assert!(report.session.planning_events.iter().any(|event| {
+            event.kind == annotagent_core::BuilderPlanEventKind::FragmentSaved
+                && event.fragment_id.as_ref().is_some_and(|fragment_id| {
+                    report
+                        .session
+                        .discovered_conversion_paths
+                        .contains(fragment_id)
+                })
+        }));
+        let selected = report
+            .session
+            .selected_candidate_id
+            .as_ref()
+            .and_then(|candidate_id| {
+                report
+                    .session
+                    .plan_candidates
+                    .iter()
+                    .find(|candidate| &candidate.id == candidate_id)
+            })
+            .expect("selected Registry Candidate");
+        assert_eq!(
+            selected.source,
+            annotagent_core::PipelineCandidateSource::RegistrySynthesis
+        );
+        assert!(selected.is_runnable(), "selected={selected:#?}");
+        let draft = &report.suggestion.expect("salvaged Draft").draft;
+        assert!(
+            draft
+                .nodes
+                .iter()
+                .any(|node| node.node_type == "capability.segment"),
+            "Runtime did not compose the available prompted segmenter: {:#?}",
+            draft.nodes
+        );
+        assert_eq!(draft.status, WorkflowDraftStatus::ReadyForHumanReview);
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
+        );
+        assert!(report.validation.is_some_and(|validation| validation.valid));
     }
 
     #[tokio::test]

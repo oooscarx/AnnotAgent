@@ -1,5 +1,39 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M6 — 2026-09-05
+
+1. `registry_synthesizes_geometry_path_when_model_never_calls_path_discovery` spends the full
+   discovery allowance without invoking either conversion-path Tool. Runtime derives the legal
+   DetectionSet → BoxPromptSet → MaskSet → DetectionSet Fragment from Registry contracts, selects
+   the complete geometry-safe Candidate, materializes `capability.segment`, validates it and
+   finishes with successful salvage.
+2. `discovered_prompted_segmentation_path_is_materialized_at_discovery_limit` still passes and now
+   proves the model-discovered and runtime-derived form of one path deduplicate to one stable
+   Fragment. The active-Draft deadline guard also preserves normal mutation, validation, Dry Run
+   and submission sequences instead of overwriting them with a template.
+3. The final real workspace session `08adec11-9aba-45dc-8419-88d315bc6d9a` used the saved GLM-5.2
+   Builder profile for 3 model turns and 8 Tool Calls. It preserved three plans, selected
+   `registry-refinement-08adec11-9aba-45dc-8419-88d315bc6d9a`, and saved Draft
+   `418771d9-f048-4b43-a384-3af4ab2cf78e` as `ReadyForHumanReview` with zero static-validation
+   issues. The selected graph binds Qwen to `vlm_detection.detect` and the Ready non-Fixture local
+   Model Instance to `capability.segment`, followed by mask-to-bbox, geometry evaluation,
+   geometry decision, Review and Commit.
+4. Real Sample Test `27b0dfaf-e395-4891-ba71-58ad4cf1ea40` ran one real B-Human image. Qwen
+   produced one coarse ball detection in 3,025 ms; the local prompted segmenter produced a MaskSet
+   in 1,494 ms; refinement succeeded with measured IoU `0.2088959`; total duration was 4,643 ms
+   with zero failed samples. Both coarse and refined results were conservatively routed to Review.
+5. Direct browser verification opened the final canonical Test URL, observed the selected validated
+   Draft and saved Sample Test, reloaded, and recovered an identical result summary. The Automation
+   page reports `EfficientSAM-Ti ONNX · Ready local model`, the selected Candidate, alternatives,
+   node chain, Build Mode and successful salvage. The two earlier M6 trial Drafts were archived;
+   no Published Workflow Version or historical Run was deleted or changed.
+6. Release commands pass: `cargo fmt --all --check`, strict workspace Clippy, all-feature workspace
+   tests/build, both architecture boundary scripts, `git diff --check`, Web TypeScript, 62 unit
+   tests, production build and 43/43 Chromium E2E scenarios. One explicitly billable Provider
+   smoke test and external-weight process tests remain intentionally ignored. No secret was read
+   into logs, no model asset was added to Git, and no publish, formal dataset Run, remote mutation
+   or push occurred.
+
 ## Builder Plan Preservation M4 — 2026-09-05
 
 1. `discovered_prompted_segmentation_path_is_materialized_at_discovery_limit` is no longer ignored.

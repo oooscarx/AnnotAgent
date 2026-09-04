@@ -1311,7 +1311,11 @@ impl PipelineBuilderPhase {
                 )
                 | (
                     Self::Validating,
-                    Self::DryRunning | Self::Revising | Self::Finalizing | Self::Failed
+                    Self::DryRunning
+                        | Self::Revising
+                        | Self::DraftSalvage
+                        | Self::Finalizing
+                        | Self::Failed
                 )
                 | (
                     Self::DryRunning,

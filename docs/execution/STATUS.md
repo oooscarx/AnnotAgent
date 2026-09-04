@@ -1,6 +1,30 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-09-03 CST
+Last updated: 2026-09-05 CST
+
+## Builder Plan Preservation M6 — 2026-09-05
+
+- Runtime now derives typed detection-geometry conversion Fragments directly from the current Node,
+  Model and Artifact Conversion Registries before salvage. A Builder model that never calls path
+  discovery can no longer hide an otherwise Ready prompted-segmentation route.
+- Registry-derived and model-discovered copies of the same conversion path share one stable
+  identity. Discovery limits apply only while no Draft exists, so active Draft editing and
+  validation are not mistaken for continued discovery.
+- Builder Context and GUI readiness now include evidence-complete local Expert Model Instances as
+  well as Provider Model Profiles. The football workspace visibly reports the Ready local
+  EfficientSAM instance instead of the contradictory `None ready` state.
+- A final real GLM-5.2 FromScratch session selected a complete Registry-synthesized Qwen detection
+  plus prompted-segmentation Candidate after 8 Tool Calls and 3 model turns. Draft
+  `418771d9-f048-4b43-a384-3af4ab2cf78e` passed static validation with no unresolved binding.
+- Real Sample Test `27b0dfaf-e395-4891-ba71-58ad4cf1ea40` executed Qwen, the Ready local
+  EfficientSAM model, mask-to-bbox, geometry evaluation/decision and Review on
+  `color_1001525.png`: 1 coarse detection, 1 successful refinement, 0 failures and 2 review
+  outcomes in 4.6 seconds. Refresh restored the exact Draft and Sample Test from server state.
+- Full release validation passes Rustfmt, strict all-target/all-feature Clippy, all workspace Rust
+  tests and doc tests, all-feature build, both architecture boundary scans, 62 Web unit tests,
+  TypeScript, production Web build, `git diff --check`, and all 43 Chromium E2E scenarios.
+
+Builder Plan Preservation M6 status: `PASS`.
 
 ## Builder Plan Preservation M4 — 2026-09-05
 
