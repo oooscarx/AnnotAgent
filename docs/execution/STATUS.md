@@ -1132,3 +1132,19 @@ Model Bundle Provisioning M7 status: `PASS WITH EXPLICIT REAL-MODEL LIVE-CONDITI
   work and were not performed.
 
 Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.
+
+## Builder Plan Preservation M5 — 2026-09-05
+
+- Pipeline Builder requests now carry an explicit FromScratch, ImproveExisting, RepairDraft or
+  ResolveBindings mode from GUI through the HTTP boundary into the persisted Agent Session.
+- FromScratch owns a new empty Working Draft and ignores old Published bootstrap state during
+  Candidate synthesis. ImproveExisting copies only the selected immutable Version into a new
+  editable Draft; ResolveBindings cannot mutate graph topology or restart broad discovery.
+- The Builder prompt states the durable-plan contract, while Runtime remains responsible for
+  automatic Fragment/Candidate persistence, deterministic selection and discovery-limit salvage.
+- GUI and TUI now expose preserved Candidate chains, model bindings, selected plan, planning events,
+  Build Mode and salvage outcome, including a diagnostic for a discovered but unapplied plan.
+- Focused Rust tests and strict Clippy pass. Web typecheck and 62 unit tests pass. Current-project
+  live validation and the full release matrix remain Milestone 6.
+
+Builder Plan Preservation M5 status: `PASS`.

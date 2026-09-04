@@ -1218,6 +1218,53 @@ impl TuiState {
                             constraints.allow_human_review,
                         ));
                     }
+                    if let Some(build_mode) = &session.build_mode {
+                        self.push(format!(
+                            "build mode {:?} · phase {} · outcome {} · stop {}",
+                            build_mode,
+                            session.phase.map_or_else(
+                                || "not recorded".to_owned(),
+                                |phase| format!("{phase:?}")
+                            ),
+                            session.outcome.map_or_else(
+                                || "pending".to_owned(),
+                                |outcome| format!("{outcome:?}")
+                            ),
+                            session.builder_stop_reason.map_or_else(
+                                || "pending".to_owned(),
+                                |reason| format!("{reason:?}")
+                            ),
+                        ));
+                    }
+                    if !session.plan_candidates.is_empty() {
+                        self.push(format!(
+                            "plans {} · selected {} · typed paths {} · salvage {}",
+                            session.plan_candidates.len(),
+                            session.selected_candidate_id.as_deref().unwrap_or("none"),
+                            session.discovered_conversion_paths.len(),
+                            session.salvage_outcome.map_or_else(
+                                || "not used".to_owned(),
+                                |outcome| format!("{outcome:?}")
+                            ),
+                        ));
+                        for candidate in &session.plan_candidates {
+                            self.push(format!(
+                                "candidate {} · {:?} · {:?} · {:?} · score {}{}",
+                                candidate.name,
+                                candidate.status,
+                                candidate.sufficiency,
+                                candidate.geometry_safety,
+                                candidate.score.deterministic_total,
+                                if session.selected_candidate_id.as_deref()
+                                    == Some(candidate.id.as_str())
+                                {
+                                    " · selected"
+                                } else {
+                                    ""
+                                }
+                            ));
+                        }
+                    }
                     for step in &session.steps {
                         self.push(format!(
                             "{}. {} · {}",
@@ -1977,11 +2024,26 @@ export:
         .expect("Project schema");
         let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
         let mut session = annotagent_core::AgentSession::start(
-            annotagent_core::AgentKind::WorkflowAdvisor,
+            annotagent_core::AgentKind::PipelineBuilder,
             annotagent_core::AgentBudget::default(),
         )
-        .with_project("demo");
-        session.wait_for_human("publish_workflow");
+        .with_project("demo")
+        .with_builder_progress(
+            annotagent_core::PipelineBuilderBudget::default(),
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        session.set_builder_working_draft(
+            "working-draft",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            "registry-revision",
+        );
+        session.salvage_outcome =
+            Some(annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized);
+        session.complete_builder(
+            annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+            annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage,
+            "Review the saved Draft",
+        );
         application
             .store()
             .save_agent_session(&session)
@@ -1993,6 +2055,10 @@ export:
             .await
             .expect("Skill detail");
         state.command("/memory").await.expect("Memory list");
+        state
+            .command("/advisor status")
+            .await
+            .expect("Advisor status");
         state
             .command("/advisor cancel")
             .await
@@ -2009,6 +2075,11 @@ export:
                 .iter()
                 .any(|line| line.contains("No Project-scoped correction"))
         );
+        assert!(state.trace.iter().any(|line| {
+            line.contains("build mode FromScratch")
+                && line.contains("DraftReadyForHumanReview")
+                && line.contains("DiscoveryLimitTriggeredSalvage")
+        }));
         assert_eq!(
             application
                 .store()

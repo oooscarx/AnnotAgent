@@ -730,6 +730,12 @@ fn default_provider_kind() -> String {
 }
 
 const PIPELINE_BUILDER_SYSTEM_PROMPT: &str = "You are AnnotAgent's constrained Pipeline Builder. \
+You are editing a persistent Working Draft whose build_mode is authoritative. FromScratch starts \
+with an empty graph and must not use a previous Draft, default Published Workflow, or historical \
+Workflow Version as its base or fallback. ImproveExisting may use only the explicitly selected \
+immutable Workflow Version and must write every change into a new editable Draft. RepairDraft and \
+ResolveBindings preserve the specified Draft identity; ResolveBindings must repair bindings without \
+rediscovering or replacing its graph. \
 Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
 and inspected evidence. Start with get_pipeline_builder_context. For a bounding-box target, inspect \
 inspect_model_quality_contract, inspect_project_geometry_policy, inspect_geometry_correction_summary, \
@@ -740,6 +746,12 @@ Request one batch inspection only when an omitted contract would materially chan
 repeat an identical Tool Call: reuse the returned observation reference and advance the phase. Respect \
 the runtime phase, remaining Tool Calls, and reserved finalization calls supplied on every turn. By the \
 draft deadline, persist either the smallest runnable Draft or a structurally complete blocked Draft. A \
+successful conversion-path observation is automatically persisted as a Pipeline Fragment and Plan \
+Candidate. Once a complete runnable Candidate exists, stop broad discovery: Candidate selection, \
+materialization, validation, and salvage are deterministic Runtime responsibilities. Workflow templates \
+are ordinary Candidate seeds, never the only legal plan and never an override for a stronger compatible \
+Registry-composed Candidate. If the discovery limit is reached, materialize the best saved Candidate \
+instead of restarting from a bootstrap template or discarding prior evidence. A \
 missing compatible model is a setup requirement, not a reason to continue discovery: preserve an \
 unresolved binding and finish_with_setup_requirements. Never spend the finalization reserve on broad \
 inspection, and always terminate with an explicit typed outcome. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
@@ -1301,6 +1313,40 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::CreateDraftFromTemplate
                     | PipelineBuilderTool::CreateBlockedDraft
             );
+            let resolve_bindings_action = matches!(
+                tool,
+                PipelineBuilderTool::GetPipelineBuilderContext
+                    | PipelineBuilderTool::ResolvePipelineFeasibility
+                    | PipelineBuilderTool::ListReadyModels
+                    | PipelineBuilderTool::InspectModelsBatch
+                    | PipelineBuilderTool::InspectContractsBatch
+                    | PipelineBuilderTool::InspectModelProfile
+                    | PipelineBuilderTool::InspectModelContracts
+                    | PipelineBuilderTool::InspectWorkerHealth
+                    | PipelineBuilderTool::CheckProviderAvailability
+                    | PipelineBuilderTool::BindModelProfile
+                    | PipelineBuilderTool::SetUnresolvedBinding
+                    | PipelineBuilderTool::CreateUnresolvedModelRequirement
+                    | PipelineBuilderTool::ValidatePipeline
+                    | PipelineBuilderTool::EstimatePipelineCost
+                    | PipelineBuilderTool::DryRunPipeline
+                    | PipelineBuilderTool::InspectDryRunSummary
+                    | PipelineBuilderTool::InspectFailureClasses
+                    | PipelineBuilderTool::InspectFailedSamples
+                    | PipelineBuilderTool::InspectReviewSamples
+                    | PipelineBuilderTool::InspectNodeStatistics
+                    | PipelineBuilderTool::InspectNodeArtifacts
+                    | PipelineBuilderTool::FinishWithSetupRequirements
+                    | PipelineBuilderTool::SubmitDraftForHumanApproval
+                    | PipelineBuilderTool::FinishAgentSession
+            );
+            if matches!(
+                session.build_mode.as_ref(),
+                Some(annotagent_core::PipelineBuildMode::ResolveBindings { .. })
+            ) && !resolve_bindings_action
+            {
+                return false;
+            }
             if remaining <= finalization_reserve {
                 return finalization;
             }
@@ -10645,6 +10691,12 @@ impl LocalApplication {
         base_draft_id: Option<&str>,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
+        let build_mode = base_draft_id.map_or(
+            annotagent_core::PipelineBuildMode::FromScratch,
+            |draft_id| annotagent_core::PipelineBuildMode::RepairDraft {
+                draft_id: draft_id.to_owned(),
+            },
+        );
         let input = self.workflow_advisor_input_for_label(
             project_id,
             settings,
@@ -10706,7 +10758,7 @@ impl LocalApplication {
             Some(selected_model),
             None,
             builder_constraints,
-            base_draft_id.is_some(),
+            build_mode,
             cancellation,
         )
         .await
@@ -10729,6 +10781,41 @@ impl LocalApplication {
         base_draft_id: Option<&str>,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
+        let build_mode = base_draft_id.map_or(
+            annotagent_core::PipelineBuildMode::FromScratch,
+            |draft_id| annotagent_core::PipelineBuildMode::RepairDraft {
+                draft_id: draft_id.to_owned(),
+            },
+        );
+        self.run_workflow_advisor_with_build_mode_and_runtime_credentials(
+            project_id,
+            settings,
+            selected_model,
+            provider,
+            runtime_provider_credentials,
+            constraints,
+            target,
+            builder_constraints,
+            build_mode,
+            cancellation,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_workflow_advisor_with_build_mode_and_runtime_credentials(
+        &self,
+        project_id: &str,
+        settings: &Settings,
+        selected_model: &PipelineBuilderModelRuntime,
+        provider: &dyn VisionModelProvider,
+        runtime_provider_credentials: &BTreeMap<ProviderId, String>,
+        constraints: &WorkflowConstraints,
+        target: Option<(&str, &str)>,
+        builder_constraints: PipelineBuilderConstraints,
+        build_mode: annotagent_core::PipelineBuildMode,
+        cancellation: CancellationToken,
+    ) -> Result<WorkflowAdvisorAgentReport> {
         let input = self.workflow_advisor_input_for_label(
             project_id,
             settings,
@@ -10736,7 +10823,7 @@ impl LocalApplication {
             target.map(|value| value.0),
             target.map(|value| value.1),
         )?;
-        let suggestion = if let Some(draft_id) = base_draft_id {
+        let suggestion = if let Some(draft_id) = build_mode.source_draft_id() {
             let draft = self.store.get_workflow_draft(draft_id)?;
             if draft.project_id != project_id {
                 bail!("retry Draft does not belong to the requested Project");
@@ -10774,6 +10861,44 @@ impl LocalApplication {
                 warnings: Vec::new(),
                 alternatives: Vec::new(),
             }
+        } else if let annotagent_core::PipelineBuildMode::ImproveExisting {
+            base_workflow_version_id,
+        } = &build_mode
+        {
+            let (workflow_id, version) =
+                base_workflow_version_id.rsplit_once('@').ok_or_else(|| {
+                    anyhow!("base Workflow Version must use the exact workflow_id@version identity")
+                })?;
+            let version = version
+                .parse::<u32>()
+                .context("base Workflow Version has an invalid version number")?;
+            let published = self
+                .store
+                .get_published_workflow_version(workflow_id, version)?;
+            if published.project_id != project_id {
+                bail!("base Workflow Version does not belong to the requested Project");
+            }
+            WorkflowSuggestion {
+                estimated_model_calls_per_image: published
+                    .draft
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.model_binding.is_some() || node.model_profile_binding.is_some()
+                    })
+                    .count(),
+                draft: published.draft,
+                rationale: vec![format!(
+                    "Improve Existing starts from immutable Workflow {base_workflow_version_id}; the published Version remains unchanged."
+                )],
+                estimated_latency_ms: None,
+                estimated_cost_tier: "unresolved".to_owned(),
+                unresolved_model_bindings: Vec::new(),
+                warnings: vec![
+                    "Changes are materialized into a new editable Working Draft.".to_owned(),
+                ],
+                alternatives: Vec::new(),
+            }
         } else if let Some((task_id, label)) = target {
             self.suggest_label_pipeline_preview(project_id, settings, task_id, label, constraints)?
         } else {
@@ -10790,7 +10915,7 @@ impl LocalApplication {
             Some(selected_model),
             Some(runtime_provider_credentials),
             builder_constraints,
-            base_draft_id.is_some(),
+            build_mode,
             cancellation,
         )
         .await
@@ -10820,7 +10945,7 @@ impl LocalApplication {
             None,
             None,
             builder_constraints,
-            false,
+            annotagent_core::PipelineBuildMode::FromScratch,
             cancellation,
         )
         .await
@@ -10839,7 +10964,7 @@ impl LocalApplication {
         selected_model: Option<&PipelineBuilderModelRuntime>,
         runtime_provider_credentials: Option<&BTreeMap<ProviderId, String>>,
         builder_constraints: PipelineBuilderConstraints,
-        resume_existing_draft: bool,
+        build_mode: annotagent_core::PipelineBuildMode,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
         let builder_constraints = pipeline_builder_constraints(constraints, builder_constraints)?;
@@ -10884,10 +11009,7 @@ impl LocalApplication {
                     "workflow_constraints": constraints,
                     "builder_constraints": builder_constraints,
                     "enabled_skill_summaries": input.enabled_skills,
-                    "retry": {
-                        "resume_existing_draft": resume_existing_draft,
-                        "draft_id": resume_existing_draft.then(|| safe_suggestion.draft.id.clone()),
-                    },
+                    "build_mode": build_mode,
                     "rule": "Inspect details with tools; do not assume Registry identities."
                 }))?,
                 tool_call_id: None,
@@ -10897,13 +11019,11 @@ impl LocalApplication {
         let tools = pipeline_builder_live_tools(&input);
         let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
         let context_revision = context_snapshot.context_revision.clone();
-        let build_mode = if resume_existing_draft {
-            annotagent_core::PipelineBuildMode::RepairDraft {
-                draft_id: safe_suggestion.draft.id.clone(),
-            }
-        } else {
-            annotagent_core::PipelineBuildMode::FromScratch
-        };
+        let resume_existing_draft = matches!(
+            build_mode,
+            annotagent_core::PipelineBuildMode::RepairDraft { .. }
+                | annotagent_core::PipelineBuildMode::ResolveBindings { .. }
+        );
         let feasibility = Self::resolve_pipeline_feasibility(&input, &context_snapshot);
         let discovery_budget = session
             .builder_budget
@@ -10924,7 +11044,26 @@ impl LocalApplication {
         let extensions = self
             .skills
             .validation_catalog_for(&enabled_skills.iter().cloned().collect::<Vec<_>>())?;
-        let mut current = resume_existing_draft.then(|| safe_suggestion.clone());
+        let mut current = if resume_existing_draft {
+            Some(safe_suggestion.clone())
+        } else if matches!(
+            &build_mode,
+            annotagent_core::PipelineBuildMode::ImproveExisting { .. }
+        ) {
+            let now = chrono::Utc::now();
+            let mut improved = safe_suggestion.clone();
+            improved.draft.id = uuid::Uuid::new_v4().to_string();
+            improved.draft.name = format!("{} · improvement draft", improved.draft.name);
+            improved.draft.status = WorkflowDraftStatus::Editing;
+            improved.draft.revision = 1;
+            improved.draft.content_hash.clear();
+            improved.draft.created_at = now;
+            improved.draft.updated_at = now;
+            self.store.save_workflow_draft(&improved.draft)?;
+            Some(improved)
+        } else {
+            None
+        };
         if let Some(suggestion) = current.as_mut()
             && reconcile_persisted_setup_draft(suggestion, &input, &feasibility)
         {
@@ -10933,7 +11072,7 @@ impl LocalApplication {
         if let Some(suggestion) = current.as_ref() {
             session.set_builder_working_draft(
                 suggestion.draft.id.clone(),
-                build_mode,
+                build_mode.clone(),
                 context_revision.clone(),
             );
             session.unresolved_bindings = suggestion.unresolved_model_bindings.clone();
@@ -10957,7 +11096,7 @@ impl LocalApplication {
             self.store.save_workflow_draft(&working_draft)?;
             session.set_builder_working_draft(
                 working_draft.id,
-                build_mode,
+                build_mode.clone(),
                 context_revision.clone(),
             );
             session.next_action =
@@ -10997,7 +11136,12 @@ impl LocalApplication {
                 candidate.sufficiency == annotagent_core::CandidateSufficiency::Complete
                     && candidate.is_runnable()
             });
-            if current.is_none()
+            let runtime_materializes_discovery = matches!(
+                &build_mode,
+                annotagent_core::PipelineBuildMode::FromScratch
+                    | annotagent_core::PipelineBuildMode::ImproveExisting { .. }
+            );
+            if runtime_materializes_discovery
                 && (session.usage.tool_calls >= forced_progress_deadline
                     || has_complete_runnable_candidate)
             {
@@ -19019,6 +19163,27 @@ export:
             .map(|tool| tool.name)
             .collect::<BTreeSet<_>>();
         assert!(drafting_tools.contains(PipelineBuilderTool::CreateDraftFromTemplate.as_str()));
+        let resolving_session =
+            session
+                .clone()
+                .with_build_mode(annotagent_core::PipelineBuildMode::ResolveBindings {
+                    draft_id: "blocked-draft".to_owned(),
+                });
+        let resolving_tools = pipeline_builder_visible_tools(&tools, &resolving_session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(resolving_tools.contains(PipelineBuilderTool::BindModelProfile.as_str()));
+        assert!(resolving_tools.contains(PipelineBuilderTool::ValidatePipeline.as_str()));
+        assert!(
+            !resolving_tools.contains(PipelineBuilderTool::FindArtifactConversionPath.as_str())
+        );
+        assert!(
+            !resolving_tools.contains(PipelineBuilderTool::FindGeometryRefinementPath.as_str())
+        );
+        assert!(!resolving_tools.contains(PipelineBuilderTool::CreateDraftFromTemplate.as_str()));
+        assert!(!resolving_tools.contains(PipelineBuilderTool::AddPipelineNode.as_str()));
+        assert!(!resolving_tools.contains(PipelineBuilderTool::RemovePipelineNode.as_str()));
         session
             .transition_builder_phase(
                 annotagent_core::PipelineBuilderPhase::Validating,
@@ -22082,6 +22247,29 @@ export:
                 include_str!("../../../examples/robocup/project.yaml"),
             )
             .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let mut legacy = application
+            .create_workflow_draft_with_template(
+                "plan-loss-regression",
+                &settings,
+                true,
+                Some("robocup.ball.vlm-bootstrap"),
+            )
+            .expect("legacy bootstrap Draft");
+        legacy.nodes[0]
+            .parameters
+            .insert("legacy_from_scratch_marker".to_owned(), json!(true));
+        let legacy = application
+            .save_workflow_draft(legacy)
+            .expect("saved legacy bootstrap Draft");
+        let legacy_published = application
+            .store
+            .publish_workflow_draft(
+                &legacy,
+                "legacy-bootstrap-snapshot".to_owned(),
+                WorkflowSnapshot::default(),
+            )
+            .expect("published legacy bootstrap");
         let selected_model =
             register_pipeline_builder_model(&application, "scripted-glm-plan-loss");
         let detector = register_available_vision_model(
@@ -22170,7 +22358,7 @@ export:
         let report = application
             .run_workflow_advisor_with_selected_model(
                 "plan-loss-regression",
-                &load_settings(None).expect("settings"),
+                &settings,
                 &selected_model,
                 &provider,
                 &WorkflowConstraints::default(),
@@ -22242,6 +22430,19 @@ export:
             report.session.selected_candidate_id
         );
         let draft = &report.suggestion.expect("salvaged Draft").draft;
+        assert_ne!(draft.id, legacy_published.source_draft_id);
+        assert!(
+            draft
+                .nodes
+                .iter()
+                .all(|node| !node.parameters.contains_key("legacy_from_scratch_marker"))
+        );
+        let preserved_versions = application
+            .store
+            .list_published_workflow_versions(Some("plan-loss-regression"))
+            .expect("preserved Published history");
+        assert_eq!(preserved_versions.len(), 1);
+        assert_eq!(preserved_versions[0], legacy_published);
         assert!(
             draft
                 .nodes
@@ -22268,6 +22469,185 @@ export:
             Some(annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized)
         );
         assert!(report.validation.is_some_and(|report| report.valid));
+    }
+
+    #[tokio::test]
+    async fn improve_existing_copies_only_the_explicit_version_into_a_new_working_draft() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "improve-explicit-version",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-improve-existing");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-improvement-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-improvement-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut registry_provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider Profile");
+        registry_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        registry_provider.credential_ref = Some(annotagent_core::CredentialReference {
+            provider_id: registry_provider.id,
+            source: annotagent_core::CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_IMPROVEMENT_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&registry_provider)
+            .expect("non-Mock Registry Provider");
+        let mut base = application
+            .suggest_label_pipeline_preview(
+                "improve-explicit-version",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("controlled base Pipeline")
+            .draft;
+        base.label_pipeline
+            .as_mut()
+            .expect("base Label Pipeline")
+            .shared_stages[0]
+            .steps[0]
+            .parameters
+            .insert("explicit_base_marker".to_owned(), json!("v1"));
+        base.nodes[0]
+            .parameters
+            .insert("explicit_base_marker".to_owned(), json!("v1"));
+        application
+            .store
+            .save_workflow_draft(&base)
+            .expect("saved base Draft");
+        let base = application
+            .store
+            .get_workflow_draft(&base.id)
+            .expect("stored base Draft");
+        application
+            .store
+            .save_workflow_draft(&base)
+            .expect("normalized base Draft");
+        let base = application
+            .store
+            .get_workflow_draft(&base.id)
+            .expect("normalized stored base Draft");
+        let published = application
+            .store
+            .publish_workflow_draft(
+                &base,
+                "explicit-base-snapshot".to_owned(),
+                WorkflowSnapshot::default(),
+            )
+            .expect("Published base");
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: Some("improve_existing".to_owned()),
+                    response: MockResponseSpec::ToolCall {
+                        name: "get_pipeline_builder_context".to_owned(),
+                        arguments: json!({}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                },
+                MockStep {
+                    expect_task: Some("pipeline_builder".to_owned()),
+                    expect_message_contains: Some("feasibility_analysis".to_owned()),
+                    response: MockResponseSpec::ToolCall {
+                        name: "find_geometry_refinement_path".to_owned(),
+                        arguments: json!({}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                },
+            ],
+        });
+        let runtime_credentials = BTreeMap::new();
+        let build_mode = annotagent_core::PipelineBuildMode::ImproveExisting {
+            base_workflow_version_id: format!("{}@{}", published.workflow_id, published.version),
+        };
+
+        let report = application
+            .run_workflow_advisor_with_build_mode_and_runtime_credentials(
+                "improve-explicit-version",
+                &settings,
+                &selected_model,
+                &provider,
+                &runtime_credentials,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints::default(),
+                build_mode.clone(),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("Improve Existing report");
+
+        let improved = report
+            .suggestion
+            .expect("preserved improvement Draft")
+            .draft;
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.build_mode, Some(build_mode));
+        assert_ne!(improved.id, published.source_draft_id);
+        assert_eq!(improved.status, WorkflowDraftStatus::ReadyForHumanReview);
+        assert!(
+            improved
+                .nodes
+                .iter()
+                .any(|node| node.node_type == "capability.segment"),
+            "nodes={:#?} candidates={:#?}",
+            improved.nodes,
+            report.session.plan_candidates,
+        );
+        assert!(
+            improved
+                .nodes
+                .iter()
+                .any(|node| { node.parameters.get("explicit_base_marker") == Some(&json!("v1")) })
+        );
+        let unchanged = application
+            .store
+            .get_published_workflow_version(&published.workflow_id, published.version)
+            .expect("immutable Published base");
+        assert!(
+            unchanged
+                .draft
+                .nodes
+                .iter()
+                .any(|node| { node.parameters.get("explicit_base_marker") == Some(&json!("v1")) })
+        );
+        assert_eq!(
+            application
+                .store
+                .list_published_workflow_versions(Some("improve-explicit-version"))
+                .expect("Published versions")
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -23602,7 +23982,7 @@ export:
                 Some(&selected_builder),
                 None,
                 builder_constraints,
-                false,
+                annotagent_core::PipelineBuildMode::FromScratch,
                 CancellationToken::new(),
             )
             .await

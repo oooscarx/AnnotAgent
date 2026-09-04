@@ -121,3 +121,28 @@ Status: complete.
   the safe reviewed baseline wins rather than using stale Ready state.
 - All 103 Core tests and 65 runnable Application tests pass; the only ignored Application test is
   the explicitly billable external Provider smoke test. Strict focused Clippy passes.
+
+## Milestone 5 — prompt, API and product trace (2026-09-05)
+
+Status: complete.
+
+- The Builder contract now treats `build_mode` as authoritative, explains automatic Candidate
+  persistence and deterministic salvage, and explicitly makes Workflow templates ordinary seeds.
+- The HTTP request and Web client carry the tagged Build Mode. Build from scratch is the visible
+  default; Improve Existing requires an explicit immutable `workflow_id@version`; Repair Draft and
+  Resolve Bindings require an editable Draft.
+- Improve Existing now copies the explicitly selected Published Version into a new Working Draft
+  without clearing its graph. The original Published Version remains unchanged. FromScratch is
+  covered with an existing Published bootstrap and proves that its marker is neither inherited nor
+  used as salvage while the historical Version remains present.
+- Resolve Bindings removes topology mutation, template and conversion-discovery actions from the
+  model-visible tool set. It can inspect current model readiness, bind profiles, validate, Dry Run
+  and finish without rediscovering the Catalog.
+- The GUI exposes Candidate selection, node chain, model bindings, planning events, typed paths,
+  Build Mode and salvage outcome. A preserved Candidate without materialization is shown as a
+  diagnostic warning instead of disappearing behind a generic failure.
+- `/advisor status` in the TUI reports Build Mode, phase, outcome, stop reason, Candidate selection,
+  conversion-path count and salvage result.
+- Focused Application regression tests, Server request decoding, TUI status, strict focused Clippy,
+  Web typecheck and all 62 Web unit tests pass. No publication, formal Run, credential, remote or
+  push was performed.

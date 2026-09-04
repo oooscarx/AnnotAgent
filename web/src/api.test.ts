@@ -95,7 +95,40 @@ describe("API client", () => {
       locked: true,
     });
     expect(suggestionBody.agent_model_profile_id).toBe("model-profile-id");
+    expect(suggestionBody.build_mode).toEqual({ kind: "from_scratch" });
     expect(JSON.stringify(fetch.mock.calls)).not.toContain("Authorization");
+  });
+
+  it("sends the user's explicit Pipeline Builder mode without changing history", async () => {
+    const fetch = mutationFetch({ draft: {}, agent_session: {} });
+    vi.stubGlobal("fetch", fetch);
+
+    await api.suggestWorkflow(
+      "demo",
+      "llm",
+      undefined,
+      undefined,
+      undefined,
+      "builder-profile",
+      undefined,
+      {
+        kind: "improve_existing",
+        base_workflow_version_id: "workflow-id@3",
+      },
+    );
+
+    const body = JSON.parse(apiCalls(fetch)[0][1].body);
+    expect(body).toMatchObject({
+      project_id: "demo",
+      advisor: "llm",
+      agent_model_profile_id: "builder-profile",
+      build_mode: {
+        kind: "improve_existing",
+        base_workflow_version_id: "workflow-id@3",
+      },
+    });
+    expect(body).not.toHaveProperty("base_draft_id");
+    expect(JSON.stringify(body)).not.toContain("publish");
   });
 
   it("starts formal execution with only an exact Published Workflow Version", async () => {

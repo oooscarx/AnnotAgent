@@ -47,6 +47,7 @@ import type {
   ModelBinding,
   NodeReplayReport,
   OptimizationPriority,
+  PipelineBuildMode,
   PipelineBuilderConstraints,
   PipelineDraftDiff,
   PipelineArtifact,
@@ -2678,6 +2679,9 @@ function WorkflowsPage({
   const [builderConstraints, setBuilderConstraints] = useState<PipelineBuilderConstraints>(
     DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
   );
+  const [buildModeKind, setBuildModeKind] = useState<PipelineBuildMode["kind"]>(
+    "from_scratch",
+  );
   const [templateId, setTemplateId] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const buildSummary = useBuildSummary(activeProject, onError);
@@ -3032,14 +3036,36 @@ function WorkflowsPage({
     setAdvisorProposalRecovered(false);
     setProposalDiff(undefined);
     setSelectedProposalChanges([]);
-    const editableBase = draft && !["published", "archived"].includes(draft.status)
-      ? Promise.resolve(draft)
-      : api.createWorkflowDraft(activeProjectId, false).then((created) => {
-          persistedDrafts.current.set(created.id, JSON.stringify(created));
-          setDraft(created);
-          return created;
-        });
-    void editableBase
+    let buildMode: PipelineBuildMode = { kind: "from_scratch" };
+    if (retry?.session_id && (retry.base_draft_id ?? draft?.id)) {
+      buildMode = {
+        kind: "repair_draft",
+        draft_id: retry.base_draft_id ?? draft!.id,
+      };
+    } else if (buildModeKind === "repair_draft" || buildModeKind === "resolve_bindings") {
+      if (!draft || ["published", "archived"].includes(draft.status)) {
+        setBusy(false);
+        setAdvisorRunning(false);
+        advisorRequestActive.current = false;
+        return onError("Choose an editable Draft for this Build mode.");
+      }
+      buildMode = { kind: buildModeKind, draft_id: draft.id };
+    } else if (buildModeKind === "improve_existing") {
+      if (!selected?.workflow.source.startsWith("published draft")) {
+        setBusy(false);
+        setAdvisorRunning(false);
+        advisorRequestActive.current = false;
+        return onError("Choose a Published Workflow Version to improve.");
+      }
+      buildMode = {
+        kind: "improve_existing",
+        base_workflow_version_id: `${selected.workflow.workflow_id}@${selected.workflow.version.replace(/^v/, "")}`,
+      };
+    }
+    const editableBase = buildMode.kind === "repair_draft" || buildMode.kind === "resolve_bindings"
+      ? draft
+      : undefined;
+    void Promise.resolve(editableBase)
       .then(async (baseDraft) => {
         const proposal = await api.suggestWorkflow(
           activeProjectId,
@@ -3053,16 +3079,19 @@ function WorkflowsPage({
           builderConstraints,
           advisorKind === "llm" ? selectedAgentModelId : undefined,
           retry,
+          buildMode,
         );
         setAdvisorProposal(proposal);
+        setDraft(proposal.draft);
+        persistedDrafts.current.set(proposal.draft.id, JSON.stringify(proposal.draft));
         setAdvisorProposalRecovered(false);
         setActiveAgentSession(proposal.agent_session);
         onSelectContext({
-          draftId: baseDraft.id,
+          draftId: proposal.draft.id,
           agentSessionId: proposal.agent_session?.id,
         }, true);
-        setShowProposalComparison(true);
-        if (baseDraft.id !== proposal.draft.id) {
+        setShowProposalComparison(Boolean(baseDraft));
+        if (baseDraft && baseDraft.id !== proposal.draft.id) {
           const diff = await api.workflowDraftDiff(baseDraft.id, proposal.draft.id);
           setProposalDiff(diff);
           setSelectedProposalChanges(pipelineDiffChangeIds(diff));
@@ -3540,6 +3569,51 @@ function WorkflowsPage({
           )}
           <fieldset className="agent-objective" aria-label="Pipeline Builder objective">
             <legend>Objective</legend>
+            <label>
+              Build mode
+              <select
+                aria-label="Pipeline Build mode"
+                value={buildModeKind}
+                onChange={(event) =>
+                  setBuildModeKind(
+                    event.target.value as PipelineBuildMode["kind"],
+                  )
+                }
+              >
+                <option value="from_scratch">Build from scratch</option>
+                <option
+                  value="repair_draft"
+                  disabled={
+                    !draft || ["published", "archived"].includes(draft.status)
+                  }
+                >
+                  Repair current Draft
+                </option>
+                <option
+                  value="resolve_bindings"
+                  disabled={
+                    !draft || ["published", "archived"].includes(draft.status)
+                  }
+                >
+                  Resolve current bindings
+                </option>
+                <option
+                  value="improve_existing"
+                  disabled={!selected?.workflow.source.startsWith("published draft")}
+                >
+                  Improve Published Version
+                </option>
+              </select>
+              <small>
+                {buildModeKind === "from_scratch"
+                  ? "Starts with a new empty Working Draft; Published history is preserved but not used as a base."
+                  : buildModeKind === "improve_existing"
+                    ? "Uses the selected immutable Version as an explicit base and writes changes to a new Draft."
+                    : buildModeKind === "resolve_bindings"
+                      ? "Keeps the current graph and only resolves model bindings, validation, and setup."
+                      : "Keeps the selected editable Draft and its identity."}
+              </small>
+            </label>
             <label>Target task<select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
@@ -9032,10 +9106,12 @@ function agentStageLabel(session: AgentSession): string {
   const phaseLabels: Record<NonNullable<AgentSession["phase"]>, string> = {
     context_loading: "Loading bounded context",
     feasibility_analysis: "Resolving feasibility",
+    candidate_selection: "Selecting the best compatible plan",
     drafting: "Building the Draft",
     validating: "Validating the Draft",
     dry_running: "Testing sample images",
     revising: "Revising from evidence",
+    draft_salvage: "Creating a Draft from the preserved plan",
     finalizing: "Saving the outcome",
     waiting_for_human: "Ready for your review",
     completed: "Completed",
@@ -9095,7 +9171,11 @@ function AgentSessionTrace({
   const totalCalls = session.total_tool_calls ?? session.usage.tool_calls;
   const maximumCalls = session.builder_budget?.max_total_tool_calls ?? session.budget.max_tool_calls;
   const remainingCalls = session.remaining_tool_calls ?? Math.max(0, maximumCalls - totalCalls);
-  const reservedCalls = session.reserved_finalization_calls ?? session.builder_budget?.reserved_finalization_calls ?? 0;
+  const reservedCalls = session.builder_budget
+    ? session.builder_budget.reserved_materialization_calls
+      + session.builder_budget.reserved_validation_calls
+      + session.builder_budget.reserved_finalization_calls
+    : session.reserved_finalization_calls ?? 0;
   const progress = Math.min(100, Math.round((totalCalls / Math.max(1, maximumCalls)) * 100));
   const needsSetup = ["provider_setup_required", "blocked_draft_ready"].includes(session.outcome ?? "");
   const retryable = ["failed", "budget_exceeded"].includes(session.status) || needsSetup;
@@ -9117,6 +9197,36 @@ function AgentSessionTrace({
       <div className="agent-progress" role="progressbar" aria-label="Tool budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
         <span style={{ width: `${progress}%` }} />
       </div>
+      {session.salvage_outcome && (
+        <section className="agent-salvage-notice" aria-label="Draft salvage result">
+          <div>
+            <span className="eyebrow">Discovery completed</span>
+            <strong>
+              {session.salvage_outcome === "runnable_draft_materialized"
+                ? "Best compatible plan saved as a Draft"
+                : "Best available plan saved with explicit blockers"}
+            </strong>
+          </div>
+          <p>
+            AnnotAgent stopped searching, preserved the plans already found, selected one
+            deterministically, and ran static validation.
+          </p>
+        </section>
+      )}
+      {!!session.plan_candidates?.length &&
+        !session.selected_candidate_id &&
+        !session.salvage_outcome && (
+          <section className="agent-plan-warning" role="alert">
+            <div>
+              <span className="eyebrow">Plan discovered but not applied</span>
+              <strong>AnnotAgent preserved the candidates for diagnosis</strong>
+            </div>
+            <p>
+              No candidate was materialized into the Working Draft. Inspect the
+              planning events, then retry from the saved Draft.
+            </p>
+          </section>
+        )}
       <div className="fact-grid">
         <Fact label="Current stage" value={stage} />
         <Fact label="Model turns" value={session.model_turns ?? session.model_calls.length} />
@@ -9154,7 +9264,77 @@ function AgentSessionTrace({
           value={session.pending_human_action ?? "None"}
         />
         {session.builder_constraints && <Fact label="Priority" value={session.builder_constraints.priority.replaceAll("_", " ")} />}
+        {session.build_mode && <Fact label="Build mode" value={session.build_mode.kind.replaceAll("_", " ")} />}
       </div>
+      {!!session.plan_candidates?.length && (
+        <section className="agent-plan-candidates" aria-label="Pipeline plan candidates">
+          <div className="section-heading compact">
+            <div>
+              <span className="eyebrow">Preserved plans</span>
+              <h4>{session.plan_candidates.length} candidate{session.plan_candidates.length === 1 ? "" : "s"}</h4>
+            </div>
+            <span>{session.discovered_conversion_paths?.length ?? 0} typed path{session.discovered_conversion_paths?.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="agent-candidate-grid">
+            {session.plan_candidates.map((candidate) => {
+              const selected = candidate.id === session.selected_candidate_id;
+              return (
+                <article key={candidate.id} className={selected ? "selected" : ""}>
+                  <div className="context-line">
+                    <strong>{candidate.name}</strong>
+                    <Status status={candidate.status === "materialized" ? "succeeded" : candidate.status} />
+                    {selected && <span className="candidate-selected">Selected</span>}
+                  </div>
+                  <p>{candidate.source.replaceAll("_", " ")} · {candidate.geometry_safety.replaceAll("_", " ")} · {candidate.model_bindings.length} model call{candidate.model_bindings.length === 1 ? "" : "s"}</p>
+                  {!!candidate.node_blueprints.length && (
+                    <div className="candidate-node-chain" aria-label="Candidate node chain">
+                      {candidate.node_blueprints.map((node, index) => (
+                        <span key={`${candidate.id}-${node.id}`}>
+                          {index > 0 && <b aria-hidden="true">→</b>}
+                          <code>{node.node_type}</code>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="candidate-contracts">
+                    <span>{candidate.has_commit_path ? "Commit path" : "No Commit path"}</span>
+                    <span>{candidate.has_review_path ? "Review path" : "No Review path"}</span>
+                    <span>{candidate.sufficiency}</span>
+                  </div>
+                  {!!candidate.unresolved_bindings.length && (
+                    <small>{candidate.unresolved_bindings.length} unresolved binding{candidate.unresolved_bindings.length === 1 ? "" : "s"}</small>
+                  )}
+                  {!!candidate.model_bindings.length && (
+                    <ul className="candidate-model-list">
+                      {candidate.model_bindings.map((binding) => (
+                        <li key={`${candidate.id}-${binding.node_id}-${binding.capability}`}>
+                          <span>{binding.capability.replaceAll("_", " ")}</span>
+                          <code>{binding.model_profile_id?.slice(0, 8) ?? "Unresolved"}</code>
+                          <small>{binding.availability.replaceAll("_", " ")}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {!!candidate.score.reasons.length && <small>{candidate.score.reasons.join(" · ")}</small>}
+                </article>
+              );
+            })}
+          </div>
+          {!!session.planning_events?.length && (
+            <details>
+              <summary>Planning events ({session.planning_events.length})</summary>
+              <ol className="agent-action-list">
+                {session.planning_events.map((event) => (
+                  <li key={`${event.sequence}-${event.kind}`}>
+                    <strong>{event.sequence}. {event.kind.replaceAll("_", " ")}</strong>
+                    <small>{event.detail}</small>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </section>
+      )}
       {session.status !== "running" && (
         <section className={`agent-outcome-card ${needsSetup ? "setup" : ""}`} aria-label="Pipeline Builder outcome">
           <div>

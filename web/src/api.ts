@@ -12,6 +12,7 @@ import type {
   ImageItem,
   ModelBinding,
   PipelineBuilderConstraints,
+  PipelineBuildMode,
   PipelineDraftDiff,
   ExportReadiness,
   ProjectExportResult,
@@ -679,6 +680,7 @@ export const api = {
     builderConstraints?: PipelineBuilderConstraints,
     agentModelProfileId?: string,
     retry?: { session_id?: string; base_draft_id?: string },
+    buildMode: PipelineBuildMode = { kind: "from_scratch" },
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -690,6 +692,7 @@ export const api = {
           : {}),
         constraints: { require_review_gate: true, ...constraints },
         builder_constraints: builderConstraints,
+        build_mode: buildMode,
         ...(agentModelProfileId
           ? { agent_model_profile_id: agentModelProfileId }
           : {}),

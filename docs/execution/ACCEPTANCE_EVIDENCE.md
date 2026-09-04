@@ -1922,3 +1922,30 @@ and packaging remain M6.
    mutations and remain operator work.
 
 Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.
+
+## Builder Plan Preservation M5 — 2026-09-05
+
+1. `discovered_prompted_segmentation_path_is_materialized_at_discovery_limit` now starts with a
+   Published `robocup.ball.vlm-bootstrap` Version carrying a unique legacy marker. A FromScratch
+   session selects and materializes the Registry-composed prompted-segmentation Candidate, does not
+   copy the marker and leaves exactly one unchanged historical Published Version.
+2. `improve_existing_copies_only_the_explicit_version_into_a_new_working_draft` proves that an
+   explicit `workflow_id@version` is copied into a distinct editable Working Draft with the selected
+   base graph preserved, while the immutable source Version is not changed or duplicated.
+3. The phase action-mask test proves ResolveBindings exposes model binding and validation but hides
+   artifact/geometry path discovery, templates, Add Node and Remove Node.
+4. Server request decoding preserves the tagged ImproveExisting identity and rejects a request that
+   omits its required version. The Web API test proves FromScratch is sent by default and an explicit
+   ImproveExisting payload contains no publication action or legacy base Draft field.
+5. The GUI Candidate panel renders deterministic selection, typed node chain, model bindings,
+   contract coverage, planning events and salvage notice. A Candidate with no selection or salvage
+   emits `Plan discovered but not applied` as an actionable diagnostic.
+6. The focused TUI test persists a successful discovery-limit salvage and proves `/advisor status`
+   reports `FromScratch`, `DraftReadyForHumanReview` and
+   `DiscoveryLimitTriggeredSalvage` before cancellation.
+7. Executed checks: the 16 Pipeline Builder Application tests passed (15 runnable, one explicit
+   billable ignore); both new Build Mode regressions passed individually; the Server DTO and TUI
+   status tests passed; Web typecheck and all 62 Vitest cases passed. Strict focused Clippy was rerun
+   after the final lint fix before the milestone commit.
+
+No credential, Published production Workflow, formal Run, remote or push was modified.

@@ -920,6 +920,52 @@ export interface WorkflowDraftApplyReport {
   selected_change_ids: string[];
 }
 
+export type PipelineBuildMode =
+  | { kind: "from_scratch" }
+  | { kind: "improve_existing"; base_workflow_version_id: string }
+  | { kind: "repair_draft"; draft_id: string }
+  | { kind: "resolve_bindings"; draft_id: string };
+
+export interface PipelinePlanCandidate {
+  id: string;
+  name: string;
+  source:
+    | "registry_synthesis"
+    | "conversion_path"
+    | "template_seed"
+    | "existing_draft_patch"
+    | "runtime_salvage";
+  status: "runnable" | "blocked" | "stale" | "materialized" | "rejected";
+  sufficiency: "partial" | "complete";
+  fragment_ids: string[];
+  node_blueprints: WorkflowDraftNode[];
+  edge_blueprints: WorkflowEdge[];
+  model_bindings: {
+    node_id: string;
+    capability: ModelCapability;
+    model_profile_id?: string;
+    model_profile_revision?: number;
+    expert_model_id?: string;
+    availability: string;
+    fixture_only: boolean;
+    production_eligible: boolean;
+  }[];
+  unresolved_bindings: string[];
+  geometry_safety: "unsafe" | "mandatory_review" | "evaluated";
+  has_review_path: boolean;
+  has_commit_path: boolean;
+  score: {
+    runnable: boolean;
+    goal_coverage: number;
+    geometry_safety: number;
+    binding_completeness: number;
+    domain_coverage: number;
+    estimated_model_calls?: number;
+    deterministic_total: number;
+    reasons: string[];
+  };
+}
+
 export interface AgentSession {
   id: string;
   project_id?: string;
@@ -942,10 +988,12 @@ export interface AgentSession {
   phase?:
     | "context_loading"
     | "feasibility_analysis"
+    | "candidate_selection"
     | "drafting"
     | "validating"
     | "dry_running"
     | "revising"
+    | "draft_salvage"
     | "finalizing"
     | "waiting_for_human"
     | "completed"
@@ -960,6 +1008,29 @@ export interface AgentSession {
     | "budget_exceeded"
     | "failed";
   builder_stop_reason?: string;
+  build_mode?: PipelineBuildMode;
+  working_draft?: {
+    draft_id: string;
+    build_mode: PipelineBuildMode;
+    created_at: string;
+    updated_at: string;
+  };
+  plan_candidates?: PipelinePlanCandidate[];
+  selected_candidate_id?: string;
+  discovered_conversion_paths?: string[];
+  planning_events?: {
+    sequence: number;
+    kind: string;
+    candidate_id?: string;
+    fragment_id?: string;
+    detail: string;
+    created_at: string;
+  }[];
+  salvage_outcome?:
+    | "runnable_draft_materialized"
+    | "blocked_draft_materialized"
+    | "existing_draft_preserved"
+    | "unsupported_request";
   builder_budget?: {
     max_model_turns: number;
     max_total_tool_calls: number;
@@ -967,6 +1038,11 @@ export interface AgentSession {
     max_draft_tool_calls: number;
     max_validation_tool_calls: number;
     max_dry_run_tool_calls: number;
+    max_draft_mutations: number;
+    max_validation_repairs: number;
+    max_dry_runs: number;
+    reserved_materialization_calls: number;
+    reserved_validation_calls: number;
     reserved_finalization_calls: number;
     max_parallel_tools_per_turn: number;
     max_duplicate_calls: number;

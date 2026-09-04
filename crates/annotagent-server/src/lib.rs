@@ -3334,6 +3334,8 @@ struct SuggestWorkflowRequest {
     /// the editable Draft and its unresolved requirements are retained.
     retry_session_id: Option<uuid::Uuid>,
     base_draft_id: Option<String>,
+    #[serde(default)]
+    build_mode: Option<annotagent_core::PipelineBuildMode>,
     #[serde(default = "default_workflow_advisor")]
     advisor: String,
     #[serde(default)]
@@ -3389,6 +3391,14 @@ async fn suggest_workflow(
         session.draft_id.or(request.base_draft_id.clone())
     } else {
         request.base_draft_id.clone()
+    };
+    let build_mode = if let Some(draft_id) = retry_draft_id {
+        annotagent_core::PipelineBuildMode::RepairDraft { draft_id }
+    } else {
+        request
+            .build_mode
+            .clone()
+            .unwrap_or(annotagent_core::PipelineBuildMode::FromScratch)
     };
     let (mut suggestion, mut agent_report) = match request.advisor.as_str() {
         #[cfg(test)]
@@ -3465,7 +3475,7 @@ async fn suggest_workflow(
             }
             let report = state
                 .application
-                .run_workflow_advisor_with_selected_model_from_draft_and_runtime_credentials(
+                .run_workflow_advisor_with_build_mode_and_runtime_credentials(
                     &request.project_id,
                     &settings,
                     &selected_model,
@@ -3474,7 +3484,7 @@ async fn suggest_workflow(
                     &workflow_constraints,
                     target,
                     request.builder_constraints.clone(),
-                    retry_draft_id.as_deref(),
+                    build_mode,
                     CancellationToken::default(),
                 )
                 .await
@@ -10497,6 +10507,33 @@ export:
         assert!(
             !reconcile_discovered_worker_identity(&mut worker, &manifest)
                 .expect("unready live identity remains non-publishable")
+        );
+    }
+
+    #[test]
+    fn workflow_suggestion_request_preserves_the_explicit_build_mode() {
+        let request: SuggestWorkflowRequest = serde_json::from_value(json!({
+            "project_id": "robocup-ball",
+            "advisor": "llm",
+            "build_mode": {
+                "kind": "improve_existing",
+                "base_workflow_version_id": "workflow-id@4"
+            }
+        }))
+        .expect("valid explicit Build Mode");
+        assert_eq!(
+            request.build_mode,
+            Some(annotagent_core::PipelineBuildMode::ImproveExisting {
+                base_workflow_version_id: "workflow-id@4".to_owned(),
+            })
+        );
+        assert!(
+            serde_json::from_value::<SuggestWorkflowRequest>(json!({
+                "project_id": "robocup-ball",
+                "advisor": "llm",
+                "build_mode": {"kind": "improve_existing"}
+            }))
+            .is_err()
         );
     }
 

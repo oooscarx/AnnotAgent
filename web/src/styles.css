@@ -1249,6 +1249,30 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .agent-session-trace .fact-grid { margin: 0; }
 .agent-progress { height: 7px; overflow: hidden; border-radius: 999px; background: var(--aa-border); }
 .agent-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--aa-primary); transition: width 180ms ease; }
+.agent-salvage-notice { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); gap: 10px 18px; align-items: center; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--aa-success) 45%, var(--aa-border)); border-radius: var(--aa-radius-md); background: color-mix(in srgb, var(--aa-success) 7%, var(--aa-surface)); }
+.agent-salvage-notice div { display: grid; gap: 3px; }
+.agent-salvage-notice p { margin: 0; color: var(--aa-text-muted); }
+.agent-plan-warning { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); gap: 10px 18px; align-items: center; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--aa-warning) 48%, var(--aa-border)); border-radius: var(--aa-radius-md); background: color-mix(in srgb, var(--aa-warning) 8%, var(--aa-surface)); }
+.agent-plan-warning div { display: grid; gap: 3px; }
+.agent-plan-warning p { margin: 0; color: var(--aa-text-muted); }
+.agent-plan-candidates { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
+.agent-plan-candidates h4 { margin: 2px 0 0; }
+.agent-candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; }
+.agent-candidate-grid article { display: grid; gap: 7px; min-width: 0; padding: 11px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: color-mix(in srgb, var(--aa-surface) 94%, var(--aa-border) 6%); }
+.agent-candidate-grid article.selected { border-color: var(--aa-primary); box-shadow: inset 3px 0 0 var(--aa-primary); }
+.agent-candidate-grid p, .agent-candidate-grid small { margin: 0; overflow-wrap: anywhere; color: var(--aa-text-muted); }
+.candidate-selected { padding: 2px 7px; border-radius: 999px; background: var(--aa-primary-soft); color: var(--aa-primary); font-size: 10px; font-weight: 750; }
+.candidate-contracts { display: flex; flex-wrap: wrap; gap: 5px; }
+.candidate-contracts span { padding: 3px 7px; border: 1px solid var(--aa-border); border-radius: 999px; font-size: 10px; }
+.candidate-node-chain { display: flex; flex-wrap: wrap; gap: 5px 7px; align-items: center; min-width: 0; padding: 8px; border-radius: var(--aa-radius-sm); background: var(--aa-surface-raised); }
+.candidate-node-chain span { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.candidate-node-chain b { flex: 0 0 auto; color: var(--aa-text-muted); font-weight: 500; }
+.candidate-node-chain code { max-width: 100%; overflow-wrap: anywhere; white-space: normal; color: var(--aa-text); font-size: 10px; }
+.candidate-model-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.candidate-model-list li { display: grid; grid-template-columns: minmax(90px, 1fr) auto auto; gap: 8px; align-items: center; min-width: 0; }
+.candidate-model-list span { overflow-wrap: anywhere; font-size: 10px; text-transform: capitalize; }
+.candidate-model-list code { font-size: 10px; }
+.candidate-model-list small { text-transform: capitalize; }
 .agent-outcome-card { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(220px, .8fr); gap: 14px 20px; align-items: start; padding: 14px; border: 1px solid var(--aa-border-strong); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
 .agent-outcome-card.setup { border-color: var(--aa-warning); background: var(--aa-warning-soft); }
 .agent-outcome-card h4 { margin: 3px 0 5px; }
@@ -1507,6 +1531,9 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
   .improvement-actions { align-items: stretch; flex-direction: column; }
   .geometry-repair-actions { grid-template-columns: 1fr; }
   .agent-outcome-card { grid-template-columns: 1fr; }
+  .agent-salvage-notice, .agent-plan-warning { grid-template-columns: 1fr; }
+  .candidate-model-list li { grid-template-columns: 1fr auto; }
+  .candidate-model-list li small { grid-column: 1 / -1; }
   .agent-outcome-card .button-row { grid-column: auto; display: grid; }
   .export-format-grid { grid-template-columns: 1fr; }
   .build-footer { position: static; align-items: stretch; flex-direction: column; }
