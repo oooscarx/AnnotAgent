@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-03 CST
 
+## Builder Plan Preservation M4 — 2026-09-05
+
+- Discovery, materialization, validation and finalization now have separate budget envelopes.
+  Discovery cannot consume the closing reserve.
+- A complete runnable Candidate or the discovery ceiling enters Candidate Selection and Draft
+  Salvage. The best current-compatible Candidate is written into the persistent Working Draft and
+  statically validated without another LLM turn.
+- Registry state is re-read before materialization. A model that became unavailable blocks its old
+  Candidate and allows a safe alternative to win.
+- Successful salvage is reported as `DiscoveryLimitTriggeredSalvage`, not Budget Exhausted. The
+  original plan-loss regression is enabled and passes.
+
 ## Builder Plan Preservation M3 — 2026-09-05
 
 - The Builder now synthesizes complete Pipeline Candidates from Registry-discovered conversion

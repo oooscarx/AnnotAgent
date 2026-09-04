@@ -1271,6 +1271,7 @@ pub enum PipelineBuilderPhase {
     #[default]
     ContextLoading,
     FeasibilityAnalysis,
+    CandidateSelection,
     Drafting,
     Validating,
     DryRunning,
@@ -1292,7 +1293,14 @@ impl PipelineBuilderPhase {
         matches!(
             (self, next),
             (Self::ContextLoading, Self::FeasibilityAnalysis)
-                | (Self::FeasibilityAnalysis, Self::Drafting | Self::Completed)
+                | (
+                    Self::FeasibilityAnalysis,
+                    Self::CandidateSelection | Self::Drafting | Self::Completed
+                )
+                | (
+                    Self::CandidateSelection,
+                    Self::Drafting | Self::DraftSalvage | Self::Completed
+                )
                 | (
                     Self::FeasibilityAnalysis | Self::Drafting | Self::Revising,
                     Self::DraftSalvage
@@ -1344,6 +1352,10 @@ pub enum BuilderStopReason {
     DraftReady,
     SetupRequired,
     UnsupportedRequest,
+    DiscoveryLimitTriggeredSalvage,
+    RunnableCandidateTriggeredSalvage,
+    CandidateMaterializationFailed,
+    NoFeasibleCandidate,
     DiscoveryLimitReached,
     DraftDeadlineReached,
     ValidationRepairLimitReached,
@@ -1365,6 +1377,11 @@ pub struct PipelineBuilderBudget {
     pub max_draft_tool_calls: u32,
     pub max_validation_tool_calls: u32,
     pub max_dry_run_tool_calls: u32,
+    pub max_draft_mutations: u32,
+    pub max_validation_repairs: u32,
+    pub max_dry_runs: u32,
+    pub reserved_materialization_calls: u32,
+    pub reserved_validation_calls: u32,
     pub reserved_finalization_calls: u32,
     pub max_parallel_tools_per_turn: u32,
     pub max_duplicate_calls: u32,
@@ -1375,11 +1392,16 @@ impl Default for PipelineBuilderBudget {
         Self {
             max_model_turns: 16,
             max_total_tool_calls: 48,
-            max_discovery_tool_calls: 10,
+            max_discovery_tool_calls: 8,
             max_draft_tool_calls: 10,
             max_validation_tool_calls: 10,
             max_dry_run_tool_calls: 10,
-            reserved_finalization_calls: 6,
+            max_draft_mutations: 6,
+            max_validation_repairs: 2,
+            max_dry_runs: 2,
+            reserved_materialization_calls: 3,
+            reserved_validation_calls: 3,
+            reserved_finalization_calls: 3,
             max_parallel_tools_per_turn: 4,
             max_duplicate_calls: 1,
         }
@@ -1394,16 +1416,31 @@ impl PipelineBuilderBudget {
             max_total_tool_calls: constraints.maximum_tool_calls,
             ..Self::default()
         };
-        budget.reserved_finalization_calls = budget
-            .reserved_finalization_calls
-            .min(budget.max_total_tool_calls.saturating_sub(1));
+        let maximum_reserve = budget.max_total_tool_calls.saturating_sub(1);
+        budget.reserved_finalization_calls =
+            budget.reserved_finalization_calls.min(maximum_reserve);
+        budget.reserved_validation_calls = budget
+            .reserved_validation_calls
+            .min(maximum_reserve.saturating_sub(budget.reserved_finalization_calls));
+        budget.reserved_materialization_calls = budget.reserved_materialization_calls.min(
+            maximum_reserve
+                .saturating_sub(budget.reserved_finalization_calls)
+                .saturating_sub(budget.reserved_validation_calls),
+        );
         let discovery_capacity = budget
             .max_total_tool_calls
-            .saturating_sub(budget.reserved_finalization_calls);
+            .saturating_sub(budget.total_reserved_calls());
         budget.max_discovery_tool_calls = budget
             .max_discovery_tool_calls
             .min(discovery_capacity)
             .min(budget.max_total_tool_calls / 4);
+        budget.max_draft_mutations = budget
+            .max_draft_mutations
+            .min(constraints.maximum_tool_calls);
+        budget.max_validation_repairs = budget
+            .max_validation_repairs
+            .min(constraints.maximum_tool_calls);
+        budget.max_dry_runs = budget.max_dry_runs.min(constraints.maximum_dry_runs);
         budget
     }
 
@@ -1417,16 +1454,15 @@ impl PipelineBuilderBudget {
                     .to_owned(),
             ));
         }
-        if self.reserved_finalization_calls >= self.max_total_tool_calls {
+        if self.total_reserved_calls() >= self.max_total_tool_calls {
             return Err(CoreError::Validation(
-                "Pipeline Builder finalization reserve must leave at least one non-finalization Tool Call"
-                    .to_owned(),
+                "Pipeline Builder reserves must leave at least one discovery Tool Call".to_owned(),
             ));
         }
         if self.max_discovery_tool_calls
             > self
                 .max_total_tool_calls
-                .saturating_sub(self.reserved_finalization_calls)
+                .saturating_sub(self.total_reserved_calls())
         {
             return Err(CoreError::Validation(
                 "Pipeline Builder discovery budget cannot consume the finalization reserve"
@@ -1440,6 +1476,13 @@ impl PipelineBuilderBudget {
     pub const fn remaining(&self, used: u32) -> u32 {
         self.max_total_tool_calls.saturating_sub(used)
     }
+
+    #[must_use]
+    pub const fn total_reserved_calls(&self) -> u32 {
+        self.reserved_materialization_calls
+            .saturating_add(self.reserved_validation_calls)
+            .saturating_add(self.reserved_finalization_calls)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1450,6 +1493,8 @@ pub struct BuilderProgressInvariant {
     pub draft_deadline_tool_call: u32,
     pub maximum_validation_repairs: u32,
     pub maximum_dry_runs: u32,
+    pub maximum_calls_without_candidate: u32,
+    pub maximum_calls_after_runnable_candidate: u32,
 }
 
 impl Default for BuilderProgressInvariant {
@@ -1460,6 +1505,8 @@ impl Default for BuilderProgressInvariant {
             draft_deadline_tool_call: 12,
             maximum_validation_repairs: 2,
             maximum_dry_runs: 2,
+            maximum_calls_without_candidate: 8,
+            maximum_calls_after_runnable_candidate: 1,
         }
     }
 }
@@ -3716,8 +3763,11 @@ mod tests {
         let budget =
             PipelineBuilderBudget::from_constraints(&PipelineBuilderConstraints::default());
         budget.validate().expect("valid phased budget");
-        assert_eq!(budget.max_discovery_tool_calls, 10);
-        assert_eq!(budget.reserved_finalization_calls, 6);
+        assert_eq!(budget.max_discovery_tool_calls, 8);
+        assert_eq!(budget.reserved_materialization_calls, 3);
+        assert_eq!(budget.reserved_validation_calls, 3);
+        assert_eq!(budget.reserved_finalization_calls, 3);
+        assert_eq!(budget.total_reserved_calls(), 9);
         assert_eq!(budget.remaining(42), 6);
 
         let mut session = AgentSession::start(

@@ -100,3 +100,24 @@ Status: complete.
   limit handling from template fallback to Candidate salvage.
 - All 103 Core tests and 63 runnable Application tests pass; strict focused Clippy passes after the
   final formatting check.
+
+## Milestone 4 — budget-safe deterministic salvage (2026-09-05)
+
+Status: complete.
+
+- Discovery now has an eight-call ceiling and cannot consume the separately persisted three-call
+  materialization, three-call validation and three-call finalization reserves.
+- A complete runnable Candidate ends ordinary discovery immediately. Candidate Selection and Draft
+  Salvage are runtime-owned phases, so no additional model turn can discard or rewrite the selected
+  plan.
+- Salvage re-reads the current Registry, re-evaluates every binding, reranks all Candidates,
+  materializes into the original Working Draft, normalizes runtime compatibility bindings, performs
+  static validation and saves either a review-ready or explicitly blocked Draft.
+- `DiscoveryLimitTriggeredSalvage` is a successful stop reason, paired with the structured
+  `RunnableDraftMaterialized` or `BlockedDraftMaterialized` salvage outcome. It is not reported as
+  budget exhaustion.
+- The formerly ignored M0 regression is enabled and passes with prompted segmentation in the final
+  Draft. A separate revalidation test disables the selected segmenter after discovery and proves
+  the safe reviewed baseline wins rather than using stale Ready state.
+- All 103 Core tests and 65 runnable Application tests pass; the only ignored Application test is
+  the explicitly billable external Provider smoke test. Strict focused Clippy passes.

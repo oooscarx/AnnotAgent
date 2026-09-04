@@ -1269,10 +1269,18 @@ fn pipeline_builder_visible_tools(
 
     let phase = session.phase.unwrap_or(Phase::ContextLoading);
     let remaining = session.remaining_builder_tool_calls();
-    let reserve = session
+    let finalization_reserve = session
         .builder_budget
         .as_ref()
         .map_or(0, |budget| budget.reserved_finalization_calls);
+    let validation_reserve = session
+        .builder_budget
+        .as_ref()
+        .map_or(0, |budget| budget.reserved_validation_calls);
+    let total_reserve = session.builder_budget.as_ref().map_or(
+        0,
+        annotagent_core::PipelineBuilderBudget::total_reserved_calls,
+    );
     all.iter()
         .filter(|definition| {
             let Ok(tool) = PipelineBuilderToolRegistry.resolve(&definition.name) else {
@@ -1293,7 +1301,7 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::CreateDraftFromTemplate
                     | PipelineBuilderTool::CreateBlockedDraft
             );
-            if remaining <= reserve {
+            if remaining <= finalization_reserve {
                 return finalization;
             }
             let broad_inspection = matches!(
@@ -1312,7 +1320,13 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::InspectGeometryCalibration
                     | PipelineBuilderTool::FindGeometryRefinementPath
             );
-            if remaining <= reserve.saturating_add(4) && broad_inspection {
+            if remaining <= total_reserve && broad_inspection {
+                return false;
+            }
+            if remaining <= finalization_reserve.saturating_add(validation_reserve)
+                && !finalization
+                && tool != PipelineBuilderTool::ValidatePipeline
+            {
                 return false;
             }
             match phase {
@@ -1379,9 +1393,11 @@ fn pipeline_builder_visible_tools(
                         )
                 }
                 Phase::DraftSalvage | Phase::Finalizing => finalization,
-                Phase::WaitingForHuman | Phase::Completed | Phase::Cancelled | Phase::Failed => {
-                    false
-                }
+                Phase::CandidateSelection
+                | Phase::WaitingForHuman
+                | Phase::Completed
+                | Phase::Cancelled
+                | Phase::Failed => false,
             }
         })
         .cloned()
@@ -2044,14 +2060,28 @@ fn candidate_from_draft(
         .nodes
         .iter()
         .any(|node| node.kind == WorkflowNodeKind::Commit);
-    let geometry_safety = if draft
-        .nodes
-        .iter()
-        .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION)
-        && draft
+    let geometry_sensitive = draft.nodes.iter().any(|node| {
+        node.inputs.iter().chain(&node.outputs).any(|port| {
+            matches!(
+                port.artifact_type,
+                ArtifactKind::DetectionSet
+                    | ArtifactKind::BoundingBox
+                    | ArtifactKind::MaskSet
+                    | ArtifactKind::PolygonSet
+                    | ArtifactKind::SemanticMask
+                    | ArtifactKind::InstanceMask
+            )
+        })
+    });
+    let geometry_safety = if !geometry_sensitive
+        || draft
             .nodes
             .iter()
-            .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_DECISION)
+            .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION)
+            && draft
+                .nodes
+                .iter()
+                .any(|node| node.node_type == annotagent_runtime::CORE_GEOMETRY_DECISION)
     {
         annotagent_core::CandidateGeometrySafety::Evaluated
     } else if has_review_path {
@@ -2067,7 +2097,7 @@ fn candidate_from_draft(
     }));
     unresolved_bindings.sort();
     unresolved_bindings.dedup();
-    let complete = has_commit_path && has_review_path;
+    let complete = has_commit_path && (has_review_path || !geometry_sensitive);
     let production_bindings = model_bindings.iter().all(|binding| {
         binding.production_eligible && !binding.fixture_only && binding.availability == "available"
     });
@@ -2292,6 +2322,239 @@ fn synthesize_registry_plan_candidates(
             .map_err(anyhow::Error::msg)?;
     }
     Ok(())
+}
+
+fn refresh_plan_candidates(
+    session: &mut AgentSession,
+    input: &WorkflowAdvisorInput,
+    registry_revision: &str,
+    priority: annotagent_core::OptimizationPriority,
+) {
+    let previous = std::mem::take(&mut session.plan_candidates);
+    let mut stale_candidate_ids = Vec::new();
+    for candidate in previous {
+        if candidate.registry_revision != registry_revision {
+            stale_candidate_ids.push(candidate.id.clone());
+        }
+        let draft = WorkflowDraft {
+            schema_version: WORKFLOW_SCHEMA_VERSION,
+            id: "candidate-revalidation".to_owned(),
+            project_id: input.project_id.clone(),
+            name: candidate.name.clone(),
+            status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: candidate.node_blueprints.clone(),
+            edges: candidate.edge_blueprints.clone(),
+            enabled_skills: candidate
+                .skill_bindings
+                .iter()
+                .map(|binding| (binding.skill_id.clone(), binding.version.clone()))
+                .collect(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: false,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: candidate.created_at,
+            updated_at: chrono::Utc::now(),
+        };
+        let created_at = candidate.created_at;
+        let mut refreshed = candidate_from_draft(
+            CandidateDraftSource {
+                id: candidate.id,
+                name: candidate.name,
+                source: candidate.source,
+                fragment_ids: candidate.fragment_ids,
+                evidence: candidate.evidence,
+            },
+            &draft,
+            input,
+            registry_revision,
+        );
+        refreshed.created_at = created_at;
+        refreshed.score.estimated_cost = candidate.score.estimated_cost;
+        session.plan_candidates.push(refreshed);
+    }
+    for candidate_id in stale_candidate_ids {
+        session.record_builder_plan_event(
+            annotagent_core::BuilderPlanEventKind::CandidateStale,
+            Some(candidate_id),
+            None,
+            "Registry context changed; re-evaluated Candidate bindings before materialization",
+        );
+    }
+    annotagent_core::RegistryPipelineSynthesizer
+        .rank_candidates(&mut session.plan_candidates, priority);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn salvage_best_discovered_plan(
+    application: &LocalApplication,
+    session: &mut AgentSession,
+    safe_suggestion: &WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+    settings: &Settings,
+    models: &ModelRegistry,
+    priority: annotagent_core::OptimizationPriority,
+    trigger: annotagent_core::BuilderStopReason,
+) -> Result<(WorkflowSuggestion, WorkflowValidationReport)> {
+    if session.phase == Some(annotagent_core::PipelineBuilderPhase::ContextLoading) {
+        session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                "Select the best preserved Pipeline Plan Candidate",
+            )
+            .map_err(anyhow::Error::msg)?;
+    }
+    if session.phase == Some(annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis) {
+        session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::CandidateSelection,
+                "Rank preserved Pipeline Plan Candidates",
+            )
+            .map_err(anyhow::Error::msg)?;
+    }
+    session
+        .transition_builder_phase(
+            annotagent_core::PipelineBuilderPhase::DraftSalvage,
+            "Materialize the best compatible preserved Candidate",
+        )
+        .map_err(anyhow::Error::msg)?;
+    session.record_builder_plan_event(
+        annotagent_core::BuilderPlanEventKind::SalvageStarted,
+        session.selected_candidate_id.clone(),
+        None,
+        "Stopped discovery and entered deterministic Draft salvage",
+    );
+
+    let current_revision = application
+        .pipeline_builder_context_snapshot(input)?
+        .context_revision;
+    refresh_plan_candidates(session, input, &current_revision, priority);
+    let selected_id = annotagent_core::RegistryPipelineSynthesizer
+        .best_candidate(&session.plan_candidates)
+        .map(|candidate| candidate.id.clone())
+        .ok_or_else(|| anyhow!("Pipeline Builder found no materializable Plan Candidate"))?;
+    session
+        .select_plan_candidate(&selected_id)
+        .map_err(anyhow::Error::msg)?;
+    let selected = session
+        .plan_candidates
+        .iter()
+        .find(|candidate| candidate.id == selected_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("selected Pipeline Plan Candidate disappeared"))?;
+    let working = session
+        .working_draft
+        .as_ref()
+        .ok_or_else(|| anyhow!("Pipeline Builder Session has no persistent working Draft"))?;
+    let mut draft = application.store.get_workflow_draft(&working.draft_id)?;
+    annotagent_core::RegistryPipelineSynthesizer
+        .materialize_candidate(&selected, &mut draft)
+        .map_err(|error| anyhow!(error))?;
+    normalize_profile_compatibility_bindings(&mut draft, models)?;
+    draft.name.clone_from(&selected.name);
+    application.store.save_workflow_draft(&draft)?;
+    session.set_builder_draft(draft.id.clone());
+    session.record_builder_plan_event(
+        annotagent_core::BuilderPlanEventKind::CandidateMaterialized,
+        Some(selected_id.clone()),
+        None,
+        "Materialized the selected Candidate into the persistent Working Draft",
+    );
+    session
+        .transition_builder_phase(
+            annotagent_core::PipelineBuilderPhase::Validating,
+            "Run deterministic static validation on the salvaged Draft",
+        )
+        .map_err(anyhow::Error::msg)?;
+    let validation = application.validate_workflow_draft(&draft, settings, false)?;
+    let mut unresolved = selected.unresolved_bindings.clone();
+    unresolved.extend(
+        validation
+            .issues
+            .iter()
+            .filter(|issue| issue.blocking)
+            .map(|issue| format!("{}: {}", issue.path, issue.message)),
+    );
+    unresolved.sort();
+    unresolved.dedup();
+    draft.status = if validation.valid && selected.is_runnable() {
+        WorkflowDraftStatus::ReadyForHumanReview
+    } else {
+        WorkflowDraftStatus::BlockedBySetup
+    };
+    draft.updated_at = chrono::Utc::now();
+    application.store.save_workflow_draft(&draft)?;
+    if let Some(candidate) = session
+        .plan_candidates
+        .iter_mut()
+        .find(|candidate| candidate.id == selected_id)
+    {
+        candidate.status = annotagent_core::PipelineCandidateStatus::Materialized;
+        candidate.updated_at = chrono::Utc::now();
+    }
+    session.salvage_outcome = Some(if validation.valid && selected.is_runnable() {
+        annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized
+    } else {
+        annotagent_core::BuilderSalvageOutcome::BlockedDraftMaterialized
+    });
+    session.unresolved_bindings.clone_from(&unresolved);
+    session.record_builder_plan_event(
+        annotagent_core::BuilderPlanEventKind::SalvageCompleted,
+        Some(selected_id),
+        None,
+        if validation.valid {
+            "Saved and statically validated the salvaged Draft"
+        } else {
+            "Saved the salvaged Draft with explicit blocking validation issues"
+        },
+    );
+    session
+        .transition_builder_phase(
+            annotagent_core::PipelineBuilderPhase::Finalizing,
+            "Present the salvaged Draft and next human action",
+        )
+        .map_err(anyhow::Error::msg)?;
+    let runnable = validation.valid && selected.is_runnable();
+    session.complete_builder(
+        if runnable {
+            annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview
+        } else {
+            annotagent_core::PipelineBuilderOutcome::BlockedDraftReady
+        },
+        trigger,
+        if runnable {
+            "Review the Draft created from the best compatible preserved plan"
+        } else {
+            "Resolve the Draft's explicit setup or validation blockers"
+        },
+    );
+    Ok((
+        WorkflowSuggestion {
+            draft,
+            rationale: selected.score.reasons.clone(),
+            estimated_model_calls_per_image: selected
+                .score
+                .estimated_model_calls
+                .unwrap_or_default() as usize,
+            estimated_latency_ms: safe_suggestion.estimated_latency_ms,
+            estimated_cost_tier: safe_suggestion.estimated_cost_tier.clone(),
+            unresolved_model_bindings: unresolved,
+            warnings: vec![
+                "Discovery stopped and the best compatible preserved plan was materialized deterministically."
+                    .to_owned(),
+            ],
+            alternatives: session
+                .plan_candidates
+                .iter()
+                .filter(|candidate| candidate.id != session.selected_candidate_id.as_deref().unwrap_or_default())
+                .map(|candidate| candidate.name.clone())
+                .collect(),
+        },
+        validation,
+    ))
 }
 
 /// Re-evaluates only unresolved bindings on a persisted Draft after the human has completed a
@@ -10642,10 +10905,14 @@ impl LocalApplication {
             annotagent_core::PipelineBuildMode::FromScratch
         };
         let feasibility = Self::resolve_pipeline_feasibility(&input, &context_snapshot);
+        let discovery_budget = session
+            .builder_budget
+            .as_ref()
+            .map_or(8, |budget| budget.max_discovery_tool_calls);
         let forced_progress_deadline = match &feasibility {
             annotagent_core::BuildFeasibility::BlockedByBindings { .. }
-            | annotagent_core::BuildFeasibility::Unsupported { .. } => 6,
-            _ => 10,
+            | annotagent_core::BuildFeasibility::Unsupported { .. } => discovery_budget.min(6),
+            _ => discovery_budget,
         };
         let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = safe_suggestion
@@ -10726,30 +10993,14 @@ impl LocalApplication {
                 );
                 break;
             }
-            if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
-                // The model may have already resolved feasibility without materializing a Draft.
-                // Recovery must continue from that durable phase instead of attempting to move
-                // the monotonic state machine backwards from Drafting to FeasibilityAnalysis.
-                if session.phase == Some(annotagent_core::PipelineBuilderPhase::ContextLoading) {
-                    session
-                        .transition_builder_phase(
-                            annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
-                            "Use deterministic feasibility",
-                        )
-                        .map_err(anyhow::Error::msg)?;
-                }
-                let feasibility_result = annotagent_core::AgentToolResult::summary(
-                    "Runtime resolved feasibility at the discovery deadline",
-                    json!({"context_revision": context_revision, "feasibility": feasibility}),
-                );
-                session
-                    .record_tool(
-                        PipelineBuilderTool::ResolvePipelineFeasibility.as_str(),
-                        json!({"runtime_recovery": true}),
-                        serde_json::to_value(feasibility_result)?,
-                        true,
-                    )
-                    .map_err(anyhow::Error::msg)?;
+            let has_complete_runnable_candidate = session.plan_candidates.iter().any(|candidate| {
+                candidate.sufficiency == annotagent_core::CandidateSufficiency::Complete
+                    && candidate.is_runnable()
+            });
+            if current.is_none()
+                && (session.usage.tool_calls >= forced_progress_deadline
+                    || has_complete_runnable_candidate)
+            {
                 if let annotagent_core::BuildFeasibility::Unsupported { reasons, .. } = &feasibility
                 {
                     session.complete_builder(
@@ -10758,70 +11009,34 @@ impl LocalApplication {
                         reasons.join("; "),
                     );
                 } else {
-                    if session.phase
-                        == Some(annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis)
-                    {
-                        session
-                            .transition_builder_phase(
-                                annotagent_core::PipelineBuilderPhase::Drafting,
-                                "Persist deterministic recovery Draft",
-                            )
-                            .map_err(anyhow::Error::msg)?;
+                    let fresh_input = self.workflow_advisor_input_for_label(
+                        project_id,
+                        settings,
+                        constraints.clone(),
+                        target.map(|(task_id, _)| task_id),
+                        target.map(|(_, label)| label),
+                    )?;
+                    if !has_complete_runnable_candidate {
+                        synthesize_registry_plan_candidates(
+                            &mut session,
+                            &safe_suggestion,
+                            &fresh_input,
+                            &feasibility,
+                            builder_constraints.priority,
+                        )?;
                     }
-                    let (mut created, outcome) =
-                        materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
-                    adopt_builder_working_draft_identity(&session, &mut created.draft)?;
-                    self.store.save_workflow_draft(&created.draft)?;
-                    session.set_builder_draft(created.draft.id.clone());
-                    session
-                        .unresolved_bindings
-                        .clone_from(&created.unresolved_model_bindings);
-                    session
-                        .record_tool(
-                            if outcome
-                                == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
-                            {
-                                PipelineBuilderTool::CreateBlockedDraft.as_str()
-                            } else {
-                                PipelineBuilderTool::CreateDraftFromTemplate.as_str()
-                            },
-                            json!({"runtime_recovery": true}),
-                            serde_json::to_value(annotagent_core::AgentToolResult::summary(
-                                if outcome
-                                    == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
-                                {
-                                    "Runtime saved a blocked editable Draft"
-                                } else {
-                                    "Runtime saved a minimal editable Draft"
-                                },
-                                json!({
-                                    "draft_id": created.draft.id,
-                                    "status": created.draft.status,
-                                    "unresolved_bindings": created.unresolved_model_bindings,
-                                }),
-                            ))?,
-                            true,
-                        )
-                        .map_err(anyhow::Error::msg)?;
+                    let (created, salvage_validation) = salvage_best_discovered_plan(
+                        self,
+                        &mut session,
+                        &safe_suggestion,
+                        &fresh_input,
+                        settings,
+                        &models,
+                        builder_constraints.priority,
+                        annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage,
+                    )?;
                     current = Some(created);
-                    session
-                        .transition_builder_phase(
-                            annotagent_core::PipelineBuilderPhase::Finalizing,
-                            "Present the saved Draft and next action",
-                        )
-                        .map_err(anyhow::Error::msg)?;
-                    let next_action = if outcome
-                        == annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired
-                    {
-                        "Configure a compatible image model, then retry from this Draft"
-                    } else {
-                        "Open and review the saved editable Draft"
-                    };
-                    session.complete_builder(
-                        outcome,
-                        annotagent_core::BuilderStopReason::DiscoveryLimitReached,
-                        next_action,
-                    );
+                    validation = Some(salvage_validation);
                 }
                 self.store.save_agent_session(&session)?;
                 break;
@@ -18721,6 +18936,8 @@ export:
 
         let progress_budget = annotagent_core::PipelineBuilderBudget {
             max_total_tool_calls: 8,
+            reserved_materialization_calls: 1,
+            reserved_validation_calls: 1,
             reserved_finalization_calls: 3,
             max_discovery_tool_calls: 4,
             ..annotagent_core::PipelineBuilderBudget::default()
@@ -18783,6 +19000,14 @@ export:
             feasibility_tools.contains(PipelineBuilderTool::FindGeometryRefinementPath.as_str())
         );
         assert!(!feasibility_tools.contains(PipelineBuilderTool::InspectModelProfile.as_str()));
+        let mut candidate_session = session.clone();
+        candidate_session
+            .transition_builder_phase(
+                annotagent_core::PipelineBuilderPhase::CandidateSelection,
+                "Runtime selects a persisted Candidate",
+            )
+            .expect("candidate selection phase");
+        assert!(pipeline_builder_visible_tools(&tools, &candidate_session).is_empty());
         session
             .transition_builder_phase(
                 annotagent_core::PipelineBuilderPhase::Drafting,
@@ -21821,18 +22046,25 @@ export:
             .await
             .expect("Drafting recovery must not regress to feasibility");
 
-        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(provider.remaining_steps(), 1);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
         assert_eq!(
             report.session.outcome,
-            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview)
+            Some(annotagent_core::PipelineBuilderOutcome::BlockedDraftReady)
         );
         assert_eq!(
             report.session.builder_stop_reason,
-            Some(annotagent_core::BuilderStopReason::DiscoveryLimitReached)
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
         );
-        assert_eq!(report.session.usage.tool_calls, 12);
-        assert!(report.suggestion.is_some());
+        assert_eq!(report.session.usage.tool_calls, 8);
+        assert_eq!(
+            report
+                .suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.draft.status),
+            Some(WorkflowDraftStatus::BlockedBySetup)
+        );
+        assert!(!report.session.unresolved_bindings.is_empty());
         assert!(report.session.builder_proposal.is_some());
     }
 
@@ -21841,7 +22073,6 @@ export:
     /// discovery deadline without explicitly creating a Draft. Before plan preservation, runtime
     /// recovery discards that observation and materializes only the bootstrap template.
     #[tokio::test]
-    #[ignore = "fails until Builder plan candidates survive discovery-limit salvage"]
     async fn discovered_prompted_segmentation_path_is_materialized_at_discovery_limit() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -22023,6 +22254,157 @@ export:
                 .map(|node| node.node_type.as_str())
                 .collect::<Vec<_>>()
         );
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview)
+        );
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
+        );
+        assert_eq!(
+            report.session.salvage_outcome,
+            Some(annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized)
+        );
+        assert!(report.validation.is_some_and(|report| report.valid));
+    }
+
+    #[test]
+    fn candidate_revalidation_rejects_a_segmenter_that_became_unavailable() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "candidate-revalidation",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let selected_model = register_pipeline_builder_model(&application, "revalidation-builder");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "revalidation-detector",
+            [ModelCapability::ObjectDetection],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &selected_model,
+            "revalidation-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider");
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.credential_ref = Some(CredentialReference {
+            provider_id: provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_REVALIDATION_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&provider)
+            .expect("non-Mock Provider state");
+        let settings = load_settings(None).expect("settings");
+        let input = application
+            .workflow_advisor_input_for_label(
+                "candidate-revalidation",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder input");
+        let safe_suggestion = application
+            .suggest_label_pipeline_preview(
+                "candidate-revalidation",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe suggestion");
+        let snapshot = application
+            .pipeline_builder_context_snapshot(&input)
+            .expect("context snapshot");
+        let feasibility = LocalApplication::resolve_pipeline_feasibility(&input, &snapshot);
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            PipelineBuilderConstraints::default().agent_budget(),
+        )
+        .with_builder_progress(
+            annotagent_core::PipelineBuilderBudget::default(),
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        session.set_builder_working_draft(
+            "revalidation-working",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            snapshot.context_revision.clone(),
+        );
+        let (nodes, _) = application
+            .workflow_catalog(&settings)
+            .expect("Workflow Registry");
+        let paths = annotagent_core::ArtifactConversionRegistry::default().find_conversion_path(
+            ArtifactKind::DetectionSet,
+            ArtifactKind::DetectionSet,
+            &nodes,
+        );
+        persist_discovered_conversion_fragments(
+            &mut session,
+            "find_geometry_refinement_path",
+            "revalidation-observation",
+            &annotagent_core::AgentToolResult::summary(
+                "path",
+                json!({"registered_conversion_paths": paths}),
+            ),
+            &snapshot.context_revision,
+            &input.node_catalog,
+        )
+        .expect("persisted Fragment");
+        synthesize_registry_plan_candidates(
+            &mut session,
+            &safe_suggestion,
+            &input,
+            &feasibility,
+            annotagent_core::OptimizationPriority::Accurate,
+        )
+        .expect("Candidates");
+        assert_eq!(
+            session.plan_candidates[0].source,
+            annotagent_core::PipelineCandidateSource::RegistrySynthesis
+        );
+        assert!(session.plan_candidates[0].is_runnable());
+
+        let mut changed_input = input;
+        let changed_segmenter = changed_input
+            .model_profiles
+            .iter_mut()
+            .find(|profile| profile.id == segmenter.id)
+            .expect("segmenter Profile");
+        changed_segmenter.enabled = false;
+        changed_segmenter.status = ModelProfileStatus::Disabled;
+        refresh_plan_candidates(
+            &mut session,
+            &changed_input,
+            "changed-registry-revision",
+            annotagent_core::OptimizationPriority::Accurate,
+        );
+        assert_eq!(
+            session.plan_candidates[0].source,
+            annotagent_core::PipelineCandidateSource::TemplateSeed
+        );
+        assert!(session.plan_candidates[0].is_runnable());
+        assert!(session.plan_candidates.iter().any(|candidate| {
+            candidate.source == annotagent_core::PipelineCandidateSource::RegistrySynthesis
+                && !candidate.is_runnable()
+        }));
+        assert!(
+            session.planning_events.iter().any(|event| {
+                event.kind == annotagent_core::BuilderPlanEventKind::CandidateStale
+            })
+        );
     }
 
     #[test]
@@ -22179,7 +22561,7 @@ export:
 
         assert_eq!(provider.remaining_steps(), 5);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
-        assert_eq!(report.session.usage.tool_calls, 8);
+        assert_eq!(report.session.usage.tool_calls, 6);
         assert_eq!(report.session.model_calls.len(), 2);
         assert_eq!(report.session.usage.input_tokens, 27_236);
         assert!(report.session.usage.input_tokens < 95_326 * 40 / 100);
@@ -22221,11 +22603,11 @@ export:
         );
         assert_eq!(
             report.session.outcome,
-            Some(annotagent_core::PipelineBuilderOutcome::ProviderSetupRequired)
+            Some(annotagent_core::PipelineBuilderOutcome::BlockedDraftReady)
         );
         assert_eq!(
             report.session.builder_stop_reason,
-            Some(annotagent_core::BuilderStopReason::DiscoveryLimitReached)
+            Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
         );
     }
 

@@ -1,5 +1,23 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder Plan Preservation M4 — 2026-09-05
+
+1. `discovered_prompted_segmentation_path_is_materialized_at_discovery_limit` is no longer ignored.
+   It persists the typed path and three Candidates, selects the Registry refinement, materializes
+   `capability.segment`, passes static validation and finishes WaitingForHuman with
+   `DraftReadyForHumanReview`, `DiscoveryLimitTriggeredSalvage` and
+   `RunnableDraftMaterialized`—never BudgetExceeded.
+2. `candidate_revalidation_rejects_a_segmenter_that_became_unavailable` changes the segmenter from
+   Available to Disabled after synthesis. Registry revalidation blocks that Candidate, records a
+   stale event and deterministically promotes the runnable mandatory-Review baseline.
+3. `phased_budget_preserves_finalization_and_rejects_phase_regression` proves the default eight-call
+   discovery limit and independent 3/3/3 materialization/validation/finalization escrow.
+4. The visible-tool test proves Candidate Selection exposes no further model-controlled discovery
+   or mutation tools; the runtime owns selection, materialization and validation.
+5. All 103 Core tests and 65 runnable Application tests pass, with one explicitly external/billable
+   Provider smoke test ignored. Strict focused Clippy passes. No Provider call, model inference,
+   publication, secret, remote mutation or push was used for this milestone.
+
 ## Builder Plan Preservation M3 — 2026-09-05
 
 1. `registry_synthesizer_ranks_by_explicit_quality_and_cost_not_candidate_source` proves Accurate
