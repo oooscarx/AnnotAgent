@@ -135,7 +135,8 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .full-run-estimate dd, .diagnostic-facts dd { margin: 5px 0 0; overflow-wrap: anywhere; font-weight: 750; }
 .sample-results-section { display: grid; gap: 13px; }
 .sample-results-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
-.sample-result-card { min-width: 0; display: grid; gap: 12px; overflow: hidden; padding: 12px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-lg); background: var(--aa-surface); box-shadow: var(--aa-shadow-sm); }
+.uncertain-results .sample-results-gallery { grid-template-columns: minmax(0, 1fr); }
+.sample-result-card { min-width: 0; display: grid; gap: 14px; overflow: hidden; padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-lg); background: var(--aa-surface); box-shadow: var(--aa-shadow-sm); }
 .sample-result-card.review { border-color: color-mix(in srgb, var(--aa-warning) 54%, var(--aa-border)); }
 .sample-result-card.failed { border-color: color-mix(in srgb, var(--aa-danger) 54%, var(--aa-border)); }
 .sample-result-preview { position: relative; min-height: 130px; max-height: 280px; margin: 0; overflow: hidden; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
@@ -143,9 +144,9 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .sample-result-preview .image-placeholder { display: grid; place-items: center; height: 100%; min-height: 160px; color: var(--aa-text-muted); }
 .sample-result-box { position: absolute; border: 2px solid var(--aa-teal); border-radius: 3px; box-shadow: 0 0 0 1px rgb(255 255 255 / 72%); pointer-events: none; }
 .sample-result-box b { position: absolute; left: -2px; bottom: 100%; max-width: 170px; padding: 3px 6px; overflow: hidden; border-radius: 3px 3px 0 0; background: var(--aa-teal); color: white; font-size: 9px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.sample-result-body { min-width: 0; display: grid; align-content: start; gap: 12px; padding: 1px 2px 2px; }
+.sample-result-body { min-width: 0; display: grid; align-content: start; gap: 12px; padding: 0; }
 .sample-result-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.sample-result-heading > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-result-heading > strong { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .sample-result-body p { margin: 0; color: var(--aa-text-muted); font-size: 11px; }
 .sample-result-summary { line-height: 1.45; }
 .sample-legacy-outcomes { display: grid; gap: 0; margin: 0; overflow: hidden; padding: 0; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface); list-style: none; }
@@ -179,7 +180,7 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .sample-lineage-stage-detail code { display: block; max-width: 100%; overflow: hidden; color: var(--aa-text-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .sample-result-box.diagnostic { border-color: var(--aa-warning); background: color-mix(in srgb, var(--aa-warning) 9%, transparent); }
 .sample-result-box.diagnostic b { background: var(--aa-warning); color: var(--aa-text); }
-.sample-result-card.compact { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1.2fr); }
+.sample-result-card.compact { display: grid; grid-template-columns: minmax(260px, .85fr) minmax(320px, 1.15fr); align-items: start; }
 .positive-empty { display: grid; gap: 4px; padding: 16px; border-left: 3px solid var(--aa-success); background: var(--aa-success-soft); color: var(--aa-success-text); }
 .sample-diagnostics { display: grid; gap: 8px; padding-top: 18px; border-top: 1px solid var(--aa-border); }
 .sample-diagnostics > details { border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
