@@ -74,6 +74,7 @@ import type {
   ReviewItem,
   ReviewNavigation,
   ReviewQueueProgress,
+  ResultLineageStage,
   RunEvent,
   RunAnnotationInspection,
   RunDebugSummary,
@@ -1428,17 +1429,60 @@ function SampleResultCard({
   image?: ImageItem;
   compact?: boolean;
 }) {
-  const boxes = sample.outcomes.filter((outcome) => outcome.value?.kind === "bounding_box");
+  const stages = sample.projection?.debug_stages ?? [];
+  const hasTerminalProjection = Boolean(sample.projection && (
+    sample.projection.final_candidates.length
+    || sample.projection.review_candidates.length
+    || sample.projection.committed_annotations.length
+    || sample.projection.no_target
+    || sample.projection.intermediate_artifact_ids.length
+    || sample.projection.debug_stages.length
+  ));
+  const [selectedStage, setSelectedStage] = useState<ResultLineageStage>("final");
+  const stageOrder: ResultLineageStage[] = ["coarse", "search_region", "relocalized", "prompt_coverage", "mask", "refined", "final"];
+  const availableStages = stageOrder.filter((stage) => stage === "final" || stages.some((item) => item.stage === stage));
+  const selectedStages = stages.filter((item) => item.stage === selectedStage);
+  const visualResults = selectedStage === "final"
+    ? sample.outcomes.map((outcome) => ({
+        id: outcome.id,
+        label: outcome.label,
+        confidence: outcome.confidence,
+        value: outcome.value,
+        source: "Terminal projection",
+        detail: outcome.status.replaceAll("_", " "),
+      }))
+    : selectedStages.map((stage, index) => ({
+        id: `${stage.artifact_id}-${stage.lineage_id}-${index}`,
+        label: stage.label ?? selectedStage.replaceAll("_", " "),
+        confidence: stage.confidence,
+        value: stage.value,
+        source: stage.source,
+        detail: stage.detail,
+      }));
+  const boxes = visualResults.filter((outcome) => outcome.value?.kind === "bounding_box");
+  const terminalCandidates = [
+    ...(sample.projection?.final_candidates ?? []),
+    ...(sample.projection?.review_candidates ?? []).map((review) => review.candidate),
+  ];
+  const reviewExplanation = sample.projection?.review_candidates[0]?.explanation;
   const state = sample.failed ? "Failed" : sample.review_count ? "Needs review" : sample.empty ? "No target found" : "Ready";
   return <article className={`sample-result-card ${sample.failed ? "failed" : sample.review_count ? "review" : "ready"} ${compact ? "compact" : ""}`}>
     <figure className="sample-result-preview" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
       {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">Preview unavailable</div>}
       {boxes.map((outcome) => {
         const rect = outcome.value?.kind === "bounding_box" ? outcome.value.rect : undefined;
-        return rect ? <span className="sample-result-box" key={outcome.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{outcome.label}{outcome.confidence != null ? ` ${Math.round(outcome.confidence * 100)}%` : ""}</b></span> : null;
+        return rect ? <span className={`sample-result-box ${selectedStage === "final" ? "final" : "diagnostic"}`} key={outcome.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{outcome.label}{outcome.confidence != null ? ` ${Math.round(outcome.confidence * 100)}%` : ""}</b></span> : null;
       })}
     </figure>
-    <div className="sample-result-body"><div><strong>{sample.image_name}</strong><Status status={state} /></div><p>{sample.failed ? "A Pipeline step failed on this image." : sample.empty ? "No target found. This is a valid empty result." : `${sample.result_count} result${sample.result_count === 1 ? "" : "s"} · ${sample.auto_accepted_count} ready · ${sample.review_count} review`}</p>{sample.outcomes.length > 0 && <ul>{sample.outcomes.map((outcome) => <li key={`summary-${outcome.id}`}><span>{outcome.label}</span><small>{outcome.status.replaceAll("_", " ")}{outcome.confidence != null ? ` · ${Math.round(outcome.confidence * 100)}%` : ""}</small></li>)}</ul>}</div>
+    <div className="sample-result-body">
+      <div><strong>{sample.image_name}</strong><Status status={state} /></div>
+      <p>{sample.failed ? "A Pipeline step failed on this image." : sample.empty ? "No target found. This is a valid empty result." : `${sample.result_count} ${hasTerminalProjection ? "terminal" : "legacy"} result${sample.result_count === 1 ? "" : "s"} · ${sample.auto_accepted_count} ready · ${sample.review_count} review`}</p>
+      {!hasTerminalProjection && <aside className="sample-legacy-projection"><strong>Legacy result aggregation</strong><span>This saved Sample Test predates terminal projection and may include intermediate detections. Test this Draft again to generate final-only Results and lineage Diagnostics.</span></aside>}
+      {terminalCandidates.length > 0 && <div className="sample-terminal-facts">{terminalCandidates.map((candidate) => <article key={candidate.lineage_id}><header><strong>{candidate.outcome.label}</strong><small>{candidate.outcome.confidence != null ? `${Math.round(candidate.outcome.confidence * 100)}%` : "Score not provided"}</small></header><dl><div><dt>Localization</dt><dd>{candidate.localization}</dd></div><div><dt>Geometry</dt><dd>{candidate.geometry}</dd></div><div><dt>Final status</dt><dd>{candidate.final_status}</dd></div></dl></article>)}</div>}
+      {!terminalCandidates.length && sample.outcomes.length > 0 && <ul>{sample.outcomes.map((outcome) => <li key={`summary-${outcome.id}`}><span>{outcome.label}</span><small>{outcome.status.replaceAll("_", " ")}{outcome.confidence != null ? ` · ${Math.round(outcome.confidence * 100)}%` : ""}</small></li>)}</ul>}
+      {reviewExplanation && <aside className="sample-result-explanation"><strong>{reviewExplanation.title}</strong><p>{reviewExplanation.summary}</p>{reviewExplanation.recommendation && <small>{reviewExplanation.recommendation}</small>}</aside>}
+      {stages.length > 0 && <details className="sample-lineage-debug"><summary>Diagnostics · {stages.length} lineage stage{stages.length === 1 ? "" : "s"}</summary><div className="sample-lineage-stage-tabs" role="tablist" aria-label={`Artifact lineage for ${sample.image_name}`}>{availableStages.map((stage) => <button key={stage} role="tab" aria-selected={selectedStage === stage} className={selectedStage === stage ? "active" : ""} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</button>)}</div><div className="sample-lineage-stage-detail"><strong>{selectedStage === "final" ? "Final terminal projection" : selectedStage.replaceAll("_", " ")}</strong>{selectedStage === "final" ? <span>Only committed or current Review candidates appear here.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}<code>{stage.artifact_ref}</code></span>) : <span>No Artifact was produced for this stage.</span>}</div></details>}
+    </div>
   </article>;
 }
 
@@ -7553,6 +7597,10 @@ function RunDetailWorkspace({
     }
   }, [view, run.id, route.nodeId, inspection, annotationInspection?.image_id, run.image_id]);
   const selectedNode = inspection?.nodes.find((node) => node.node_id === route.nodeId) ?? inspection?.nodes[0];
+  const lineageStageNodes = (["coarse", "search_region", "relocalized", "prompt_coverage", "mask", "refined", "final"] as ResultLineageStage[]).flatMap((stage) => {
+    const node = [...(inspection?.nodes ?? [])].reverse().find((candidate) => resultLineageStageForOperation(candidate.operation) === stage);
+    return node ? [{ stage, node }] : [];
+  });
   const selectedArtifacts = selectedNode
     ? selectedNode.outputs.filter(
         (artifact, index) =>
@@ -7676,6 +7724,7 @@ function RunDetailWorkspace({
         </div>
       </> : <>
         <div className="debug-summary-strip" aria-label="Run debug summary"><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0} steps complete</span><span>{debugSummary?.failed_node_count ?? 0} failed</span><span>{debugSummary?.issues.length ?? 0} issues</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
+        {lineageStageNodes.length > 0 && <nav className="run-lineage-stage-selector" aria-label="Artifact lineage stages">{lineageStageNodes.map(({ stage, node }) => <button key={`${stage}-${node.node_id}`} className={selectedNode?.node_id === node.node_id ? "active" : ""} aria-current={selectedNode?.node_id === node.node_id ? "step" : undefined} onClick={() => setContext({ node: node.node_id })}><strong>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</strong><small>{node.operation}</small></button>)}</nav>}
         <div className="run-workspace">
           <aside className="panel run-image-identity"><span className="eyebrow">Run image</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>Project image</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
           <main className="panel run-visual-workspace"><span className="eyebrow">Artifact Preview</span>{canPreview ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={selectedPreviewArtifacts} annotations={finalAnnotations} imageId={ownedImageId!} /> : <Empty title="No visual Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint and annotations." : "This Run has no visual Artifact to preview."} />}</main>
@@ -7717,6 +7766,17 @@ function RunDetailWorkspace({
       </>}
     </section>
   );
+}
+
+function resultLineageStageForOperation(operation: string): ResultLineageStage | undefined {
+  if (["vlm_detection.detect", "capability.detect", "object_detection.detect", "yolo.detect"].includes(operation)) return "coarse";
+  if (["core.expand_region", "core.crop", "core.tile"].includes(operation)) return "search_region";
+  if (operation === "core.project_coordinates") return "relocalized";
+  if (operation === "core.prompt_coverage_gate") return "prompt_coverage";
+  if (operation === "capability.segment") return "mask";
+  if (["core.mask_to_bbox", "core.geometry_quality_evaluation"].includes(operation)) return "refined";
+  if (["core.geometry_decision", "core.human_review", "commit"].includes(operation)) return "final";
+  return undefined;
 }
 
 export function evidenceGateReport(

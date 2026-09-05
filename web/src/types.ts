@@ -1201,6 +1201,70 @@ export interface WorkflowValidationReport {
   execution_order: string[];
 }
 
+export interface SampleTestOutcomeRecord {
+  id: string;
+  label: string;
+  confidence?: number | null;
+  status: "ready_to_accept" | "needs_review" | "invalid";
+  value?: AnnotationValue | null;
+  failure_classes?: AnnotationFailureClass[];
+  geometry_quality?: CandidateGeometryQualityReport | null;
+}
+
+export type ResultLineageStage =
+  | "coarse"
+  | "search_region"
+  | "relocalized"
+  | "prompt_coverage"
+  | "mask"
+  | "refined"
+  | "final";
+
+export interface LineageStageProjection {
+  artifact_id: string;
+  artifact_ref: string;
+  node_id: string;
+  lineage_id: string;
+  stage: ResultLineageStage;
+  source: string;
+  label?: string | null;
+  confidence?: number | null;
+  value?: AnnotationValue | null;
+  terminal: boolean;
+  detail?: string | null;
+}
+
+export interface FinalCandidateProjection {
+  source_artifact_id: string;
+  source_artifact_ref: string;
+  lineage_id: string;
+  outcome: SampleTestOutcomeRecord;
+  localization: string;
+  geometry: string;
+  final_status: string;
+}
+
+export interface ResultProjection {
+  final_candidates: FinalCandidateProjection[];
+  review_candidates: {
+    candidate: FinalCandidateProjection;
+    explanation: {
+      title: string;
+      summary: string;
+      recommendation?: string | null;
+    };
+  }[];
+  committed_annotations: {
+    annotation_id: string;
+    label: string;
+    confidence?: number | null;
+    value: AnnotationValue;
+  }[];
+  no_target: boolean;
+  intermediate_artifact_ids: string[];
+  debug_stages: LineageStageProjection[];
+}
+
 export interface WorkflowDryRunReport {
   sample_test_id?: string;
   draft_revision?: number;
@@ -1217,15 +1281,8 @@ export interface WorkflowDryRunReport {
     review_count: number;
     failed: boolean;
     empty: boolean;
-    outcomes: {
-      id: string;
-      label: string;
-      confidence?: number | null;
-      status: "ready_to_accept" | "needs_review" | "invalid";
-      value?: AnnotationValue | null;
-      failure_classes?: AnnotationFailureClass[];
-      geometry_quality?: CandidateGeometryQualityReport | null;
-    }[];
+    outcomes: SampleTestOutcomeRecord[];
+    projection?: ResultProjection;
     failure_classes?: AnnotationFailureClass[];
     nodes: {
       node_id: string;

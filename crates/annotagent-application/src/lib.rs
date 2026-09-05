@@ -2,6 +2,7 @@
 
 mod guidance;
 mod published_run;
+mod result_projection;
 mod workspace_summary;
 
 pub use guidance::{
@@ -25,14 +26,14 @@ use annotagent_core::{
     AnnotationId, AnnotationSource, ArtifactContract, ArtifactConversionRegistry, ArtifactKind,
     AttributeDefinition, AttributeValue, BatchBudgetLedger, BatchBudgetLimits, BatchId,
     BatchImageCheckpoint, BatchImageStatus, BatchNodeState, BatchProgress, BatchRecord,
-    BatchStatus, BatchUsage, Budget, CandidateGeometryQualityReport, CapabilityDeclarationSource,
-    CheckpointIdentity, ContractDataType, CredentialReference, CredentialSource, DatasetExporter,
-    DatasetImporter, DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport,
-    ExportRequest, FullRunEstimate, GenerationDefaults, GeometryCalibrationKey,
-    GeometryCalibrationReport, GeometryCalibrationStaleness, GeometryCalibrationStatus,
-    GeometryCorrectionReason, ImageId, ImportIssue, ImportReport, ImportRequest, InputModality,
-    LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
-    LicenseMetadata, LocalizationFailureClass, ModelAvailability, ModelAvailabilityEvidence,
+    BatchStatus, BatchUsage, Budget, CapabilityDeclarationSource, CheckpointIdentity,
+    ContractDataType, CredentialReference, CredentialSource, DatasetExporter, DatasetImporter,
+    DomainSkill, EnabledSkillConfig, ExpertModelManifest, ExportReport, ExportRequest,
+    FullRunEstimate, GenerationDefaults, GeometryCalibrationKey, GeometryCalibrationReport,
+    GeometryCalibrationStaleness, GeometryCalibrationStatus, GeometryCorrectionReason, ImageId,
+    ImportIssue, ImportReport, ImportRequest, InputModality, LabelId, LabelPipeline,
+    LabelPipelineStaticValidator, LabelWorkflowComposition, LicenseMetadata,
+    LocalizationFailureClass, ModelAvailability, ModelAvailabilityEvidence,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
     ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
     ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile,
@@ -49,9 +50,9 @@ use annotagent_core::{
     ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
     ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
     ProviderHealthStatus, ProviderId, ProviderProfile, PublishedModelAssetReference,
-    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
-    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
-    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, ResultProjection,
+    RetryPolicy, ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId,
+    RunStatus, RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements,
     SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
     SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
     ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
@@ -103,6 +104,7 @@ use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 use published_run::{ApplicationImageRuntime, PublishedWorkflowRuntime};
+use result_projection::project_sandbox_result;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
@@ -11227,7 +11229,7 @@ impl LocalApplication {
             temporary_api_key,
         )
         .map_err(|error| anyhow!(error))?;
-        self.run_workflow_advisor_with_provider(
+        Box::pin(self.run_workflow_advisor_with_provider(
             project_id,
             settings,
             constraints,
@@ -11237,7 +11239,7 @@ impl LocalApplication {
             &provider,
             builder_constraints,
             cancellation,
-        )
+        ))
         .await
     }
 
@@ -15512,6 +15514,7 @@ impl LocalApplication {
                     failed: node_results.iter().any(|node| !node.issues.is_empty()),
                     empty: node_results.iter().all(|node| node.issues.is_empty()),
                     outcomes: Vec::new(),
+                    projection: ResultProjection::default(),
                     failure_classes: node_results
                         .iter()
                         .flat_map(|node| node.failure_classes.iter().copied())
@@ -15670,6 +15673,7 @@ impl LocalApplication {
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
         let requires_original_model_image =
             workflow_requires_original_model_image(&published.draft);
+        let projection_draft = published.draft.clone();
         let runtime = PublishedWorkflowRuntime::new(
             published,
             runtime_provider.kind,
@@ -15744,12 +15748,7 @@ impl LocalApplication {
                 .iter()
                 .filter(|trace| trace.cache_hit)
                 .count();
-            let mut sample_detections = 0;
-            let mut sample_candidates = 0;
             let mut sample_failed = false;
-            let mut detection_outcomes = BTreeMap::new();
-            let mut classification_outcomes = BTreeMap::new();
-            let mut candidate_outcomes = BTreeMap::new();
             for trace in &result.checkpoint.traces {
                 summary.input_tokens = summary
                     .input_tokens
@@ -15759,139 +15758,33 @@ impl LocalApplication {
                     .saturating_add(trace.usage.output_tokens);
                 total_cost += trace.usage.cost;
                 sample_failed |= trace.error.is_some();
-                for artifact in &trace.output_pipeline_artifacts {
-                    match artifact {
-                        PipelineArtifact::DetectionSet(set) => {
-                            sample_detections = sample_detections.max(set.detections.len());
-                            for detection in &set.detections {
-                                let status = sample_test_outcome_status(Some(set.validation_state));
-                                let mut geometry_quality =
-                                    CandidateGeometryQualityReport::from_detection(
-                                        set.reference.artifact_id.clone(),
-                                        detection,
-                                    );
-                                geometry_quality.historical_correction_rate =
-                                    historical_geometry_correction_rate;
-                                let mut failure_classes = Vec::new();
-                                if detection.score.value.is_none() {
-                                    failure_classes.push(AnnotationFailureClass::MissingScore);
-                                }
-                                if status == SampleTestOutcomeStatus::NeedsReview
-                                    && geometry_quality.has_geometry_issue()
-                                {
-                                    failure_classes.push(AnnotationFailureClass::GeometryError);
-                                }
-                                detection_outcomes.insert(
-                                    detection.detection_id.clone(),
-                                    SampleTestOutcome {
-                                        id: detection.detection_id.clone(),
-                                        label: detection.project_label.as_ref().map_or_else(
-                                            || {
-                                                detection
-                                                    .model_label
-                                                    .clone()
-                                                    .unwrap_or_else(|| "unlabeled".to_owned())
-                                            },
-                                            ToString::to_string,
-                                        ),
-                                        confidence: detection.score.comparable_confidence(),
-                                        status,
-                                        value: Some(VisionArtifactValue::BoundingBox {
-                                            rect: detection.bbox,
-                                        }),
-                                        failure_classes,
-                                        geometry_quality: Some(geometry_quality),
-                                    },
-                                );
-                            }
-                        }
-                        PipelineArtifact::AnnotationCandidateSet(set) => {
-                            sample_candidates = sample_candidates.max(set.candidates.len());
-                            for candidate in &set.candidates {
-                                candidate_outcomes.insert(
-                                    candidate.id.clone(),
-                                    SampleTestOutcome {
-                                        id: candidate.id.clone(),
-                                        label: candidate.label.to_string(),
-                                        confidence: candidate.confidence,
-                                        status: sample_test_outcome_status(
-                                            candidate.validation_state,
-                                        ),
-                                        value: candidate.value.clone(),
-                                        failure_classes: Vec::new(),
-                                        geometry_quality: None,
-                                    },
-                                );
-                            }
-                        }
-                        PipelineArtifact::ClassificationSet(set) => {
-                            for classification in &set.classifications {
-                                classification_outcomes.insert(
-                                    classification.id.clone(),
-                                    SampleTestOutcome {
-                                        id: classification.id.clone(),
-                                        label: classification.label.to_string(),
-                                        confidence: Some(classification.confidence),
-                                        status: sample_test_outcome_status(Some(
-                                            set.validation_state,
-                                        )),
-                                        value: Some(VisionArtifactValue::Classification {
-                                            labels: vec![classification.label.clone()],
-                                        }),
-                                        failure_classes: Vec::new(),
-                                        geometry_quality: None,
-                                    },
-                                );
-                            }
-                        }
-                        PipelineArtifact::CandidateClusterSet(set) => {
-                            sample_candidates = sample_candidates.max(set.candidates.len());
-                            for candidate in &set.candidates {
-                                let source_models = candidate
-                                    .members
-                                    .iter()
-                                    .map(|member| &member.source_model_id)
-                                    .collect::<BTreeSet<_>>();
-                                candidate_outcomes.insert(
-                                    candidate.id.clone(),
-                                    SampleTestOutcome {
-                                        id: candidate.id.clone(),
-                                        label: candidate.target_label.to_string(),
-                                        confidence: (source_models.len() == 1)
-                                            .then(|| {
-                                                candidate.members.first().and_then(|member| {
-                                                    member.score.comparable_confidence()
-                                                })
-                                            })
-                                            .flatten(),
-                                        status: sample_test_outcome_status(Some(
-                                            set.validation_state,
-                                        )),
-                                        value: Some(VisionArtifactValue::BoundingBox {
-                                            rect: candidate.representative_bbox,
-                                        }),
-                                        failure_classes: Vec::new(),
-                                        geometry_quality: None,
-                                    },
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
             }
+            let projection = project_sandbox_result(
+                &projection_draft,
+                &result,
+                historical_geometry_correction_rate,
+            );
+            let outcomes = projection
+                .final_candidates
+                .iter()
+                .map(|candidate| candidate.outcome.clone())
+                .chain(
+                    projection
+                        .review_candidates
+                        .iter()
+                        .map(|candidate| candidate.candidate.outcome.clone()),
+                )
+                .collect::<Vec<_>>();
+            let sample_detections = outcomes
+                .iter()
+                .filter(|outcome| {
+                    matches!(outcome.value, Some(VisionArtifactValue::BoundingBox { .. }))
+                })
+                .count();
+            let sample_candidates = outcomes.len();
             summary.detection_count += sample_detections;
             summary.candidate_count += sample_candidates;
             summary.failed_count += usize::from(sample_failed);
-            let outcomes = if candidate_outcomes.is_empty() {
-                if classification_outcomes.is_empty() {
-                    detection_outcomes.into_values().collect::<Vec<_>>()
-                } else {
-                    classification_outcomes.into_values().collect::<Vec<_>>()
-                }
-            } else {
-                candidate_outcomes.into_values().collect::<Vec<_>>()
-            };
             let sample_auto_accepted = outcomes
                 .iter()
                 .filter(|outcome| outcome.status == SampleTestOutcomeStatus::ReadyToAccept)
@@ -16013,6 +15906,7 @@ impl LocalApplication {
                 failed: sample_failed,
                 empty: sample_empty,
                 outcomes,
+                projection,
                 failure_classes: sample_failure_classes.into_iter().collect(),
                 nodes,
             });
@@ -18080,22 +17974,6 @@ fn unique_target(directory: &Path, name: &std::ffi::OsStr) -> PathBuf {
     unreachable!()
 }
 
-fn sample_test_outcome_status(
-    state: Option<annotagent_core::ArtifactValidationState>,
-) -> SampleTestOutcomeStatus {
-    match state {
-        Some(annotagent_core::ArtifactValidationState::Valid) => {
-            SampleTestOutcomeStatus::ReadyToAccept
-        }
-        Some(annotagent_core::ArtifactValidationState::Invalid) => SampleTestOutcomeStatus::Invalid,
-        Some(
-            annotagent_core::ArtifactValidationState::NeedsReview
-            | annotagent_core::ArtifactValidationState::Unvalidated,
-        )
-        | None => SampleTestOutcomeStatus::NeedsReview,
-    }
-}
-
 fn record_dry_run_failure(
     summary: &mut SampleTestSummary,
     failure_class: AnnotationFailureClass,
@@ -19959,20 +19837,19 @@ export:
                 scripted_step("undo_last_draft_change", json!({})),
             ],
         });
-        let report = application
-            .run_workflow_advisor_with_provider(
-                "builder-mutations",
-                &settings,
-                &constraints,
-                Some(("scene", "day")),
-                input,
-                safe,
-                &provider,
-                PipelineBuilderConstraints::default(),
-                CancellationToken::new(),
-            )
-            .await
-            .expect("bounded Builder loop");
+        let report = Box::pin(application.run_workflow_advisor_with_provider(
+            "builder-mutations",
+            &settings,
+            &constraints,
+            Some(("scene", "day")),
+            input,
+            safe,
+            &provider,
+            PipelineBuilderConstraints::default(),
+            CancellationToken::new(),
+        ))
+        .await
+        .expect("bounded Builder loop");
         let suggestion = report.suggestion.expect("persisted Draft suggestion");
         let persisted = application
             .store
@@ -22502,11 +22379,15 @@ export:
         );
         assert!(report.approval_required);
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
-        assert!(report.dry_run.as_ref().is_some_and(|value| {
-            value.sandbox
-                && value.summary.auto_accepted_count == 1
-                && value.summary.needs_review_count == 0
-        }));
+        assert!(
+            report.dry_run.as_ref().is_some_and(|value| {
+                value.sandbox
+                    && value.summary.auto_accepted_count == 0
+                    && value.summary.needs_review_count == 1
+            }),
+            "{:#?}",
+            report.dry_run
+        );
         assert_eq!(
             report
                 .session
@@ -22559,7 +22440,7 @@ export:
         );
         assert_eq!(
             dry_runs[1].result["model_payload"]["summary"]["review_count"],
-            json!(0)
+            json!(1)
         );
 
         let suggestion = report.suggestion.expect("revised Draft");

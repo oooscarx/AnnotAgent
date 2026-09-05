@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M6 — 2026-09-05
+
+- Results now represent terminal annotation candidates only. Commit inputs and Human Review
+  suspensions are projected separately from intermediate detections, masks and geometry evidence,
+  eliminating the previous coarse-plus-refined duplicate count.
+- Sample Test persists a typed `ResultProjection` with stable candidate identity, terminal status,
+  review explanation and explicit intermediate Artifact references. Historical reports keep their
+  bytes and are visibly marked as legacy aggregation until re-tested.
+- Test Results default to the final annotation view. A collapsed Diagnostics component exposes the
+  available Coarse, Search region, Re-localized, Prompt coverage, Mask, Refined and Final stages;
+  Run Debug provides the same stage-first navigation without hiding the complete node timeline.
+- Responsive browser verification at 404 px showed no horizontal overflow. Core, Application,
+  Server and Web tests, production build, 31 guided Chromium journeys and strict focused Clippy
+  pass.
+
+Small-Object Localization Recovery M6 status: `PASS`.
+
 ## Small-Object Localization Recovery M3 — 2026-09-05
 
 - Added explicit bounded recovery budgets and a Review terminal decision at exhaustion.

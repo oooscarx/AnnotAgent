@@ -7,10 +7,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentBudget, ArtifactKind, DetectionFallbackQuery, DetectionRecoveryPolicy, EvidenceAcceptRule,
-    EvidenceFallbackRule, LabelId, ModelAvailabilityStatus, ModelRegistry, NodeRegistry,
-    ProjectSchema, TaskId, TaskKind, ValidationCatalog, VisionCapability, VisionModelDescriptor,
-    WorkflowSafetyCompatibility,
+    AgentBudget, AnnotationId, ArtifactId, ArtifactKind, DetectionFallbackQuery,
+    DetectionRecoveryPolicy, EvidenceAcceptRule, EvidenceFallbackRule, LabelId,
+    ModelAvailabilityStatus, ModelRegistry, NodeRegistry, ProjectSchema, TaskId, TaskKind,
+    ValidationCatalog, VisionCapability, VisionModelDescriptor, WorkflowSafetyCompatibility,
 };
 
 pub const WORKFLOW_SCHEMA_VERSION: u32 = 2;
@@ -446,6 +446,10 @@ pub struct WorkflowDryRunSampleResult {
     pub empty: bool,
     #[serde(default)]
     pub outcomes: Vec<SampleTestOutcome>,
+    /// Explicit terminal projection. `outcomes` remains as a compatibility view of terminal
+    /// candidates only; intermediate node outputs are available through `debug_stages`.
+    #[serde(default)]
+    pub projection: ResultProjection,
     #[serde(default)]
     pub failure_classes: Vec<crate::AnnotationFailureClass>,
     pub nodes: Vec<WorkflowDryRunNodeResult>,
@@ -470,6 +474,81 @@ pub struct SampleTestOutcome {
     pub failure_classes: Vec<crate::AnnotationFailureClass>,
     #[serde(default)]
     pub geometry_quality: Option<crate::CandidateGeometryQualityReport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultLineageStage {
+    Coarse,
+    SearchRegion,
+    Relocalized,
+    PromptCoverage,
+    Mask,
+    Refined,
+    Final,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResultExplanation {
+    pub title: String,
+    pub summary: String,
+    pub recommendation: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LineageStageProjection {
+    /// Stable projection identity derived from the persisted Artifact reference. Pipeline
+    /// Artifacts predate strong UUID ids, so this does not replace their original reference.
+    pub artifact_id: ArtifactId,
+    pub artifact_ref: String,
+    pub node_id: String,
+    pub lineage_id: String,
+    pub stage: ResultLineageStage,
+    pub source: String,
+    pub label: Option<String>,
+    pub confidence: Option<f32>,
+    pub value: Option<crate::VisionArtifactValue>,
+    #[serde(default)]
+    pub terminal: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FinalCandidateProjection {
+    pub source_artifact_id: ArtifactId,
+    pub source_artifact_ref: String,
+    pub lineage_id: String,
+    pub outcome: SampleTestOutcome,
+    pub localization: String,
+    pub geometry: String,
+    pub final_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReviewCandidateProjection {
+    pub candidate: FinalCandidateProjection,
+    pub explanation: ResultExplanation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationProjection {
+    pub annotation_id: AnnotationId,
+    pub label: String,
+    pub confidence: Option<f32>,
+    pub value: crate::AnnotationValue,
+}
+
+/// Product-facing terminal results are deliberately separate from the complete Artifact trace.
+/// A coarse, re-localized and refined box in one lineage therefore remains one Result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ResultProjection {
+    pub final_candidates: Vec<FinalCandidateProjection>,
+    pub review_candidates: Vec<ReviewCandidateProjection>,
+    pub committed_annotations: Vec<AnnotationProjection>,
+    pub no_target: bool,
+    pub intermediate_artifact_ids: Vec<ArtifactId>,
+    #[serde(default)]
+    pub debug_stages: Vec<LineageStageProjection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

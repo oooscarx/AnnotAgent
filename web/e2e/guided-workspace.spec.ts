@@ -673,7 +673,14 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await expect(page.getByText("Ready to activate")).toBeVisible();
   await expect(page.getByLabel("Full Run Estimate")).toContainText("Review workload");
   await expect(page.getByRole("heading", { name: "What the automation found" })).toBeVisible();
-  await expect(page.locator(".sample-result-card").first()).toContainText("day");
+  const sampleResult = page.locator(".sample-result-card").first();
+  await expect(sampleResult).toContainText("day");
+  await expect(sampleResult).toContainText("1 terminal result");
+  await sampleResult.getByText(/Diagnostics · \d+ lineage stages?/).click();
+  await expect(sampleResult.getByRole("tab", { name: "Final" })).toHaveAttribute("aria-selected", "true");
+  await sampleResult.getByRole("tab", { name: "Coarse" }).click();
+  await expect(sampleResult.locator(".sample-lineage-stage-detail")).toContainText("coarse");
+  await sampleResult.getByRole("tab", { name: "Final" }).click();
   await expect(page.getByRole("heading", { name: "What needs a human decision" })).toBeVisible();
   await expect(page.getByText("No uncertain results in this sample")).toBeVisible();
   await expect(page.locator(".sample-diagnostics details[open]")).toHaveCount(0);
@@ -761,6 +768,8 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   await expect(page).toHaveURL(/view=debug/);
   await expect(page.getByText("Pipeline Steps", { exact: true })).toBeVisible();
   await expect(page.locator(".run-node-timeline button").first()).toBeVisible();
+  await expect(page.getByLabel("Artifact lineage stages")).toBeVisible();
+  await expect(page.getByLabel("Artifact lineage stages").getByRole("button", { name: /Final/ })).toBeVisible();
 });
 
 test("global Runs and Review ignore hidden active Project state", async ({ page }) => {
@@ -1077,7 +1086,7 @@ test("geometry safety is visible from Results through Improve Automation", async
   await expect(quality.getByText("Geometry verification", { exact: true })).toBeVisible();
   await expect(quality).toContainText(/uncalibrated|Not performed|Human-verified/i);
   await page.getByRole("button", { name: "Improve automation" }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${cropProjectId}/build/pipeline$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${cropProjectId}/build/pipeline(?:\\?draft=[^&]+)?$`));
   await expect(page.getByRole("heading", { name: "Improve Automation" })).toBeVisible();
   await expect(page.getByText("Diagnosis evidence", { exact: true })).toBeVisible();
   await expect(page.getByText("Independent evaluation holdout", { exact: true })).toBeVisible();

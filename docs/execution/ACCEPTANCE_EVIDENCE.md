@@ -1,5 +1,30 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M6 — 2026-09-05
+
+1. `one_lineage_projects_to_one_result_and_four_debug_stages` feeds coarse, local, refined and
+   terminal DetectionSets from one lineage through the projector. It produces exactly one review
+   Result while retaining all four stages as inspectable Debug evidence.
+2. `projection_ids_are_stable_and_do_not_claim_pipeline_refs_are_uuids` proves persisted legacy
+   Artifact references map to deterministic projection identities without fabricating their source
+   ids or producing a different Result after refresh.
+3. Projection walks only terminal Commit inputs and Human Review suspensions. It does not flatten
+   every DetectionSet emitted by the DAG; no-target is emitted only for a completed, error-free
+   sample with no terminal candidate.
+4. The Sample Test browser regression asserts one terminal result, then opens Diagnostics and
+   selects Coarse and Final independently. The Run Debug regression asserts the stage navigator and
+   Final stage while preserving the complete Artifact/node inspector.
+5. Direct in-app verification of the persisted B-Human report showed a visible `Legacy result
+   aggregation` warning rather than falsely rewriting its historical two-result payload. A fresh
+   paid inference was intentionally not run, so this remains provisional evidence with no claimed
+   Ground Truth accuracy.
+6. Executed checks: 109 Core tests, 71 runnable Application tests plus one explicit billable ignore,
+   31 Server tests, 62 Web unit tests, TypeScript, production Web build, all 31 guided Chromium E2E
+   journeys, Rustfmt and strict all-target/all-feature Clippy all passed.
+
+No credential, real Provider call, Published Workflow, formal Run, annotation history, remote or
+push was modified.
+
 ## Small-Object Localization Recovery M3 — 2026-09-05
 
 1. `exhausted_localization_budget_routes_to_review` proves a consumed tile-stage allowance yields

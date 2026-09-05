@@ -2,6 +2,28 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 6 — Terminal result projection and inspectable lineage
+
+- Sample Test now projects user-facing Results only from terminal `Commit` inputs or candidates
+  suspended at `HumanReview`. Coarse, search-region, re-localized, prompt-coverage, mask and
+  refined outputs remain intermediate evidence and never become duplicate final Results.
+- `ResultProjection` explicitly separates final candidates, review candidates, committed
+  annotations, no-target outcomes and intermediate Artifact ids. Stable projection ids and
+  lineage-based deduplication preserve one result per terminal subject across refreshes.
+- Every terminal result carries Localization, Geometry and Final-status facts plus a structured
+  explanation. Diagnostics is collapsed by default and exposes only lineage stages that actually
+  exist; users can inspect Coarse, Search region, Re-localized, Prompt coverage, Mask, Refined and
+  Final overlays without changing the final count.
+- Run Debug now exposes the same stage-oriented lineage navigator above the complete node timeline.
+  Existing persisted reports that used legacy intermediate aggregation are labeled as legacy and
+  ask for a new Sample Test instead of being silently reinterpreted.
+- Verification passed Core (109), Application (71 runnable, one explicit billable ignore), Server
+  (31), Web (62), the production build, 31 guided Chromium journeys and strict all-target,
+  all-feature Clippy. No Provider request, credential access, Published mutation, formal Run, push
+  or remote operation was performed.
+
+Milestone 6 status: `PASS`.
+
 ## Milestone 5 — Prompt-coverage-gated segmentation safety
 
 - Prompted Segmentation now requires one valid, independently evidenced `Covered`

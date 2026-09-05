@@ -11680,9 +11680,18 @@ export:
                 .is_some_and(|policies| policies.iter().any(|policy| policy["id"] == "cache"))
         );
         assert_eq!(catalog["model_registry"][0]["id"], json!("default-vision"));
+        let workflow_template_ids = catalog["workflow_templates"]
+            .as_array()
+            .expect("workflow templates")
+            .iter()
+            .filter_map(|template| template["id"].as_str())
+            .collect::<BTreeSet<_>>();
         assert_eq!(
-            catalog["workflow_templates"].as_array().map(Vec::len),
-            Some(1)
+            workflow_template_ids,
+            BTreeSet::from([
+                "robocup.ball.small-object-recovery",
+                "robocup.ball.vlm-bootstrap",
+            ])
         );
         let hybrid_draft = response_json(
             request(
