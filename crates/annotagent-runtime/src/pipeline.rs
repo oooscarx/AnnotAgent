@@ -35,6 +35,7 @@ pub const CORE_GEOMETRY_DECISION: &str = "core.geometry_decision";
 pub const CORE_MASK_TO_POLYGON: &str = "core.mask_to_polygon";
 pub const CORE_RESIZE: &str = "core.resize";
 pub const CORE_TILE: &str = "core.tile";
+pub const CORE_MERGE_TILES: &str = "core.merge_tiles";
 pub const CORE_FILTER: &str = "core.filter";
 pub const CORE_MAP_LABEL: &str = "core.map_label";
 pub const CORE_SELECT_AND_MAP: &str = "core.select_and_map";
@@ -60,6 +61,7 @@ impl DagNodeRunner for CorePipelineRunner {
         match context.node.node_type.as_str() {
             CORE_RESIZE => run_resize(&context),
             CORE_TILE => run_tile(&context),
+            CORE_MERGE_TILES => run_merge_tiles(&context),
             CORE_CROP => run_crop(&context),
             CORE_EXPAND_REGION => run_expand_region(&context),
             CORE_DETECTIONS_TO_BOX_PROMPTS => run_detections_to_box_prompts(&context),
@@ -175,7 +177,7 @@ fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
             "Tile overlap must be within [0,0.9)",
         ));
     }
-    let maximum_tiles = optional_u32_parameter(context, "maximum_tiles")?.unwrap_or(64) as usize;
+    let maximum_tiles = optional_u32_parameter(context, "maximum_tiles")?.unwrap_or(9) as usize;
     if maximum_tiles == 0 {
         return Err(DagNodeFailure::terminal(
             "invalid_maximum_tiles",
@@ -184,15 +186,7 @@ fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
     }
     let x_offsets = tile_offsets(image.width, tile_width, overlap);
     let y_offsets = tile_offsets(image.height, tile_height, overlap);
-    if x_offsets.len().saturating_mul(y_offsets.len()) > maximum_tiles {
-        return Err(DagNodeFailure::terminal(
-            "tile_limit_exceeded",
-            format!(
-                "Tile would produce {} images, exceeding maximum_tiles={maximum_tiles}",
-                x_offsets.len().saturating_mul(y_offsets.len())
-            ),
-        ));
-    }
+    let planned_tile_count = x_offsets.len().saturating_mul(y_offsets.len());
     let output = output_reference(context, "images", ArtifactKind::Image)?;
     let parent_region = image.root_region.unwrap_or(
         annotagent_core::NormalizedRect::new(0.0, 0.0, 1.0, 1.0)
@@ -201,6 +195,9 @@ fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
     let mut tiles = Vec::new();
     for (row, y) in y_offsets.iter().enumerate() {
         for (column, x) in x_offsets.iter().enumerate() {
+            if tiles.len() >= maximum_tiles {
+                break;
+            }
             let local_x = *x as f32 / image.width as f32;
             let local_y = *y as f32 / image.height as f32;
             let local_width = tile_width as f32 / image.width as f32;
@@ -228,10 +225,20 @@ fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
     }
     Ok(DagNodeOutput {
         pipeline_artifacts: tiles,
-        metadata: BTreeMap::from([(
-            "tile_count".to_owned(),
-            serde_json::json!(x_offsets.len() * y_offsets.len()),
-        )]),
+        metadata: BTreeMap::from([
+            (
+                "tile_count".to_owned(),
+                serde_json::json!(planned_tile_count.min(maximum_tiles)),
+            ),
+            (
+                "planned_tile_count".to_owned(),
+                serde_json::json!(planned_tile_count),
+            ),
+            (
+                "search_truncated_by_budget".to_owned(),
+                serde_json::json!(planned_tile_count > maximum_tiles),
+            ),
+        ]),
         ..DagNodeOutput::default()
     })
 }
@@ -251,6 +258,130 @@ fn tile_offsets(total: u32, tile: u32, overlap: f64) -> Vec<u32> {
     offsets.sort_unstable();
     offsets.dedup();
     offsets
+}
+
+fn run_merge_tiles(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let sets = detection_sets(context)?;
+    for set in &sets {
+        set.validate()
+            .map_err(|error| DagNodeFailure::terminal("tile_merge_failed", error))?;
+    }
+    if sets.iter().any(|set| set.image_id != sets[0].image_id) {
+        return Err(DagNodeFailure::terminal(
+            "tile_merge_scope_mismatch",
+            "Tile detections must belong to one root image",
+        ));
+    }
+    let minimum_iou = number_parameter(context, "minimum_iou", 0.5)? as f32;
+    if !(0.0..=1.0).contains(&minimum_iou) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_tile_merge_iou",
+            "Tile merge minimum_iou must be within [0,1]",
+        ));
+    }
+    let mut candidates = sets
+        .iter()
+        .flat_map(|set| {
+            set.detections
+                .iter()
+                .map(move |detection| (set.reference.artifact_id.as_str(), detection.clone()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .1
+            .score
+            .comparable_confidence()
+            .unwrap_or(f32::NEG_INFINITY)
+            .total_cmp(
+                &left
+                    .1
+                    .score
+                    .comparable_confidence()
+                    .unwrap_or(f32::NEG_INFINITY),
+            )
+            .then_with(|| left.0.cmp(right.0))
+            .then_with(|| left.1.detection_id.cmp(&right.1.detection_id))
+    });
+    let mut merged: Vec<Detection> = Vec::new();
+    for (source_artifact, mut candidate) in candidates {
+        let duplicate = merged.iter_mut().find(|existing| {
+            existing.project_label == candidate.project_label
+                && existing.model_label == candidate.model_label
+                && rect_iou(existing.bbox, candidate.bbox) >= minimum_iou
+        });
+        if let Some(existing) = duplicate {
+            for evidence in candidate.evidence {
+                if !existing.evidence.contains(&evidence) {
+                    existing.evidence.push(evidence);
+                }
+            }
+            existing
+                .attributes
+                .insert("tile_duplicate_merged".to_owned(), serde_json::json!(true));
+            continue;
+        }
+        candidate.detection_id =
+            format!("tile-merged:{source_artifact}:{}", candidate.detection_id);
+        candidate.attributes.insert(
+            "tile_source_artifact".to_owned(),
+            serde_json::json!(source_artifact),
+        );
+        merged.push(candidate);
+    }
+    let reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+    let validation_state = if sets
+        .iter()
+        .any(|set| set.validation_state == ArtifactValidationState::Invalid)
+    {
+        ArtifactValidationState::Invalid
+    } else if sets
+        .iter()
+        .any(|set| set.validation_state == ArtifactValidationState::NeedsReview)
+    {
+        ArtifactValidationState::NeedsReview
+    } else {
+        ArtifactValidationState::Unvalidated
+    };
+    let result = DetectionSetArtifact {
+        schema_version: annotagent_core::DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference,
+        image_id: sets[0].image_id,
+        model_binding: "core-tile-merge".to_owned(),
+        validation_state,
+        detections: merged,
+        metadata: BTreeMap::from([
+            (
+                "artifact_role".to_owned(),
+                serde_json::json!("tile_search_candidates"),
+            ),
+            (
+                "source_detection_sets".to_owned(),
+                serde_json::json!(
+                    sets.iter()
+                        .map(|set| set.reference.artifact_id.as_str())
+                        .collect::<Vec<_>>()
+                ),
+            ),
+        ]),
+    };
+    result
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("tile_merge_failed", error))?;
+    Ok(DagNodeOutput {
+        metadata: BTreeMap::from([
+            (
+                "source_detection_count".to_owned(),
+                serde_json::json!(sets.iter().map(|set| set.detections.len()).sum::<usize>()),
+            ),
+            (
+                "merged_detection_count".to_owned(),
+                serde_json::json!(result.detections.len()),
+            ),
+        ]),
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(result)],
+        ..DagNodeOutput::default()
+    })
 }
 
 /// Converts evidence clusters back into a `DetectionSet` for downstream Core Crop fan-out while
@@ -3563,6 +3694,92 @@ mod tests {
         assert!((crop_region.width() - region.width()).abs() < 0.000_001);
         assert!((crop_region.height() - region.height()).abs() < 0.000_001);
         assert!(crop_image.parent.is_some());
+    }
+
+    #[tokio::test]
+    async fn tile_search_is_truncated_by_budget_and_merge_deduplicates_overlap() {
+        let image_id = ImageId::new();
+        let tile = WorkflowDraftNode {
+            id: "tile".to_owned(),
+            node_type: CORE_TILE.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "images".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([
+                ("tile_width".to_owned(), serde_json::json!(40)),
+                ("tile_height".to_owned(), serde_json::json!(40)),
+                ("overlap".to_owned(), serde_json::json!(0)),
+                ("maximum_tiles".to_owned(), serde_json::json!(4)),
+            ]),
+            ..WorkflowDraftNode::default()
+        };
+        let tiled = CorePipelineRunner
+            .run(node_context(
+                &tile,
+                vec![pipeline_image(image_id, 100, 100, None)],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("bounded tiles");
+        assert_eq!(tiled.pipeline_artifacts.len(), 4);
+        assert_eq!(tiled.metadata["planned_tile_count"], 9);
+        assert_eq!(tiled.metadata["search_truncated_by_budget"], true);
+
+        let first = detection_set(
+            image_id,
+            "tile-a",
+            "detector",
+            vec![detection(
+                "tile-a",
+                "a",
+                "ball",
+                [0.20, 0.20, 0.10, 0.10],
+                Some(0.9),
+                "detector",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let second = detection_set(
+            image_id,
+            "tile-b",
+            "detector",
+            vec![detection(
+                "tile-b",
+                "b",
+                "ball",
+                [0.21, 0.21, 0.10, 0.10],
+                Some(0.8),
+                "detector",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let merge = WorkflowDraftNode {
+            id: "merge".to_owned(),
+            node_type: CORE_MERGE_TILES.to_owned(),
+            kind: WorkflowNodeKind::CandidateMerge,
+            outputs: vec![NodePort {
+                id: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([("minimum_iou".to_owned(), serde_json::json!(0.5))]),
+            ..WorkflowDraftNode::default()
+        };
+        let merged = CorePipelineRunner
+            .run(node_context(&merge, vec![first, second], BTreeMap::new()))
+            .await
+            .expect("merge tiles");
+        let PipelineArtifact::DetectionSet(set) = &merged.pipeline_artifacts[0] else {
+            panic!("merged detections")
+        };
+        assert_eq!(set.detections.len(), 1);
+        assert_eq!(set.detections[0].evidence.len(), 2);
+        assert_eq!(merged.metadata["source_detection_count"], 2);
     }
 
     #[tokio::test]

@@ -4383,6 +4383,14 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             deterministic: true,
         },
         VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_MERGE_TILES.to_owned(),
+            display_name: "Merge tile detections".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
             id: annotagent_runtime::CORE_EXPAND_REGION.to_owned(),
             display_name: "Expand localization search region".to_owned(),
             required_capabilities: Vec::new(),
@@ -4610,11 +4618,36 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
                 "tile_width": {"type": "integer", "minimum": 1},
                 "tile_height": {"type": "integer", "minimum": 1},
                 "overlap": {"type": "number", "minimum": 0, "exclusiveMaximum": 0.9, "default": 0.15},
-                "maximum_tiles": {"type": "integer", "minimum": 1, "default": 64},
+                "maximum_tiles": {"type": "integer", "minimum": 1, "maximum": 9, "default": 9},
                 "merge_policy": {"type": "string", "enum": ["nms", "deduplicate", "preserve"], "default": "nms"}
             })),
             required_model_capability: None,
             cardinality: NodeCardinality::OneToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_MERGE_TILES.to_owned(),
+            display_name: "Merge tile detections".to_owned(),
+            category: NodeCategory::ResultTransform,
+            input_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            output_ports: vec![catalog_port(
+                "detections",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "minimum_iou": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToOne,
             side_effect: NodeSideEffect::None,
             dry_run_supported: true,
             expert_only: false,

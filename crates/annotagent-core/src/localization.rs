@@ -1,5 +1,6 @@
 //! Domain-neutral bounded localization-recovery policies and scale evidence.
 
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::{CoreError, CoreResult, NormalizedRect};
@@ -181,6 +182,61 @@ pub struct TargetScaleProfile {
     pub size_bucket: TargetSizeBucket,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalizationRecoveryBudget {
+    pub max_local_relocalizations: u32,
+    pub max_tile_search_calls: u32,
+    pub max_prompted_segmentations: u32,
+    pub max_total_model_calls: u32,
+    pub max_additional_cost: Decimal,
+}
+
+impl Default for LocalizationRecoveryBudget {
+    fn default() -> Self {
+        Self {
+            max_local_relocalizations: 2,
+            max_tile_search_calls: 1,
+            max_prompted_segmentations: 1,
+            max_total_model_calls: 4,
+            max_additional_cost: Decimal::ZERO,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LocalizationRecoveryUsage {
+    pub local_relocalizations: u32,
+    pub tile_search_calls: u32,
+    pub prompted_segmentations: u32,
+    pub total_model_calls: u32,
+    pub additional_cost: Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalizationRecoveryDecision {
+    Continue,
+    HumanReview,
+}
+
+impl LocalizationRecoveryBudget {
+    #[must_use]
+    pub fn decision_for(&self, usage: &LocalizationRecoveryUsage) -> LocalizationRecoveryDecision {
+        let cost_exhausted = self.max_additional_cost > Decimal::ZERO
+            && usage.additional_cost >= self.max_additional_cost;
+        if usage.local_relocalizations >= self.max_local_relocalizations
+            || usage.tile_search_calls >= self.max_tile_search_calls
+            || usage.prompted_segmentations >= self.max_prompted_segmentations
+            || usage.total_model_calls >= self.max_total_model_calls
+            || cost_exhausted
+        {
+            LocalizationRecoveryDecision::HumanReview
+        } else {
+            LocalizationRecoveryDecision::Continue
+        }
+    }
+}
+
 impl TargetScaleProfile {
     #[must_use]
     pub fn from_candidate(
@@ -239,5 +295,23 @@ mod tests {
         let profile = TargetScaleProfile::from_candidate(candidate, 544, 448, 20.0, 64.0, 160.0);
         assert_eq!(profile.minimum_dimension_px, Some(16.0));
         assert_eq!(profile.size_bucket, TargetSizeBucket::Tiny);
+    }
+
+    #[test]
+    fn exhausted_localization_budget_routes_to_review() {
+        let budget = LocalizationRecoveryBudget {
+            max_additional_cost: Decimal::new(5, 2),
+            ..LocalizationRecoveryBudget::default()
+        };
+        let usage = LocalizationRecoveryUsage {
+            tile_search_calls: 1,
+            total_model_calls: 1,
+            additional_cost: Decimal::new(1, 2),
+            ..LocalizationRecoveryUsage::default()
+        };
+        assert_eq!(
+            budget.decision_for(&usage),
+            LocalizationRecoveryDecision::HumanReview
+        );
     }
 }

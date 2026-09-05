@@ -31,9 +31,9 @@ use annotagent_runtime::{
     CORE_CANDIDATE_MATCH, CORE_COMBINE_EVIDENCE, CORE_CONFIDENCE_GATE, CORE_CROP, CORE_DECISION,
     CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_EXISTING_ANNOTATIONS, CORE_FILTER,
     CORE_GEOMETRY_DECISION, CORE_GEOMETRY_QUALITY_EVALUATION, CORE_IMAGE_STATISTICS,
-    CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES,
-    CORE_PROJECT_COORDINATES, CORE_PROMPT_COVERAGE_GATE, CORE_REJECT, CORE_RESIZE,
-    CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
+    CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_MERGE_TILES,
+    CORE_PROJECT_CANDIDATES, CORE_PROJECT_COORDINATES, CORE_PROMPT_COVERAGE_GATE, CORE_REJECT,
+    CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
     DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
     DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
     ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
@@ -355,6 +355,7 @@ impl PublishedWorkflowRuntime {
                 CORE_ARTIFACT_CACHE
                 | CORE_RESIZE
                 | CORE_TILE
+                | CORE_MERGE_TILES
                 | CORE_CROP
                 | annotagent_runtime::CORE_EXPAND_REGION
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
@@ -1075,6 +1076,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 CORE_ARTIFACT_CACHE
                 | CORE_RESIZE
                 | CORE_TILE
+                | CORE_MERGE_TILES
                 | CORE_CROP
                 | annotagent_runtime::CORE_EXPAND_REGION
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
@@ -1902,15 +1904,63 @@ impl DagNodeRunner for BoundDetectionRunner {
             .input_pipeline_artifacts
             .iter()
             .filter_map(|artifact| match artifact {
-                PipelineArtifact::Image(image) if image.root_region.is_some() => Some(image),
+                PipelineArtifact::Image(image) if image.root_region.is_some() => {
+                    Some(image.clone())
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
         if local_inputs.len() > 1 {
-            return Err(DagNodeFailure::terminal(
-                "local_detection_input_ambiguous",
-                "one local detection node consumes exactly one search crop",
-            ));
+            let maximum_model_calls = context
+                .node
+                .parameters
+                .get("maximum_model_calls")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(9);
+            let planned_model_calls = local_inputs.len();
+            let shared_inputs = context
+                .input_pipeline_artifacts
+                .iter()
+                .filter(|artifact| {
+                    !matches!(
+                        artifact,
+                        PipelineArtifact::Image(image) if image.root_region.is_some()
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut aggregate = DagNodeOutput::default();
+            for image in local_inputs.into_iter().take(maximum_model_calls) {
+                let mut inputs = shared_inputs.clone();
+                inputs.push(PipelineArtifact::Image(image));
+                let output = Box::pin(self.run(DagNodeContext {
+                    project_id: context.project_id,
+                    run_id: context.run_id,
+                    image_id: context.image_id,
+                    node: context.node,
+                    input_artifacts: context.input_artifacts.clone(),
+                    input_pipeline_artifacts: inputs,
+                    input_metadata: context.input_metadata.clone(),
+                    cancellation: context.cancellation.clone(),
+                }))
+                .await?;
+                aggregate.usage += &output.usage;
+                aggregate.artifacts.extend(output.artifacts);
+                aggregate
+                    .pipeline_artifacts
+                    .extend(output.pipeline_artifacts);
+            }
+            aggregate.metadata.insert(
+                "bounded_local_model_calls".to_owned(),
+                serde_json::json!(planned_model_calls.min(maximum_model_calls)),
+            );
+            aggregate.metadata.insert(
+                "local_search_truncated_by_budget".to_owned(),
+                serde_json::json!(planned_model_calls > maximum_model_calls),
+            );
+            return Ok(aggregate);
         }
         let (model_image, local_source) = if let Some(image) = local_inputs.first() {
             let region = image.root_region.expect("filtered local image");

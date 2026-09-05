@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M3 — 2026-09-05
+
+- Added explicit bounded recovery budgets and a Review terminal decision at exhaustion.
+- Tile generation is capped rather than treated as a Runtime failure; planned/executed counts and
+  truncation remain visible in node metadata.
+- Local detection now supports a bounded series of tile inputs, and `core.merge_tiles` projects
+  them into one evidence-preserving DetectionSet with deterministic overlap deduplication.
+- Budget, tile truncation and merge regressions pass alongside strict focused Clippy.
+
+Small-Object Localization Recovery M3 status: `PASS`.
+
 ## Small-Object Localization Recovery M2 — 2026-09-05
 
 - Added domain-neutral candidate-relative, image-fraction and direction-aware region expansion,

@@ -2,6 +2,24 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 3 — Bounded tile search and recovery budget
+
+- Added `LocalizationRecoveryBudget`, usage and decision contracts for local re-localization,
+  tile-search stages, prompted-segmentation calls, total model calls and exact Decimal cost.
+  Exhaustion returns `HumanReview`.
+- `core.tile` now emits at most the configured tile budget (default maximum 9), records the full
+  planned count and whether search was truncated, instead of failing the Run because an unbounded
+  grid was requested.
+- Bound detection executes multiple local/tile images as separate, bounded model calls using their
+  untouched root-image pixels. `maximum_model_calls` truncates work deterministically and exposes
+  the truncation as evidence.
+- Added `core.merge_tiles` with deterministic score ordering, label-aware IoU deduplication and
+  preservation of evidence from overlapping detections.
+- The existing Prompt Coverage gate routes outside prompts to `search_tiles`; a graph can route
+  budget exhaustion to Review without classifying it as Provider failure.
+
+Milestone 3 status: `PASS`.
+
 ## Milestone 2 — Bounded coarse-to-fine re-localization
 
 - Added typed, serializable `RegionExpansionPolicy` variants for image-fraction,

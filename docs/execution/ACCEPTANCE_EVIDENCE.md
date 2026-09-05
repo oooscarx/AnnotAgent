@@ -1,5 +1,17 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M3 — 2026-09-05
+
+1. `exhausted_localization_budget_routes_to_review` proves a consumed tile-stage allowance yields
+   `HumanReview`, not a failed or provider-error decision.
+2. `tile_search_is_truncated_by_budget_and_merge_deduplicates_overlap` requests a 3×3 grid with a
+   four-tile limit. Runtime emits four tiles, records nine planned tiles and marks budget
+   truncation.
+3. The same regression merges two overlapping projected detections into one terminal candidate
+   while retaining both independent source-evidence records.
+4. Bound detection fans multiple local Image Artifacts into at most `maximum_model_calls` separate
+   crop-backed inference requests; the aggregate reports actual calls and truncation.
+
 ## Small-Object Localization Recovery M2 — 2026-09-05
 
 1. `candidate_relative_region_obeys_pixel_minimum_and_clamps_at_edges` proves minimum pixel width
