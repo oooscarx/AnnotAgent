@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M7 — 2026-09-05
+
+- Created baseline-derived, editable recovery Draft `9b7d31d4…7d73` for the current football
+  Project. The immutable default remains `b5f5a819…@v1`; neither it nor historical Sample Test/Run
+  evidence was changed or published.
+- The 18-node Candidate binds the available qwen VLM Profile and Ready non-Fixture EfficientSAM
+  instance, freezes all three ball Prompt Resources at `2.0.0`, and passes static validation with
+  zero issues.
+- Exact B-Human provisional coordinates now prove 2 legacy intermediate Results project to 1
+  terminal review Result. The new visual pipeline was not remotely executed because API-key use is
+  prohibited and the image has no human Ground Truth; real localization accuracy remains an
+  explicit external validation item.
+- Fixed Draft navigation so template creation opens the server-returned Draft and direct Draft URLs
+  survive refresh. All 44 Chromium journeys pass, alongside the complete Rust/Web release matrix.
+
+Small-Object Localization Recovery M7 status: `PASS WITH REAL-IMAGE ACCURACY PROVISIONAL`.
+
 ## Small-Object Localization Recovery M6 — 2026-09-05
 
 - Results now represent terminal annotation candidates only. Commit inputs and Human Review

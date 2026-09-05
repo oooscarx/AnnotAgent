@@ -2,6 +2,41 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 7 — Current Project and release closure
+
+- The current `robocup-ball` Project still defaults to immutable Workflow
+  `b5f5a819-83dc-4cb4-b329-998503e6fe36@v1`. It was cloned and compared with recovery proposal
+  `bb15a177-3d13-4063-8ee2-8eebab445353`; the explicit Diff produced editable Candidate Draft
+  `9b7d31d4-3906-4032-b658-5b91c24c7d73`, revision 2, content hash `b8999a65…133c`.
+- The Candidate has 18 nodes and 30 edges: coarse VLM localization → candidate-relative 96 px
+  minimum search crop → local re-localization → root projection → independent crop verification →
+  Prompt Coverage → prompted segmentation → mask bbox → geometry evaluation/decision → mandatory
+  Review → Commit. Static validation returned valid with zero issues.
+- Three VLM nodes lock available Profile `b9c5bbe8…434f@2`; prompted segmentation binds Ready local
+  instance `ae3efb4b…da72`. Its real, publishable EfficientSAM-Ti Bundle passed a 578 ms Rust smoke
+  test and is not a Fixture. The three football Prompt Resources are frozen at `2.0.0` with their
+  exact SHA-256 identities.
+- Before remains Sample Test `27b0dfaf-e395-4891-ba71-58ad4cf1ea40`: one 544×448 B-Human image,
+  nine node outputs, 4,643 ms and two legacy review Results for one lineage. The new projector uses
+  those exact provisional coarse/refined coordinates and returns one terminal review Result while
+  preserving four Debug stages.
+- A new real-image Sample Test was intentionally not executed: the task prohibits reading or
+  restoring an API key and the B-Human image has no human Ground Truth. Candidate latency, cost,
+  intermediate Artifact count and localization accuracy therefore remain `not measured`, with
+  Review as the safe outcome. No accuracy claim is made from the local segmenter smoke test.
+- Template creation now opens the returned Draft immediately and an explicit Draft URL survives
+  refresh. The current Candidate was directly verified in the browser with Prompt Coverage and the
+  Ready local segmenter visible.
+- Full verification passed Rustfmt, strict workspace all-target/all-feature Clippy, workspace tests
+  and doc-tests, all-feature build, TypeScript, 62 Web tests, production build and all 44 Chromium
+  E2E journeys.
+
+Release matrix: A–F pass in deterministic/offline regression. The only external validation item is
+human-calibrated B-Human localization accuracy plus one separately authorized real Provider Sample
+Test. Until then the new Draft remains unpublished and mandatory-review.
+
+Milestone 7 status: `PASS WITH REAL-IMAGE ACCURACY PROVISIONAL`.
+
 ## Milestone 6 — Terminal result projection and inspectable lineage
 
 - Sample Test now projects user-facing Results only from terminal `Commit` inputs or candidates

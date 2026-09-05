@@ -1,5 +1,79 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M7 — 2026-09-05
+
+### Current Project evidence
+
+1. Baseline: immutable default Workflow `b5f5a819-83dc-4cb4-b329-998503e6fe36@v1`, named
+   `RoboCup Ball · VLM bootstrap`. Proposal Draft:
+   `bb15a177-3d13-4063-8ee2-8eebab445353`. Baseline-derived Candidate Draft:
+   `9b7d31d4-3906-4032-b658-5b91c24c7d73`, revision 2, hash
+   `b8999a65815df602db94e9fdf3525bc00653db2cce74bafb2db3d65bf506133c`.
+2. The baseline was cloned first; every added/removed node and edge was then applied through the
+   server's structured Draft Diff. The Candidate has 18 nodes, 30 edges and execution order
+   `image → coarse_localization → select → expand → crop → local_relocalization / independent
+   verification → project → validate → box prompts → prompt coverage → segment → mask bbox →
+   geometry evaluate/decision → review → commit`.
+3. Static Core validation returned `valid=true`, zero issues. The current default Published Version
+   remained unchanged after validation and the Candidate remains unpublished.
+4. VLM Profile `b9c5bbe8-e21a-5784-9c52-cade259b434f@2` is enabled/Available and bound, locked, to
+   all three VLM nodes. The selected Pipeline Builder UI model is `glm-5.2`, but no Builder model
+   request was made; the Candidate came from the deterministic registered template and explicit
+   Diff because credential use was prohibited.
+5. Prompted segmentation uses local instance `ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`, Ready on CPU.
+   Plugin `org.annotagent.efficientsam-onnx@1.0.0`, Bundle
+   `org.annotagent.models.efficientsam-ti-onnx@1.0.0` (`publishable=true`, SHA-256
+   `3c9004b3…6d6c`) and Contract `ad3f23ab…6ee` are exact. Its persisted real smoke test passed 14
+   checks in 578 ms; this smoke is model readiness evidence, not B-Human accuracy evidence.
+6. Prompt Resources are frozen as detection `5530dcde…9fce`, local re-localization
+   `c10efdd0…a9e`, and crop verification `7d8c2980…b9516`, all at version `2.0.0`.
+
+### Before / after
+
+| Evidence | Before | Recovery Candidate |
+| --- | --- | --- |
+| Project images | 4 available | same 4; no data mutation |
+| B-Human sample | `color_1001525.png`, 544×448 | same provisional fixture |
+| Sample Test | `27b0dfaf…ea40` on old Draft | not run; credential use prohibited |
+| Result projection | 2 legacy review Results | 1 terminal review Result in exact-coordinate regression |
+| Intermediate evidence | 9 old node outputs flattened by legacy UI | 4 observed stages retained in regression; live count not measured |
+| Runtime | 4,643 ms | not measured |
+| Cost | old report recorded `$0` | no request; cost not estimated as measured usage |
+| Accuracy | no Ground Truth; incorrect coarse/refined observation | provisional pending human calibration |
+| Safe outcome | Review | Review unless independently covered geometry passes |
+
+### Release Blocking Acceptance Matrix
+
+- **A · Localization diagnosis — PASS.** Structured tests distinguish coarse miss, prompt coverage,
+  loose geometry, semantic/provider failure and retain per-class Dry Run evidence.
+- **B · Coarse-to-fine search — PASS.** Candidate-relative/minimum-pixel expansion, local crop,
+  root projection, bounded local calls, tile cap and deterministic merge are executable regressions.
+- **C · Prompted segmentation — PASS.** Covered evidence is required before backend execution;
+  outside prompts and drift route Review; original/prompt/mask/refined lineage survives; production
+  Core has no model-brand branch and Fixture profiles cannot publish.
+- **D · Builder — PASS.** Versioned target-scale Prompt Resources, Registry candidate synthesis,
+  localization-specific Patch and bounded failure rules are tested; no automatic publication exists.
+- **E · Results — PASS FOR PROJECTION; REAL IMAGE PROVISIONAL.** Exact B-Human coarse/refined
+  coordinates yield one terminal Result and inspectable stages offline. A fresh B-Human UI Sample
+  Test remains pending the prohibited credential and human Ground Truth conditions.
+- **F · Safety/regression — PASS.** Geometry Safety, immutability, Artifact lineage, Cache/Replay,
+  Batch controls, Review, Provider/Plugin boundaries and export all pass workspace/E2E regression.
+
+### Executed release commands
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
+- `cargo build --workspace --all-features`
+- `npm --prefix web run typecheck`
+- `npm --prefix web test` — 62 passed
+- `npm --prefix web run build`
+- `npm --prefix web run test:e2e` — 44 passed
+
+No API key or credential value was read, no real Provider request was sent, no formal Run or new
+Sample Test was started, no Published Version/history/annotation was mutated, and no remote or push
+operation was performed.
+
 ## Small-Object Localization Recovery M6 — 2026-09-05
 
 1. `one_lineage_projects_to_one_result_and_four_debug_stages` feeds coarse, local, refined and

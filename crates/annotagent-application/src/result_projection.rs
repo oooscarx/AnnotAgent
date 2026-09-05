@@ -649,6 +649,22 @@ mod tests {
 
     #[test]
     fn one_lineage_projects_to_one_result_and_four_debug_stages() {
+        let provisional_fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/execution/fixtures/small-object-localization/bhuman-provisional.json"
+        ))
+        .expect("B-Human provisional fixture");
+        let fixture_rect = |field: &str| {
+            let coordinates = provisional_fixture[field]
+                .as_array()
+                .expect("fixture xywh coordinates");
+            NormalizedRect::new(
+                coordinates[0].as_f64().expect("x") as f32,
+                coordinates[1].as_f64().expect("y") as f32,
+                coordinates[2].as_f64().expect("width") as f32,
+                coordinates[3].as_f64().expect("height") as f32,
+            )
+            .expect("fixture bbox")
+        };
         let now = Utc::now();
         let detection_node = |id: &str, node_type: &str, kind| WorkflowDraftNode {
             id: id.to_owned(),
@@ -729,7 +745,7 @@ mod tests {
         let coarse = set(
             "coarse-set",
             "coarse",
-            NormalizedRect::new(0.48, 0.52, 0.03, 0.03).expect("coarse bbox"),
+            fixture_rect("coarse_detection_xywh_normalized"),
             ArtifactValidationState::Unvalidated,
         );
         let local = set(
@@ -741,7 +757,7 @@ mod tests {
         let refined = set(
             "refined-set",
             "refined",
-            NormalizedRect::new(0.468, 0.488, 0.038, 0.038).expect("refined bbox"),
+            fixture_rect("refined_detection_xywh_normalized"),
             ArtifactValidationState::NeedsReview,
         );
         let trace = |node_id: &str,
@@ -824,7 +840,13 @@ mod tests {
         let projection = project_sandbox_result(&draft, &result, None);
 
         assert!(projection.final_candidates.is_empty());
-        assert_eq!(projection.review_candidates.len(), 1);
+        assert_eq!(provisional_fixture["legacy_results_count"], 2);
+        assert_eq!(
+            projection.review_candidates.len() as u64,
+            provisional_fixture["expected_terminal_results_count"]
+                .as_u64()
+                .expect("expected terminal count")
+        );
         assert_eq!(
             projection.review_candidates[0].candidate.outcome.id,
             "ball-1"

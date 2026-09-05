@@ -371,7 +371,9 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
     ["Automation", "pipeline"],
   ] as const) {
     await page.getByLabel("Build steps").getByRole("button").filter({ hasText: name }).click();
-    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/${path}$`));
+    await expect(page).toHaveURL(new RegExp(
+      `/projects/${projectId}/build/${path}${path === "pipeline" ? "(?:\\?draft=[0-9a-f-]+)?" : ""}$`,
+    ));
     if (path === "labels") {
       await expect(page.getByRole("heading", { name: "What do you want to annotate?" })).toBeVisible();
       const labelForm = page.locator(".label-group-form");
@@ -1787,4 +1789,21 @@ test("reduced motion and server-state error recovery are explicit", async ({ pag
   await expect(page.getByRole("status").filter({ hasText: "Loading workspace state" })).toBeVisible();
   releaseProjects();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+});
+
+test("a newly created template Draft opens immediately and survives refresh", async ({ page }) => {
+  await page.goto(`/projects/${projectId}/build/pipeline`);
+  const createdResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && new URL(response.url()).pathname === "/api/workflow-drafts",
+  );
+  await page.getByRole("button", { name: "From Template" }).click();
+  const response = await createdResponse;
+  expect(response.ok()).toBeTruthy();
+  const created = await response.json() as { id: string; name: string };
+  await expect(page).toHaveURL(new RegExp(`\\?draft=${created.id}$`));
+  await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`\\?draft=${created.id}$`));
+  await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
 });

@@ -2983,7 +2983,7 @@ function WorkflowsPage({
     setSelectedPublishedKey(selectedPublishedFromRoute);
   }, [selectedPublishedFromRoute]);
   useEffect(() => {
-    if (draft?.id && draft.id !== selectedDraftId && !selectedPublishedFromRoute)
+    if (draft?.id && !selectedDraftId && !selectedPublishedFromRoute)
       onSelectContext({ draftId: draft.id }, true);
   }, [draft?.id, selectedDraftId, selectedPublishedFromRoute]);
   useEffect(() => {
@@ -3053,16 +3053,22 @@ function WorkflowsPage({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
-  const create = (fromTemplate: boolean, selectedTemplate?: string) =>
-    activeProjectId
-      ? finish(
-          api.createWorkflowDraft(
-            activeProjectId,
-            fromTemplate,
-            selectedTemplate,
-          ),
-        )
-      : onError("Select a Project before creating a Workflow.");
+  const create = (fromTemplate: boolean, selectedTemplate?: string) => {
+    if (!activeProjectId)
+      return onError("Select a Project before creating a Workflow.");
+    setBusy(true);
+    void api
+      .createWorkflowDraft(activeProjectId, fromTemplate, selectedTemplate)
+      .then((created) => {
+        persistedDrafts.current.set(created.id, JSON.stringify(created));
+        setDraft(created);
+        setReport(undefined);
+        onSelectContext({ draftId: created.id }, true);
+        return Promise.all([refreshDrafts(), onRefresh()]);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
   const runAdvisor = (
     target?: { task_id: string; label: string },
     retry?: { session_id?: string; base_draft_id?: string },
