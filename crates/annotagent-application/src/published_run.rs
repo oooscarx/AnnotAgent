@@ -2684,6 +2684,7 @@ fn mock_artifact(
         | ArtifactKind::DetectionSet
         | ArtifactKind::BoxPromptSet
         | ArtifactKind::PointPromptSet
+        | ArtifactKind::PromptCoverage
         | ArtifactKind::MaskSet
         | ArtifactKind::PolygonSet
         | ArtifactKind::CandidateClusterSet
@@ -2832,6 +2833,7 @@ const fn capability_for_kind(kind: ArtifactKind) -> annotagent_core::VisionCapab
         | ArtifactKind::DetectionSet
         | ArtifactKind::BoxPromptSet
         | ArtifactKind::PointPromptSet
+        | ArtifactKind::PromptCoverage
         | ArtifactKind::MaskSet
         | ArtifactKind::PolygonSet
         | ArtifactKind::CropSet
@@ -3059,6 +3061,7 @@ fn pipeline_annotations(
                 PipelineArtifact::Image(_)
                 | PipelineArtifact::BoxPromptSet(_)
                 | PipelineArtifact::PointPromptSet(_)
+                | PipelineArtifact::PromptCoverage(_)
                 | PipelineArtifact::MaskSet(_)
                 | PipelineArtifact::SemanticMask(_)
                 | PipelineArtifact::PolygonSet(_)

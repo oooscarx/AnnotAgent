@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M1 — 2026-09-05
+
+- Added typed localization-failure and Prompt Coverage contracts with evidence-backed state/action
+  validation; insufficient evidence remains Unknown.
+- Registered and implemented `core.prompt_coverage_gate`. It refuses self-confirming source
+  detections, measures independent candidate coverage and selects refine/re-localize/tile/review
+  routes without invoking a refiner as a detector.
+- Static validation rejects automatic prompted-segmentation Commit paths that bypass the coverage
+  gate. Explicitly reviewed debug evidence remains legal.
+- Focused Core/Runtime tests, all-feature workspace compilation and strict focused Clippy pass.
+
+Small-Object Localization Recovery M1 status: `PASS`.
+
 ## Small-Object Localization Recovery M0 — 2026-09-05
 
 - Added a deterministic known-Ground-Truth 16 px football fixture with white-line and white-shoe

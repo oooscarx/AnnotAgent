@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 1 — Failure classification and Prompt Coverage
+
+- Added the domain-neutral `LocalizationFailureClass` taxonomy. `prompt_outside_target` resolves to
+  both `CoarseLocalizationMiss` and `PromptCoverageFailure`, never `LooseGeometry`.
+- Added typed `PromptCoverageArtifact`, state, action and observable evidence contracts. A known
+  state without evidence is invalid; missing evidence remains `Unknown` and has no fabricated
+  confidence.
+- Added executable `core.prompt_coverage_gate`. Independent/re-localized detections determine
+  covered, partially covered or outside states by measured intersection; the source DetectionSet
+  cannot validate its own prompt.
+- Gate routes are bounded and explicit: `refine`, `relocalize`, `search_tiles` or `review`. Outside
+  and unknown prompts do not enter the automatic refinement route.
+- Static validation blocks an automatic prompted-segmentation-to-Commit path without a Prompt
+  Coverage Gate while preserving explicitly human-reviewed debug paths.
+
+Milestone 1 status: `PASS`.
+
 ## Milestone 0 — Regression baseline
 
 - Added a deterministic 544×448 non-square image generator with a generator-owned 16 px football
@@ -20,4 +37,3 @@ Last updated: 2026-09-05 CST
   one; implementation is assigned to Milestone 6.
 
 Milestone 0 status: `PASS`.
-

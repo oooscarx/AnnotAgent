@@ -1651,6 +1651,7 @@ const fn artifact_port(kind: ArtifactKind) -> &'static str {
         ArtifactKind::Image => "image",
         ArtifactKind::DetectionSet => "detections",
         ArtifactKind::BoxPromptSet | ArtifactKind::PointPromptSet => "prompts",
+        ArtifactKind::PromptCoverage => "coverage",
         ArtifactKind::MaskSet => "masks",
         ArtifactKind::PolygonSet => "polygons",
         ArtifactKind::CandidateClusterSet | ArtifactKind::AnnotationCandidateSet => "candidates",
@@ -2079,6 +2080,7 @@ impl WorkflowStaticValidator {
         validate_edges(draft, &indexes, &mut issues);
         validate_required_inputs(draft, &mut issues);
         validate_fallbacks(draft, &ids, &mut issues);
+        validate_prompt_coverage_safety(draft, &mut issues);
         let execution_order = topological_order(draft).unwrap_or_else(|cycle| {
             issues.push(issue("workflow_cycle", "edges", &cycle));
             Vec::new()
@@ -2127,6 +2129,70 @@ impl WorkflowStaticValidator {
         report.valid = report.issues.iter().all(|issue| !issue.blocking);
         report
     }
+}
+
+fn validate_prompt_coverage_safety(
+    draft: &WorkflowDraft,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    for (index, segment) in draft
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.node_type == "capability.segment")
+    {
+        if !has_commit_path_without_human_review(draft, &segment.id) {
+            continue;
+        }
+        let prompt_sources = draft
+            .edges
+            .iter()
+            .filter(|edge| edge.to_node == segment.id)
+            .filter_map(|edge| draft.nodes.iter().find(|node| node.id == edge.from_node))
+            .filter(|node| {
+                node.outputs
+                    .iter()
+                    .any(|port| port.artifact_type == ArtifactKind::BoxPromptSet)
+            })
+            .collect::<Vec<_>>();
+        if prompt_sources
+            .iter()
+            .any(|node| node.node_type == "core.prompt_coverage_gate")
+        {
+            continue;
+        }
+        let code = if prompt_sources.is_empty() {
+            "refiner_used_as_detector"
+        } else {
+            "prompt_coverage_check_missing"
+        };
+        issues.push(issue(
+            code,
+            &format!("nodes[{index}]"),
+            "Prompted segmentation on an automatic bbox path requires an upstream Prompt Coverage Gate; route unknown or invalid coverage to re-localization or human review",
+        ));
+    }
+}
+
+fn has_commit_path_without_human_review(draft: &WorkflowDraft, source: &str) -> bool {
+    let mut pending = vec![(source, false)];
+    let mut visited = BTreeSet::new();
+    while let Some((node_id, reviewed)) = pending.pop() {
+        if !visited.insert((node_id, reviewed)) {
+            continue;
+        }
+        for edge in draft.edges.iter().filter(|edge| edge.from_node == node_id) {
+            let Some(next) = draft.nodes.iter().find(|node| node.id == edge.to_node) else {
+                continue;
+            };
+            let reviewed = reviewed || next.kind == WorkflowNodeKind::HumanReview;
+            if next.kind == WorkflowNodeKind::Commit && !reviewed {
+                return true;
+            }
+            pending.push((&next.id, reviewed));
+        }
+    }
+    false
 }
 
 #[must_use]
@@ -2733,12 +2799,13 @@ fn topological_order(draft: &WorkflowDraft) -> Result<Vec<String>, String> {
 }
 
 #[must_use]
-pub const fn all_artifact_kinds() -> [ArtifactKind; 19] {
+pub const fn all_artifact_kinds() -> [ArtifactKind; 20] {
     [
         ArtifactKind::Image,
         ArtifactKind::DetectionSet,
         ArtifactKind::BoxPromptSet,
         ArtifactKind::PointPromptSet,
+        ArtifactKind::PromptCoverage,
         ArtifactKind::MaskSet,
         ArtifactKind::PolygonSet,
         ArtifactKind::CandidateClusterSet,
@@ -2895,6 +2962,76 @@ export:
 ",
         )
         .expect("Project Schema")
+    }
+
+    #[test]
+    fn automatic_prompted_segmentation_requires_prompt_coverage() {
+        let mut prompts = node("prompts", WorkflowNodeKind::Transform);
+        prompts.node_type = "core.detections_to_box_prompts".to_owned();
+        prompts.outputs = vec![NodePort {
+            id: "prompts".to_owned(),
+            artifact_type: ArtifactKind::BoxPromptSet,
+            required: true,
+            multiple: true,
+        }];
+        let mut segment = node("segment", WorkflowNodeKind::VisionModel);
+        segment.node_type = "capability.segment".to_owned();
+        segment.inputs = vec![NodePort {
+            id: "box_prompts".to_owned(),
+            artifact_type: ArtifactKind::BoxPromptSet,
+            required: true,
+            multiple: true,
+        }];
+        let commit = node("commit", WorkflowNodeKind::Commit);
+        let direct = draft(
+            vec![prompts.clone(), segment.clone(), commit.clone()],
+            vec![
+                WorkflowEdge {
+                    from_node: "prompts".to_owned(),
+                    from_port: "prompts".to_owned(),
+                    to_node: "segment".to_owned(),
+                    to_port: "box_prompts".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "segment".to_owned(),
+                    from_port: "masks".to_owned(),
+                    to_node: "commit".to_owned(),
+                    to_port: "masks".to_owned(),
+                    route: None,
+                },
+            ],
+        );
+        let mut issues = Vec::new();
+        validate_prompt_coverage_safety(&direct, &mut issues);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, "prompt_coverage_check_missing");
+
+        let mut coverage = node("coverage", WorkflowNodeKind::Gate);
+        coverage.node_type = "core.prompt_coverage_gate".to_owned();
+        coverage.outputs = prompts.outputs.clone();
+        let gated = draft(
+            vec![prompts, coverage, segment, commit],
+            vec![
+                WorkflowEdge {
+                    from_node: "coverage".to_owned(),
+                    from_port: "prompts".to_owned(),
+                    to_node: "segment".to_owned(),
+                    to_port: "box_prompts".to_owned(),
+                    route: Some("refine".to_owned()),
+                },
+                WorkflowEdge {
+                    from_node: "segment".to_owned(),
+                    from_port: "masks".to_owned(),
+                    to_node: "commit".to_owned(),
+                    to_port: "masks".to_owned(),
+                    route: None,
+                },
+            ],
+        );
+        let mut issues = Vec::new();
+        validate_prompt_coverage_safety(&gated, &mut issues);
+        assert!(issues.is_empty());
     }
 
     fn detection_catalog() -> NodeRegistry {

@@ -137,6 +137,7 @@ fn rebind_smoke_image(artifact: &mut PipelineArtifact, image_id: ImageId) {
         PipelineArtifact::DetectionSet(value) => value.image_id = image_id,
         PipelineArtifact::BoxPromptSet(value) => value.image_id = image_id,
         PipelineArtifact::PointPromptSet(value) => value.image_id = image_id,
+        PipelineArtifact::PromptCoverage(value) => value.image_id = image_id,
         PipelineArtifact::MaskSet(value) => value.image_id = image_id,
         PipelineArtifact::SemanticMask(value) => value.image_id = image_id,
         PipelineArtifact::PolygonSet(value) => value.image_id = image_id,
@@ -382,7 +383,9 @@ fn validate_definition(
 
 fn artifact_item_count(artifact: &PipelineArtifact) -> usize {
     match artifact {
-        PipelineArtifact::Image(_) | PipelineArtifact::SemanticMask(_) => 1,
+        PipelineArtifact::Image(_)
+        | PipelineArtifact::SemanticMask(_)
+        | PipelineArtifact::PromptCoverage(_) => 1,
         PipelineArtifact::DetectionSet(value) => value.detections.len(),
         PipelineArtifact::BoxPromptSet(value) => value.prompts.len(),
         PipelineArtifact::PointPromptSet(value) => value.prompts.len(),

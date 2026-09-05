@@ -172,6 +172,11 @@ fn pipeline_parents(artifact: &PipelineArtifact) -> Vec<ArtifactEnvelopeRef> {
         PipelineArtifact::PointPromptSet(prompts) => std::iter::once(&prompts.source_artifact)
             .chain(prompts.prompts.iter().map(|prompt| &prompt.subject))
             .collect(),
+        PipelineArtifact::PromptCoverage(coverage) => coverage
+            .evidence
+            .iter()
+            .map(|evidence| &evidence.source)
+            .collect(),
         PipelineArtifact::MaskSet(masks) => std::iter::once(&masks.source_prompts)
             .chain(masks.masks.iter().map(|mask| &mask.prompt))
             .collect(),

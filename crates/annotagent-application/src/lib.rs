@@ -4431,6 +4431,14 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             deterministic: true,
         },
         VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            display_name: "Validate prompt coverage".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::BoxPromptSet, ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::BoxPromptSet, ArtifactKind::PromptCoverage],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
             id: annotagent_runtime::CORE_MASK_TO_BBOX.to_owned(),
             display_name: "Convert masks to bounding boxes".to_owned(),
             required_capabilities: Vec::new(),
@@ -4640,6 +4648,25 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             config_schema: node_schema(json!({
                 "padding": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0}
             })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            display_name: "Prompt coverage gate".to_owned(),
+            category: NodeCategory::EvidenceAndValidation,
+            input_ports: vec![
+                catalog_port("prompts", ArtifactKind::BoxPromptSet, true, many),
+                catalog_port("evidence", ArtifactKind::DetectionSet, false, many),
+            ],
+            output_ports: vec![
+                catalog_port("prompts", ArtifactKind::BoxPromptSet, true, many),
+                catalog_port("coverage", ArtifactKind::PromptCoverage, true, many),
+            ],
+            config_schema: node_schema(json!({})),
             required_model_capability: None,
             cardinality: NodeCardinality::ManyToMany,
             side_effect: NodeSideEffect::None,

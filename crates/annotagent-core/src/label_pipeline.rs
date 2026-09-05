@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId, LabelId,
-    MaskEncoding, ModelId, ModelImage, ModelRegistry, NodePort, NodeRegistry, NormalizedPoint,
-    NormalizedRect, ProjectSchema, ResourceRequirements, RetryPolicy, ReviewGate, RunId,
-    ScoreSemantics, TaskId, ValidationIssue, VisionArtifactValue, VisionBackendError,
+    ArtifactId, ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId,
+    LabelId, MaskEncoding, ModelId, ModelImage, ModelRegistry, NodePort, NodeRegistry,
+    NormalizedPoint, NormalizedRect, ProjectSchema, ResourceRequirements, RetryPolicy, ReviewGate,
+    RunId, ScoreSemantics, TaskId, ValidationIssue, VisionArtifactValue, VisionBackendError,
     VisionBackendTimings, VisionBackendUsage, VisionCapability, WORKFLOW_SCHEMA_VERSION,
     WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
 };
@@ -292,6 +292,56 @@ pub struct BoxPromptSetArtifact {
     pub image_id: ImageId,
     pub source_detections: ArtifactRef,
     pub prompts: Vec<BoxPrompt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptCoverageState {
+    Covered,
+    PartiallyCovered,
+    OutsidePrompt,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptCoverageAction {
+    ProceedToRefinement,
+    ExpandAndRelocalize,
+    SearchTiles,
+    HumanReview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptCoverageEvidenceKind {
+    RelocalizedCandidate,
+    CropBoundary,
+    CropVerifier,
+    IndependentDetector,
+    HistoricalCorrection,
+    DomainValidator,
+    MaskPromptRelationship,
+}
+
+/// Observable evidence used by a prompt-coverage decision. There is deliberately no synthesized
+/// probability: absent evidence produces `Unknown` rather than a fabricated confidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptCoverageEvidence {
+    pub kind: PromptCoverageEvidenceKind,
+    pub source: ArtifactRef,
+    pub observation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptCoverageArtifact {
+    pub reference: ArtifactRef,
+    pub image_id: ImageId,
+    pub candidate_artifact_id: ArtifactId,
+    pub search_region_artifact_id: Option<ArtifactId>,
+    pub state: PromptCoverageState,
+    pub evidence: Vec<PromptCoverageEvidence>,
+    pub recommended_action: PromptCoverageAction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -750,6 +800,7 @@ pub enum PipelineArtifact {
     DetectionSet(DetectionSetArtifact),
     BoxPromptSet(BoxPromptSetArtifact),
     PointPromptSet(PointPromptSetArtifact),
+    PromptCoverage(PromptCoverageArtifact),
     MaskSet(MaskSetArtifact),
     SemanticMask(SemanticMaskArtifact),
     PolygonSet(PolygonSetArtifact),
@@ -767,6 +818,7 @@ impl PipelineArtifact {
             Self::DetectionSet(_) => ArtifactKind::DetectionSet,
             Self::BoxPromptSet(_) => ArtifactKind::BoxPromptSet,
             Self::PointPromptSet(_) => ArtifactKind::PointPromptSet,
+            Self::PromptCoverage(_) => ArtifactKind::PromptCoverage,
             Self::MaskSet(_) => ArtifactKind::MaskSet,
             Self::SemanticMask(_) => ArtifactKind::SemanticMask,
             Self::PolygonSet(_) => ArtifactKind::PolygonSet,
@@ -784,6 +836,7 @@ impl PipelineArtifact {
             Self::DetectionSet(artifact) => &artifact.reference,
             Self::BoxPromptSet(artifact) => &artifact.reference,
             Self::PointPromptSet(artifact) => &artifact.reference,
+            Self::PromptCoverage(artifact) => &artifact.reference,
             Self::MaskSet(artifact) => &artifact.reference,
             Self::SemanticMask(artifact) => &artifact.reference,
             Self::PolygonSet(artifact) => &artifact.reference,
@@ -802,6 +855,7 @@ impl PipelineArtifact {
             Self::DetectionSet(artifact) => &mut artifact.reference,
             Self::BoxPromptSet(artifact) => &mut artifact.reference,
             Self::PointPromptSet(artifact) => &mut artifact.reference,
+            Self::PromptCoverage(artifact) => &mut artifact.reference,
             Self::MaskSet(artifact) => &mut artifact.reference,
             Self::SemanticMask(artifact) => &mut artifact.reference,
             Self::PolygonSet(artifact) => &mut artifact.reference,
@@ -819,6 +873,7 @@ impl PipelineArtifact {
             Self::DetectionSet(artifact) => artifact.image_id,
             Self::BoxPromptSet(artifact) => artifact.image_id,
             Self::PointPromptSet(artifact) => artifact.image_id,
+            Self::PromptCoverage(artifact) => artifact.image_id,
             Self::MaskSet(artifact) => artifact.image_id,
             Self::SemanticMask(artifact) => artifact.image_id,
             Self::PolygonSet(artifact) => artifact.image_id,
@@ -835,6 +890,7 @@ impl PipelineArtifact {
             Self::DetectionSet(artifact) => artifact.validate(),
             Self::BoxPromptSet(artifact) => artifact.validate(),
             Self::PointPromptSet(artifact) => artifact.validate(),
+            Self::PromptCoverage(artifact) => artifact.validate(),
             Self::MaskSet(artifact) => artifact.validate(),
             Self::SemanticMask(artifact) => artifact.validate(),
             Self::PolygonSet(artifact) => artifact.validate(),
@@ -843,6 +899,32 @@ impl PipelineArtifact {
             Self::ClassificationSet(artifact) => artifact.validate(),
             Self::AnnotationCandidateSet(artifact) => artifact.validate(),
         }
+    }
+}
+
+impl PromptCoverageArtifact {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_set_reference(&self.reference, ArtifactKind::PromptCoverage)?;
+        if self
+            .evidence
+            .iter()
+            .any(|evidence| evidence.observation.trim().is_empty())
+        {
+            return Err("Prompt coverage evidence observations cannot be empty".to_owned());
+        }
+        let expected_action = match self.state {
+            PromptCoverageState::Covered => PromptCoverageAction::ProceedToRefinement,
+            PromptCoverageState::PartiallyCovered => PromptCoverageAction::ExpandAndRelocalize,
+            PromptCoverageState::OutsidePrompt => PromptCoverageAction::SearchTiles,
+            PromptCoverageState::Unknown => PromptCoverageAction::HumanReview,
+        };
+        if self.recommended_action != expected_action {
+            return Err("Prompt coverage state and recommended action disagree".to_owned());
+        }
+        if self.state != PromptCoverageState::Unknown && self.evidence.is_empty() {
+            return Err("Known prompt coverage requires observable evidence".to_owned());
+        }
+        Ok(())
     }
 }
 

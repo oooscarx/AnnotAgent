@@ -1,5 +1,20 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M1 — 2026-09-05
+
+1. `outside_prompt_is_a_localization_miss_not_loose_geometry` proves the structured code produces
+   `CoarseLocalizationMiss + PromptCoverageFailure` and excludes `LooseGeometry`.
+2. `prompt_coverage_gate_blocks_a_target_outside_the_prompt` supplies a separate re-localized
+   DetectionSet above a coarse prompt. Runtime emits an evidence-bearing `OutsidePrompt` Artifact,
+   recommends `SearchTiles`, routes `search_tiles` and exposes `prompt_outside_target`.
+3. `prompt_coverage_gate_keeps_missing_evidence_unknown` proves absent independent evidence creates
+   `Unknown`, an empty evidence list and a `review` route instead of fake confidence.
+4. `automatic_prompted_segmentation_requires_prompt_coverage` proves static validation blocks a
+   segment-to-Commit path with `prompt_coverage_check_missing` and accepts the typed gated path.
+5. The public Node Registry exposes Prompt Coverage as an inspectable Artifact and
+   `core.prompt_coverage_gate` as a deterministic node; no model brand or Project label appears in
+   Core.
+
 ## Small-Object Localization Recovery M0 — 2026-09-05
 
 1. `small_object_fixture_reproduces_missed_prompt_and_refiner_drift` decodes the deterministic

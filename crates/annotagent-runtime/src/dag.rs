@@ -773,6 +773,7 @@ fn built_in_output(
                     PipelineArtifact::Image(_)
                     | PipelineArtifact::BoxPromptSet(_)
                     | PipelineArtifact::PointPromptSet(_)
+                    | PipelineArtifact::PromptCoverage(_)
                     | PipelineArtifact::PolygonSet(_)
                     | PipelineArtifact::CropSet(_) => {}
                 }
@@ -819,6 +820,7 @@ fn built_in_output(
                         PipelineArtifact::Image(_)
                         | PipelineArtifact::BoxPromptSet(_)
                         | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PromptCoverage(_)
                         | PipelineArtifact::PolygonSet(_)
                         | PipelineArtifact::CropSet(_) => false,
                     })

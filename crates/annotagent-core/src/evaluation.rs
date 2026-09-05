@@ -27,6 +27,78 @@ pub enum AnnotationFailureClass {
     InsufficientEvidence,
 }
 
+/// Geometry-specific diagnosis used to decide whether refinement, renewed localization or human
+/// review is the safe next action. This is intentionally separate from provider/runtime failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalizationFailureClass {
+    ProviderFailure,
+    NoCandidate,
+    SemanticFalsePositive,
+    CoarseLocalizationMiss,
+    PromptCoverageFailure,
+    LooseGeometry,
+    TightGeometry,
+    RefinerDrift,
+    WeakMask,
+    CoordinateProjectionError,
+    InsufficientEvidence,
+}
+
+/// Maps structured Runtime codes to localization diagnoses. Multiple diagnoses are intentional:
+/// an observed target outside the prompt is both a coarse-localization miss and a prompt-coverage
+/// failure, not a generic loose-box condition.
+#[must_use]
+pub fn classify_localization_failures(code: &str, message: &str) -> Vec<LocalizationFailureClass> {
+    let evidence = format!("{code} {message}").to_ascii_lowercase();
+    if contains_any(
+        &evidence,
+        &["provider", "credential", "rate_limit", "model timeout"],
+    ) {
+        vec![LocalizationFailureClass::ProviderFailure]
+    } else if contains_any(
+        &evidence,
+        &["no_candidate", "no candidate", "empty_detection"],
+    ) {
+        vec![LocalizationFailureClass::NoCandidate]
+    } else if contains_any(
+        &evidence,
+        &[
+            "prompt_outside_target",
+            "outside prompt",
+            "coarse localization miss",
+        ],
+    ) {
+        vec![
+            LocalizationFailureClass::CoarseLocalizationMiss,
+            LocalizationFailureClass::PromptCoverageFailure,
+        ]
+    } else if contains_any(
+        &evidence,
+        &[
+            "prompt_coverage_check_missing",
+            "invalid_prompt_sent_to_refiner",
+            "refiner_used_as_detector",
+        ],
+    ) {
+        vec![LocalizationFailureClass::PromptCoverageFailure]
+    } else if contains_any(&evidence, &["wrong_object", "not_target", "false_positive"]) {
+        vec![LocalizationFailureClass::SemanticFalsePositive]
+    } else if contains_any(&evidence, &["refiner_drift", "refiner conflict"]) {
+        vec![LocalizationFailureClass::RefinerDrift]
+    } else if contains_any(&evidence, &["weak_mask", "empty mask"]) {
+        vec![LocalizationFailureClass::WeakMask]
+    } else if contains_any(&evidence, &["projection", "coordinate transform"]) {
+        vec![LocalizationFailureClass::CoordinateProjectionError]
+    } else if contains_any(&evidence, &["too_loose", "includes_background"]) {
+        vec![LocalizationFailureClass::LooseGeometry]
+    } else if contains_any(&evidence, &["too_tight", "partial_object"]) {
+        vec![LocalizationFailureClass::TightGeometry]
+    } else {
+        vec![LocalizationFailureClass::InsufficientEvidence]
+    }
+}
+
 /// Classifies an already-structured Runtime/validation code. This is intentionally conservative:
 /// unknown errors remain invalid-artifact failures instead of being guessed as geometry errors.
 #[must_use]
@@ -1222,6 +1294,22 @@ mod tests {
         assert!(evaluation.issue_codes.is_empty());
         assert!(evaluation.coarse_refined_iou > 0.4);
         assert!((evaluation.area_ratio - 0.4225).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn outside_prompt_is_a_localization_miss_not_loose_geometry() {
+        let failures = classify_localization_failures(
+            "prompt_outside_target",
+            "relocalized candidate is above the coarse prompt",
+        );
+        assert_eq!(
+            failures,
+            vec![
+                LocalizationFailureClass::CoarseLocalizationMiss,
+                LocalizationFailureClass::PromptCoverageFailure,
+            ]
+        );
+        assert!(!failures.contains(&LocalizationFailureClass::LooseGeometry));
     }
 
     #[test]

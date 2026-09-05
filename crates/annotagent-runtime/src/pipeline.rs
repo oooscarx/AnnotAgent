@@ -11,9 +11,11 @@ use annotagent_core::{
     EvidenceGateInput, EvidenceGateReason, EvidenceGateReport, EvidenceRejectRule,
     EvidenceReviewRule, GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION, GeometryRefinementThresholds,
     GeometryRefinementTrace, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact,
-    PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact, SuggestedAction, TaskId,
-    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
-    evaluate_geometry_refinement, mask_tight_bbox,
+    PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact, PromptCoverageAction,
+    PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind,
+    PromptCoverageState, SuggestedAction, TaskId, ValidationEvidence, ValidationIssue,
+    VisionArtifact, VisionArtifactValue, VisionCapability, evaluate_geometry_refinement,
+    mask_tight_bbox,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -25,6 +27,7 @@ use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 pub const CORE_CROP: &str = "core.crop";
 pub const CORE_EXISTING_ANNOTATIONS: &str = "core.existing_annotations";
 pub const CORE_DETECTIONS_TO_BOX_PROMPTS: &str = "core.detections_to_box_prompts";
+pub const CORE_PROMPT_COVERAGE_GATE: &str = "core.prompt_coverage_gate";
 pub const CORE_MASK_TO_BBOX: &str = "core.mask_to_bbox";
 pub const CORE_GEOMETRY_QUALITY_EVALUATION: &str = "core.geometry_quality_evaluation";
 pub const CORE_GEOMETRY_DECISION: &str = "core.geometry_decision";
@@ -58,6 +61,7 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_TILE => run_tile(&context),
             CORE_CROP => run_crop(&context),
             CORE_DETECTIONS_TO_BOX_PROMPTS => run_detections_to_box_prompts(&context),
+            CORE_PROMPT_COVERAGE_GATE => run_prompt_coverage_gate(&context),
             CORE_MASK_TO_BBOX => run_mask_to_bbox(&context),
             CORE_GEOMETRY_QUALITY_EVALUATION => run_geometry_quality_evaluation(&context),
             CORE_GEOMETRY_DECISION => run_geometry_decision(&context),
@@ -496,6 +500,148 @@ fn run_detections_to_box_prompts(
             ),
         ]),
         pipeline_artifacts: vec![PipelineArtifact::BoxPromptSet(prompts)],
+        ..DagNodeOutput::default()
+    })
+}
+
+fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let prompts = one_box_prompt_set(context)?;
+    prompts
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("invalid_prompt_sent_to_refiner", error))?;
+    let evidence_sets = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::DetectionSet(set)
+                if set.reference.artifact_id != prompts.source_detections.artifact_id =>
+            {
+                Some(set)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let coverage_reference = output_reference(context, "coverage", ArtifactKind::PromptCoverage)?;
+    let mut coverage = Vec::with_capacity(prompts.prompts.len());
+    for prompt in &prompts.prompts {
+        let best = evidence_sets
+            .iter()
+            .flat_map(|set| {
+                set.detections
+                    .iter()
+                    .map(move |detection| (*set, detection))
+            })
+            .max_by(|(_, left), (_, right)| {
+                prompt
+                    .bbox
+                    .intersection_area(left.bbox)
+                    .total_cmp(&prompt.bbox.intersection_area(right.bbox))
+            });
+        let (state, evidence) = best.map_or_else(
+            || (PromptCoverageState::Unknown, Vec::new()),
+            |(set, candidate)| {
+                let intersection = prompt.bbox.intersection_area(candidate.bbox);
+                let covered_fraction = intersection / candidate.bbox.area();
+                let state = if covered_fraction >= 0.98 {
+                    PromptCoverageState::Covered
+                } else if intersection > f32::EPSILON {
+                    PromptCoverageState::PartiallyCovered
+                } else {
+                    PromptCoverageState::OutsidePrompt
+                };
+                (
+                    state,
+                    vec![PromptCoverageEvidence {
+                        kind: PromptCoverageEvidenceKind::RelocalizedCandidate,
+                        source: set.reference.item(&candidate.detection_id),
+                        observation: format!(
+                            "observable candidate coverage fraction {covered_fraction:.6}"
+                        ),
+                    }],
+                )
+            },
+        );
+        let recommended_action = match state {
+            PromptCoverageState::Covered => PromptCoverageAction::ProceedToRefinement,
+            PromptCoverageState::PartiallyCovered => PromptCoverageAction::ExpandAndRelocalize,
+            PromptCoverageState::OutsidePrompt => PromptCoverageAction::SearchTiles,
+            PromptCoverageState::Unknown => PromptCoverageAction::HumanReview,
+        };
+        let mut candidate_reference = coverage_reference.clone();
+        candidate_reference.artifact_id =
+            format!("{}:{}", candidate_reference.artifact_id, prompt.id);
+        let artifact = PromptCoverageArtifact {
+            reference: candidate_reference,
+            image_id: prompts.image_id,
+            candidate_artifact_id: ArtifactId::new(),
+            search_region_artifact_id: None,
+            state,
+            evidence,
+            recommended_action,
+        };
+        artifact
+            .validate()
+            .map_err(|error| DagNodeFailure::terminal("prompt_coverage_check_failed", error))?;
+        coverage.push(PipelineArtifact::PromptCoverage(artifact));
+    }
+    let state = coverage.iter().find_map(|artifact| match artifact {
+        PipelineArtifact::PromptCoverage(artifact) => Some(artifact.state),
+        _ => None,
+    });
+    let route = if coverage.iter().all(|artifact| {
+        matches!(
+            artifact,
+            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+                state: PromptCoverageState::Covered,
+                ..
+            })
+        )
+    }) && !coverage.is_empty()
+    {
+        "refine"
+    } else if coverage.iter().any(|artifact| {
+        matches!(
+            artifact,
+            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+                state: PromptCoverageState::PartiallyCovered,
+                ..
+            })
+        )
+    }) {
+        "relocalize"
+    } else if coverage.iter().any(|artifact| {
+        matches!(
+            artifact,
+            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+                state: PromptCoverageState::OutsidePrompt,
+                ..
+            })
+        )
+    }) {
+        "search_tiles"
+    } else {
+        "review"
+    };
+    let mut output = vec![PipelineArtifact::BoxPromptSet(prompts.clone())];
+    output.extend(coverage);
+    Ok(DagNodeOutput {
+        pipeline_artifacts: output,
+        route: Some(route.to_owned()),
+        metadata: BTreeMap::from([
+            ("coverage_state".to_owned(), serde_json::json!(state)),
+            (
+                "prompt_count".to_owned(),
+                serde_json::json!(prompts.prompts.len()),
+            ),
+            (
+                "failure_code".to_owned(),
+                serde_json::json!(match route {
+                    "search_tiles" => Some("prompt_outside_target"),
+                    "relocalize" | "review" => Some("prompt_coverage_check_missing"),
+                    _ => None,
+                }),
+            ),
+        ]),
         ..DagNodeOutput::default()
     })
 }
@@ -2065,6 +2211,7 @@ fn run_confidence_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, Da
         PipelineArtifact::Image(_)
         | PipelineArtifact::BoxPromptSet(_)
         | PipelineArtifact::PointPromptSet(_)
+        | PipelineArtifact::PromptCoverage(_)
         | PipelineArtifact::PolygonSet(_)
         | PipelineArtifact::CropSet(_) => false,
     });
@@ -2147,6 +2294,7 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                         PipelineArtifact::Image(_)
                         | PipelineArtifact::BoxPromptSet(_)
                         | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PromptCoverage(_)
                         | PipelineArtifact::PolygonSet(_)
                         | PipelineArtifact::CropSet(_) => false,
                     });
@@ -2179,6 +2327,7 @@ fn run_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFa
                         PipelineArtifact::Image(_)
                         | PipelineArtifact::BoxPromptSet(_)
                         | PipelineArtifact::PointPromptSet(_)
+                        | PipelineArtifact::PromptCoverage(_)
                         | PipelineArtifact::PolygonSet(_)
                         | PipelineArtifact::CropSet(_) => false,
                     });
@@ -2224,6 +2373,7 @@ fn set_candidate_state(artifacts: &mut [PipelineArtifact], state: ArtifactValida
             PipelineArtifact::Image(_)
             | PipelineArtifact::BoxPromptSet(_)
             | PipelineArtifact::PointPromptSet(_)
+            | PipelineArtifact::PromptCoverage(_)
             | PipelineArtifact::PolygonSet(_)
             | PipelineArtifact::CropSet(_) => {}
         }
@@ -2256,6 +2406,7 @@ fn artifact_confidences(artifact: &PipelineArtifact) -> Vec<f32> {
         | PipelineArtifact::Image(_)
         | PipelineArtifact::BoxPromptSet(_)
         | PipelineArtifact::PointPromptSet(_)
+        | PipelineArtifact::PromptCoverage(_)
         | PipelineArtifact::PolygonSet(_)
         | PipelineArtifact::CandidateClusterSet(_)
         | PipelineArtifact::CropSet(_) => Vec::new(),
@@ -2618,6 +2769,171 @@ mod tests {
                 .comparable_confidence(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn prompt_coverage_gate_blocks_a_target_outside_the_prompt() {
+        let image_id = ImageId::new();
+        let coarse = detection_set(
+            image_id,
+            "coarse-set",
+            "coarse-model",
+            vec![detection(
+                "coarse-set",
+                "coarse",
+                "target",
+                [0.48, 0.50, 0.04, 0.04],
+                Some(0.8),
+                "coarse-model",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(coarse_set) = &coarse else {
+            panic!("coarse detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            coarse_set,
+            0.02,
+        )
+        .expect("box prompts");
+        let relocalized = detection_set(
+            image_id,
+            "local-set",
+            "local-model",
+            vec![detection(
+                "local-set",
+                "target",
+                "target",
+                [0.50, 0.43, 0.03, 0.04],
+                Some(0.9),
+                "local-model",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![PipelineArtifact::BoxPromptSet(prompts), relocalized],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("coverage decision");
+        assert_eq!(output.route.as_deref(), Some("search_tiles"));
+        assert_eq!(output.metadata["failure_code"], "prompt_outside_target");
+        let coverage = output
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::OutsidePrompt);
+        assert_eq!(
+            coverage.recommended_action,
+            PromptCoverageAction::SearchTiles
+        );
+        assert_eq!(coverage.evidence.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn prompt_coverage_gate_keeps_missing_evidence_unknown() {
+        let image_id = ImageId::new();
+        let coarse = detection_set(
+            image_id,
+            "coarse-set",
+            "coarse-model",
+            vec![detection(
+                "coarse-set",
+                "coarse",
+                "target",
+                [0.2, 0.2, 0.2, 0.2],
+                Some(0.8),
+                "coarse-model",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(coarse_set) = &coarse else {
+            panic!("coarse detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            coarse_set,
+            0.0,
+        )
+        .expect("box prompts");
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![PipelineArtifact::BoxPromptSet(prompts)],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("unknown coverage");
+        assert_eq!(output.route.as_deref(), Some("review"));
+        let coverage = output
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::Unknown);
+        assert!(coverage.evidence.is_empty());
     }
 
     #[tokio::test]

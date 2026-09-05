@@ -180,6 +180,7 @@ pub enum ArtifactKind {
     DetectionSet,
     BoxPromptSet,
     PointPromptSet,
+    PromptCoverage,
     MaskSet,
     PolygonSet,
     CandidateClusterSet,
