@@ -93,6 +93,26 @@ impl DomainSkill for RoboCupSkill {
                     "resources/advisor.md",
                     include_str!("../../../skills/robocup/resources/advisor.md"),
                 )]),
+                "resources/detection-prompt.md" => Ok(vec![resource(
+                    "resources/detection-prompt.md",
+                    include_str!("../../../skills/robocup/ball/resources/detection-prompt.md"),
+                )]),
+                "resources/local-relocalization-prompt.md" => Ok(vec![resource(
+                    "resources/local-relocalization-prompt.md",
+                    include_str!(
+                        "../../../skills/robocup/ball/resources/local-relocalization-prompt.md"
+                    ),
+                )]),
+                "resources/crop-verification-prompt.md" => Ok(vec![resource(
+                    "resources/crop-verification-prompt.md",
+                    include_str!(
+                        "../../../skills/robocup/ball/resources/crop-verification-prompt.md"
+                    ),
+                )]),
+                "resources/hard-negatives.md" => Ok(vec![resource(
+                    "resources/hard-negatives.md",
+                    include_str!("../../../skills/robocup/ball/resources/hard-negatives.md"),
+                )]),
                 "tasks/ball.md" => Ok(vec![resource(
                     "tasks/ball.md",
                     include_str!("../../../skills/robocup/tasks/ball.md"),
@@ -107,6 +127,24 @@ impl DomainSkill for RoboCupSkill {
             resource(
                 "resources/advisor.md",
                 include_str!("../../../skills/robocup/resources/advisor.md"),
+            ),
+            resource(
+                "resources/detection-prompt.md",
+                include_str!("../../../skills/robocup/ball/resources/detection-prompt.md"),
+            ),
+            resource(
+                "resources/local-relocalization-prompt.md",
+                include_str!(
+                    "../../../skills/robocup/ball/resources/local-relocalization-prompt.md"
+                ),
+            ),
+            resource(
+                "resources/crop-verification-prompt.md",
+                include_str!("../../../skills/robocup/ball/resources/crop-verification-prompt.md"),
+            ),
+            resource(
+                "resources/hard-negatives.md",
+                include_str!("../../../skills/robocup/ball/resources/hard-negatives.md"),
             ),
         ];
         if let Some(task) = &request.task_id {
@@ -144,21 +182,51 @@ impl DomainSkill for RoboCupSkill {
             .map(|skill| {
                 annotagent_core::Skill::workflow_templates(&skill)
                     .into_iter()
-                    .filter(|template| template.id == "robocup.ball.vlm-bootstrap")
+                    .filter(|template| {
+                        matches!(
+                            template.id.as_str(),
+                            "robocup.ball.vlm-bootstrap" | "robocup.ball.small-object-recovery"
+                        )
+                    })
                     .map(|mut template| {
                         for node in &mut template.nodes {
                             node.required_skills = vec!["robocup".to_owned()];
+                            if let Some(resource_id) = node
+                                .parameters
+                                .get("prompt_resource_id")
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|id| id.strip_prefix("ball/"))
+                                .map(ToOwned::to_owned)
+                            {
+                                node.parameters.insert(
+                                    "prompt_resource_id".to_owned(),
+                                    serde_json::json!(resource_id),
+                                );
+                            }
                             for validator in &mut node.validators {
                                 if let Some(unqualified) = validator.strip_prefix("robocup.ball.") {
                                     *validator = unqualified.to_owned();
                                 }
                             }
                         }
-                        template.resource_versions = std::collections::BTreeMap::from([
-                            ("SKILL.md".to_owned(), "1".to_owned()),
-                            ("resources/advisor.md".to_owned(), "1".to_owned()),
-                            ("tasks/ball.md".to_owned(), "1".to_owned()),
-                        ]);
+                        template.resource_versions = template
+                            .resource_versions
+                            .into_iter()
+                            .map(|(resource, version)| {
+                                (
+                                    resource
+                                        .strip_prefix("ball/")
+                                        .unwrap_or(&resource)
+                                        .to_owned(),
+                                    version,
+                                )
+                            })
+                            .chain([
+                                ("SKILL.md".to_owned(), "1".to_owned()),
+                                ("resources/advisor.md".to_owned(), "1".to_owned()),
+                                ("tasks/ball.md".to_owned(), "1".to_owned()),
+                            ])
+                            .collect();
                         template
                     })
                     .collect()

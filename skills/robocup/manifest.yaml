@@ -12,13 +12,18 @@ capabilities:
   - robocup_ball_annotation
 templates:
   - robocup.ball.vlm-bootstrap
+  - robocup.ball.small-object-recovery
   - robocup.ball.detector-first
 summary_resources:
   - SKILL.md
   - resources/advisor.md
+  - resources/detection-prompt.md
+  - resources/local-relocalization-prompt.md
 task_resources:
   objects:
     - tasks/ball.md
+    - resources/hard-negatives.md
+    - resources/crop-verification-prompt.md
 correction_taxonomy:
   - white_shoe_as_ball
   - white_sock_as_ball

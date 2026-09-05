@@ -260,6 +260,8 @@ fn rate_not_higher(baseline: Option<f32>, candidate: Option<f32>, margin: f32) -
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipelineImprovementDiagnosis {
     pub primary_failure_class: AnnotationFailureClass,
+    #[serde(default)]
+    pub localization_failure_classes: Vec<crate::LocalizationFailureClass>,
     pub evidence_run_ids: Vec<RunId>,
     pub evidence_statements: Vec<String>,
     pub semantic_target_correct_count: u32,

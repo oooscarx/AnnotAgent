@@ -2,6 +2,32 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 4 — Versioned Ball resources and evidence-driven Builder
+
+- Added three `robocup.ball` Prompt Resources at version `2.0.0`: whole-image detection, local
+  re-localization and crop verification. Every VLM node freezes the resource id, version, exact
+  SHA-256 and prompt content; compatibility Projects expose the same resources without model-brand
+  assumptions.
+- Added `robocup.ball.small-object-recovery`: coarse VLM → candidate-relative scale/search region
+  → untouched-original crop → local crop-coordinate re-localization → root projection → domain
+  validation → independent crop verification → Prompt Coverage → prompted segmentation → mask
+  bbox → geometry evaluation/decision → Review/Commit.
+- The recovery graph is Registry-bound. Ready production Provider profiles bind VLM nodes; Ready,
+  checkpoint-pinned, non-Fixture Expert Models can bind prompted segmentation. Missing refinement
+  setup produces a reviewed Draft/Setup Alternative, never a mock or invented binding.
+- Deterministic Candidate ranking rewards explicit expansion, coordinate projection and Prompt
+  Coverage for Balanced/Accurate goals, while Low Cost continues to penalize additional model
+  calls. `Improve Automation` detects coarse misses, prompt-coverage failures and Refiner drift and
+  adds the recovery subgraph to the selected immutable baseline's editable clone.
+- Dry Run diagnosis now rejects unconditional segmentation when evidence says the prompt is outside
+  the target. Provider failure, no candidate, semantic false positive, coarse localization miss,
+  loose geometry and Refiner drift retain different permitted repairs.
+- Focused Core (108), Runtime (29), RoboCup (17) and Application (69 runnable, one explicit
+  billable ignore) tests pass. No Provider request, credential access, Published mutation, formal
+  Run, push or remote operation was performed.
+
+Milestone 4 status: `PASS`.
+
 ## Milestone 3 — Bounded tile search and recovery budget
 
 - Added `LocalizationRecoveryBudget`, usage and decision contracts for local re-localization,

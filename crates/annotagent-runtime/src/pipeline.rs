@@ -796,6 +796,18 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             _ => None,
         })
         .collect::<Vec<_>>();
+    let candidate_set =
+        context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::DetectionSet(set)
+                    if set.reference.artifact_id == prompts.source_detections.artifact_id =>
+                {
+                    Some(set)
+                }
+                _ => None,
+            });
     let coverage_reference = output_reference(context, "coverage", ArtifactKind::PromptCoverage)?;
     let mut coverage = Vec::with_capacity(prompts.prompts.len());
     for prompt in &prompts.prompts {
@@ -898,6 +910,14 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         "review"
     };
     let mut output = vec![PipelineArtifact::BoxPromptSet(prompts.clone())];
+    if let Some(candidate_set) = candidate_set {
+        let mut candidates = candidate_set.clone();
+        candidates.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
+        candidates
+            .metadata
+            .insert("prompt_coverage_route".to_owned(), serde_json::json!(route));
+        output.push(PipelineArtifact::DetectionSet(candidates));
+    }
     output.extend(coverage);
     Ok(DagNodeOutput {
         pipeline_artifacts: output,

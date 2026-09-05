@@ -2038,3 +2038,26 @@ Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.
    after the final lint fix before the milestone commit.
 
 No credential, Published production Workflow, formal Run, remote or push was modified.
+
+## Small-Object Localization Recovery M4 — 2026-09-05
+
+1. Prompt files under `skills/robocup/ball/resources/` have exact SHA-256 identities
+   `5530dcde…9fce`, `c10efdd0…a9e` and `7d8c2980…b9516`. Template node parameters and Workflow
+   resource versions freeze those identities and the full prompt text.
+2. `pack_and_ball_domain_are_separate_and_templates_are_model_agnostic` proves the recovery
+   template contains expansion, crop, projection, Prompt Coverage, segmentation, mask conversion
+   and geometry decision, while containing neither a Qwen nor EfficientSAM binding.
+3. `discovered_prompted_segmentation_path_is_materialized_at_discovery_limit` proves a FromScratch
+   Builder with a Ready VLM profile and Ready prompted-segmentation profile selects the stronger
+   localization-recovery Candidate rather than the bootstrap or direct-refinement Candidate.
+4. `localization_recovery_patch_preserves_existing_plan_and_falls_back_without_refiner` proves
+   every existing node id is retained, a typed `core.expand_region` subgraph appears in the Diff,
+   and an unavailable Refiner removes the segmentation branch and routes Covered candidates to
+   Human Review.
+5. The Dry Run diagnosis regression maps `prompt_outside_target` to
+   `localization_recovery_required`; it does not recommend direct prompted segmentation.
+6. Verification passed 108 Core tests, 29 Runtime tests, 6 RoboCup unit plus 11 RoboCup integration
+   tests, and 69 runnable Application tests. The single billable smoke test stayed explicitly
+   ignored.
+
+No credential, real Provider call, Published Workflow, formal Run, remote or push was modified.

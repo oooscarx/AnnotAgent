@@ -462,7 +462,7 @@ fn required_robot_attributes_and_memory_change_review_decision() {
 }
 
 #[test]
-fn robocup_exposes_one_lean_default_ball_workflow_template() {
+fn robocup_exposes_lean_default_and_small_object_recovery_templates() {
     let skill = RoboCupSkill::new().expect("RoboCup Skill");
     assert_eq!(skill.task_templates().len(), 1);
     assert_eq!(skill.workflow().nodes.len(), 1);
@@ -480,7 +480,10 @@ fn robocup_exposes_one_lean_default_ball_workflow_template() {
             .iter()
             .map(|template| template.id.as_str())
             .collect::<Vec<_>>(),
-        ["robocup.ball.vlm-bootstrap"]
+        [
+            "robocup.ball.vlm-bootstrap",
+            "robocup.ball.small-object-recovery"
+        ]
     );
     for template in &templates {
         assert!(

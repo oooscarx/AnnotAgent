@@ -32,37 +32,38 @@ use annotagent_core::{
     GeometryCalibrationReport, GeometryCalibrationStaleness, GeometryCalibrationStatus,
     GeometryCorrectionReason, ImageId, ImportIssue, ImportReport, ImportRequest, InputModality,
     LabelId, LabelPipeline, LabelPipelineStaticValidator, LabelWorkflowComposition,
-    LicenseMetadata, ModelAvailability, ModelAvailabilityEvidence, ModelAvailabilityStatus,
-    ModelBinding as PipelineModelBinding, ModelBindingId, ModelBindingMatch, ModelBindingRole,
-    ModelBindingSource, ModelCapability, ModelConnection, ModelInputContract, ModelLimits,
-    ModelMessage, ModelOutputContract, ModelPricing, ModelProfile, ModelProfileId,
-    ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest, ModelRole,
-    ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort, NodeRegistry,
-    NodeSideEffect, NormalizedRect, ObjectSizeBucket, PIPELINE_IMPROVEMENT_SCHEMA_VERSION,
-    PipelineArtifact, PipelineBuilderConstraints, PipelineBuilderProviderProfile,
-    PipelineBuilderTool, PipelineBuilderToolRegistry, PipelineDraftDiff, PipelineDraftHistory,
-    PipelineDraftTools, PipelineGeometryMetrics, PipelineGeometrySizeMetrics,
-    PipelineGrammarValidator, PipelineImprovementDiagnosis, PipelineImprovementId,
-    PipelineImprovementPolicy, PipelineImprovementSession, PipelineImprovementStatus,
-    PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality, PortDefinition,
-    PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId, ProjectModelBinding,
-    ProjectSchema, ProjectSnapshot, PromptContract, PromptKind, ProtocolFeatures,
-    ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot, ProviderHealthStatus,
-    ProviderId, ProviderProfile, PublishedModelAssetReference, PublishedWorkflowVersion,
-    RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy, ReviewGate, ReviewStatus, RunEvent,
-    RunEventKind, RunEventPayload, RunId, RunStatus, RuntimePolicyDefinition, RuntimePolicyScope,
-    RuntimeRequirements, SampleTestOutcome, SampleTestOutcomeStatus, SampleTestSummary,
-    ScoreSemantics, SharedWorkflowStage, SkillResourceRequest, SnapshotImage, TaskConfig, TaskId,
-    TaskKind, TaskRunStatus, TokenUsage, ToolDefinition, UsageSource, UsageSummary,
-    VisionArtifactValue, VisionCapability, VisionInferenceRequest, VisionInputType,
-    VisionModelDescriptor, VisionModelHealth, VisionModelHealthStatus, VisionModelLimits,
-    VisionModelProvider, VisionNodeDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor,
-    WorkflowAdvisorAgentReport, WorkflowAdvisorInput, WorkflowConstraints, WorkflowDataProfile,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowDryRunNodeResult,
-    WorkflowDryRunReport, WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot, WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue,
-    WorkflowValidationReport, WorkflowVersionComparison, all_artifact_kinds, center_shift,
-    compare_pipeline_geometry_metrics, rect_iou, resolve_model_binding,
+    LicenseMetadata, LocalizationFailureClass, ModelAvailability, ModelAvailabilityEvidence,
+    ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
+    ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
+    ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile,
+    ModelProfileId, ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest,
+    ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort,
+    NodeRegistry, NodeSideEffect, NormalizedRect, ObjectSizeBucket,
+    PIPELINE_IMPROVEMENT_SCHEMA_VERSION, PipelineArtifact, PipelineBuilderConstraints,
+    PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
+    PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGeometryMetrics,
+    PipelineGeometrySizeMetrics, PipelineGrammarValidator, PipelineImprovementDiagnosis,
+    PipelineImprovementId, PipelineImprovementPolicy, PipelineImprovementSession,
+    PipelineImprovementStatus, PipelineSource, PipelineStep, PluginModelSnapshot, PortCardinality,
+    PortDefinition, PricingConfig, PricingSource, ProjectGeometryPolicy, ProjectId,
+    ProjectModelBinding, ProjectSchema, ProjectSnapshot, PromptContract, PromptKind,
+    ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+    ProviderHealthStatus, ProviderId, ProviderProfile, PublishedModelAssetReference,
+    PublishedWorkflowVersion, RegistryWorkflowAdvisor, ResourceRequirements, RetryPolicy,
+    ReviewGate, ReviewStatus, RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus,
+    RuntimePolicyDefinition, RuntimePolicyScope, RuntimeRequirements, SampleTestOutcome,
+    SampleTestOutcomeStatus, SampleTestSummary, ScoreSemantics, SharedWorkflowStage,
+    SkillResourceRequest, SnapshotImage, TaskConfig, TaskId, TaskKind, TaskRunStatus, TokenUsage,
+    ToolDefinition, UsageSource, UsageSummary, VisionArtifactValue, VisionCapability,
+    VisionInferenceRequest, VisionInputType, VisionModelDescriptor, VisionModelHealth,
+    VisionModelHealthStatus, VisionModelLimits, VisionModelProvider, VisionNodeDescriptor,
+    WORKFLOW_SCHEMA_VERSION, WorkflowAdvisor, WorkflowAdvisorAgentReport, WorkflowAdvisorInput,
+    WorkflowConstraints, WorkflowDataProfile, WorkflowDraft, WorkflowDraftNode,
+    WorkflowDraftStatus, WorkflowDryRunNodeResult, WorkflowDryRunReport,
+    WorkflowDryRunSampleResult, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
+    WorkflowStaticValidator, WorkflowSuggestion, WorkflowValidationIssue, WorkflowValidationReport,
+    WorkflowVersionComparison, all_artifact_kinds, center_shift, compare_pipeline_geometry_metrics,
+    rect_iou, resolve_model_binding,
 };
 use annotagent_export::{
     CocoExporter, CocoImporter, LabelMeExporter, LabelMeImporter, NativeExporter, NativeImporter,
@@ -772,9 +773,14 @@ add prompted segmentation; consider Tile, zoom/crop search, an available open-vo
 detector, or Review. Semantic errors such as white footwear mistaken for a football require Crop \
 Classification, a Domain Validator, a second detector, Correction Memory, or Review; segmentation may \
 tighten the wrong object and is not the primary repair. Add Detection -> Box Prompt -> Prompted Segmentation \
--> Mask to BBox only when a semantically plausible candidate exists, inspected geometry evidence is poor, \
+-> Mask to BBox only when a semantically plausible candidate exists, independently observed Prompt Coverage \
+is Covered, inspected geometry evidence is poor, \
 the conversion path is registered, and an Available prompted-segmentation Model Profile passes its \
-contracts. For small targets consider Resize or Tile -> Detection -> Merge before refinement. Prefer an \
+contracts. CoarseLocalizationMiss or PromptCoverageFailure requires candidate-relative expansion, an \
+original-image Crop, local re-localization, coordinate projection, and a Prompt Coverage Gate before \
+refinement; use bounded Tile -> Detection -> Merge only when relative search fails. RefinerDrift must \
+preserve the coarse candidate, reject refined geometry, and route to Review. For small targets consider \
+Resize or Tile -> Detection -> Merge before refinement. Prefer an \
 Available specialist whose fixed Label Space covers the target; otherwise an Available open-vocabulary \
 detector may cold-start. Missing scores remain missing and require evidence decision or Review, never a \
 fabricated confidence. Never bind unavailable, disabled, unconfigured, missing-weights, unreachable, \
@@ -2155,27 +2161,78 @@ fn bind_available_registry_models(draft: &mut WorkflowDraft, input: &WorkflowAdv
             })
             .collect::<Vec<_>>();
         profiles.sort_by_key(|profile| profile.id.to_string());
-        let Some(profile) = profiles.first() else {
+        if let Some(profile) = profiles.first() {
+            node.model_binding = Some(
+                input
+                    .model_registry
+                    .iter()
+                    .find(|runtime| {
+                        runtime.id == profile.remote_model_id
+                            || runtime.model == profile.remote_model_id
+                    })
+                    .map_or_else(
+                        || profile.remote_model_id.clone(),
+                        |runtime| runtime.id.clone(),
+                    ),
+            );
+            node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                model_profile_id: profile.id,
+                locked: true,
+            });
+            node.unresolved_model_requirement = None;
+            continue;
+        }
+        let mut experts = input
+            .expert_models
+            .iter()
+            .filter(|model| {
+                model.availability == ModelAvailability::Available
+                    && model.availability_evidence.available()
+                    && model.checkpoint.is_some()
+                    && !matches!(&model.connection, ModelConnection::Mock { .. })
+                    && !model
+                        .metadata
+                        .get("fixture_only")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    && model.capabilities.contains(&capability)
+            })
+            .collect::<Vec<_>>();
+        experts.sort_by(|left, right| left.model_id.cmp(&right.model_id));
+        if let Some(expert) = experts.first() {
+            node.model_binding = Some(expert.model_id.clone());
+            node.model_profile_binding = None;
+            node.unresolved_model_requirement = None;
+        }
+    }
+}
+
+fn freeze_node_prompt_resources(draft: &mut WorkflowDraft) {
+    for node in &draft.nodes {
+        let Some(resource_id) = node
+            .parameters
+            .get("prompt_resource_id")
+            .and_then(serde_json::Value::as_str)
+        else {
             continue;
         };
-        node.model_binding = Some(
-            input
-                .model_registry
-                .iter()
-                .find(|runtime| {
-                    runtime.id == profile.remote_model_id
-                        || runtime.model == profile.remote_model_id
-                })
-                .map_or_else(
-                    || profile.remote_model_id.clone(),
-                    |runtime| runtime.id.clone(),
-                ),
-        );
-        node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
-            model_profile_id: profile.id,
-            locked: true,
-        });
-        node.unresolved_model_requirement = None;
+        let Some(version) = node
+            .parameters
+            .get("prompt_resource_version")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let Some(sha256) = node
+            .parameters
+            .get("prompt_resource_sha256")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        draft
+            .resource_versions
+            .insert(resource_id.to_owned(), format!("{version}+sha256:{sha256}"));
     }
 }
 
@@ -2319,6 +2376,42 @@ fn synthesize_registry_plan_candidates(
         &registry_revision,
     );
     session.record_plan_candidate(baseline_candidate);
+
+    if matches!(
+        session.build_mode,
+        Some(annotagent_core::PipelineBuildMode::FromScratch)
+    ) && let Some(template) = input.workflow_templates.iter().find(|template| {
+        let types = template
+            .nodes
+            .iter()
+            .map(|node| node.node_type.as_str())
+            .collect::<BTreeSet<_>>();
+        types.contains(annotagent_runtime::CORE_EXPAND_REGION)
+            && types.contains(annotagent_runtime::CORE_PROMPT_COVERAGE_GATE)
+            && types.contains("capability.segment")
+            && types.contains(annotagent_runtime::CORE_PROJECT_COORDINATES)
+    }) {
+        let mut localized = template.instantiate(
+            input.project_id.clone(),
+            input.project_schema.project.enabled_skill_versions(),
+            chrono::Utc::now(),
+        );
+        bind_available_registry_models(&mut localized, input);
+        freeze_node_prompt_resources(&mut localized);
+        let candidate = candidate_from_draft(
+            CandidateDraftSource {
+                id: format!("registry-localization-recovery-{}", session.id),
+                name: template.name.clone(),
+                source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                fragment_ids: vec![template.id.clone()],
+                evidence: Vec::new(),
+            },
+            &localized,
+            input,
+            &registry_revision,
+        );
+        session.record_plan_candidate(candidate);
+    }
 
     let refinement_fragments = session
         .working_memory
@@ -2593,6 +2686,7 @@ fn salvage_best_discovered_plan(
     annotagent_core::RegistryPipelineSynthesizer
         .materialize_candidate(&selected, &mut draft)
         .map_err(|error| anyhow!(error))?;
+    freeze_node_prompt_resources(&mut draft);
     normalize_profile_compatibility_bindings(&mut draft, models)?;
     draft.name.clone_from(&selected.name);
     application.store.save_workflow_draft(&draft)?;
@@ -3711,6 +3805,193 @@ fn add_mandatory_geometry_review_boundaries(draft: &mut WorkflowDraft) -> Result
     Ok(())
 }
 
+fn apply_localization_recovery_patch(
+    draft: &mut WorkflowDraft,
+    template: &annotagent_core::WorkflowTemplate,
+    prompted_segmentation_model: Option<&str>,
+) -> Result<bool> {
+    let Some(image_id) = draft
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::ImageInput)
+        .map(|node| node.id.clone())
+    else {
+        return Ok(false);
+    };
+    let Some(detector_id) = draft
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == WorkflowNodeKind::VisionLanguageModel
+                && node
+                    .outputs
+                    .iter()
+                    .any(|port| port.artifact_type == ArtifactKind::DetectionSet)
+        })
+        .map(|node| node.id.clone())
+    else {
+        return Ok(false);
+    };
+    let Some(review_id) = draft
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::HumanReview)
+        .map(|node| node.id.clone())
+    else {
+        return Ok(false);
+    };
+    let recovery_entry_id = draft
+        .edges
+        .iter()
+        .find(|edge| edge.to_node == review_id)
+        .map_or_else(|| detector_id.clone(), |edge| edge.from_node.clone());
+    let Some(commit_id) = draft
+        .nodes
+        .iter()
+        .find(|node| node.kind == WorkflowNodeKind::Commit)
+        .map(|node| node.id.clone())
+    else {
+        return Ok(false);
+    };
+    if draft.nodes.iter().any(|node| {
+        node.node_type == annotagent_runtime::CORE_EXPAND_REGION
+            && node
+                .parameters
+                .get("localization_recovery_patch")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+    }) {
+        return Ok(false);
+    }
+
+    let detector = draft
+        .nodes
+        .iter()
+        .find(|node| node.id == detector_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("localization recovery detector disappeared"))?;
+    let mut id_map = BTreeMap::from([
+        ("image".to_owned(), image_id.clone()),
+        ("coarse_localization".to_owned(), detector_id.clone()),
+        ("select_coarse_ball".to_owned(), recovery_entry_id.clone()),
+        ("review_final_ball".to_owned(), review_id.clone()),
+        ("commit_final_ball".to_owned(), commit_id.clone()),
+    ]);
+    for node in &template.nodes {
+        if id_map.contains_key(&node.id) {
+            continue;
+        }
+        let base = format!("localization_recovery.{}", node.id);
+        let mut id = base.clone();
+        let mut suffix = 2_u32;
+        while draft.nodes.iter().any(|existing| existing.id == id)
+            || id_map.values().any(|mapped| mapped == &id)
+        {
+            id = format!("{base}.{suffix}");
+            suffix = suffix.saturating_add(1);
+        }
+        id_map.insert(node.id.clone(), id);
+    }
+
+    let unavailable_refiner_nodes = BTreeSet::from([
+        "refine_validated_prompt",
+        "project_mask_bbox",
+        "evaluate_refiner_geometry",
+        "geometry_decision",
+    ]);
+    for source in &template.nodes {
+        if matches!(
+            source.id.as_str(),
+            "image"
+                | "coarse_localization"
+                | "select_coarse_ball"
+                | "review_final_ball"
+                | "commit_final_ball"
+        ) || prompted_segmentation_model.is_none()
+            && unavailable_refiner_nodes.contains(source.id.as_str())
+        {
+            continue;
+        }
+        let mut node = source.clone();
+        node.id.clone_from(&id_map[&source.id]);
+        if node.kind == WorkflowNodeKind::VisionLanguageModel {
+            node.model_binding.clone_from(&detector.model_binding);
+            node.model_profile_binding
+                .clone_from(&detector.model_profile_binding);
+            node.unresolved_model_requirement
+                .clone_from(&detector.unresolved_model_requirement);
+        }
+        if node.node_type == "capability.segment" {
+            node.model_binding = prompted_segmentation_model.map(ToOwned::to_owned);
+            node.model_profile_binding = None;
+            node.unresolved_model_requirement = None;
+        }
+        if node.node_type == annotagent_runtime::CORE_EXPAND_REGION {
+            node.parameters
+                .insert("localization_recovery_patch".to_owned(), json!(true));
+        }
+        draft.nodes.push(node);
+    }
+
+    let coarse_template = template
+        .nodes
+        .iter()
+        .find(|node| node.id == "coarse_localization")
+        .ok_or_else(|| anyhow!("localization recovery template has no coarse detector"))?;
+    if let Some(existing) = draft.nodes.iter_mut().find(|node| node.id == detector_id) {
+        for key in [
+            "labels",
+            "prompt_resource_id",
+            "prompt_resource_version",
+            "prompt_resource_sha256",
+            "target_description",
+        ] {
+            if let Some(value) = coarse_template.parameters.get(key) {
+                existing.parameters.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
+
+    draft.edges.retain(|edge| {
+        edge.to_node != review_id && !(edge.to_node == commit_id && edge.from_node != review_id)
+    });
+    for source in &template.edges {
+        if source.from_node == "coarse_localization" && source.to_node == "select_coarse_ball" {
+            continue;
+        }
+        if prompted_segmentation_model.is_none()
+            && (unavailable_refiner_nodes.contains(source.from_node.as_str())
+                || unavailable_refiner_nodes.contains(source.to_node.as_str()))
+        {
+            continue;
+        }
+        let mut edge = source.clone();
+        edge.from_node.clone_from(&id_map[&source.from_node]);
+        edge.to_node.clone_from(&id_map[&source.to_node]);
+        if !draft.edges.contains(&edge) {
+            draft.edges.push(edge);
+        }
+    }
+    if prompted_segmentation_model.is_none() {
+        let fallback = WorkflowEdge {
+            from_node: id_map["prompt_coverage_gate"].clone(),
+            from_port: "detections".to_owned(),
+            to_node: review_id,
+            to_port: "detections".to_owned(),
+            route: Some("refine".to_owned()),
+        };
+        if !draft.edges.contains(&fallback) {
+            draft.edges.push(fallback);
+        }
+    }
+    draft
+        .resource_versions
+        .extend(template.resource_versions.clone());
+    draft.label_pipeline = None;
+    draft.updated_at = chrono::Utc::now();
+    Ok(true)
+}
+
 fn compatibility_workflow(
     project: &ProjectSchema,
     skills: &[Arc<dyn DomainSkill>],
@@ -4451,7 +4732,11 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             display_name: "Validate prompt coverage".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::BoxPromptSet, ArtifactKind::DetectionSet],
-            produces: vec![ArtifactKind::BoxPromptSet, ArtifactKind::PromptCoverage],
+            produces: vec![
+                ArtifactKind::BoxPromptSet,
+                ArtifactKind::DetectionSet,
+                ArtifactKind::PromptCoverage,
+            ],
             deterministic: true,
         },
         VisionNodeDescriptor {
@@ -4733,10 +5018,12 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             category: NodeCategory::EvidenceAndValidation,
             input_ports: vec![
                 catalog_port("prompts", ArtifactKind::BoxPromptSet, true, many),
+                catalog_port("candidates", ArtifactKind::DetectionSet, true, many),
                 catalog_port("evidence", ArtifactKind::DetectionSet, false, many),
             ],
             output_ports: vec![
                 catalog_port("prompts", ArtifactKind::BoxPromptSet, true, many),
+                catalog_port("detections", ArtifactKind::DetectionSet, true, many),
                 catalog_port("coverage", ArtifactKind::PromptCoverage, true, many),
             ],
             config_schema: node_schema(json!({})),
@@ -7774,6 +8061,7 @@ impl LocalApplication {
         }
 
         let mut failure_counts = BTreeMap::<AnnotationFailureClass, u32>::new();
+        let mut localization_failure_classes = BTreeSet::<LocalizationFailureClass>::new();
         let mut geometry_correction_count = 0_u32;
         let mut semantic_target_correct_count = 0_u32;
         let mut correction_reason_counts = BTreeMap::<GeometryCorrectionReason, u32>::new();
@@ -7796,15 +8084,29 @@ impl LocalApplication {
                             error_code,
                             summary,
                             ..
-                        } => Some(annotagent_core::classify_annotation_failure(
-                            error_code, summary,
-                        )),
+                        } => {
+                            localization_failure_classes.extend(
+                                annotagent_core::classify_localization_failures(
+                                    error_code, summary,
+                                ),
+                            );
+                            Some(annotagent_core::classify_annotation_failure(
+                                error_code, summary,
+                            ))
+                        }
                         RunEventPayload::Validation {
                             issue_codes,
                             accepted,
-                        } if !accepted || !issue_codes.is_empty() => issue_codes
-                            .first()
-                            .map(|code| annotagent_core::classify_annotation_failure(code, code)),
+                        } if !accepted || !issue_codes.is_empty() => {
+                            if let Some(code) = issue_codes.first() {
+                                localization_failure_classes.extend(
+                                    annotagent_core::classify_localization_failures(code, code),
+                                );
+                            }
+                            issue_codes.first().map(|code| {
+                                annotagent_core::classify_annotation_failure(code, code)
+                            })
+                        }
                         _ => None,
                     };
                     if let Some(class) = class {
@@ -7812,6 +8114,9 @@ impl LocalApplication {
                     }
                 }
                 if let Some(reason) = history.run.terminal_reason.as_deref() {
+                    localization_failure_classes.extend(
+                        annotagent_core::classify_localization_failures("terminal", reason),
+                    );
                     let class = annotagent_core::classify_annotation_failure("terminal", reason);
                     *failure_counts.entry(class).or_default() += 1;
                 }
@@ -7840,6 +8145,8 @@ impl LocalApplication {
                             AnnotationFailureClass::GeometryError
                         }
                         GeometryCorrectionReason::MissedObject => {
+                            localization_failure_classes
+                                .insert(LocalizationFailureClass::CoarseLocalizationMiss);
                             AnnotationFailureClass::NoCandidate
                         }
                         GeometryCorrectionReason::DomainRisk(_) => {
@@ -7909,7 +8216,68 @@ impl LocalApplication {
             alternatives: Vec::new(),
         };
         let mut setup_requirements = Vec::new();
-        if primary_failure_class == AnnotationFailureClass::GeometryError {
+        let needs_localization_recovery = localization_failure_classes.iter().any(|class| {
+            matches!(
+                class,
+                LocalizationFailureClass::CoarseLocalizationMiss
+                    | LocalizationFailureClass::PromptCoverageFailure
+                    | LocalizationFailureClass::RefinerDrift
+            )
+        });
+        if needs_localization_recovery {
+            let templates = workflow_templates_for(
+                &self.skills,
+                &project
+                    .project
+                    .enabled_skill_versions()
+                    .into_keys()
+                    .collect::<Vec<_>>(),
+            )?;
+            let template = templates
+                .iter()
+                .find(|template| {
+                    template
+                        .nodes
+                        .iter()
+                        .any(|node| node.node_type == annotagent_runtime::CORE_EXPAND_REGION)
+                        && template.nodes.iter().any(|node| {
+                            node.node_type == annotagent_runtime::CORE_PROMPT_COVERAGE_GATE
+                        })
+                })
+                .ok_or_else(|| {
+                    anyhow!("enabled Skills do not provide a typed localization-recovery template")
+                })?;
+            let (_, models) = self.workflow_catalog(settings)?;
+            let segmenter = available_model_for_capability(
+                &models.models(),
+                VisionCapability::PromptedSegmentation,
+            )
+            .ok();
+            if !apply_localization_recovery_patch(
+                &mut suggestion.draft,
+                template,
+                segmenter.as_deref(),
+            )? {
+                setup_requirements.push(
+                    "The existing Draft could not be incrementally patched; preserve it and create a reviewed recovery Draft manually."
+                        .to_owned(),
+                );
+            }
+            if segmenter.is_none() {
+                setup_requirements.push(
+                    "Prompted segmentation is retained as a Setup Alternative; until a production-eligible model is Ready, recovered candidates route to mandatory Human Review."
+                        .to_owned(),
+                );
+            }
+            suggestion.rationale.push(format!(
+                "Added a local recovery subgraph for structured localization evidence: {}.",
+                localization_failure_classes
+                    .iter()
+                    .map(|class| format!("{class:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        } else if primary_failure_class == AnnotationFailureClass::GeometryError {
             let (_, models) = self.workflow_catalog(settings)?;
             let model_descriptors = models.models();
             let mut summary = AgentDryRunSummary {
@@ -7979,6 +8347,10 @@ impl LocalApplication {
             target_label: request.target_label.clone(),
             diagnosis: PipelineImprovementDiagnosis {
                 primary_failure_class,
+                localization_failure_classes: localization_failure_classes
+                    .iter()
+                    .copied()
+                    .collect(),
                 evidence_run_ids: request.evidence_run_ids.clone(),
                 evidence_statements,
                 semantic_target_correct_count,
@@ -18426,6 +18798,28 @@ fn assess_prompted_segmentation_revision(
             explanation: "Prompted segmentation was not added: no Detection candidate exists to convert into a box or point prompt.".to_owned(),
         };
     }
+    let localization_failures = evidence
+        .warning_counts
+        .iter()
+        .filter(|(_, count)| **count > 0)
+        .flat_map(|(code, _)| annotagent_core::classify_localization_failures(code, code))
+        .collect::<BTreeSet<_>>();
+    if localization_failures.contains(&LocalizationFailureClass::CoarseLocalizationMiss)
+        || localization_failures.contains(&LocalizationFailureClass::PromptCoverageFailure)
+    {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "localization_recovery_required",
+            explanation: "Prompted segmentation was not added: the Dry Run shows that the current prompt does not cover the target. Add relative search expansion, an original-image crop, local re-localization, coordinate projection, and a Prompt Coverage Gate before any Refiner call.".to_owned(),
+        };
+    }
+    if localization_failures.contains(&LocalizationFailureClass::RefinerDrift) {
+        return PromptedSegmentationAssessment {
+            applicable: false,
+            code: "refiner_drift_requires_review",
+            explanation: "The observed Refiner drift cannot justify another unconditional refinement pass. Preserve the coarse candidate, reject the refined geometry, and route to Human Review or revise the prompt strategy.".to_owned(),
+        };
+    }
     let geometry_evidence = evidence.geometry_review_count > 0
         || evidence.geometry_quality.geometry_review_count > 0
         || evidence.geometry_quality.inaccurate_bbox_reason_count > 0
@@ -19911,6 +20305,22 @@ export:
         assert!(!no_candidate.applicable);
         assert_eq!(no_candidate.code, "no_promptable_candidate");
 
+        let outside_prompt = assess_prompted_segmentation_revision(
+            &AgentDryRunSummary {
+                image_count: 1,
+                successful_images: 1,
+                detection_count: 1,
+                geometry_review_count: 1,
+                warning_counts: BTreeMap::from([("prompt_outside_target".to_owned(), 1)]),
+                ..AgentDryRunSummary::default()
+            },
+            true,
+            true,
+        );
+        assert!(!outside_prompt.applicable);
+        assert_eq!(outside_prompt.code, "localization_recovery_required");
+        assert!(outside_prompt.explanation.contains("local re-localization"));
+
         let semantic = assess_prompted_segmentation_revision(
             &AgentDryRunSummary {
                 image_count: 4,
@@ -20033,13 +20443,16 @@ export:
                 "core.decision".to_owned(),
                 "core.detections_to_box_prompts".to_owned(),
                 "core.existing_annotations".to_owned(),
+                "core.expand_region".to_owned(),
                 "core.geometry_decision".to_owned(),
                 "core.geometry_quality_evaluation".to_owned(),
                 "core.human_review".to_owned(),
                 "core.image_input".to_owned(),
                 "core.mask_to_bbox".to_owned(),
                 "core.mask_to_polygon".to_owned(),
+                "core.merge_tiles".to_owned(),
                 "core.project_coordinates".to_owned(),
+                "core.prompt_coverage_gate".to_owned(),
                 "core.resize".to_owned(),
                 "core.select_and_map".to_owned(),
                 "core.tile".to_owned(),
@@ -22601,7 +23014,7 @@ export:
             .expect("persisted conversion-path observation");
         assert_eq!(path.result["model_payload"]["runnable"], json!(true));
         assert_eq!(report.session.discovered_conversion_paths.len(), 1);
-        assert_eq!(report.session.plan_candidates.len(), 3);
+        assert_eq!(report.session.plan_candidates.len(), 4);
         let selected_candidate = report
             .session
             .selected_candidate_id
@@ -22627,6 +23040,18 @@ export:
                 .node_blueprints
                 .iter()
                 .any(|node| { node.node_type == "capability.segment" })
+        );
+        assert!(
+            selected_candidate
+                .node_blueprints
+                .iter()
+                .any(|node| { node.node_type == annotagent_runtime::CORE_EXPAND_REGION })
+        );
+        assert!(
+            selected_candidate
+                .node_blueprints
+                .iter()
+                .any(|node| { node.node_type == annotagent_runtime::CORE_PROMPT_COVERAGE_GATE })
         );
         let persisted = application
             .store
@@ -24949,7 +25374,13 @@ export:
         let catalog = application
             .workflow_advisor_input("robocup-demo", &settings, WorkflowConstraints::default())
             .expect("RoboCup catalog");
-        assert_eq!(catalog.workflow_templates.len(), 1);
+        assert_eq!(catalog.workflow_templates.len(), 2);
+        assert!(
+            catalog
+                .workflow_templates
+                .iter()
+                .any(|template| template.id == "robocup.ball.small-object-recovery")
+        );
         let draft = application
             .create_workflow_draft_with_template(
                 "robocup-demo",
@@ -26460,6 +26891,102 @@ export:
             )
             .expect("published JSON"),
             immutable_before
+        );
+    }
+
+    #[test]
+    fn localization_recovery_patch_preserves_existing_plan_and_falls_back_without_refiner() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "localization-patch",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let baseline = application
+            .create_workflow_draft_with_template(
+                "localization-patch",
+                &settings,
+                false,
+                Some("robocup.ball.vlm-bootstrap"),
+            )
+            .expect("baseline Draft");
+        let baseline_ids = baseline
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<BTreeSet<_>>();
+        let advisor_input = application
+            .workflow_advisor_input_for_label(
+                "localization-patch",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Advisor input");
+        let template_ids = advisor_input
+            .workflow_templates
+            .iter()
+            .map(|template| template.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            template_ids.contains(&"robocup.ball.small-object-recovery"),
+            "available templates: {template_ids:?}"
+        );
+        let template = advisor_input
+            .workflow_templates
+            .into_iter()
+            .find(|template| template.id == "robocup.ball.small-object-recovery")
+            .expect("localization template");
+        let mut candidate = baseline.clone();
+        assert!(
+            apply_localization_recovery_patch(&mut candidate, &template, None)
+                .expect("local patch")
+        );
+        assert!(
+            baseline_ids
+                .iter()
+                .all(|id| { candidate.nodes.iter().any(|node| &node.id == id) })
+        );
+        assert!(candidate.nodes.iter().any(|node| {
+            node.node_type == annotagent_runtime::CORE_EXPAND_REGION
+                && node.parameters["localization_recovery_patch"] == json!(true)
+        }));
+        assert!(
+            !candidate
+                .nodes
+                .iter()
+                .any(|node| { node.node_type == "capability.segment" })
+        );
+        assert!(candidate.edges.iter().any(|edge| {
+            edge.from_node.contains("prompt_coverage_gate")
+                && edge.to_node == "review"
+                && edge.route.as_deref() == Some("refine")
+        }));
+        let diff = PipelineDraftDiff::between(&baseline, &candidate).expect("typed patch Diff");
+        assert!(!diff.is_empty());
+        assert!(
+            diff.added_nodes
+                .iter()
+                .any(|change| change.node_type == annotagent_runtime::CORE_EXPAND_REGION)
+        );
+        let validation = application
+            .validate_workflow_draft(&candidate, &settings, false)
+            .expect("static validation");
+        assert!(
+            validation.issues.iter().all(|issue| !matches!(
+                issue.code.as_str(),
+                "artifact_type_mismatch"
+                    | "missing_required_input"
+                    | "cycle_detected"
+                    | "unknown_node_type"
+                    | "unknown_skill_resource"
+            )),
+            "structural issues: {:#?}",
+            validation.issues
         );
     }
 

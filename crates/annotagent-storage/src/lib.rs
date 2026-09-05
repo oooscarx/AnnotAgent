@@ -4621,6 +4621,9 @@ mod tests {
             target_label: LabelId::from("ball"),
             diagnosis: annotagent_core::PipelineImprovementDiagnosis {
                 primary_failure_class: annotagent_core::AnnotationFailureClass::GeometryError,
+                localization_failure_classes: vec![
+                    annotagent_core::LocalizationFailureClass::LooseGeometry,
+                ],
                 evidence_run_ids: vec![run_id],
                 evidence_statements: vec!["one human bbox correction".to_owned()],
                 semantic_target_correct_count: 1,

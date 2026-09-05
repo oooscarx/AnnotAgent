@@ -1223,3 +1223,17 @@ Real Prompted-Segmentation Delivery M6 status: `PASS ON MACOS ARM64 CPU`.
   live validation and the full release matrix remain Milestone 6.
 
 Builder Plan Preservation M5 status: `PASS`.
+
+## Small-Object Localization Recovery M4 — 2026-09-05
+
+- RoboCup Ball now publishes versioned, SHA-256-frozen prompts for whole-image localization, local
+  crop re-localization and hard-negative crop verification.
+- Registry synthesis can select a model-agnostic small-object recovery Candidate with relative
+  expansion, original-image crop, local coordinates, root projection, independent Prompt Coverage,
+  prompted segmentation and geometry decision. Only Ready non-Fixture bindings are runnable.
+- Improvement sessions retain structured localization failure classes and incrementally patch the
+  selected baseline. Without a production-eligible Refiner, the refine route becomes mandatory
+  Review and the model remains a Setup Alternative.
+- All focused M4 Rust tests pass; no real Provider request or remote mutation was used.
+
+Small-Object Localization Recovery M4 status: `PASS`.

@@ -575,6 +575,14 @@ impl RegistryPipelineSynthesizer {
             .map(|binding| binding.node_id.as_str())
             .collect::<BTreeSet<_>>()
             .len() as u32;
+        let node_types = candidate
+            .node_blueprints
+            .iter()
+            .map(|node| node.node_type.as_str())
+            .collect::<BTreeSet<_>>();
+        let has_localization_recovery = node_types.contains("core.expand_region")
+            && node_types.contains("core.project_coordinates")
+            && node_types.contains("core.prompt_coverage_gate");
         let mut deterministic_total = 0_i64;
         if runnable {
             deterministic_total += 1_000_000;
@@ -598,10 +606,16 @@ impl RegistryPipelineSynthesizer {
         match priority {
             OptimizationPriority::Accurate => {
                 deterministic_total += (geometry_safety * 120_000.0) as i64;
+                if has_localization_recovery {
+                    deterministic_total += 75_000;
+                }
                 deterministic_total -= i64::from(model_calls) * 500;
             }
             OptimizationPriority::Balanced => {
                 deterministic_total += (geometry_safety * 80_000.0) as i64;
+                if has_localization_recovery {
+                    deterministic_total += 50_000;
+                }
                 deterministic_total -= i64::from(model_calls) * 2_000;
             }
             OptimizationPriority::Fast | OptimizationPriority::LowCost => {
@@ -624,6 +638,17 @@ impl RegistryPipelineSynthesizer {
             ));
         } else if candidate.geometry_safety == CandidateGeometrySafety::Evaluated {
             reasons.push("Accuracy priority rewards explicit geometry evaluation".to_owned());
+        }
+        if has_localization_recovery
+            && matches!(
+                priority,
+                OptimizationPriority::Accurate | OptimizationPriority::Balanced
+            )
+        {
+            reasons.push(
+                "Localization recovery is rewarded only when expansion, coordinate projection, and prompt coverage are explicit"
+                    .to_owned(),
+            );
         }
         PlanCandidateScore {
             runnable,
@@ -4074,6 +4099,35 @@ mod tests {
                 .reasons
                 .iter()
                 .any(|reason| reason.contains("model call"))
+        );
+
+        let mut recovery = runnable_candidate(
+            "localization-recovery",
+            PipelineCandidateSource::RegistrySynthesis,
+            CandidateGeometrySafety::Evaluated,
+            4,
+        );
+        recovery.node_blueprints.extend(
+            [
+                "core.expand_region",
+                "core.project_coordinates",
+                "core.prompt_coverage_gate",
+            ]
+            .map(|node_type| WorkflowDraftNode {
+                id: node_type.replace('.', "-"),
+                node_type: node_type.to_owned(),
+                ..WorkflowDraftNode::default()
+            }),
+        );
+        let mut balanced = vec![baseline.clone(), recovery];
+        synthesizer.rank_candidates(&mut balanced, OptimizationPriority::Balanced);
+        assert_eq!(balanced[0].id, "localization-recovery");
+        assert!(
+            balanced[0]
+                .score
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("Localization recovery"))
         );
 
         let mut same_graph = vec![
