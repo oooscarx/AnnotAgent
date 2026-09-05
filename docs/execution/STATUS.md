@@ -1237,3 +1237,18 @@ Builder Plan Preservation M5 status: `PASS`.
 - All focused M4 Rust tests pass; no real Provider request or remote mutation was used.
 
 Small-Object Localization Recovery M4 status: `PASS`.
+
+## Small-Object Localization Recovery M5 — 2026-09-05
+
+- Prompted Segmentation consumes typed Prompt Coverage and rejects invalid target prompts before
+  invoking its backend. The RoboCup recovery graph supplies this evidence only on its `refine`
+  route.
+- Automatic refinement paths without a wired coverage artifact fail static publication
+  validation. Existing mandatory-review compatibility graphs remain explicit
+  `legacy_review_only` paths.
+- Geometry Decision rejects drifting mask-derived boxes, restores the coarse/local candidate as
+  evidence and routes Review with structured `refiner_drift` diagnostics.
+- Focused Core, Segmentation, Runtime, RoboCup and Application test suites pass; no paid inference,
+  credential, Published Workflow, formal Run or remote state was touched.
+
+Small-Object Localization Recovery M5 status: `PASS`.

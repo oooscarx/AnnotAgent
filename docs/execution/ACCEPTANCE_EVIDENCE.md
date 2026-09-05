@@ -2061,3 +2061,27 @@ No credential, Published production Workflow, formal Run, remote or push was mod
    ignored.
 
 No credential, real Provider call, Published Workflow, formal Run, remote or push was modified.
+
+## Small-Object Localization Recovery M5 — 2026-09-05
+
+1. `prompted_segmentation_accepts_only_independently_covered_prompts_when_required` proves an
+   `OutsidePrompt` coverage result returns `invalid_prompt_sent_to_refiner` at the runner boundary,
+   before backend inference can begin.
+2. `covered_prompt_reaches_backend_and_returns_a_mask` executes the generic prompted-segmentation
+   runner with independent Covered evidence and proves the backend returns one Mask Artifact with
+   `prompt_coverage_validation=covered`.
+3. `automatic_prompted_segmentation_requires_prompt_coverage` proves an automatic path needs both
+   an upstream Prompt Coverage Gate and its typed `PromptCoverage` edge; prompt-only wiring does not
+   make the graph publishable.
+4. `sam_artifact_chain_preserves_original_prompt_mask_and_refined_box` exercises Detection →
+   Prompt → Mask → Mask-to-BBox → Geometry Evaluation → Geometry Decision. A rejected refined box
+   is recorded, the original bbox and detection identity are restored, and the route is Review.
+5. `fourfold_refiner_expansion_is_structured_drift_evidence` fixes Case 8 at exactly 4× area and
+   verifies it is unstable `RefinerDrift` evidence rather than an accepted geometry improvement.
+6. The versioned RoboCup recovery template wires both Box Prompts and Prompt Coverage into the
+   generic segmentation capability. Nodes and Core validation contain no SAM/model-brand branch.
+7. Verification passed 109 Core tests, 3 Segmentation tests, 29 Runtime tests, 6 RoboCup unit plus
+   11 integration tests, and 69 runnable Application tests. The billable Application smoke test
+   remained explicitly ignored.
+
+No credential, real Provider call, Published Workflow, formal Run, remote or push was modified.

@@ -1342,6 +1342,25 @@ mod tests {
     }
 
     #[test]
+    fn fourfold_refiner_expansion_is_structured_drift_evidence() {
+        let evaluation = evaluate_geometry_refinement(
+            refinement_trace(
+                NormalizedRect::new(0.48, 0.50, 0.03, 0.03).expect("coarse"),
+                NormalizedRect::new(0.45, 0.47, 0.06, 0.06).expect("fourfold refined area"),
+            ),
+            GeometryRefinementThresholds::default(),
+        )
+        .expect("evaluation");
+
+        assert!((evaluation.area_ratio - 4.0).abs() < f32::EPSILON);
+        assert!(!evaluation.stable);
+        assert!(
+            classify_localization_failures("refiner_drift", "mask area expanded fourfold")
+                .contains(&LocalizationFailureClass::RefinerDrift)
+        );
+    }
+
+    #[test]
     fn provider_failure_is_not_geometry_evidence() {
         assert_eq!(
             classify_annotation_failure("provider_timeout", "Qwen did not respond"),

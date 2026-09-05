@@ -2,6 +2,29 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 5 — Prompt-coverage-gated segmentation safety
+
+- Prompted Segmentation now requires one valid, independently evidenced `Covered`
+  `PromptCoverageArtifact` per prompt whenever the graph declares the coverage contract. Outside,
+  partial, unknown, missing or mismatched coverage fails before the model backend is called.
+- Automatic Prompted Segmentation → Commit paths must wire the typed Prompt Coverage output into
+  the segment node. Historical explicitly reviewed paths remain readable and execute in a labeled
+  `legacy_review_only` mode; they do not gain automatic publication authority.
+- The RoboCup small-object recovery template routes the `refine` branch and the typed coverage
+  evidence together into segmentation. Search/re-localization/review branches cannot accidentally
+  invoke the Refiner.
+- Mask-to-BBox and Geometry Evaluation retain the original, prompt, mask and refined lineage. A
+  drifting Refiner result is rejected: Geometry Decision restores the coarse/local candidate,
+  records the rejected geometry and `refiner_drift`, and routes the image to Review.
+- Regression coverage includes a Covered prompt reaching the segmentation backend, an outside
+  prompt being rejected before inference, and a fourfold mask-bbox expansion being rejected while
+  coarse evidence survives.
+- Focused Core (109), Segmentation (3), Runtime (29), RoboCup (17) and Application (69 runnable,
+  one explicit billable ignore) tests pass. No Provider request, credential access, Published
+  mutation, formal Run, push or remote operation was performed.
+
+Milestone 5 status: `PASS`.
+
 ## Milestone 4 — Versioned Ball resources and evidence-driven Builder
 
 - Added three `robocup.ball` Prompt Resources at version `2.0.0`: whole-image detection, local

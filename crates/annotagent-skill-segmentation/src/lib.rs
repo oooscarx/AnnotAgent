@@ -10,8 +10,9 @@ use annotagent_core::{
     ArtifactKind, ArtifactRef, ArtifactValidationState, BoxPromptSetArtifact, CoreError,
     CoreResult, DetectionScore, MaskArtifactItem, MaskEncoding, MaskSetArtifact, ModelImage,
     NormalizedPoint, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
-    PipelineInferenceResponse, PipelineModelBackend, ScoreSemantics, Skill, SkillKind,
-    SkillManifest, SkillProductVisibility, SkillResource, SkillResourceRequest, VisionCapability,
+    PipelineInferenceResponse, PipelineModelBackend, PromptCoverageState, ScoreSemantics, Skill,
+    SkillKind, SkillManifest, SkillProductVisibility, SkillResource, SkillResourceRequest,
+    VisionCapability,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -164,6 +165,48 @@ impl PromptedSegmentationRunner {
     }
 }
 
+fn validate_prompt_coverage(
+    context: &DagNodeContext<'_>,
+    prompt_count: usize,
+) -> Result<&'static str, DagNodeFailure> {
+    let requires_prompt_coverage = context
+        .node
+        .parameters
+        .get("require_prompt_coverage")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || context
+            .node
+            .inputs
+            .iter()
+            .any(|port| port.artifact_type == ArtifactKind::PromptCoverage);
+    if !requires_prompt_coverage {
+        return Ok("legacy_review_only");
+    }
+    let coverage = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if coverage.len() != prompt_count
+        || coverage.iter().any(|coverage| {
+            coverage.image_id != context.image_id
+                || coverage.validate().is_err()
+                || coverage.state != PromptCoverageState::Covered
+                || coverage.evidence.is_empty()
+        })
+    {
+        return Err(DagNodeFailure::terminal(
+            "invalid_prompt_sent_to_refiner",
+            "Prompted Segmentation requires one independently evidenced Covered PromptCoverage Artifact for every prompt",
+        ));
+    }
+    Ok("covered")
+}
+
 #[async_trait]
 impl DagNodeRunner for PromptedSegmentationRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -193,12 +236,22 @@ impl DagNodeRunner for PromptedSegmentationRunner {
                 "Prompted Segmentation requires Image and exactly one BoxPromptSet or PointPromptSet",
             ));
         }
+        let prompt_count = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::BoxPromptSet(prompts) => Some(prompts.prompts.len()),
+                PipelineArtifact::PointPromptSet(prompts) => Some(prompts.prompts.len()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let coverage_validation = validate_prompt_coverage(&context, prompt_count)?;
         let model_id = context
             .node
             .model_binding
             .as_deref()
             .unwrap_or(&self.model_id);
-        let response = self
+        let mut response = self
             .backend
             .infer_pipeline(
                 PipelineInferenceRequest {
@@ -243,6 +296,10 @@ impl DagNodeRunner for PromptedSegmentationRunner {
                 "Prompted Segmentation backend must return exactly one scoped MaskSet",
             ));
         }
+        response.metadata.insert(
+            "prompt_coverage_validation".to_owned(),
+            serde_json::json!(coverage_validation),
+        );
         Ok(DagNodeOutput {
             pipeline_artifacts: response.artifacts,
             metadata: response.metadata,
@@ -442,6 +499,13 @@ impl Skill for SegmentationCapabilitySkill {
 
 #[cfg(test)]
 mod tests {
+    use annotagent_core::{
+        ArtifactId, BoxPrompt, ImageArtifact, ImageId, NodePort, ProjectId, PromptCoverageAction,
+        PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind, RunId,
+        WorkflowDraftNode,
+    };
+    use tokio_util::sync::CancellationToken;
+
     use super::*;
 
     #[test]
@@ -457,5 +521,205 @@ mod tests {
                 .contains(&"prompted_segmentation".to_owned())
         );
         assert!(!skill.manifest().description.contains("SAM"));
+    }
+
+    #[test]
+    fn prompted_segmentation_accepts_only_independently_covered_prompts_when_required() {
+        let image_id = ImageId::new();
+        let source = ArtifactRef {
+            artifact_id: "local-detections".to_owned(),
+            source_node: "localize".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let prompts = PipelineArtifact::BoxPromptSet(BoxPromptSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "to-prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            image_id,
+            source_detections: source.clone(),
+            prompts: vec![BoxPrompt {
+                id: "prompt-1".to_owned(),
+                subject: source.item("candidate-1"),
+                bbox: annotagent_core::NormalizedRect::new(0.4, 0.4, 0.1, 0.1)
+                    .expect("prompt bbox"),
+                attributes: BTreeMap::new(),
+            }],
+        });
+        let coverage_artifact = |state, recommended_action| {
+            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+                reference: ArtifactRef {
+                    artifact_id: "coverage".to_owned(),
+                    source_node: "coverage-gate".to_owned(),
+                    port: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    item_id: None,
+                },
+                image_id,
+                candidate_artifact_id: ArtifactId::new(),
+                search_region_artifact_id: None,
+                state,
+                evidence: vec![PromptCoverageEvidence {
+                    kind: PromptCoverageEvidenceKind::IndependentDetector,
+                    source: source.item("independent-1"),
+                    observation: "independent candidate overlaps the prompt".to_owned(),
+                }],
+                recommended_action,
+            })
+        };
+        let node = WorkflowDraftNode {
+            id: "segment".to_owned(),
+            node_type: PROMPTED_SEGMENTATION_OPERATION.to_owned(),
+            inputs: vec![NodePort {
+                id: "coverage".to_owned(),
+                artifact_type: ArtifactKind::PromptCoverage,
+                required: true,
+                multiple: true,
+            }],
+            ..WorkflowDraftNode::default()
+        };
+        let context = |coverage| DagNodeContext {
+            project_id: ProjectId::new(),
+            run_id: RunId::new(),
+            image_id,
+            node: &node,
+            input_artifacts: Vec::new(),
+            input_pipeline_artifacts: vec![prompts.clone(), coverage],
+            input_metadata: BTreeMap::new(),
+            cancellation: CancellationToken::new(),
+        };
+
+        assert_eq!(
+            validate_prompt_coverage(
+                &context(coverage_artifact(
+                    PromptCoverageState::Covered,
+                    PromptCoverageAction::ProceedToRefinement,
+                )),
+                1,
+            )
+            .expect("Covered prompt"),
+            "covered"
+        );
+        let error = validate_prompt_coverage(
+            &context(coverage_artifact(
+                PromptCoverageState::OutsidePrompt,
+                PromptCoverageAction::SearchTiles,
+            )),
+            1,
+        )
+        .expect_err("outside prompt must never reach Refiner");
+        assert_eq!(error.code, "invalid_prompt_sent_to_refiner");
+    }
+
+    #[tokio::test]
+    async fn covered_prompt_reaches_backend_and_returns_a_mask() {
+        let image_id = ImageId::new();
+        let source = ArtifactRef {
+            artifact_id: "local-detections".to_owned(),
+            source_node: "localize".to_owned(),
+            port: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            item_id: None,
+        };
+        let image = PipelineArtifact::Image(ImageArtifact {
+            reference: ArtifactRef {
+                artifact_id: "image".to_owned(),
+                source_node: "image".to_owned(),
+                port: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                item_id: None,
+            },
+            image_id,
+            width: 640,
+            height: 480,
+            mime_type: "image/png".to_owned(),
+            blob_ref: "workspace://covered-prompt.png".to_owned(),
+            parent: None,
+            root_region: None,
+        });
+        let prompts = PipelineArtifact::BoxPromptSet(BoxPromptSetArtifact {
+            reference: ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "to-prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            image_id,
+            source_detections: source.clone(),
+            prompts: vec![BoxPrompt {
+                id: "prompt-1".to_owned(),
+                subject: source.item("candidate-1"),
+                bbox: annotagent_core::NormalizedRect::new(0.4, 0.4, 0.1, 0.1)
+                    .expect("prompt bbox"),
+                attributes: BTreeMap::new(),
+            }],
+        });
+        let coverage = PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+            reference: ArtifactRef {
+                artifact_id: "coverage".to_owned(),
+                source_node: "coverage-gate".to_owned(),
+                port: "coverage".to_owned(),
+                artifact_type: ArtifactKind::PromptCoverage,
+                item_id: None,
+            },
+            image_id,
+            candidate_artifact_id: ArtifactId::new(),
+            search_region_artifact_id: None,
+            state: PromptCoverageState::Covered,
+            evidence: vec![PromptCoverageEvidence {
+                kind: PromptCoverageEvidenceKind::IndependentDetector,
+                source: source.item("independent-1"),
+                observation: "independent candidate overlaps the prompt".to_owned(),
+            }],
+            recommended_action: PromptCoverageAction::ProceedToRefinement,
+        });
+        let node = WorkflowDraftNode {
+            id: "segment".to_owned(),
+            node_type: PROMPTED_SEGMENTATION_OPERATION.to_owned(),
+            inputs: vec![NodePort {
+                id: "coverage".to_owned(),
+                artifact_type: ArtifactKind::PromptCoverage,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([(
+                "require_prompt_coverage".to_owned(),
+                serde_json::json!(true),
+            )]),
+            ..WorkflowDraftNode::default()
+        };
+        let runner = PromptedSegmentationRunner::new(
+            Arc::new(MockPromptedSegmentationBackend::new("covered-backend")),
+            "covered-model",
+            None,
+        )
+        .expect("runner");
+
+        let output = runner
+            .run(DagNodeContext {
+                project_id: ProjectId::new(),
+                run_id: RunId::new(),
+                image_id,
+                node: &node,
+                input_artifacts: Vec::new(),
+                input_pipeline_artifacts: vec![image, prompts, coverage],
+                input_metadata: BTreeMap::new(),
+                cancellation: CancellationToken::new(),
+            })
+            .await
+            .expect("Covered prompt reaches backend");
+
+        assert_eq!(output.pipeline_artifacts.len(), 1);
+        assert!(matches!(
+            output.pipeline_artifacts[0],
+            PipelineArtifact::MaskSet(_)
+        ));
+        assert_eq!(output.metadata["prompt_coverage_validation"], "covered");
     }
 }

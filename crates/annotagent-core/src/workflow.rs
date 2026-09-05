@@ -2155,14 +2155,30 @@ fn validate_prompt_coverage_safety(
                     .any(|port| port.artifact_type == ArtifactKind::BoxPromptSet)
             })
             .collect::<Vec<_>>();
-        if prompt_sources
+        let has_coverage_gate = prompt_sources
             .iter()
-            .any(|node| node.node_type == "core.prompt_coverage_gate")
-        {
+            .any(|node| node.node_type == "core.prompt_coverage_gate");
+        let has_coverage_artifact = draft
+            .edges
+            .iter()
+            .filter(|edge| edge.to_node == segment.id)
+            .any(|edge| {
+                draft.nodes.iter().any(|node| {
+                    node.id == edge.from_node
+                        && node.node_type == "core.prompt_coverage_gate"
+                        && node.outputs.iter().any(|port| {
+                            port.id == edge.from_port
+                                && port.artifact_type == ArtifactKind::PromptCoverage
+                        })
+                })
+            });
+        if has_coverage_gate && has_coverage_artifact {
             continue;
         }
         let code = if prompt_sources.is_empty() {
             "refiner_used_as_detector"
+        } else if has_coverage_gate {
+            "prompt_coverage_artifact_missing"
         } else {
             "prompt_coverage_check_missing"
         };
@@ -3010,6 +3026,18 @@ export:
         let mut coverage = node("coverage", WorkflowNodeKind::Gate);
         coverage.node_type = "core.prompt_coverage_gate".to_owned();
         coverage.outputs = prompts.outputs.clone();
+        coverage.outputs.push(NodePort {
+            id: "coverage".to_owned(),
+            artifact_type: ArtifactKind::PromptCoverage,
+            required: true,
+            multiple: true,
+        });
+        segment.inputs.push(NodePort {
+            id: "coverage".to_owned(),
+            artifact_type: ArtifactKind::PromptCoverage,
+            required: true,
+            multiple: true,
+        });
         let gated = draft(
             vec![prompts, coverage, segment, commit],
             vec![
@@ -3018,6 +3046,13 @@ export:
                     from_port: "prompts".to_owned(),
                     to_node: "segment".to_owned(),
                     to_port: "box_prompts".to_owned(),
+                    route: Some("refine".to_owned()),
+                },
+                WorkflowEdge {
+                    from_node: "coverage".to_owned(),
+                    from_port: "coverage".to_owned(),
+                    to_node: "segment".to_owned(),
+                    to_port: "coverage".to_owned(),
                     route: Some("refine".to_owned()),
                 },
                 WorkflowEdge {

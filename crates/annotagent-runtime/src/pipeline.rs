@@ -1118,6 +1118,10 @@ fn run_geometry_quality_evaluation(
             .map_err(|error| DagNodeFailure::terminal("geometry_evaluation_failed", error))?;
         if !evaluation.stable {
             unstable_count = unstable_count.saturating_add(1);
+            detection.attributes.insert(
+                "localization_failure_class".to_owned(),
+                serde_json::json!("refiner_drift"),
+            );
         }
         detection.attributes.insert(
             "geometry_quality_evaluation".to_owned(),
@@ -1153,6 +1157,10 @@ fn run_geometry_quality_evaluation(
                 "unstable_detection_count".to_owned(),
                 serde_json::json!(unstable_count),
             ),
+            (
+                "failure_code".to_owned(),
+                serde_json::json!((unstable_count > 0).then_some("refiner_drift")),
+            ),
             ("semantic_score_used".to_owned(), serde_json::json!(false)),
         ]),
         ..DagNodeOutput::default()
@@ -1166,7 +1174,8 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
         .map_err(|error| DagNodeFailure::terminal("invalid_detection_set", error))?;
     let mut missing_evaluation_count = 0_u64;
     let mut unstable_count = 0_u64;
-    for detection in &detections.detections {
+    let mut rejected_refinement_count = 0_u64;
+    for detection in &mut detections.detections {
         let Some(value) = detection.attributes.get("geometry_quality_evaluation") else {
             missing_evaluation_count = missing_evaluation_count.saturating_add(1);
             continue;
@@ -1179,7 +1188,44 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
                     && evaluation.trace.refined_detection.item_id.as_deref()
                         == Some(&detection.detection_id)
                     && evaluation.trace.refined_bbox == detection.bbox => {}
-            Ok(_) | Err(_) => unstable_count = unstable_count.saturating_add(1),
+            Ok(evaluation) => {
+                unstable_count = unstable_count.saturating_add(1);
+                rejected_refinement_count = rejected_refinement_count.saturating_add(1);
+                let refined_bbox = detection.bbox;
+                let refined_detection_id = detection.detection_id.clone();
+                detection.bbox = evaluation.trace.original_bbox;
+                if let Some(source_id) = evaluation.trace.source_detection.item_id.as_deref() {
+                    source_id.clone_into(&mut detection.detection_id);
+                }
+                detection.geometry_semantics = annotagent_core::GeometrySemantics::CoarseHypothesis;
+                if let Some(source) = detection.evidence.iter().find(|evidence| {
+                    evidence.bbox == evaluation.trace.original_bbox
+                        && evidence.source_capability != VisionCapability::PromptedSegmentation
+                }) {
+                    detection
+                        .source_model_id
+                        .clone_from(&source.source_model_id);
+                    detection.source_capability = source.source_capability;
+                    detection.score = source.score;
+                    detection.query_id.clone_from(&source.query_id);
+                    detection.model_label.clone_from(&source.model_label);
+                    detection.project_label.clone_from(&source.project_label);
+                }
+                detection.attributes.insert(
+                    "rejected_refined_geometry".to_owned(),
+                    serde_json::json!({
+                        "failure_class": "refiner_drift",
+                        "refined_detection_id": refined_detection_id,
+                        "refined_bbox": refined_bbox,
+                        "restored_coarse_bbox": evaluation.trace.original_bbox,
+                        "coarse_refined_iou": evaluation.coarse_refined_iou,
+                        "normalized_center_shift": evaluation.normalized_center_shift,
+                        "area_ratio": evaluation.area_ratio,
+                        "issue_codes": evaluation.issue_codes,
+                    }),
+                );
+            }
+            Err(_) => unstable_count = unstable_count.saturating_add(1),
         }
     }
     let accept =
@@ -1197,6 +1243,8 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
             "evaluated_detection_count": detections.detections.len(),
             "missing_evaluation_count": missing_evaluation_count,
             "unstable_detection_count": unstable_count,
+            "rejected_refinement_count": rejected_refinement_count,
+            "failure_code": (rejected_refinement_count > 0).then_some("refiner_drift"),
             "semantic_score_used": false,
         }),
     );
@@ -1214,6 +1262,14 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
             (
                 "unstable_detection_count".to_owned(),
                 serde_json::json!(unstable_count),
+            ),
+            (
+                "rejected_refinement_count".to_owned(),
+                serde_json::json!(rejected_refinement_count),
+            ),
+            (
+                "failure_code".to_owned(),
+                serde_json::json!((rejected_refinement_count > 0).then_some("refiner_drift")),
             ),
             ("semantic_score_used".to_owned(), serde_json::json!(false)),
         ]),
@@ -4110,6 +4166,22 @@ mod tests {
             .await
             .expect("review geometry decision");
         assert_eq!(reviewed.route.as_deref(), Some("review"));
+        assert_eq!(reviewed.metadata["rejected_refinement_count"], 1);
+        assert_eq!(reviewed.metadata["failure_code"], "refiner_drift");
+        let PipelineArtifact::DetectionSet(review_candidate) = &reviewed.pipeline_artifacts[0]
+        else {
+            panic!("review candidate")
+        };
+        assert_eq!(
+            review_candidate.detections[0].bbox,
+            NormalizedRect::new(0.10, 0.20, 0.40, 0.40).expect("original bbox")
+        );
+        assert_eq!(review_candidate.detections[0].detection_id, "ball-1");
+        assert!(
+            review_candidate.detections[0]
+                .attributes
+                .contains_key("rejected_refined_geometry")
+        );
     }
 
     fn pipeline_image(

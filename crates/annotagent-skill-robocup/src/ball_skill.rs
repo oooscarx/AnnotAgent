@@ -591,10 +591,15 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         vec![
             port("images", ArtifactKind::Image),
             multiple_port("box_prompts", ArtifactKind::BoxPromptSet),
+            multiple_port("coverage", ArtifactKind::PromptCoverage),
         ],
         vec![multiple_port("masks", ArtifactKind::MaskSet)],
     );
     segment.required_skills.clear();
+    segment.parameters.insert(
+        "require_prompt_coverage".to_owned(),
+        serde_json::json!(true),
+    );
 
     let mut mask_to_bbox = node(
         "project_mask_bbox",
@@ -693,6 +698,7 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             edge("project_verification_detection", "detections", "prompt_coverage_gate", "evidence", None),
             edge("image", "image", "refine_validated_prompt", "images", None),
             edge("prompt_coverage_gate", "prompts", "refine_validated_prompt", "box_prompts", Some("refine")),
+            edge("prompt_coverage_gate", "coverage", "refine_validated_prompt", "coverage", Some("refine")),
             edge("refine_validated_prompt", "masks", "project_mask_bbox", "masks", None),
             edge("prompt_coverage_gate", "prompts", "project_mask_bbox", "box_prompts", Some("refine")),
             edge("project_mask_bbox", "detections", "evaluate_refiner_geometry", "detections", None),

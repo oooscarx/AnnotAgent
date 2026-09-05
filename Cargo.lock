@@ -647,6 +647,7 @@ dependencies = [
  "async-trait",
  "rust_decimal",
  "serde_json",
+ "tokio",
  "tokio-util",
  "uuid",
 ]
