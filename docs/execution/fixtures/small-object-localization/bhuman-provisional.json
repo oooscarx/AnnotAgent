@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "provisional_real_image_observation",
+  "project_id": "robocup-ball",
+  "image_name": "color_1001525.png",
+  "image_size": [544, 448],
+  "source_sample_test_id": "27b0dfaf-e395-4891-ba71-58ad4cf1ea40",
+  "source_draft_id": "418771d9-f048-4b43-a384-3af4ab2cf78e",
+  "coarse_detection_xywh_normalized": [0.482, 0.503, 0.034, 0.036],
+  "legacy_prompt_padding_image_fraction": 0.02,
+  "refined_detection_xywh_normalized": [0.46875, 0.4821429, 0.0625, 0.09375],
+  "geometry_observation": {
+    "coarse_refined_iou": 0.2088959,
+    "area_change_from_refiner": 3.787,
+    "refiner_score": 0.7788
+  },
+  "artifact_lineage": [
+    "whole_image_detection",
+    "box_prompt",
+    "prompted_segmentation_mask",
+    "mask_to_bbox",
+    "geometry_quality",
+    "review"
+  ],
+  "legacy_results_count": 2,
+  "expected_terminal_results_count": 1,
+  "ground_truth": null,
+  "accuracy_status": "provisional_pending_human_calibration",
+  "notes": [
+    "No coordinate in this file is asserted as human ground truth.",
+    "The observation preserves the pre-recovery Sample Test evidence without mutating its Draft or Published history.",
+    "The legacy Results count flattens coarse and refined detections from one lineage."
+  ]
+}

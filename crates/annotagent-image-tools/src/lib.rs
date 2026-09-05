@@ -313,6 +313,107 @@ pub fn generate_synthetic_robocup(path: &Path) -> CoreResult<()> {
         .map_err(|error| CoreError::InvalidGeometry(format!("cannot save fixture: {error}")))
 }
 
+/// Deterministic small-object regression evidence for localization recovery.
+///
+/// The rectangles are generator-owned observations rather than model predictions. The deliberately
+/// bad coarse box sits below the target and reproduces the failure mode where a prompted segmenter
+/// can only refine background inside an invalid prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmallObjectLocalizationFixture {
+    pub width: u32,
+    pub height: u32,
+    pub ground_truth: NormalizedRect,
+    pub coarse_detection: NormalizedRect,
+    pub legacy_refined_detection: NormalizedRect,
+}
+
+impl SmallObjectLocalizationFixture {
+    /// Reproduces the old full-image-fraction box-prompt expansion.
+    pub fn legacy_prompt(&self, padding: f32) -> CoreResult<NormalizedRect> {
+        if !padding.is_finite() || !(0.0..=0.5).contains(&padding) {
+            return Err(CoreError::InvalidGeometry(
+                "fixture prompt padding must be finite and within [0,0.5]".to_owned(),
+            ));
+        }
+        let left = (self.coarse_detection.x() - padding).max(0.0);
+        let top = (self.coarse_detection.y() - padding).max(0.0);
+        let right = (self.coarse_detection.x() + self.coarse_detection.width() + padding).min(1.0);
+        let bottom =
+            (self.coarse_detection.y() + self.coarse_detection.height() + padding).min(1.0);
+        NormalizedRect::new(left, top, right - left, bottom - top)
+    }
+}
+
+/// Writes a non-square image with a known 16 px ball, white field-line and white-shoe distractors.
+/// The returned coordinates are the authoritative fixture truth used by recovery tests.
+pub fn generate_small_object_localization_fixture(
+    path: &Path,
+) -> CoreResult<SmallObjectLocalizationFixture> {
+    const WIDTH: u32 = 544;
+    const HEIGHT: u32 = 448;
+    const BALL_LEFT: u32 = 272;
+    const BALL_TOP: u32 = 194;
+    const BALL_SIZE: u32 = 16;
+
+    let mut image: RgbImage = ImageBuffer::from_pixel(WIDTH, HEIGHT, Rgb([27, 128, 59]));
+
+    // A bright field line and shoe-like rectangles deliberately resemble the tiny white target.
+    for y in 286..=292 {
+        for x in 20..524 {
+            image.put_pixel(x, y, Rgb([242, 242, 235]));
+        }
+    }
+    for y in 218..=232 {
+        for x in 252..=269 {
+            image.put_pixel(x, y, Rgb([245, 245, 240]));
+        }
+    }
+    for y in 209..=231 {
+        for x in 248..=253 {
+            image.put_pixel(x, y, Rgb([52, 54, 58]));
+        }
+    }
+
+    // The target lies above and does not overlap the deliberately wrong coarse prediction.
+    let radius = i32::try_from(BALL_SIZE / 2).unwrap_or_default();
+    for y in BALL_TOP..BALL_TOP + BALL_SIZE {
+        for x in BALL_LEFT..BALL_LEFT + BALL_SIZE {
+            let dx = i32::try_from(x - BALL_LEFT).unwrap_or_default() - radius;
+            let dy = i32::try_from(y - BALL_TOP).unwrap_or_default() - radius;
+            if dx * dx + dy * dy <= radius * radius {
+                let value = if (x + y) % 7 < 2 { 48 } else { 238 };
+                image.put_pixel(x, y, Rgb([value, value, value]));
+            }
+        }
+    }
+    image
+        .save(path)
+        .map_err(|error| CoreError::InvalidGeometry(format!("cannot save fixture: {error}")))?;
+
+    Ok(SmallObjectLocalizationFixture {
+        width: WIDTH,
+        height: HEIGHT,
+        ground_truth: NormalizedRect::new(
+            BALL_LEFT as f32 / WIDTH as f32,
+            BALL_TOP as f32 / HEIGHT as f32,
+            BALL_SIZE as f32 / WIDTH as f32,
+            BALL_SIZE as f32 / HEIGHT as f32,
+        )?,
+        coarse_detection: NormalizedRect::new(
+            262.0 / WIDTH as f32,
+            225.0 / HEIGHT as f32,
+            19.0 / WIDTH as f32,
+            16.0 / HEIGHT as f32,
+        )?,
+        legacy_refined_detection: NormalizedRect::new(
+            255.0 / WIDTH as f32,
+            216.0 / HEIGHT as f32,
+            34.0 / WIDTH as f32,
+            42.0 / HEIGHT as f32,
+        )?,
+    })
+}
+
 pub fn generate_synthetic_inspection(path: &Path) -> CoreResult<()> {
     let mut image: RgbImage = ImageBuffer::from_pixel(160, 100, Rgb([24, 28, 34]));
     for y in 28..72 {
@@ -369,6 +470,46 @@ mod tests {
         let frame = load_image(&path, 1_000_000).expect("load generated image");
         assert_eq!((frame.metadata.width, frame.metadata.height), (640, 400));
         assert!(load_image(&path, 10).is_err());
+    }
+
+    #[test]
+    fn small_object_fixture_reproduces_missed_prompt_and_refiner_drift() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("small-ball-regression.png");
+        let fixture = generate_small_object_localization_fixture(&path).expect("generate fixture");
+        let frame = load_image(&path, 1_000_000).expect("load generated fixture");
+        assert_eq!(
+            (frame.metadata.width, frame.metadata.height),
+            (fixture.width, fixture.height)
+        );
+
+        assert!(
+            fixture
+                .coarse_detection
+                .intersection_area(fixture.ground_truth)
+                <= f32::EPSILON,
+            "the regression requires a genuine coarse-localization miss"
+        );
+        assert!(
+            fixture
+                .legacy_prompt(0.02)
+                .expect("legacy prompt")
+                .intersection_area(fixture.ground_truth)
+                <= f32::EPSILON,
+            "full-image padding must not make this invalid prompt look usable"
+        );
+        assert!(
+            fixture
+                .legacy_refined_detection
+                .intersection_area(fixture.ground_truth)
+                <= f32::EPSILON,
+            "the historical refinement follows the distractor rather than the ball"
+        );
+        let area_ratio = fixture.legacy_refined_detection.area() / fixture.coarse_detection.area();
+        assert!(
+            (area_ratio - 4.697_368_6).abs() < 0.000_01,
+            "unexpected refiner-drift ratio: {area_ratio}"
+        );
     }
 
     #[test]

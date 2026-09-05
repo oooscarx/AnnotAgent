@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M0 — 2026-09-05
+
+- Added a deterministic known-Ground-Truth 16 px football fixture with white-line and white-shoe
+  distractors. The bad coarse box, its legacy padded prompt and the historical-style refined box
+  all have zero overlap with the target.
+- Preserved the current B-Human Sample Test as provisional, non-Ground-Truth evidence, including
+  its Draft/Sample Test identity, geometry measurements and complete lineage stages.
+- Recorded the projection regression where one coarse/refined lineage appears as two Results; the
+  required terminal count remains one and is assigned to M6.
+- Focused image-tools tests and strict Clippy pass. No Provider call, publication, history mutation,
+  remote change or push was performed.
+
+Small-Object Localization Recovery M0 status: `PASS`.
+
 ## Builder Plan Preservation M6 — 2026-09-05
 
 - Runtime now derives typed detection-geometry conversion Fragments directly from the current Node,

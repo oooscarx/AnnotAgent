@@ -26727,4 +26727,22 @@ export:
         assert_eq!(page.items[6].id, "project-016");
         assert_eq!(page.next_offset, Some(17));
     }
+
+    #[test]
+    fn provisional_bhuman_fixture_reproduces_duplicate_intermediate_results() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/execution/fixtures/small-object-localization/bhuman-provisional.json"
+        ))
+        .expect("provisional B-Human evidence");
+        assert!(fixture["ground_truth"].is_null());
+        assert_eq!(fixture["legacy_results_count"], 2);
+        assert_eq!(fixture["expected_terminal_results_count"], 1);
+        assert_eq!(
+            fixture["artifact_lineage"]
+                .as_array()
+                .expect("artifact lineage")
+                .len(),
+            6
+        );
+    }
 }

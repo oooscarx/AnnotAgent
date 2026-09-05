@@ -1,5 +1,18 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M0 — 2026-09-05
+
+1. `small_object_fixture_reproduces_missed_prompt_and_refiner_drift` decodes the deterministic
+   544×448 fixture and proves that the generated 16 px football has zero intersection with the bad
+   coarse box, legacy `0.02` prompt and wrong refined result.
+2. The same test measures the wrong refinement at 4.6973686 times the coarse area, preventing a
+   later implementation from relabeling this evidence as merely a loose-but-valid target box.
+3. `docs/execution/fixtures/small-object-localization/bhuman-provisional.json` preserves the real
+   Sample Test observation with `ground_truth: null`, explicit calibration status and the legacy
+   two-result versus one-terminal-result projection expectation.
+4. No current Draft, immutable Published Version, real Sample Test, model asset, credential,
+   annotation, remote or Run history was modified.
+
 ## Builder Plan Preservation M6 — 2026-09-05
 
 1. `registry_synthesizes_geometry_path_when_model_never_calls_path_discovery` spends the full
