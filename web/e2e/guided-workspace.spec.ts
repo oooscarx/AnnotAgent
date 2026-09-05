@@ -678,6 +678,15 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   const sampleResult = page.locator(".sample-result-card").first();
   await expect(sampleResult).toContainText("day");
   await expect(sampleResult).toContainText("1 terminal result");
+  const cardBounds = await sampleResult.boundingBox();
+  const previewBounds = await sampleResult.locator(".sample-result-preview").boundingBox();
+  const bodyBounds = await sampleResult.locator(".sample-result-body").boundingBox();
+  expect(cardBounds).not.toBeNull();
+  expect(previewBounds).not.toBeNull();
+  expect(bodyBounds).not.toBeNull();
+  expect(previewBounds!.x - cardBounds!.x).toBeGreaterThanOrEqual(10);
+  expect(cardBounds!.x + cardBounds!.width - previewBounds!.x - previewBounds!.width).toBeGreaterThanOrEqual(10);
+  expect(bodyBounds!.y - previewBounds!.y - previewBounds!.height).toBeGreaterThanOrEqual(10);
   await sampleResult.getByText(/Diagnostics · \d+ lineage stages?/).click();
   await expect(sampleResult.getByRole("tab", { name: "Final" })).toHaveAttribute("aria-selected", "true");
   await sampleResult.getByRole("tab", { name: "Coarse" }).click();
