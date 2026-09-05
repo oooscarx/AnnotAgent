@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-05 CST
 
+## Small-Object Localization Recovery M2 — 2026-09-05
+
+- Added domain-neutral candidate-relative, image-fraction and direction-aware region expansion,
+  plus pixel-derived target-scale evidence.
+- `core.expand_region` now produces auditable search-region Artifacts; `core.crop` can emit the
+  actual local image lineage used by a detector.
+- Published and sandbox detection runners materialize the local crop from the untouched source
+  image, retain the local-image parent and tag output for standard coordinate projection.
+- The known-Ground-Truth regression proves the default configured 96×96 search region contains the
+  missed 16 px target. Edge clamp, non-square dimensions and scale bucketing tests pass.
+
+Small-Object Localization Recovery M2 status: `PASS`.
+
 ## Small-Object Localization Recovery M1 — 2026-09-05
 
 - Added typed localization-failure and Prompt Coverage contracts with evidence-backed state/action

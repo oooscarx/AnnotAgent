@@ -32,11 +32,11 @@ use annotagent_runtime::{
     CORE_DETECTIONS_TO_BOX_PROMPTS, CORE_EVIDENCE_GATE, CORE_EXISTING_ANNOTATIONS, CORE_FILTER,
     CORE_GEOMETRY_DECISION, CORE_GEOMETRY_QUALITY_EVALUATION, CORE_IMAGE_STATISTICS,
     CORE_MAP_LABEL, CORE_MASK_TO_BBOX, CORE_MASK_TO_POLYGON, CORE_PROJECT_CANDIDATES,
-    CORE_PROJECT_COORDINATES, CORE_REJECT, CORE_RESIZE, CORE_SELECT_AND_MAP, CORE_TILE,
-    CorePipelineRunner, DETECTION_RECOVERY_OPERATION, DagCheckpoint, DagExecutionRequest,
-    DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage,
-    DagRunResult, DagRunStatus, DetectionRecoveryAgent, ImageRunRequest, ImageRunResult,
-    PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
+    CORE_PROJECT_COORDINATES, CORE_PROMPT_COVERAGE_GATE, CORE_REJECT, CORE_RESIZE,
+    CORE_SELECT_AND_MAP, CORE_TILE, CorePipelineRunner, DETECTION_RECOVERY_OPERATION,
+    DagCheckpoint, DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput,
+    DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunResult, DagRunStatus, DetectionRecoveryAgent,
+    ImageRunRequest, ImageRunResult, PublishedDagExecutor, RunControl, RunRecord, RuntimeStore,
 };
 use annotagent_skill_classification::{
     CLASSIFICATION_OPERATION, CLASSIFICATION_VERIFY_OPERATION, ClassificationSkillRunner,
@@ -356,7 +356,9 @@ impl PublishedWorkflowRuntime {
                 | CORE_RESIZE
                 | CORE_TILE
                 | CORE_CROP
+                | annotagent_runtime::CORE_EXPAND_REGION
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
+                | CORE_PROMPT_COVERAGE_GATE
                 | CORE_MASK_TO_BBOX
                 | CORE_GEOMETRY_QUALITY_EVALUATION
                 | CORE_GEOMETRY_DECISION
@@ -451,6 +453,7 @@ impl PublishedWorkflowRuntime {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
+                            source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
@@ -1073,7 +1076,9 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                 | CORE_RESIZE
                 | CORE_TILE
                 | CORE_CROP
+                | annotagent_runtime::CORE_EXPAND_REGION
                 | CORE_DETECTIONS_TO_BOX_PROMPTS
+                | CORE_PROMPT_COVERAGE_GATE
                 | CORE_MASK_TO_BBOX
                 | CORE_GEOMETRY_QUALITY_EVALUATION
                 | CORE_GEOMETRY_DECISION
@@ -1168,6 +1173,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
+                            source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
@@ -1773,6 +1779,7 @@ struct BoundDetectionRunner {
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
+    source_image: Arc<annotagent_core::ImageFrame>,
     detection_workers: Vec<DetectionWorkerSettings>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
     model_bundle_registry: Arc<Mutex<ModelBundleRegistry>>,
@@ -1891,6 +1898,36 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
 #[async_trait]
 impl DagNodeRunner for BoundDetectionRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let local_inputs = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) if image.root_region.is_some() => Some(image),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if local_inputs.len() > 1 {
+            return Err(DagNodeFailure::terminal(
+                "local_detection_input_ambiguous",
+                "one local detection node consumes exactly one search crop",
+            ));
+        }
+        let (model_image, local_source) = if let Some(image) = local_inputs.first() {
+            let region = image.root_region.expect("filtered local image");
+            let crop =
+                annotagent_image_tools::crop(&self.source_image, region, 0.0).map_err(|error| {
+                    DagNodeFailure::terminal("local_crop_failed", error.to_string())
+                })?;
+            let model_image = annotagent_image_tools::to_model_image(
+                format!("local-search:{}", image.reference.artifact_id),
+                &crop,
+                crop.metadata.width.max(crop.metadata.height),
+            )
+            .map_err(|error| DagNodeFailure::terminal("local_crop_failed", error.to_string()))?;
+            (Some(model_image), Some(image.reference.clone()))
+        } else {
+            (self.model_image.clone(), None)
+        };
         let execution = execution_for_node(
             &self.default_execution,
             &self.profile_executions,
@@ -1909,7 +1946,7 @@ impl DagNodeRunner for BoundDetectionRunner {
             )
             .await
             .map_err(|error| DagNodeFailure::terminal("detection_plugin", error.to_string()))?;
-            ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+            ObjectDetectionSkillRunner::new(backend, model_id, model_image.clone())
                 .map_err(|error| DagNodeFailure::terminal("detection_binding", error.to_string()))?
                 .run(context)
                 .await?
@@ -1921,7 +1958,7 @@ impl DagNodeRunner for BoundDetectionRunner {
                     execution.model_name.clone(),
                 )),
                 execution.model_name.clone(),
-                self.model_image.clone(),
+                model_image.clone(),
             )
             .map_err(|error| DagNodeFailure::terminal("detection_binding", error.to_string()))?;
             runner.run(context).await?
@@ -1980,15 +2017,14 @@ impl DagNodeRunner for BoundDetectionRunner {
                 )
             };
             if context.node.node_type == VLM_DETECTION_OPERATION {
-                let runner =
-                    VlmDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
-                        .map_err(|error| {
-                            DagNodeFailure::terminal("detection_binding", error.to_string())
-                        })?;
+                let runner = VlmDetectionSkillRunner::new(backend, model_id, model_image.clone())
+                    .map_err(|error| {
+                    DagNodeFailure::terminal("detection_binding", error.to_string())
+                })?;
                 runner.run(context).await?
             } else {
                 let runner =
-                    ObjectDetectionSkillRunner::new(backend, model_id, self.model_image.clone())
+                    ObjectDetectionSkillRunner::new(backend, model_id, model_image.clone())
                         .map_err(|error| {
                             DagNodeFailure::terminal("detection_binding", error.to_string())
                         })?;
@@ -1999,6 +2035,24 @@ impl DagNodeRunner for BoundDetectionRunner {
             add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         } else {
             add_execution_metadata(&mut output, execution);
+        }
+        if let Some(source) = local_source {
+            for artifact in &mut output.pipeline_artifacts {
+                if let PipelineArtifact::DetectionSet(set) = artifact {
+                    set.metadata.insert(
+                        "source_image_artifact_id".to_owned(),
+                        serde_json::json!(source.artifact_id),
+                    );
+                    set.metadata
+                        .insert("local_relocalization".to_owned(), serde_json::json!(true));
+                    for detection in &mut set.detections {
+                        detection.attributes.insert(
+                            "local_search_image".to_owned(),
+                            serde_json::to_value(&source).unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                }
+            }
         }
         Ok(output)
     }

@@ -13,9 +13,9 @@ use annotagent_core::{
     GeometryRefinementTrace, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact,
     PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact, PromptCoverageAction,
     PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind,
-    PromptCoverageState, SuggestedAction, TaskId, ValidationEvidence, ValidationIssue,
-    VisionArtifact, VisionArtifactValue, VisionCapability, evaluate_geometry_refinement,
-    mask_tight_bbox,
+    PromptCoverageState, RegionExpansionPolicy, SuggestedAction, TargetScaleProfile, TaskId,
+    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
+    evaluate_geometry_refinement, mask_tight_bbox,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 
 pub const CORE_CROP: &str = "core.crop";
+pub const CORE_EXPAND_REGION: &str = "core.expand_region";
 pub const CORE_EXISTING_ANNOTATIONS: &str = "core.existing_annotations";
 pub const CORE_DETECTIONS_TO_BOX_PROMPTS: &str = "core.detections_to_box_prompts";
 pub const CORE_PROMPT_COVERAGE_GATE: &str = "core.prompt_coverage_gate";
@@ -60,6 +61,7 @@ impl DagNodeRunner for CorePipelineRunner {
             CORE_RESIZE => run_resize(&context),
             CORE_TILE => run_tile(&context),
             CORE_CROP => run_crop(&context),
+            CORE_EXPAND_REGION => run_expand_region(&context),
             CORE_DETECTIONS_TO_BOX_PROMPTS => run_detections_to_box_prompts(&context),
             CORE_PROMPT_COVERAGE_GATE => run_prompt_coverage_gate(&context),
             CORE_MASK_TO_BBOX => run_mask_to_bbox(&context),
@@ -470,7 +472,149 @@ fn run_crop(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailur
     crops
         .validate()
         .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
-    Ok(output(PipelineArtifact::CropSet(crops)))
+    let mut artifacts = vec![PipelineArtifact::CropSet(crops.clone())];
+    if context
+        .node
+        .outputs
+        .iter()
+        .any(|port| port.artifact_type == ArtifactKind::Image)
+    {
+        let output = output_reference(context, "images", ArtifactKind::Image)?;
+        let parent_region = image.root_region.unwrap_or(
+            annotagent_core::NormalizedRect::new(0.0, 0.0, 1.0, 1.0)
+                .map_err(|error| DagNodeFailure::terminal("crop_failed", error.to_string()))?,
+        );
+        for crop in &crops.crops {
+            let root_region = annotagent_core::NormalizedRect::new(
+                parent_region.x() + crop.rect.x() * parent_region.width(),
+                parent_region.y() + crop.rect.y() * parent_region.height(),
+                crop.rect.width() * parent_region.width(),
+                crop.rect.height() * parent_region.height(),
+            )
+            .map_err(|error| DagNodeFailure::terminal("crop_failed", error.to_string()))?;
+            let mut reference = output.clone();
+            reference.artifact_id = format!("{}:{}", reference.artifact_id, crop.id);
+            let crop_image = annotagent_core::ImageArtifact {
+                reference,
+                image_id: image.image_id,
+                width: crop.crop_width,
+                height: crop.crop_height,
+                mime_type: crop
+                    .mime_type
+                    .clone()
+                    .unwrap_or_else(|| image.mime_type.clone()),
+                blob_ref: crop
+                    .blob_ref
+                    .clone()
+                    .unwrap_or_else(|| format!("virtual-crop://{}", crop.id)),
+                parent: Some(image.reference.clone()),
+                root_region: Some(root_region),
+            };
+            crop_image
+                .validate()
+                .map_err(|error| DagNodeFailure::terminal("crop_failed", error))?;
+            artifacts.push(PipelineArtifact::Image(crop_image));
+        }
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: artifacts,
+        metadata: BTreeMap::from([(
+            "crop_count".to_owned(),
+            serde_json::json!(crops.crops.len()),
+        )]),
+        ..DagNodeOutput::default()
+    })
+}
+
+fn run_expand_region(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+    let image = one_image(context)?;
+    let detections = one_detection_set(context)?;
+    let policy = context.node.parameters.get("policy").map_or_else(
+        || {
+            Ok(RegionExpansionPolicy::RelativeToCandidate {
+                width_factor: 4.0,
+                height_factor: 4.0,
+                minimum_width_px: 96,
+                minimum_height_px: 96,
+                maximum_image_fraction: 0.5,
+            })
+        },
+        |value| {
+            serde_json::from_value(value.clone()).map_err(|error| {
+                DagNodeFailure::terminal(
+                    "invalid_region_expansion_policy",
+                    format!("Region expansion policy is invalid: {error}"),
+                )
+            })
+        },
+    )?;
+    let tiny_max = number_parameter(context, "tiny_max_dimension_px", 20.0)? as f32;
+    let small_max = number_parameter(context, "small_max_dimension_px", 64.0)? as f32;
+    let medium_max = number_parameter(context, "medium_max_dimension_px", 160.0)? as f32;
+    if !(tiny_max > 0.0 && tiny_max <= small_max && small_max <= medium_max) {
+        return Err(DagNodeFailure::terminal(
+            "invalid_target_scale_thresholds",
+            "Target scale thresholds must be positive and ordered tiny <= small <= medium",
+        ));
+    }
+    let reference = output_reference(context, "regions", ArtifactKind::DetectionSet)?;
+    let mut regions = detections.clone();
+    regions.reference = reference;
+    regions.model_binding = format!("core-region-expansion:{}", detections.model_binding);
+    for detection in &mut regions.detections {
+        let candidate_bbox = detection.bbox;
+        let scale = TargetScaleProfile::from_candidate(
+            candidate_bbox,
+            image.width,
+            image.height,
+            tiny_max,
+            small_max,
+            medium_max,
+        );
+        detection.bbox = policy
+            .expand(candidate_bbox, image.width, image.height)
+            .map_err(|error| {
+                DagNodeFailure::terminal("region_expansion_failed", error.to_string())
+            })?;
+        detection.detection_id = format!("search-region:{}", detection.detection_id);
+        detection.attributes.insert(
+            "source_candidate_bbox".to_owned(),
+            serde_json::to_value(candidate_bbox).unwrap_or(serde_json::Value::Null),
+        );
+        detection.attributes.insert(
+            "source_detection_artifact".to_owned(),
+            serde_json::json!(detections.reference.artifact_id),
+        );
+        detection.attributes.insert(
+            "region_expansion_policy".to_owned(),
+            serde_json::to_value(&policy).unwrap_or(serde_json::Value::Null),
+        );
+        detection.attributes.insert(
+            "target_scale_profile".to_owned(),
+            serde_json::to_value(scale).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    regions.metadata.insert(
+        "artifact_role".to_owned(),
+        serde_json::json!("localization_search_region"),
+    );
+    regions
+        .validate()
+        .map_err(|error| DagNodeFailure::terminal("region_expansion_failed", error))?;
+    Ok(DagNodeOutput {
+        metadata: BTreeMap::from([
+            (
+                "policy".to_owned(),
+                serde_json::to_value(policy).unwrap_or_default(),
+            ),
+            (
+                "region_count".to_owned(),
+                serde_json::json!(regions.detections.len()),
+            ),
+        ]),
+        pipeline_artifacts: vec![PipelineArtifact::DetectionSet(regions)],
+        ..DagNodeOutput::default()
+    })
 }
 
 fn run_detections_to_box_prompts(
@@ -3303,6 +3447,122 @@ mod tests {
         let region = last.root_region.expect("root region");
         assert_eq!((region.x(), region.y()), (0.4, 0.25));
         assert_eq!(last.reference.item_id.as_deref(), Some("r1-c1"));
+    }
+
+    #[tokio::test]
+    async fn coarse_candidate_expands_to_a_minimum_pixel_search_crop_covering_the_target() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let fixture = annotagent_image_tools::generate_small_object_localization_fixture(
+            &temporary.path().join("small-target.png"),
+        )
+        .expect("localization fixture");
+        let image_id = ImageId::new();
+        let image = pipeline_image(image_id, fixture.width, fixture.height, None);
+        let coarse = detection_set(
+            image_id,
+            "coarse-set",
+            "coarse-model",
+            vec![detection(
+                "coarse-set",
+                "ball",
+                "ball",
+                [
+                    fixture.coarse_detection.x(),
+                    fixture.coarse_detection.y(),
+                    fixture.coarse_detection.width(),
+                    fixture.coarse_detection.height(),
+                ],
+                Some(0.8),
+                "coarse-model",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let expand = WorkflowDraftNode {
+            id: "expand".to_owned(),
+            node_type: CORE_EXPAND_REGION.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![NodePort {
+                id: "regions".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                required: true,
+                multiple: true,
+            }],
+            parameters: BTreeMap::from([(
+                "policy".to_owned(),
+                serde_json::json!({
+                    "kind": "relative_to_candidate",
+                    "width_factor": 4.0,
+                    "height_factor": 4.0,
+                    "minimum_width_px": 96,
+                    "minimum_height_px": 96,
+                    "maximum_image_fraction": 0.5
+                }),
+            )]),
+            ..WorkflowDraftNode::default()
+        };
+        let expanded = CorePipelineRunner
+            .run(node_context(
+                &expand,
+                vec![image.clone(), coarse],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("expand search region");
+        let PipelineArtifact::DetectionSet(regions) = &expanded.pipeline_artifacts[0] else {
+            panic!("search regions")
+        };
+        let region = regions.detections[0].bbox;
+        assert!(
+            region.intersection_area(fixture.ground_truth)
+                >= fixture.ground_truth.area() - f32::EPSILON,
+            "candidate-relative search must recover the target above the coarse box"
+        );
+        assert!((region.width() * fixture.width as f32 - 96.0).abs() < 0.001);
+        assert!((region.height() * fixture.height as f32 - 96.0).abs() < 0.001);
+
+        let crop = WorkflowDraftNode {
+            id: "crop".to_owned(),
+            node_type: CORE_CROP.to_owned(),
+            kind: WorkflowNodeKind::Transform,
+            outputs: vec![
+                NodePort {
+                    id: "crops".to_owned(),
+                    artifact_type: ArtifactKind::CropSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "images".to_owned(),
+                    artifact_type: ArtifactKind::Image,
+                    required: false,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let cropped = CorePipelineRunner
+            .run(node_context(
+                &crop,
+                vec![image, expanded.pipeline_artifacts[0].clone()],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("crop search region");
+        let crop_image = cropped
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) => Some(image),
+                _ => None,
+            })
+            .expect("executable crop image");
+        assert_eq!((crop_image.width, crop_image.height), (96, 96));
+        let crop_region = crop_image.root_region.expect("root crop region");
+        assert!((crop_region.x() - region.x()).abs() < 0.000_001);
+        assert!((crop_region.y() - region.y()).abs() < 0.000_001);
+        assert!((crop_region.width() - region.width()).abs() < 0.000_001);
+        assert!((crop_region.height() - region.height()).abs() < 0.000_001);
+        assert!(crop_image.parent.is_some());
     }
 
     #[tokio::test]

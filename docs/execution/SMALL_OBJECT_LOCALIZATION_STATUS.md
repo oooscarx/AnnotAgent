@@ -2,6 +2,27 @@
 
 Last updated: 2026-09-05 CST
 
+## Milestone 2 — Bounded coarse-to-fine re-localization
+
+- Added typed, serializable `RegionExpansionPolicy` variants for image-fraction,
+  candidate-relative and direction-aware search. Candidate-relative expansion enforces minimum
+  pixel dimensions, a maximum image fraction and edge-safe clamping.
+- Added observable `TargetScaleProfile` evidence from candidate geometry and source-image pixels.
+  Tiny/small/medium thresholds are node or Skill configuration rather than model-brand logic.
+- Registered and implemented `core.expand_region`. It preserves the source evidence, records the
+  original candidate, expansion policy and scale profile, and marks output as an intermediate
+  localization search region.
+- Extended `core.crop` to optionally emit executable image Artifacts as well as CropSet metadata.
+  Each image keeps its parent and exact normalized root-image region.
+- Bound detection runners now crop the untouched source image for one local search input, record the
+  source-image Artifact and produce local coordinates for the existing
+  `core.project_coordinates` transform. Multiple implicit local crops fail closed instead of using
+  the wrong image.
+- The M0 miss is recovered by a 96×96 candidate-relative search crop that fully contains the known
+  football above the bad coarse box.
+
+Milestone 2 status: `PASS`.
+
 ## Milestone 1 — Failure classification and Prompt Coverage
 
 - Added the domain-neutral `LocalizationFailureClass` taxonomy. `prompt_outside_target` resolves to

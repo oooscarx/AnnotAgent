@@ -1,5 +1,20 @@
 # AnnotAgent Acceptance Evidence
 
+## Small-Object Localization Recovery M2 — 2026-09-05
+
+1. `candidate_relative_region_obeys_pixel_minimum_and_clamps_at_edges` proves minimum pixel width
+   and height on a non-square image and preserves bounds when the candidate is near two edges.
+2. `target_scale_uses_observed_pixels_not_a_model_confidence` classifies a measured 16 px candidate
+   as Tiny without converting semantic confidence into geometry evidence.
+3. `coarse_candidate_expands_to_a_minimum_pixel_search_crop_covering_the_target` runs
+   `core.expand_region → core.crop` against the M0 fixture. The 96×96 original-image crop fully
+   covers the target above the non-overlapping coarse box and retains parent/root-region lineage.
+4. The existing `coordinate_projection_maps_local_detections_to_root_image` test continues to prove
+   local normalized coordinates map to exact non-square root-image coordinates.
+5. Bound detector execution materializes the local ModelImage from the untouched source pixels and
+   records `source_image_artifact_id`; it rejects ambiguous multi-crop input rather than silently
+   running on the full image.
+
 ## Small-Object Localization Recovery M1 — 2026-09-05
 
 1. `outside_prompt_is_a_localization_miss_not_loose_geometry` proves the structured code produces

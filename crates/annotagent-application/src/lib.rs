@@ -4161,7 +4161,7 @@ fn workflow_catalog_with_api_key(
             display_name: "Crop".to_owned(),
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
-            produces: vec![ArtifactKind::CropSet],
+            produces: vec![ArtifactKind::CropSet, ArtifactKind::Image],
             deterministic: true,
         },
         VisionNodeDescriptor {
@@ -4380,6 +4380,14 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             required_capabilities: Vec::new(),
             accepts: vec![ArtifactKind::Image],
             produces: vec![ArtifactKind::Image],
+            deterministic: true,
+        },
+        VisionNodeDescriptor {
+            id: annotagent_runtime::CORE_EXPAND_REGION.to_owned(),
+            display_name: "Expand localization search region".to_owned(),
+            required_capabilities: Vec::new(),
+            accepts: vec![ArtifactKind::Image, ArtifactKind::DetectionSet],
+            produces: vec![ArtifactKind::DetectionSet],
             deterministic: true,
         },
         VisionNodeDescriptor {
@@ -4619,9 +4627,41 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
                 catalog_port("image", ArtifactKind::Image, true, one),
                 catalog_port("detections", ArtifactKind::DetectionSet, true, one),
             ],
-            output_ports: vec![catalog_port("crops", ArtifactKind::CropSet, true, many)],
+            output_ports: vec![
+                catalog_port("crops", ArtifactKind::CropSet, true, many),
+                catalog_port("images", ArtifactKind::Image, false, many),
+            ],
             config_schema: node_schema(json!({
                 "padding": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0}
+            })),
+            required_model_capability: None,
+            cardinality: NodeCardinality::ManyToMany,
+            side_effect: NodeSideEffect::None,
+            dry_run_supported: true,
+            expert_only: false,
+        },
+        NodeDefinition {
+            id: annotagent_runtime::CORE_EXPAND_REGION.to_owned(),
+            display_name: "Expand search region".to_owned(),
+            category: NodeCategory::ImagePreparation,
+            input_ports: vec![
+                catalog_port("image", ArtifactKind::Image, true, one),
+                catalog_port("detections", ArtifactKind::DetectionSet, true, many),
+            ],
+            output_ports: vec![catalog_port(
+                "regions",
+                ArtifactKind::DetectionSet,
+                true,
+                many,
+            )],
+            config_schema: node_schema(json!({
+                "policy": {
+                    "type": "object",
+                    "description": "A typed image_fraction, relative_to_candidate, or direction_aware RegionExpansionPolicy"
+                },
+                "tiny_max_dimension_px": {"type": "number", "exclusiveMinimum": 0, "default": 20},
+                "small_max_dimension_px": {"type": "number", "exclusiveMinimum": 0, "default": 64},
+                "medium_max_dimension_px": {"type": "number", "exclusiveMinimum": 0, "default": 160}
             })),
             required_model_capability: None,
             cardinality: NodeCardinality::ManyToMany,
