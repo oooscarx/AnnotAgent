@@ -1386,6 +1386,88 @@ mod tests {
         assert_eq!(set.validation_state, ArtifactValidationState::Unvalidated);
     }
 
+    struct OutboundImageBoundaryProvider;
+
+    #[async_trait]
+    impl VisionModelProvider for OutboundImageBoundaryProvider {
+        fn name(&self) -> &str {
+            "outbound-image-boundary"
+        }
+
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities {
+                vision: true,
+                tool_calls: true,
+                json_schema: true,
+                usage_reporting: false,
+                multi_image: false,
+            }
+        }
+
+        async fn complete(
+            &self,
+            request: ModelRequest,
+            _cancellation: CancellationToken,
+        ) -> CoreResult<ModelResponse> {
+            assert_eq!(request.images.len(), 1);
+            let bytes = STANDARD
+                .decode(&request.images[0].data_base64)
+                .expect("outbound base64");
+            let decoded = image::load_from_memory(&bytes)
+                .expect("outbound image")
+                .to_rgb8();
+            assert_eq!((decoded.width(), decoded.height()), (384, 384));
+            assert_eq!(decoded.get_pixel(0, 0).0, [12, 34, 56]);
+            assert_eq!(decoded.get_pixel(383, 383).0, [210, 180, 90]);
+            Ok(ModelResponse {
+                content: None,
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call-outbound-image"),
+                    name: "submit_detections".to_owned(),
+                    arguments: serde_json::json!({"detections": []}),
+                }],
+                usage: TokenUsage {
+                    input_tokens: None,
+                    output_tokens: None,
+                    total_tokens: None,
+                    source: UsageSource::Unknown,
+                },
+                request_id: Some("outbound-image-request".to_owned()),
+                provider_metadata: BTreeMap::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_boundary_sends_the_materialized_384_pixel_raster() {
+        let mut raster = RgbImage::from_pixel(384, 384, image::Rgb([80, 90, 100]));
+        raster.put_pixel(0, 0, image::Rgb([12, 34, 56]));
+        raster.put_pixel(383, 383, image::Rgb([210, 180, 90]));
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(raster)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("encode outbound fixture");
+        let backend = OpenAiCompatiblePipelineDetector::new(
+            "boundary-detector",
+            Arc::new(OutboundImageBoundaryProvider),
+            "qwen-boundary-model",
+        );
+        let mut request = request(ImageId::new(), VisionCapability::VisionLanguage);
+        request.model_id = "boundary-model-profile".to_owned();
+        request.image = Some(annotagent_core::ModelImage {
+            id: "materialized-384".to_owned(),
+            mime_type: "image/png".to_owned(),
+            data_base64: STANDARD.encode(encoded.into_inner()),
+        });
+        request
+            .parameters
+            .insert("labels".to_owned(), serde_json::json!(["ball"]));
+        backend
+            .infer_pipeline(request, CancellationToken::new())
+            .await
+            .expect("boundary inference");
+    }
+
     struct GridAwareDetectionProvider;
 
     #[async_trait]

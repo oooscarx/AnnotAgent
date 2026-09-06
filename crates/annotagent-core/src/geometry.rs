@@ -159,6 +159,99 @@ impl<'de> Deserialize<'de> for NormalizedRect {
     }
 }
 
+/// One reversible mapping from a model-facing raster back to the normalized root image.
+/// `content_region` describes the non-padding area inside the submitted raster; it is the full
+/// unit rectangle for ordinary stretch/resize and a smaller rectangle for letterbox input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoordinateTransform {
+    pub coordinate_frame_id: String,
+    pub source_region: NormalizedRect,
+    pub submitted_width: u32,
+    pub submitted_height: u32,
+    pub content_region: NormalizedRect,
+}
+
+impl CoordinateTransform {
+    pub fn stretch(
+        coordinate_frame_id: impl Into<String>,
+        source_region: NormalizedRect,
+        submitted_width: u32,
+        submitted_height: u32,
+    ) -> CoreResult<Self> {
+        if submitted_width == 0 || submitted_height == 0 {
+            return Err(CoreError::InvalidGeometry(
+                "submitted image dimensions must be non-zero".to_owned(),
+            ));
+        }
+        Ok(Self {
+            coordinate_frame_id: coordinate_frame_id.into(),
+            source_region,
+            submitted_width,
+            submitted_height,
+            content_region: NormalizedRect::new(0.0, 0.0, 1.0, 1.0)?,
+        })
+    }
+
+    pub fn letterbox(
+        coordinate_frame_id: impl Into<String>,
+        source_region: NormalizedRect,
+        submitted_width: u32,
+        submitted_height: u32,
+        padding: [u32; 4],
+    ) -> CoreResult<Self> {
+        if submitted_width == 0 || submitted_height == 0 {
+            return Err(CoreError::InvalidGeometry(
+                "submitted image dimensions must be non-zero".to_owned(),
+            ));
+        }
+        let [left, top, right, bottom] = padding;
+        let content_width = submitted_width.saturating_sub(left.saturating_add(right));
+        let content_height = submitted_height.saturating_sub(top.saturating_add(bottom));
+        if content_width == 0 || content_height == 0 {
+            return Err(CoreError::InvalidGeometry(
+                "letterbox padding leaves no image content".to_owned(),
+            ));
+        }
+        Ok(Self {
+            coordinate_frame_id: coordinate_frame_id.into(),
+            source_region,
+            submitted_width,
+            submitted_height,
+            content_region: NormalizedRect::new(
+                left as f32 / submitted_width as f32,
+                top as f32 / submitted_height as f32,
+                content_width as f32 / submitted_width as f32,
+                content_height as f32 / submitted_height as f32,
+            )?,
+        })
+    }
+
+    /// Projects one model-space normalized rectangle into root-image normalized coordinates.
+    /// Floating-point geometry is retained; callers rasterize only at an output boundary.
+    pub fn project_rect(&self, rect: NormalizedRect) -> CoreResult<NormalizedRect> {
+        let content = self.content_region;
+        let left = rect.x().max(content.x());
+        let top = rect.y().max(content.y());
+        let right = (rect.x() + rect.width()).min(content.x() + content.width());
+        let bottom = (rect.y() + rect.height()).min(content.y() + content.height());
+        if right <= left || bottom <= top {
+            return Err(CoreError::InvalidGeometry(
+                "model rectangle lies entirely inside letterbox padding".to_owned(),
+            ));
+        }
+        let local_x = (left - content.x()) / content.width();
+        let local_y = (top - content.y()) / content.height();
+        let local_width = (right - left) / content.width();
+        let local_height = (bottom - top) / content.height();
+        NormalizedRect::new(
+            self.source_region.x() + local_x * self.source_region.width(),
+            self.source_region.y() + local_y * self.source_region.height(),
+            local_width * self.source_region.width(),
+            local_height * self.source_region.height(),
+        )
+    }
+}
+
 fn validate_unit(value: f32, name: &str) -> CoreResult<()> {
     if !value.is_finite() || !(0.0..=1.0).contains(&value) {
         return Err(CoreError::InvalidGeometry(format!(
@@ -194,6 +287,36 @@ mod tests {
     fn rectangle_must_stay_in_bounds() {
         assert!(NormalizedRect::new(0.8, 0.2, 0.3, 0.2).is_err());
         assert!(NormalizedRect::new(0.1, 0.2, 0.3, 0.4).is_ok());
+    }
+
+    #[test]
+    fn crop_resize_and_letterbox_project_through_one_transform() {
+        let source = NormalizedRect::new(0.2, 0.1, 0.5, 0.6).expect("source region");
+        let stretched = CoordinateTransform::stretch("stretch", source, 400, 200)
+            .expect("non-uniform resize transform");
+        let projected = stretched
+            .project_rect(NormalizedRect::new(0.25, 0.5, 0.5, 0.25).expect("model rect"))
+            .expect("projected rect");
+        assert!((projected.x() - 0.325).abs() < 1e-6);
+        assert!((projected.y() - 0.4).abs() < 1e-6);
+        assert!((projected.width() - 0.25).abs() < 1e-6);
+        assert!((projected.height() - 0.15).abs() < 1e-6);
+
+        let letterboxed =
+            CoordinateTransform::letterbox("letterbox", source, 400, 400, [0, 100, 0, 100])
+                .expect("letterbox transform");
+        let projected = letterboxed
+            .project_rect(NormalizedRect::new(0.25, 0.375, 0.5, 0.125).expect("model rect"))
+            .expect("projected letterbox rect");
+        assert!((projected.x() - 0.325).abs() < 1e-6);
+        assert!((projected.y() - 0.25).abs() < 1e-6);
+        assert!((projected.width() - 0.25).abs() < 1e-6);
+        assert!((projected.height() - 0.15).abs() < 1e-6);
+        assert!(
+            letterboxed
+                .project_rect(NormalizedRect::new(0.1, 0.01, 0.2, 0.1).expect("padding-only rect"))
+                .is_err()
+        );
     }
 
     proptest! {

@@ -784,7 +784,7 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
     prompts
         .validate()
         .map_err(|error| DagNodeFailure::terminal("invalid_prompt_sent_to_refiner", error))?;
-    let evidence_sets = context
+    let all_evidence_sets = context
         .input_pipeline_artifacts
         .iter()
         .filter_map(|artifact| match artifact {
@@ -808,6 +808,31 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
                 }
                 _ => None,
             });
+    let candidate_origin = candidate_set.and_then(evidence_origin);
+    let mut correlated_repeat_count = 0_u32;
+    let mut same_model_multi_view_count = 0_u32;
+    let mut different_model_source_count = 0_u32;
+    let evidence_sets = all_evidence_sets
+        .into_iter()
+        .filter(|set| {
+            let Some(candidate_origin) = candidate_origin.as_ref() else {
+                return true;
+            };
+            let Some(evidence_origin) = evidence_origin(set) else {
+                return true;
+            };
+            if candidate_origin == &evidence_origin {
+                correlated_repeat_count = correlated_repeat_count.saturating_add(1);
+                return false;
+            }
+            if candidate_origin.0 == evidence_origin.0 {
+                same_model_multi_view_count = same_model_multi_view_count.saturating_add(1);
+            } else {
+                different_model_source_count = different_model_source_count.saturating_add(1);
+            }
+            true
+        })
+        .collect::<Vec<_>>();
     let coverage_reference = output_reference(context, "coverage", ArtifactKind::PromptCoverage)?;
     let mut coverage = Vec::with_capacity(prompts.prompts.len());
     for prompt in &prompts.prompts {
@@ -999,9 +1024,46 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
                 "recovery_exhausted".to_owned(),
                 serde_json::json!(recovery_exhausted),
             ),
+            (
+                "correlated_repeat_skipped".to_owned(),
+                serde_json::json!(correlated_repeat_count),
+            ),
+            (
+                "same_model_multi_view_count".to_owned(),
+                serde_json::json!(same_model_multi_view_count),
+            ),
+            (
+                "different_model_source_count".to_owned(),
+                serde_json::json!(different_model_source_count),
+            ),
         ]),
         ..DagNodeOutput::default()
     })
+}
+
+fn evidence_origin(set: &DetectionSetArtifact) -> Option<(String, String, String)> {
+    if let Some(source) = set.metadata.get("evidence_source").and_then(|value| {
+        serde_json::from_value::<annotagent_core::ModelEvidenceSource>(value.clone()).ok()
+    }) {
+        return Some((
+            source.resolved_model_identity,
+            source.request_image_digest,
+            source.transform_fingerprint,
+        ));
+    }
+    let source_image = set
+        .metadata
+        .get("source_image_artifact_id")
+        .and_then(Value::as_str)?;
+    Some((
+        set.model_binding.clone(),
+        source_image.to_owned(),
+        set.metadata
+            .get("coordinate_space")
+            .and_then(Value::as_str)
+            .unwrap_or("model_input")
+            .to_owned(),
+    ))
 }
 
 fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -1526,6 +1588,15 @@ fn run_project_coordinates(context: &DagNodeContext<'_>) -> Result<DagNodeOutput
                 "Source Image Artifact has no Crop/Tile root coordinate mapping",
             )
         })?;
+        let transform = annotagent_core::CoordinateTransform::stretch(
+            format!("image-artifact:{}", image.reference.artifact_id),
+            region,
+            image.width,
+            image.height,
+        )
+        .map_err(|error| {
+            DagNodeFailure::terminal("coordinate_mapping_invalid", error.to_string())
+        })?;
         let mut next = source.clone();
         next.reference = ArtifactRef {
             artifact_id: format!("{}:set-{index}", output.artifact_id),
@@ -1535,14 +1606,7 @@ fn run_project_coordinates(context: &DagNodeContext<'_>) -> Result<DagNodeOutput
             item_id: None,
         };
         for detection in &mut next.detections {
-            let local = detection.bbox;
-            detection.bbox = annotagent_core::NormalizedRect::new(
-                region.x() + local.x() * region.width(),
-                region.y() + local.y() * region.height(),
-                local.width() * region.width(),
-                local.height() * region.height(),
-            )
-            .map_err(|error| {
+            detection.bbox = transform.project_rect(detection.bbox).map_err(|error| {
                 DagNodeFailure::terminal("coordinate_projection_failed", error.to_string())
             })?;
         }
@@ -1553,6 +1617,12 @@ fn run_project_coordinates(context: &DagNodeContext<'_>) -> Result<DagNodeOutput
         next.metadata.insert(
             "coordinate_space".to_owned(),
             serde_json::json!("root_image"),
+        );
+        next.metadata.insert(
+            "transform_to_original".to_owned(),
+            serde_json::to_value(&transform).map_err(|error| {
+                DagNodeFailure::terminal("coordinate_projection_failed", error.to_string())
+            })?,
         );
         next.validate()
             .map_err(|error| DagNodeFailure::terminal("coordinate_projection_failed", error))?;
@@ -3248,6 +3318,12 @@ mod tests {
                     required: true,
                     multiple: true,
                 },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    multiple: true,
+                },
             ],
             ..WorkflowDraftNode::default()
         };
@@ -3355,6 +3431,12 @@ mod tests {
                 NodePort {
                     id: "coverage".to_owned(),
                     artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
                     required: true,
                     multiple: true,
                 },
@@ -3475,6 +3557,131 @@ mod tests {
                 .observation
                 .contains("intersection over union")
         );
+    }
+
+    #[tokio::test]
+    async fn same_model_same_image_repeat_is_not_independent_coverage_evidence() {
+        let image_id = ImageId::new();
+        let shared_origin = annotagent_core::ModelEvidenceSource {
+            resolved_model_identity: "qwen3.7-flash-2026-07-15".to_owned(),
+            model_revision: Some("2026-07-15".to_owned()),
+            model_profile_id: Some("profile-a".to_owned()),
+            request_image_digest: "same-request-image".to_owned(),
+            original_image_id: image_id,
+            search_region: Some(NormalizedRect::new(0.4, 0.4, 0.2, 0.2).expect("search region")),
+            transform_fingerprint: "same-transform".to_owned(),
+            prompt_resource_hash: Some("prompt-a".to_owned()),
+            request_settings_hash: "settings-a".to_owned(),
+            evidence_purpose: annotagent_core::ModelEvidencePurpose::Localization,
+            parent_evidence_ids: Vec::new(),
+        };
+        let PipelineArtifact::DetectionSet(mut candidate) = detection_set(
+            image_id,
+            "candidate-set",
+            "profile-a",
+            vec![detection(
+                "candidate-set",
+                "candidate",
+                "ball",
+                [0.45, 0.45, 0.05, 0.05],
+                Some(0.9),
+                "profile-a",
+                VisionCapability::VisionLanguage,
+            )],
+        ) else {
+            panic!("candidate set")
+        };
+        candidate.metadata.insert(
+            "evidence_source".to_owned(),
+            serde_json::to_value(&shared_origin).expect("evidence source"),
+        );
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            &candidate,
+            0.0,
+        )
+        .expect("box prompts");
+        let PipelineArtifact::DetectionSet(mut repeated) = detection_set(
+            image_id,
+            "repeat-set",
+            "profile-b",
+            vec![detection(
+                "repeat-set",
+                "repeat",
+                "ball",
+                [0.451, 0.451, 0.048, 0.048],
+                Some(0.95),
+                "profile-b",
+                VisionCapability::VisionLanguage,
+            )],
+        ) else {
+            panic!("repeat set")
+        };
+        let mut repeated_origin = shared_origin;
+        repeated_origin.model_profile_id = Some("profile-b".to_owned());
+        repeated_origin.prompt_resource_hash = Some("different-prompt".to_owned());
+        repeated_origin.request_settings_hash = "different-settings".to_owned();
+        repeated.metadata.insert(
+            "evidence_source".to_owned(),
+            serde_json::to_value(repeated_origin).expect("repeat source"),
+        );
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![
+                    PipelineArtifact::BoxPromptSet(prompts),
+                    PipelineArtifact::DetectionSet(candidate),
+                    PipelineArtifact::DetectionSet(repeated),
+                ],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("correlated repeat decision");
+        assert_eq!(output.route.as_deref(), Some("review"));
+        assert_eq!(output.metadata["correlated_repeat_skipped"], 1);
+        assert_eq!(output.metadata["different_model_source_count"], 0);
+        let coverage = output
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::Unknown);
+        assert!(coverage.evidence.is_empty());
     }
 
     #[tokio::test]

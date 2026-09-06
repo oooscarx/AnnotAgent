@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ArtifactId, ArtifactKind, ArtifactValidationState, CoreResult, FallbackPolicy, ImageId,
-    LabelId, MaskEncoding, ModelId, ModelImage, ModelRegistry, NodePort, NodeRegistry,
-    NormalizedPoint, NormalizedRect, ProjectSchema, ResourceRequirements, RetryPolicy, ReviewGate,
-    RunId, ScoreSemantics, TaskId, ValidationIssue, VisionArtifactValue, VisionBackendError,
-    VisionBackendTimings, VisionBackendUsage, VisionCapability, WORKFLOW_SCHEMA_VERSION,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
+    ArtifactId, ArtifactKind, ArtifactValidationState, CoordinateTransform, CoreResult,
+    FallbackPolicy, ImageId, LabelId, MaskEncoding, ModelId, ModelImage, ModelRegistry, NodePort,
+    NodeRegistry, NormalizedPoint, NormalizedRect, ProjectSchema, ResourceRequirements,
+    RetryPolicy, ReviewGate, RunId, ScoreSemantics, TaskId, ValidationIssue, VisionArtifactValue,
+    VisionBackendError, VisionBackendTimings, VisionBackendUsage, VisionCapability,
+    WORKFLOW_SCHEMA_VERSION, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge,
+    WorkflowNodeKind,
 };
 
 pub const LABEL_PIPELINE_SCHEMA_VERSION: u32 = 1;
@@ -65,6 +66,62 @@ pub struct ImageArtifact {
     /// Region occupied by this image in normalized root-image coordinates. `None` is identity.
     #[serde(default)]
     pub root_region: Option<NormalizedRect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ProviderEffectiveDimensions {
+    Observed { width: u32, height: u32 },
+    Estimated { width: u32, height: u32 },
+    Unknown,
+}
+
+/// Redacted, persisted evidence for the exact raster submitted at a model boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInputTrace {
+    pub source_image_id: ImageId,
+    pub source_image_sha256: String,
+    pub source_image_artifact: Option<ArtifactRef>,
+    /// Integer `[x, y, width, height]` in the decoded root raster.
+    pub source_region_pixels: [u32; 4],
+    pub crop_dimensions: [u32; 2],
+    pub submitted_dimensions: [u32; 2],
+    pub submitted_image_sha256: String,
+    /// SHA-256 of decoded RGB pixels, stable across lossless re-encoding.
+    pub normalized_pixel_digest: String,
+    pub interpolation: String,
+    /// `[left, top, right, bottom]` pixels in the submitted raster.
+    pub letterbox_padding: [u32; 4],
+    pub color_format: String,
+    pub transform_to_original: CoordinateTransform,
+    #[serde(default)]
+    pub provider_image_parameters: BTreeMap<String, serde_json::Value>,
+    pub provider_effective_dimensions: ProviderEffectiveDimensions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelEvidencePurpose {
+    Localization,
+    Semantics,
+    Mask,
+    Geometry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelEvidenceSource {
+    pub resolved_model_identity: String,
+    pub model_revision: Option<String>,
+    pub model_profile_id: Option<String>,
+    pub request_image_digest: String,
+    pub original_image_id: ImageId,
+    pub search_region: Option<NormalizedRect>,
+    pub transform_fingerprint: String,
+    pub prompt_resource_hash: Option<String>,
+    pub request_settings_hash: String,
+    pub evidence_purpose: ModelEvidencePurpose,
+    #[serde(default)]
+    pub parent_evidence_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

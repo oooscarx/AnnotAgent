@@ -108,7 +108,7 @@ Expected M0 failure: the route target is `review_final_ball`, a `HumanReview` no
 
 - M1: machine-checkable route semantics and a real bounded search view B — completed below.
 - M2: materialized Resize/model-input trace, shared coordinate transforms and correlated-evidence
-  de-duplication.
+  de-duplication — completed below.
 - M3: separate refinement eligibility from automatic acceptance and pass the selected recovered
   candidate through SAM/geometry/review safely.
 - M4: Builder inspection/validation tools, branch-injection tests, UI execution summary and fixed-set
@@ -183,3 +183,77 @@ cargo test -p annotagent-application
 
 M1 proves bounded control-flow correctness. It does not yet prove that the HTTP provider received
 resized bytes or that visual localization improved; those are M2 and M4 concerns.
+
+## M2 — materialized model input and evidence identity
+
+### Actual submitted pixels
+
+The application detection runner no longer recreates every local input at the raw Crop dimensions.
+It now materializes the `ImageArtifact` selected by the DAG from the decoded root image:
+
+1. map `root_region` to one integer root-pixel rectangle;
+2. crop those original pixels once;
+3. resize to the exact upstream Image Artifact dimensions with Catmull-Rom interpolation;
+4. encode that raster to PNG;
+5. pass that exact `ModelImage` to the selected Provider/Plugin backend.
+
+The small-object template places `core.resize` after both search crops. A 96×96 search A therefore
+requests actual 384×384 bytes, and search B is independently materialized to its declared target
+size. The implementation does not claim that upscaling restores detail or improves accuracy; M4
+compares it as one controlled strategy.
+
+Each local detection output now retains a typed `ModelInputTrace` in node and DetectionSet metadata:
+
+- source image ID and source SHA-256;
+- exact `[x,y,width,height]` source pixels and Crop dimensions;
+- submitted dimensions, encoded PNG SHA-256, and decoded RGB pixel digest;
+- interpolation, zero letterbox padding, RGB8 format;
+- coordinate-frame ID and one typed transform back to the root image;
+- bounded Provider image parameters;
+- Provider effective dimensions as `unknown` unless the Provider itself reports them.
+
+No full base64 payload or authorization data enters ordinary logs. The source Artifact reference,
+submitted digest and deterministic transform make the bytes auditable without duplicating the image
+inside SQLite.
+
+### Coordinate contract
+
+`CoordinateTransform` is now the shared projection primitive used by
+`core.project_coordinates`. It supports ordinary/non-uniform resize and explicit letterbox content
+regions, clamps a partially padded prediction to real content, rejects padding-only boxes, and keeps
+floating-point geometry until a raster output boundary. Tests cover a non-square source region,
+non-uniform resize, letterbox padding, edge-clamped integer Crop pixels and 4× materialization.
+
+### Correlated evidence
+
+Every materialized local model result also records a typed `ModelEvidenceSource`: resolved model
+identity, Profile ID, request-image digest, original image, search region, transform fingerprint,
+prompt-resource hash, settings hash, purpose and parent evidence.
+
+Prompt Coverage de-duplicates an observation when resolved model identity, actual request-image
+digest and transform fingerprint match. Different Profile IDs, prompts, temperatures or request IDs
+do not turn that repeat into an independent source. Same-model/different-view evidence remains
+available for bounded search consistency but is explicitly counted as `same_model_multi_view`, not
+as statistical independence.
+
+The new RoboCup template removes `independent_crop_verification` entirely. Search A compares its
+local candidate only with the coarse multi-view observation; the model call formerly spent on the
+same Crop is now reserved for real search B.
+
+### Regression evidence
+
+```text
+cargo test -p annotagent-core
+cargo test -p annotagent-image-tools
+cargo test -p annotagent-provider
+cargo test -p annotagent-runtime
+cargo test -p annotagent-skill-robocup
+cargo test -p annotagent-application
+```
+
+Results at M2: Core 112 passed; Image Tools 7 passed; Provider 45 passed; Runtime 46 passed across
+unit/integration suites; RoboCup Skill 18 passed; Application 71 passed with one explicitly opt-in
+billable Provider smoke ignored. The Provider boundary test decodes the actual image carried in the
+`ModelRequest`, verifies 384×384 dimensions and sentinel pixels, rather than checking UI metadata.
+
+These tests establish byte/coordinate/evidence semantics. They do not establish football accuracy.

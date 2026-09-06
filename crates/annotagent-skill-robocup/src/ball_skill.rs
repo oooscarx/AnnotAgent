@@ -481,6 +481,21 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     crop.parameters
         .insert("padding".to_owned(), serde_json::json!(0.0));
 
+    let mut resize = node(
+        "resize_local_search",
+        "core.resize",
+        WorkflowNodeKind::Transform,
+        vec![port("image", ArtifactKind::Image)],
+        vec![port("image", ArtifactKind::Image)],
+    );
+    resize.required_skills.clear();
+    resize.parameters.extend([
+        ("target_width".to_owned(), serde_json::json!(384)),
+        ("target_height".to_owned(), serde_json::json!(384)),
+        ("allow_upscale".to_owned(), serde_json::json!(true)),
+        ("interpolation".to_owned(), serde_json::json!("catmull_rom")),
+    ]);
+
     let mut localize = node(
         "local_relocalization",
         "vlm_detection.detect",
@@ -501,28 +516,6 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         "ball/resources/local-relocalization-prompt.md",
         BALL_LOCAL_RELOCALIZATION_PROMPT_SHA256,
         BALL_LOCAL_RELOCALIZATION_PROMPT,
-    );
-
-    let mut verify = node(
-        "independent_crop_verification",
-        "vlm_detection.detect",
-        WorkflowNodeKind::VisionLanguageModel,
-        vec![multiple_port("image", ArtifactKind::Image)],
-        vec![multiple_port("detections", ArtifactKind::DetectionSet)],
-    );
-    verify.parameters.extend([
-        ("labels".to_owned(), serde_json::json!(["ball"])),
-        (
-            "coordinate_space".to_owned(),
-            serde_json::json!("local_crop"),
-        ),
-        ("maximum_model_calls".to_owned(), serde_json::json!(3)),
-    ]);
-    bind_prompt_resource(
-        &mut verify,
-        "ball/resources/crop-verification-prompt.md",
-        BALL_CROP_VERIFICATION_PROMPT_SHA256,
-        BALL_CROP_VERIFICATION_PROMPT,
     );
 
     let project = |id: &str| {
@@ -648,6 +641,12 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         ),
     ]);
 
+    let mut recovery_resize = resize.clone();
+    recovery_resize.id = "resize_recovery_search".to_owned();
+    recovery_resize
+        .parameters
+        .insert("recovery_attempt".to_owned(), serde_json::json!(2));
+
     let mut recovery_localize = node(
         "relocalize_recovery_search",
         "vlm_detection.detect",
@@ -760,7 +759,7 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     WorkflowTemplate {
         id: "robocup.ball.small-object-recovery".to_owned(),
         name: "RoboCup Ball · small-object localization recovery".to_owned(),
-        description: "Coarse semantic localization → target-scale search crop → local re-localization → independent prompt-coverage evidence → prompted segmentation → geometry decision → review → commit".to_owned(),
+        description: "Coarse semantic localization → materialized target-scale search → same-model multi-view re-localization → bounded second search when needed → prompted segmentation → geometry decision → review → commit".to_owned(),
         nodes: vec![
             node(
                 "image",
@@ -773,15 +772,15 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             select,
             expand,
             crop,
+            resize,
             localize,
             project("project_local_detection"),
             validator,
-            verify,
-            project("project_verification_detection"),
             prompts,
             coverage,
             recovery_expand,
             recovery_crop,
+            recovery_resize,
             recovery_localize,
             project("project_recovery_detection"),
             recovery_validator,
@@ -801,17 +800,15 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             edge("select_coarse_ball", "detections", "infer_scale_and_expand_search", "detections", None),
             edge("image", "image", "crop_original_search_region", "image", None),
             edge("infer_scale_and_expand_search", "regions", "crop_original_search_region", "detections", None),
-            edge("crop_original_search_region", "images", "local_relocalization", "image", None),
-            edge("crop_original_search_region", "images", "independent_crop_verification", "image", None),
-            edge("crop_original_search_region", "images", "project_local_detection", "images", None),
+            edge("crop_original_search_region", "images", "resize_local_search", "image", None),
+            edge("resize_local_search", "image", "local_relocalization", "image", None),
+            edge("resize_local_search", "image", "project_local_detection", "images", None),
             edge("local_relocalization", "detections", "project_local_detection", "detections", None),
             edge("project_local_detection", "detections", "validate_relocalized_ball", "detections", None),
-            edge("crop_original_search_region", "images", "project_verification_detection", "images", None),
-            edge("independent_crop_verification", "detections", "project_verification_detection", "detections", None),
             edge("validate_relocalized_ball", "detections", "relocalized_box_prompts", "detections", None),
             edge("relocalized_box_prompts", "prompts", "prompt_coverage_gate", "prompts", None),
             edge("validate_relocalized_ball", "detections", "prompt_coverage_gate", "candidates", None),
-            edge("project_verification_detection", "detections", "prompt_coverage_gate", "evidence", None),
+            edge("select_coarse_ball", "detections", "prompt_coverage_gate", "evidence", None),
             edge("image", "image", "refine_validated_prompt", "images", None),
             edge("prompt_coverage_gate", "prompts", "refine_validated_prompt", "box_prompts", Some("refine")),
             edge("prompt_coverage_gate", "coverage", "refine_validated_prompt", "coverage", Some("refine")),
@@ -820,8 +817,9 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             edge("prompt_coverage_gate", "detections", "expand_recovery_search", "detections", Some("search_tiles")),
             edge("image", "image", "crop_recovery_search_region", "image", None),
             edge("expand_recovery_search", "regions", "crop_recovery_search_region", "detections", None),
-            edge("crop_recovery_search_region", "images", "relocalize_recovery_search", "image", None),
-            edge("crop_recovery_search_region", "images", "project_recovery_detection", "images", None),
+            edge("crop_recovery_search_region", "images", "resize_recovery_search", "image", None),
+            edge("resize_recovery_search", "image", "relocalize_recovery_search", "image", None),
+            edge("resize_recovery_search", "image", "project_recovery_detection", "images", None),
             edge("relocalize_recovery_search", "detections", "project_recovery_detection", "detections", None),
             edge("project_recovery_detection", "detections", "validate_recovery_ball", "detections", None),
             edge("validate_recovery_ball", "detections", "recovery_box_prompts", "detections", None),
@@ -1251,6 +1249,24 @@ mod tests {
         assert!(recovery_json.contains("local_crop"));
         assert!(!recovery_json.to_ascii_lowercase().contains("qwen"));
         assert!(!recovery_json.to_ascii_lowercase().contains("efficientsam"));
+        assert!(
+            recovery
+                .nodes
+                .iter()
+                .all(|node| node.id != "independent_crop_verification"),
+            "the same model and same Crop must not be presented as independent evidence"
+        );
+        let resize_nodes = recovery
+            .nodes
+            .iter()
+            .filter(|node| node.node_type == "core.resize")
+            .collect::<Vec<_>>();
+        assert_eq!(resize_nodes.len(), 2);
+        assert!(resize_nodes.iter().all(|node| {
+            node.parameters.get("target_width") == Some(&serde_json::json!(384))
+                && node.parameters.get("target_height") == Some(&serde_json::json!(384))
+                && node.parameters.get("allow_upscale") == Some(&serde_json::json!(true))
+        }));
         assert_eq!(
             ball.manifest().requires.capabilities,
             ["detection", "human_review"]

@@ -3,10 +3,14 @@
 use std::{io::Cursor, path::Path};
 
 use annotagent_core::{
-    CoreError, CoreResult, ImageFrame, ImageMetadata, ModelImage, NormalizedPoint, NormalizedRect,
+    ArtifactRef, CoordinateTransform, CoreError, CoreResult, ImageFrame, ImageId, ImageMetadata,
+    ModelImage, ModelInputTrace, NormalizedPoint, NormalizedRect, ProviderEffectiveDimensions,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use image::{DynamicImage, ImageBuffer, ImageFormat, ImageReader, Rgb, RgbImage, imageops};
+use image::{
+    DynamicImage, ImageBuffer, ImageFormat, ImageReader, Rgb, RgbImage,
+    imageops::{self, FilterType},
+};
 use sha2::{Digest, Sha256};
 
 pub fn load_image(path: &Path, max_decode_pixels: u64) -> CoreResult<ImageFrame> {
@@ -88,6 +92,122 @@ pub fn to_model_image(
         mime_type: "image/png".to_owned(),
         data_base64: STANDARD.encode(png),
     })
+}
+
+pub fn resize_exact(frame: &ImageFrame, width: u32, height: u32) -> CoreResult<ImageFrame> {
+    frame.validate()?;
+    if width == 0 || height == 0 {
+        return Err(CoreError::InvalidGeometry(
+            "resize dimensions must be non-zero".to_owned(),
+        ));
+    }
+    let resized = imageops::resize(&rgb_image(frame)?, width, height, FilterType::CatmullRom);
+    let rgb = resized.into_raw();
+    Ok(ImageFrame {
+        metadata: ImageMetadata {
+            width,
+            height,
+            mime_type: "image/png".to_owned(),
+            sha256: sha256(&rgb),
+        },
+        rgb,
+    })
+}
+
+/// Materializes a model request from decoded root pixels. Virtual Crop/Resize metadata is not
+/// trusted as payload evidence: this function crops the root frame, performs the requested resize,
+/// encodes the exact outbound PNG and returns a redacted trace over those bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn materialize_model_input(
+    id: impl Into<String>,
+    source_image_id: ImageId,
+    source_image_artifact: Option<ArtifactRef>,
+    source: &ImageFrame,
+    source_region: Option<NormalizedRect>,
+    submitted_width: u32,
+    submitted_height: u32,
+) -> CoreResult<(ModelImage, ModelInputTrace)> {
+    source.validate()?;
+    if submitted_width == 0 || submitted_height == 0 {
+        return Err(CoreError::InvalidGeometry(
+            "submitted model dimensions must be non-zero".to_owned(),
+        ));
+    }
+    let region = source_region.unwrap_or(NormalizedRect::new(0.0, 0.0, 1.0, 1.0)?);
+    let source_region_pixels = pixel_region(region, source.metadata.width, source.metadata.height)?;
+    let crop = crop(source, region, 0.0)?;
+    let crop_dimensions = [crop.metadata.width, crop.metadata.height];
+    let (submitted, interpolation) =
+        if crop.metadata.width == submitted_width && crop.metadata.height == submitted_height {
+            (crop, "none")
+        } else {
+            (
+                resize_exact(&crop, submitted_width, submitted_height)?,
+                "catmull_rom",
+            )
+        };
+    let encoded = encode_png(&submitted)?;
+    let submitted_image_sha256 = sha256(&encoded);
+    let normalized_pixel_digest = sha256(&submitted.rgb);
+    let coordinate_frame_id = format!(
+        "sha256:{}",
+        sha256(
+            format!(
+                "{}:{source_region_pixels:?}:{submitted_width}:{submitted_height}",
+                source.metadata.sha256
+            )
+            .as_bytes()
+        )
+    );
+    let transform_to_original = CoordinateTransform::stretch(
+        coordinate_frame_id,
+        region,
+        submitted_width,
+        submitted_height,
+    )?;
+    let image = ModelImage {
+        id: id.into(),
+        mime_type: "image/png".to_owned(),
+        data_base64: STANDARD.encode(encoded),
+    };
+    let trace = ModelInputTrace {
+        source_image_id,
+        source_image_sha256: source.metadata.sha256.clone(),
+        source_image_artifact,
+        source_region_pixels,
+        crop_dimensions,
+        submitted_dimensions: [submitted_width, submitted_height],
+        submitted_image_sha256,
+        normalized_pixel_digest,
+        interpolation: interpolation.to_owned(),
+        letterbox_padding: [0; 4],
+        color_format: "rgb8".to_owned(),
+        transform_to_original,
+        provider_image_parameters: std::collections::BTreeMap::new(),
+        provider_effective_dimensions: ProviderEffectiveDimensions::Unknown,
+    };
+    Ok((image, trace))
+}
+
+pub fn pixel_region(
+    rect: NormalizedRect,
+    image_width: u32,
+    image_height: u32,
+) -> CoreResult<[u32; 4]> {
+    if image_width == 0 || image_height == 0 {
+        return Err(CoreError::InvalidGeometry(
+            "pixel region requires non-zero image dimensions".to_owned(),
+        ));
+    }
+    let x = normalized_to_pixel(rect.x(), image_width);
+    let y = normalized_to_pixel(rect.y(), image_height);
+    let right = normalized_to_pixel(rect.x() + rect.width(), image_width)
+        .max(x + 1)
+        .min(image_width);
+    let bottom = normalized_to_pixel(rect.y() + rect.height(), image_height)
+        .max(y + 1)
+        .min(image_height);
+    Ok([x, y, right - x, bottom - y])
 }
 
 pub fn encode_png(frame: &ImageFrame) -> CoreResult<Vec<u8>> {
@@ -532,6 +652,69 @@ mod tests {
         let bytes = STANDARD.decode(encoded.data_base64).expect("base64");
         let decoded = image::load_from_memory(&bytes).expect("PNG");
         assert_eq!((decoded.width(), decoded.height()), (8, 4));
+    }
+
+    #[test]
+    fn materialized_model_input_contains_real_resized_pixels_and_transform() {
+        let mut rgb = Vec::new();
+        for y in 0..48_u8 {
+            for x in 0..96_u8 {
+                rgb.extend([x, y, x.wrapping_add(y)]);
+            }
+        }
+        let frame = ImageFrame {
+            metadata: ImageMetadata {
+                width: 96,
+                height: 48,
+                mime_type: "image/png".to_owned(),
+                sha256: "source-sha".to_owned(),
+            },
+            rgb,
+        };
+        let image_id = ImageId::new();
+        let (model_image, trace) =
+            materialize_model_input("4x", image_id, None, &frame, None, 384, 192)
+                .expect("materialized model input");
+        let bytes = STANDARD.decode(model_image.data_base64).expect("base64");
+        let decoded = image::load_from_memory(&bytes).expect("outbound PNG");
+        assert_eq!((decoded.width(), decoded.height()), (384, 192));
+        assert_eq!(trace.crop_dimensions, [96, 48]);
+        assert_eq!(trace.submitted_dimensions, [384, 192]);
+        assert_eq!(trace.interpolation, "catmull_rom");
+        assert_eq!(trace.source_region_pixels, [0, 0, 96, 48]);
+        assert_eq!(trace.submitted_image_sha256, sha256(&bytes));
+        assert_eq!(
+            trace.normalized_pixel_digest,
+            sha256(decoded.to_rgb8().as_raw())
+        );
+        let local = NormalizedRect::new(0.25, 0.25, 0.5, 0.5).expect("local rect");
+        assert_eq!(
+            trace
+                .transform_to_original
+                .project_rect(local)
+                .expect("root rect"),
+            local
+        );
+    }
+
+    #[test]
+    fn edge_crop_pixel_region_matches_materialized_payload() {
+        let frame = ImageFrame {
+            metadata: ImageMetadata {
+                width: 11,
+                height: 7,
+                mime_type: "image/png".to_owned(),
+                sha256: "edge-source".to_owned(),
+            },
+            rgb: vec![32; 11 * 7 * 3],
+        };
+        let region = NormalizedRect::new(0.82, 0.72, 0.18, 0.28).expect("edge region");
+        let (_, trace) =
+            materialize_model_input("edge", ImageId::new(), None, &frame, Some(region), 8, 8)
+                .expect("edge materialization");
+        assert_eq!(trace.source_region_pixels, [9, 5, 2, 2]);
+        assert_eq!(trace.crop_dimensions, [2, 2]);
+        assert_eq!(trace.submitted_dimensions, [8, 8]);
     }
 
     #[test]

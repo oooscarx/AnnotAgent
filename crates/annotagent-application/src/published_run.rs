@@ -1900,6 +1900,13 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
 #[async_trait]
 impl DagNodeRunner for BoundDetectionRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let node_parameters = context.node.parameters.clone();
+        let model_profile_id = context
+            .node
+            .model_profile_binding
+            .as_ref()
+            .map(|binding| binding.model_profile_id.to_string());
+        let image_id = context.image_id;
         let local_inputs = context
             .input_pipeline_artifacts
             .iter()
@@ -1962,21 +1969,27 @@ impl DagNodeRunner for BoundDetectionRunner {
             );
             return Ok(aggregate);
         }
-        let (model_image, local_source) = if let Some(image) = local_inputs.first() {
+        let (model_image, local_source, mut model_input_trace) = if let Some(image) =
+            local_inputs.first()
+        {
             let region = image.root_region.expect("filtered local image");
-            let crop =
-                annotagent_image_tools::crop(&self.source_image, region, 0.0).map_err(|error| {
-                    DagNodeFailure::terminal("local_crop_failed", error.to_string())
-                })?;
-            let model_image = annotagent_image_tools::to_model_image(
+            let (model_image, trace) = annotagent_image_tools::materialize_model_input(
                 format!("local-search:{}", image.reference.artifact_id),
-                &crop,
-                crop.metadata.width.max(crop.metadata.height),
+                context.image_id,
+                Some(image.reference.clone()),
+                &self.source_image,
+                Some(region),
+                image.width,
+                image.height,
             )
             .map_err(|error| DagNodeFailure::terminal("local_crop_failed", error.to_string()))?;
-            (Some(model_image), Some(image.reference.clone()))
+            (
+                Some(model_image),
+                Some(image.reference.clone()),
+                Some(trace),
+            )
         } else {
-            (self.model_image.clone(), None)
+            (self.model_image.clone(), None, None)
         };
         let execution = execution_for_node(
             &self.default_execution,
@@ -2085,6 +2098,67 @@ impl DagNodeRunner for BoundDetectionRunner {
             add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         } else {
             add_execution_metadata(&mut output, execution);
+        }
+        if let Some(trace) = model_input_trace.as_mut() {
+            for key in ["image_detail", "localization_grid"] {
+                if let Some(value) = node_parameters.get(key) {
+                    trace
+                        .provider_image_parameters
+                        .insert(key.to_owned(), value.clone());
+                }
+            }
+            let request_settings = serde_json::to_vec(&node_parameters).map_err(|error| {
+                DagNodeFailure::terminal("model_input_trace_failed", error.to_string())
+            })?;
+            let transform = serde_json::to_vec(&trace.transform_to_original).map_err(|error| {
+                DagNodeFailure::terminal("model_input_trace_failed", error.to_string())
+            })?;
+            let evidence = annotagent_core::ModelEvidenceSource {
+                resolved_model_identity: execution.model_name.clone(),
+                model_revision: None,
+                model_profile_id,
+                request_image_digest: trace.submitted_image_sha256.clone(),
+                original_image_id: image_id,
+                search_region: local_inputs.first().and_then(|image| image.root_region),
+                transform_fingerprint: annotagent_image_tools::sha256(&transform),
+                prompt_resource_hash: node_parameters
+                    .get("prompt_resource_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                request_settings_hash: annotagent_image_tools::sha256(&request_settings),
+                evidence_purpose: annotagent_core::ModelEvidencePurpose::Localization,
+                parent_evidence_ids: local_source
+                    .iter()
+                    .map(|reference| reference.artifact_id.clone())
+                    .collect(),
+            };
+            let trace_json = serde_json::to_value(trace).map_err(|error| {
+                DagNodeFailure::terminal("model_input_trace_failed", error.to_string())
+            })?;
+            let evidence_json = serde_json::to_value(&evidence).map_err(|error| {
+                DagNodeFailure::terminal("model_input_trace_failed", error.to_string())
+            })?;
+            output
+                .metadata
+                .insert("model_input_trace".to_owned(), trace_json.clone());
+            output
+                .metadata
+                .insert("evidence_source".to_owned(), evidence_json.clone());
+            output.metadata.insert(
+                "evidence_relationship".to_owned(),
+                node_parameters
+                    .get("evidence_relationship")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("single_observation")),
+            );
+            for artifact in &mut output.pipeline_artifacts {
+                if let PipelineArtifact::DetectionSet(set) = artifact {
+                    set.metadata
+                        .insert("model_input_trace".to_owned(), trace_json.clone());
+                    set.metadata
+                        .insert("evidence_source".to_owned(), evidence_json.clone());
+                }
+            }
         }
         if let Some(source) = local_source {
             for artifact in &mut output.pipeline_artifacts {
