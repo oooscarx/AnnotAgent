@@ -20,7 +20,12 @@ interface QueryEntry<T> extends QuerySnapshot<T> {
 type QueryListener = () => void;
 
 function abortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError") return true;
+  return /^(?:signal is aborted without reason|the operation was aborted|this operation was aborted)\.?$/i.test(
+    error.message.trim(),
+  );
 }
 
 /**

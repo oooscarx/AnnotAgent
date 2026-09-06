@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { RouteQueryCache, queryKeys } from "./queryCache";
+import { isAbortError, RouteQueryCache, queryKeys } from "./queryCache";
 
 describe("route-aware query cache", () => {
+  it("recognizes browser and runtime cancellation shapes without hiding normal failures", () => {
+    expect(isAbortError(new DOMException("The operation was aborted.", "AbortError"))).toBe(true);
+    expect(isAbortError(new TypeError("signal is aborted without reason"))).toBe(true);
+    expect(isAbortError(Object.assign(new Error("cancelled"), { name: "AbortError" }))).toBe(true);
+    expect(isAbortError(new Error("provider request failed"))).toBe(false);
+  });
+
   it("deduplicates the same in-flight resource", async () => {
     const cache = new RouteQueryCache();
     let resolve!: (value: string) => void;

@@ -2766,7 +2766,9 @@ function WorkflowsPage({
             value.drafts[0],
         );
       })
-      .catch((error: Error) => onError(error.message));
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      });
   const refreshModelChoices = () => {
     if (!activeProjectId) {
       setRegistryProviders([]);
@@ -2957,7 +2959,9 @@ function WorkflowsPage({
               onError(`Agent result recovery: ${error.message}`),
             );
         })
-        .catch((error: Error) => onError(`Agent recovery: ${error.message}`));
+        .catch((error: Error) => {
+          if (!isAbortError(error)) onError(`Agent recovery: ${error.message}`);
+        });
     } else {
       setCatalog(undefined);
       setActiveAgentSession(undefined);
@@ -3050,7 +3054,9 @@ function WorkflowsPage({
     setBusy(true);
     void promise
       .then(() => Promise.all([refreshDrafts(), onRefresh()]))
-      .catch((error: Error) => onError(error.message))
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      })
       .finally(() => setBusy(false));
   };
   const create = (fromTemplate: boolean, selectedTemplate?: string) => {
@@ -3066,7 +3072,9 @@ function WorkflowsPage({
         onSelectContext({ draftId: created.id }, true);
         return Promise.all([refreshDrafts(), onRefresh()]);
       })
-      .catch((error: Error) => onError(error.message))
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      })
       .finally(() => setBusy(false));
   };
   const runAdvisor = (
@@ -3150,7 +3158,9 @@ function WorkflowsPage({
         }
         await refreshDrafts();
       })
-      .catch((error: Error) => onError(error.message))
+      .catch((error: Error) => {
+        if (!isAbortError(error)) onError(error.message);
+      })
       .finally(() => {
         advisorRequestActive.current = false;
         setAdvisorRunning(false);
