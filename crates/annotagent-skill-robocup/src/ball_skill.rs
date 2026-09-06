@@ -1144,4 +1144,39 @@ mod tests {
             .is_err()
         );
     }
+
+    /// M0 regression lock: the current template labels this route as a re-localization action,
+    /// but sends it directly to Human Review without producing a changed search view or running a
+    /// second localization model call. M1 removes `ignore` after the graph is repaired.
+    #[test]
+    #[ignore = "M1 must replace the fake re-localization route with a bounded second search"]
+    fn relocalization_route_cannot_go_directly_to_review() {
+        let skill = RoboCupBallSkill::new().expect("Ball Skill");
+        let template = skill
+            .workflow_templates()
+            .into_iter()
+            .find(|template| template.id == "robocup.ball.small-object-recovery")
+            .expect("small-object recovery template");
+        let relocalization_edges = template
+            .edges
+            .iter()
+            .filter(|edge| edge.route.as_deref() == Some("relocalize"))
+            .collect::<Vec<_>>();
+        assert!(
+            !relocalization_edges.is_empty(),
+            "the recovery policy must expose an explicit re-localization route"
+        );
+        for edge in relocalization_edges {
+            let target = template
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.to_node)
+                .expect("route target");
+            assert_ne!(
+                target.kind,
+                WorkflowNodeKind::HumanReview,
+                "a route named re-localize must first produce and consume a changed search view"
+            );
+        }
+    }
 }
