@@ -1,13 +1,16 @@
-# AnnotAgent
+<p align="center">
+  <img src="web/public/brand/core/og-card.png" alt="AnnotAgent — composable annotation workflows for vision data" width="100%">
+</p>
 
-*Composable annotation workflows for vision data.*
+AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes
+geometry, registered tools gather bounded image evidence, deterministic validators and refiners
+check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool
+calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
 
-AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes geometry, registered tools gather bounded image evidence, deterministic validators and refiners check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
+It combines open-vocabulary models, specialist detectors, domain validators, and human review into
+versioned annotation pipelines.
 
-AnnotAgent can combine open-vocabulary models, specialist detectors, domain validators, and human
-review into versioned annotation pipelines.
-
-## Guided Project Workspace
+## Quick start
 
 The Web product is organized around one concrete Project journey:
 
