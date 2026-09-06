@@ -398,8 +398,11 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
 test("Automation Recipe previews Advisor changes and autosaves Drawer edits", async ({ page }) => {
   await page.goto(`/projects/${projectId}/build/pipeline`);
   await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Models this automation will call" })).toBeVisible();
+  await expect(page.getByText("Builder LLM · does not label images")).toBeVisible();
   if (await page.getByText("Shared Stages", { exact: true }).count() === 0) {
-    await page.getByRole("button", { name: "From Template" }).click();
+    await page.getByText("Start from a template", { exact: true }).click();
+    await page.getByRole("button", { name: "Create from Template" }).click();
   }
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
   await expect(page.getByText(/Runs once per image/).first()).toBeVisible();
@@ -678,6 +681,13 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   const sampleResult = page.locator(".sample-result-card").first();
   await expect(sampleResult).toContainText("day");
   await expect(sampleResult).toContainText("1 terminal result");
+  await sampleResult.getByRole("button", { name: /Open annotation preview for/ }).click();
+  const previewDialog = page.getByRole("dialog", { name: /day\.png/ });
+  await expect(previewDialog).toBeVisible();
+  await expect(previewDialog.getByRole("navigation", { name: "Annotation stages" })).toContainText("Final");
+  await expect(previewDialog.locator(".sample-preview-canvas img")).toBeVisible();
+  await previewDialog.getByRole("button", { name: "Close annotation preview" }).click();
+  await expect(previewDialog).toBeHidden();
   const cardBounds = await sampleResult.boundingBox();
   const previewBounds = await sampleResult.locator(".sample-result-preview").boundingBox();
   const bodyBounds = await sampleResult.locator(".sample-result-body").boundingBox();
@@ -1806,7 +1816,8 @@ test("a newly created template Draft opens immediately and survives refresh", as
     response.request().method() === "POST"
     && new URL(response.url()).pathname === "/api/workflow-drafts",
   );
-  await page.getByRole("button", { name: "From Template" }).click();
+  await page.getByText("Start from a template", { exact: true }).click();
+  await page.getByRole("button", { name: "Create from Template" }).click();
   const response = await createdResponse;
   expect(response.ok()).toBeTruthy();
   const created = await response.json() as { id: string; name: string };

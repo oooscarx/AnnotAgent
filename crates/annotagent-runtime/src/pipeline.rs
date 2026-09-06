@@ -829,7 +829,23 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             |(set, candidate)| {
                 let intersection = prompt.bbox.intersection_area(candidate.bbox);
                 let covered_fraction = intersection / candidate.bbox.area();
-                let state = if covered_fraction >= 0.98 {
+                let union = prompt.bbox.area() + candidate.bbox.area() - intersection;
+                let intersection_over_union = if union > f32::EPSILON {
+                    intersection / union
+                } else {
+                    0.0
+                };
+                let candidate_center_in_prompt =
+                    prompt.bbox.contains(candidate.bbox.center(), f32::EPSILON);
+                // Independent localization may describe the same small object with a
+                // slightly larger box. Requiring near-total containment in that case
+                // incorrectly bypasses a configured geometry refiner. Strong overlap
+                // plus a contained center is sufficient observable evidence that the
+                // prompt covers the same subject; weak or displaced overlap continues
+                // through relocalization instead.
+                let state = if covered_fraction >= 0.98
+                    || (intersection_over_union >= 0.85 && candidate_center_in_prompt)
+                {
                     PromptCoverageState::Covered
                 } else if intersection > f32::EPSILON {
                     PromptCoverageState::PartiallyCovered
@@ -842,7 +858,7 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
                         kind: PromptCoverageEvidenceKind::RelocalizedCandidate,
                         source: set.reference.item(&candidate.detection_id),
                         observation: format!(
-                            "observable candidate coverage fraction {covered_fraction:.6}"
+                            "observable candidate coverage fraction {covered_fraction:.6}; intersection over union {intersection_over_union:.6}; candidate center in prompt {candidate_center_in_prompt}"
                         ),
                     }],
                 )
@@ -3285,6 +3301,101 @@ mod tests {
             .expect("coverage artifact");
         assert_eq!(coverage.state, PromptCoverageState::Unknown);
         assert!(coverage.evidence.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prompt_coverage_gate_accepts_strong_independent_overlap() {
+        let image_id = ImageId::new();
+        let coarse = detection_set(
+            image_id,
+            "coarse-set",
+            "coarse-model",
+            vec![detection(
+                "coarse-set",
+                "coarse",
+                "target",
+                [0.482_647_06, 0.450_928_57, 0.024_705_885, 0.029_999_997],
+                Some(0.8),
+                "coarse-model",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(coarse_set) = &coarse else {
+            panic!("coarse detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            coarse_set,
+            0.0,
+        )
+        .expect("box prompts");
+        let relocalized = detection_set(
+            image_id,
+            "local-set",
+            "local-model",
+            vec![detection(
+                "local-set",
+                "target",
+                "target",
+                [0.484_058_86, 0.451_142_85, 0.023_470_592, 0.030_642_856],
+                Some(0.9),
+                "local-model",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![PipelineArtifact::BoxPromptSet(prompts), relocalized],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("coverage decision");
+        assert_eq!(output.route.as_deref(), Some("refine"));
+        let coverage = output
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::Covered);
+        assert_eq!(
+            coverage.recommended_action,
+            PromptCoverageAction::ProceedToRefinement
+        );
+        assert!(
+            coverage.evidence[0]
+                .observation
+                .contains("intersection over union")
+        );
     }
 
     #[tokio::test]

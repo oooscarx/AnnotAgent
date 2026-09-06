@@ -83,6 +83,7 @@ import type {
   SkillDetail,
   WorkflowCatalog,
   WorkflowDraft,
+  WorkflowDraftNode,
   WorkflowDryRunReport,
   WorkflowVersion,
   WorkflowVersionComparison,
@@ -1186,6 +1187,7 @@ function BuildTestPublish({
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const [startingRun, setStartingRun] = useState(false);
+  const [inspectedSampleIndex, setInspectedSampleIndex] = useState<number>();
   const sampleLoadGeneration = useRef(0);
   const load = (selectFallback = true) => workspaceQueries.load(
     queryKeys.workflowDrafts(project.id),
@@ -1306,6 +1308,14 @@ function BuildTestPublish({
   const fullRun = summary?.estimated_full_run;
   const sampleLimit = Math.min(10, images.length);
   const currentDraft = drafts.find((draft) => draft.id === draftId);
+  const inspectedSample = report?.samples.find(
+    (sample) => sample.image_index === inspectedSampleIndex,
+  );
+  const configuredRefiners = currentDraft?.nodes.filter(
+    (node) =>
+      node.kind === "refiner" ||
+      node.node_type.toLowerCase().includes("segment"),
+  ) ?? [];
   const isActivated = currentDraft?.status === "published";
   const publishedWorkflowVersion = project.available_workflow_versions.find(
     (workflow) => workflow.source === `published draft ${draftId}` && workflow.status === "published",
@@ -1394,11 +1404,11 @@ function BuildTestPublish({
           </section>}
           <section className="sample-results-section" aria-labelledby="sample-results-title">
             <div className="section-heading"><div><span className="eyebrow">Results Gallery</span><h2 id="sample-results-title">What the automation found</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : "s"}</small></div>
-            <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} />)}</div>
+            <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div>
           </section>
           <section className="sample-results-section uncertain-results" id="uncertain-results" aria-labelledby="uncertain-results-title">
             <div className="section-heading"><div><span className="eyebrow">Uncertain Results</span><h2 id="uncertain-results-title">What needs a human decision</h2></div><small>{uncertainSamples.length} image{uncertainSamples.length === 1 ? "" : "s"}</small></div>
-            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact />)}</div> : <div className="positive-empty"><strong>No uncertain results in this sample</strong><span>The configured confidence and Review gates accepted every result.</span></div>}
+            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div> : <div className="positive-empty"><strong>No uncertain results in this sample</strong><span>The configured confidence and Review gates accepted every result.</span></div>}
           </section>
           <section className="sample-diagnostics" aria-label="Sample Test diagnostics">
             <div className="section-heading"><div><span className="eyebrow">Diagnostics</span><h2>Inspect only when you need to troubleshoot</h2></div></div>
@@ -1409,6 +1419,12 @@ function BuildTestPublish({
           </section>
         </>
       ) : reportLoading ? <div className="loading-banner" role="status">Restoring the saved Sample Test…</div> : staleReport ? <Empty title="Sample Test is out of date" detail="This Draft changed after its saved Sample Test. Test the current Draft again before activation." /> : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+      {inspectedSample && <SampleAnnotationDialog
+        sample={inspectedSample}
+        image={images.find((item) => item.index === inspectedSample.image_index)}
+        configuredRefiners={configuredRefiners}
+        onClose={() => setInspectedSampleIndex(undefined)}
+      />}
       {!isActivated && <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>}
     </>
   );
@@ -1424,10 +1440,12 @@ function SampleResultCard({
   sample,
   image,
   compact = false,
+  onInspect,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
   image?: ImageItem;
   compact?: boolean;
+  onInspect: () => void;
 }) {
   const stages = sample.projection?.debug_stages ?? [];
   const hasTerminalProjection = Boolean(sample.projection && (
@@ -1473,6 +1491,9 @@ function SampleResultCard({
         const rect = outcome.value?.kind === "bounding_box" ? outcome.value.rect : undefined;
         return rect ? <span className={`sample-result-box ${selectedStage === "final" ? "final" : "diagnostic"}`} key={outcome.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{outcome.label}{outcome.confidence != null ? ` ${Math.round(outcome.confidence * 100)}%` : ""}</b></span> : null;
       })}
+      <button className="sample-result-preview-trigger" type="button" onClick={onInspect} aria-label={`Open annotation preview for ${sample.image_name}`}>
+        <span>Open annotation preview</span>
+      </button>
     </figure>
     <div className="sample-result-body">
       <header className="sample-result-heading"><strong>{sample.image_name}</strong><Status status={state} /></header>
@@ -1484,6 +1505,78 @@ function SampleResultCard({
       {stages.length > 0 && <details className="sample-lineage-debug"><summary>Diagnostics · {stages.length} lineage stage{stages.length === 1 ? "" : "s"}</summary><div className="sample-lineage-stage-tabs" role="tablist" aria-label={`Artifact lineage for ${sample.image_name}`}>{availableStages.map((stage) => <button key={stage} role="tab" aria-selected={selectedStage === stage} className={selectedStage === stage ? "active" : ""} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</button>)}</div><div className="sample-lineage-stage-detail"><strong>{selectedStage === "final" ? "Final terminal projection" : selectedStage.replaceAll("_", " ")}</strong>{selectedStage === "final" ? <span>Only committed or current Review candidates appear here.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}<code>{stage.artifact_ref}</code></span>) : <span>No Artifact was produced for this stage.</span>}</div></details>}
     </div>
   </article>;
+}
+
+function SampleAnnotationDialog({
+  sample,
+  image,
+  configuredRefiners,
+  onClose,
+}: {
+  sample: WorkflowDryRunReport["samples"][number];
+  image?: ImageItem;
+  configuredRefiners: WorkflowDraftNode[];
+  onClose: () => void;
+}) {
+  const stages = sample.projection?.debug_stages ?? [];
+  const [selectedStage, setSelectedStage] = useState<ResultLineageStage>("final");
+  const stageOrder: ResultLineageStage[] = ["coarse", "search_region", "relocalized", "prompt_coverage", "mask", "refined", "final"];
+  const availableStages = stageOrder.filter(
+    (stage) => stage === "final" || stages.some((item) => item.stage === stage),
+  );
+  const selectedStages = stages.filter((item) => item.stage === selectedStage);
+  const visualResults = selectedStage === "final"
+    ? sample.outcomes
+    : selectedStages.map((stage, index) => ({
+        id: `${stage.artifact_id}-${stage.lineage_id}-${index}`,
+        label: stage.label ?? selectedStage.replaceAll("_", " "),
+        confidence: stage.confidence,
+        value: stage.value,
+      }));
+  const boxes = visualResults.filter((result) => result.value?.kind === "bounding_box");
+  const executedNodeIds = new Set(sample.nodes.map((node) => node.node_id));
+  const reachedRefiners = configuredRefiners.filter((node) => executedNodeIds.has(node.id));
+  const coverage = stages.find((stage) => stage.stage === "prompt_coverage");
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return <div className="modal-backdrop sample-preview-backdrop" onMouseDown={(event) => {
+    if (event.target === event.currentTarget) onClose();
+  }}>
+    <section className="sample-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-preview-title">
+      <header className="sample-preview-header">
+        <div><span className="eyebrow">Sample annotation</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
+        <button type="button" onClick={onClose} aria-label="Close annotation preview">Close</button>
+      </header>
+      <nav className="sample-preview-stage-tabs" aria-label="Annotation stages">
+        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</button>)}
+      </nav>
+      <div className="sample-preview-layout">
+        <figure className="sample-preview-canvas" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
+          {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">Preview unavailable</div>}
+          {boxes.map((result) => {
+            const rect = result.value?.kind === "bounding_box" ? result.value.rect : undefined;
+            return rect ? <span className={`sample-result-box ${selectedStage === "final" ? "final" : "diagnostic"}`} key={result.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{result.label}{result.confidence != null ? ` ${Math.round(result.confidence * 100)}%` : ""}</b></span> : null;
+          })}
+        </figure>
+        <aside className="sample-preview-inspector">
+          <div><span className="eyebrow">Visible stage</span><h3>{selectedStage === "final" ? "Final annotation" : selectedStage.replaceAll("_", " ")}</h3><p>{boxes.length} bounding box{boxes.length === 1 ? "" : "es"} shown</p></div>
+          <section className={`sample-refiner-state ${configuredRefiners.length && !reachedRefiners.length ? "warning" : ""}`}>
+            <strong>Geometry refinement</strong>
+            {!configuredRefiners.length ? <span>No segmentation or refiner node is configured in this Draft.</span> : reachedRefiners.length ? <span>{reachedRefiners.length} of {configuredRefiners.length} configured refiner node{configuredRefiners.length === 1 ? "" : "s"} executed.</span> : <span>A refiner is configured but was not reached in this Sample Test.{coverage?.detail ? ` ${coverage.detail}` : ""}</span>}
+          </section>
+          <section className="sample-preview-stage-detail">
+            <strong>Stage evidence</strong>
+            {selectedStage === "final" ? <span>Only terminal results eligible for Review or Commit are displayed.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}</span>) : <span>No Artifact was produced for this stage.</span>}
+          </section>
+        </aside>
+      </div>
+    </section>
+  </div>;
 }
 
 function SettingsWorkspace({
@@ -3455,6 +3548,45 @@ function WorkflowsPage({
     });
   const immutable =
     draft?.status === "published" || draft?.status === "archived";
+  const registryModelProfiles = Object.values(compatibleModels).flat();
+  const executedNodeIds = new Set(
+    report?.samples.flatMap((sample) => sample.nodes.map((node) => node.node_id)) ?? [],
+  );
+  const pipelineModelCalls = (draft?.nodes ?? [])
+    .filter((node) =>
+      Boolean(node.model_binding || node.model_profile_binding) &&
+      ["vision_model", "vision_language_model", "refiner"].includes(node.kind ?? ""),
+    )
+    .map((node) => {
+      const profile = registryModelProfiles.find(
+        (model) => model.id === node.model_profile_binding?.model_profile_id,
+      );
+      const instanceId = node.model_binding?.startsWith("model-instance:")
+        ? node.model_binding.slice("model-instance:".length)
+        : undefined;
+      const expert = catalog?.expert_models.find(
+        (model) =>
+          model.model_id === node.model_binding ||
+          model.metadata.model_instance_id === instanceId,
+      );
+      const executedImageCount = report?.samples.filter((sample) =>
+        sample.nodes.some((result) => result.node_id === node.id),
+      ).length ?? 0;
+      return {
+        node,
+        modelName: profile?.display_name ?? expert?.display_name ?? node.model_binding ?? "Unresolved model",
+        providerName: profile
+          ? registryProviders.find((provider) => provider.id === profile.provider_id)?.display_name
+          : undefined,
+        executedImageCount,
+      };
+    });
+  const latestPromptCoverage = report?.samples
+    .flatMap((sample) => sample.projection?.debug_stages ?? [])
+    .find((stage) => stage.stage === "prompt_coverage");
+  const configuredRefinerSkipped = Boolean(report) && pipelineModelCalls.some(
+    ({ node }) => node.node_type.toLowerCase().includes("segment") && !executedNodeIds.has(node.id),
+  );
   const geometryBlockingCodes = new Set([
     "uncalibrated_geometry_auto_commit",
     "semantic_score_used_as_geometry_evidence",
@@ -3520,31 +3652,48 @@ function WorkflowsPage({
           </div>
         </section>
       )}
+      <section className="pipeline-model-overview" aria-labelledby="pipeline-model-overview-title">
+        <header>
+          <div><span className="eyebrow">Runtime model calls</span><h2 id="pipeline-model-overview-title">Models this automation will call</h2><p>The Builder LLM plans the Draft; only the calls below process your images.</p></div>
+          <strong>{pipelineModelCalls.length}</strong>
+        </header>
+        {pipelineModelCalls.length ? <ol className="pipeline-model-call-list">
+          {pipelineModelCalls.map(({ node, modelName, providerName, executedImageCount }, index) => <li key={node.id} className={report && !executedImageCount ? "not-reached" : ""}>
+            <span className="pipeline-model-call-index">{index + 1}</span>
+            <span className="pipeline-model-call-copy"><strong>{node.id.replaceAll("_", " ")}</strong><small>{node.node_type.replaceAll("_", " ")}</small></span>
+            <span className="pipeline-model-call-model"><strong>{modelName}</strong>{providerName && <small>via {providerName}</small>}</span>
+            <span className={`status ${!report || executedImageCount ? "status-auto-accepted" : "status-needs-review"}`}>{!report ? "Configured" : executedImageCount ? `Reached · ${executedImageCount}/${report.samples.length}` : "Not reached"}</span>
+          </li>)}
+        </ol> : <div className="pipeline-model-empty"><strong>No image-processing model is bound</strong><span>Choose a Draft or ask AnnotAgent to propose a model-backed automation.</span></div>}
+        {configuredRefinerSkipped && <aside className="pipeline-model-warning"><strong>Segmentation was configured but did not run in the latest Sample Test.</strong><span>{latestPromptCoverage?.detail ?? "An earlier gate routed the candidate away from refinement."}</span></aside>}
+      </section>
       <div className="workflow-command-grid">
-        <section className="workflow-command-card">
-          <span className="eyebrow">Starting point</span>
-          <h3>Template</h3>
-          <select
-            aria-label="Workflow template"
-            value={templateId}
-            onChange={(event) => setTemplateId(event.target.value)}
-          >
-            <option value="">Generic project template</option>
-            {(catalog?.workflow_templates ?? []).map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => create(true, templateId || undefined)}
-            disabled={busy || !activeProjectId}
-          >
-            From Template
-          </button>
-        </section>
+        <details className="workflow-command-card workflow-start-options">
+          <summary>Start from a template</summary>
+          <div className="workflow-template-controls">
+            <p>Use a registered starting recipe instead of asking the Builder Agent.</p>
+            <select
+              aria-label="Workflow template"
+              value={templateId}
+              onChange={(event) => setTemplateId(event.target.value)}
+            >
+              <option value="">Generic project template</option>
+              {(catalog?.workflow_templates ?? []).map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => create(true, templateId || undefined)}
+              disabled={busy || !activeProjectId}
+            >
+              Create from Template
+            </button>
+          </div>
+        </details>
         <section className="workflow-command-card workflow-advisor-recommendation">
-          <span className="eyebrow">Pipeline Builder Agent</span>
+          <span className="eyebrow">Builder LLM · does not label images</span>
           <h3>Build a recommended automation</h3>
           <p>{targetLabel ? `Set the boundaries for ${targetLabel}. The Agent may inspect, draft, validate, and Dry Run, but it cannot activate the result.` : "Choose a Label and bounded objective before starting the Agent."}</p>
           {registryLoading ? (
@@ -3553,7 +3702,7 @@ function WorkflowsPage({
             </div>
           ) : liveAgentModels.length ? (
             <fieldset className="agent-model-choice">
-              <legend>Agent model</legend>
+              <legend>Builder LLM</legend>
               <label>
                 Model Profile
                 <select
@@ -3588,9 +3737,8 @@ function WorkflowsPage({
                   </span>
                   <Status status={selectedAgentModel.status} />
                   <div className="tag-group">
-                    <span>Text generation</span>
-                    <span>Structured output</span>
-                    <span>Tool calls</span>
+                    <span>Plans the pipeline</span>
+                    <span>Not a Runtime image call</span>
                     <span>
                       {agentProjectBinding
                         ? "Project choice"
@@ -3629,53 +3777,8 @@ function WorkflowsPage({
               onError={onError}
             />
           )}
-          <fieldset className="agent-objective" aria-label="Pipeline Builder objective">
-            <legend>Objective</legend>
-            <label>
-              Build mode
-              <select
-                aria-label="Pipeline Build mode"
-                value={buildModeKind}
-                onChange={(event) =>
-                  setBuildModeKind(
-                    event.target.value as PipelineBuildMode["kind"],
-                  )
-                }
-              >
-                <option value="from_scratch">Build from scratch</option>
-                <option
-                  value="repair_draft"
-                  disabled={
-                    !draft || ["published", "archived"].includes(draft.status)
-                  }
-                >
-                  Repair current Draft
-                </option>
-                <option
-                  value="resolve_bindings"
-                  disabled={
-                    !draft || ["published", "archived"].includes(draft.status)
-                  }
-                >
-                  Resolve current bindings
-                </option>
-                <option
-                  value="improve_existing"
-                  disabled={!selected?.workflow.source.startsWith("published draft")}
-                >
-                  Improve Published Version
-                </option>
-              </select>
-              <small>
-                {buildModeKind === "from_scratch"
-                  ? "Starts with a new empty Working Draft; Published history is preserved but not used as a base."
-                  : buildModeKind === "improve_existing"
-                    ? "Uses the selected immutable Version as an explicit base and writes changes to a new Draft."
-                    : buildModeKind === "resolve_bindings"
-                      ? "Keeps the current graph and only resolves model bindings, validation, and setup."
-                      : "Keeps the selected editable Draft and its identity."}
-              </small>
-            </label>
+          <fieldset className="agent-objective agent-objective-primary" aria-label="Pipeline Builder objective">
+            <legend>Annotation goal</legend>
             <label>Target task<select aria-label="Target task" value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
@@ -3692,29 +3795,61 @@ function WorkflowsPage({
               <option value="fast">Speed first</option>
               <option value="low_cost">Lowest cost</option>
             </select></label>
-            <label>Maximum cost per image<input aria-label="Maximum cost per image" inputMode="decimal" placeholder="No per-image limit" value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
-            <label>Maximum latency (ms)<input aria-label="Maximum latency" type="number" min="1" placeholder="No latency limit" value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-            <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
-            <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />Allow configured external APIs</label>
-            <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
-            <div className="agent-worker-summary">
-              <span>Available local expert models</span>
-              <strong>
-                {catalog?.expert_models
-                  .filter(
-                    (model) =>
-                      model.availability === "available" &&
-                      model.availability_evidence.health_passed &&
-                      model.availability_evidence.protocol_compatible &&
-                      model.availability_evidence.contracts_validated &&
-                      model.availability_evidence.sample_conversion_passed &&
-                      model.availability_evidence.weights_ready,
-                  )
-                  .map((model) => model.display_name)
-                  .join(", ") || "None ready"}
-              </strong>
-            </div>
           </fieldset>
+          <details className="builder-advanced-options">
+            <summary>Build mode, review and limits</summary>
+            <fieldset className="agent-objective" aria-label="Advanced Pipeline Builder objective">
+              <legend>Advanced constraints</legend>
+              <label>
+                Build mode
+                <select
+                  aria-label="Pipeline Build mode"
+                  value={buildModeKind}
+                  onChange={(event) =>
+                    setBuildModeKind(
+                      event.target.value as PipelineBuildMode["kind"],
+                    )
+                  }
+                >
+                  <option value="from_scratch">Build from scratch</option>
+                  <option value="repair_draft" disabled={!draft || ["published", "archived"].includes(draft.status)}>Repair current Draft</option>
+                  <option value="resolve_bindings" disabled={!draft || ["published", "archived"].includes(draft.status)}>Resolve current bindings</option>
+                  <option value="improve_existing" disabled={!selected?.workflow.source.startsWith("published draft")}>Improve Published Version</option>
+                </select>
+                <small>
+                  {buildModeKind === "from_scratch"
+                    ? "Starts with a new empty Working Draft."
+                    : buildModeKind === "improve_existing"
+                      ? "Uses the selected immutable Version as an explicit base."
+                      : buildModeKind === "resolve_bindings"
+                        ? "Keeps the graph and resolves its model bindings."
+                        : "Keeps the selected editable Draft and its identity."}
+                </small>
+              </label>
+              <label>Maximum cost per image<input aria-label="Maximum cost per image" inputMode="decimal" placeholder="No per-image limit" value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
+              <label>Maximum latency (ms)<input aria-label="Maximum latency" type="number" min="1" placeholder="No latency limit" value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
+              <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
+              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />Allow configured external APIs</label>
+              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
+              <div className="agent-worker-summary">
+                <span>Available local expert models</span>
+                <strong>
+                  {catalog?.expert_models
+                    .filter(
+                      (model) =>
+                        model.availability === "available" &&
+                        model.availability_evidence.health_passed &&
+                        model.availability_evidence.protocol_compatible &&
+                        model.availability_evidence.contracts_validated &&
+                        model.availability_evidence.sample_conversion_passed &&
+                        model.availability_evidence.weights_ready,
+                    )
+                    .map((model) => model.display_name)
+                    .join(", ") || "None ready"}
+                </strong>
+              </div>
+            </fieldset>
+          </details>
           <details className="project-model-choices">
             <summary>Project model choices</summary>
             <p>
@@ -3840,6 +3975,13 @@ function WorkflowsPage({
           title={advisorProposalRecovered ? "Saved Agent Result" : "Proposed Changes"}
           eyebrow={advisorProposalRecovered ? "Recovered from server · editable Draft · not activated" : "Advisor preview · Draft only · never activated automatically"}
         >
+          {advisorProposalRecovered && <div className="saved-agent-result-summary">
+            <span><strong>{advisorProposal.draft.name}</strong><small>{advisorProposal.estimated_model_calls_per_image} Runtime model calls per image · {advisorProposal.unresolved_model_bindings.length ? `${advisorProposal.unresolved_model_bindings.length} unresolved bindings` : "bindings resolved"}</small></span>
+            <Status status={advisorProposal.draft.status} />
+          </div>}
+          <details className="advisor-result-details" open={!advisorProposalRecovered}>
+            <summary>{advisorProposalRecovered ? "View Builder reasoning and diagnostics" : "Review proposed automation"}</summary>
+            <div className="advisor-result-details-body">
           <div className="advisor-proposal-grid">
             <div>
               <h3>Automation Recipe</h3>
@@ -3900,17 +4042,20 @@ function WorkflowsPage({
               }
             />
           )}
-          <div className="button-row">
-            {advisorProposalRecovered ? <>
-              <button onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
-              <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>Dismiss result</button>
-            </> : <>
+          {!advisorProposalRecovered && <div className="button-row">
+            <>
               <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>
               <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>Apply all</button>
               <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
               <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>Reject proposal</button>
-            </>}
-          </div>
+            </>
+          </div>}
+            </div>
+          </details>
+          {advisorProposalRecovered && <div className="button-row">
+            <button className="primary" onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
+            <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>Dismiss result</button>
+          </div>}
         </Panel>
       )}
       {activeProject && <ImproveAutomationPanel
@@ -4073,11 +4218,11 @@ function WorkflowsPage({
               )}
               {!draft.label_pipeline && (
                 <>
-              <div className="natural-workflow-recipe">
-                <span className="eyebrow">Automation Recipe</span>
+              <details className="natural-workflow-recipe">
+                <summary>Full Automation Recipe · {guidedWorkflowNodes(draft.nodes).length} steps</summary>
                 <ol>{guidedWorkflowNodes(draft.nodes).map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : "Reliable built-in step"}</small></li>)}</ol>
                 {!draft.nodes.length && <Empty title="No Automation steps" detail="Start from a template or preview an AnnotAgent recommendation." />}
-              </div>
+              </details>
               <details className="advanced-graph">
                 <summary>View technical graph (read-only)</summary>
                 <p><strong>Inspection only.</strong> Graph-safe port selection, cycle checks, and undo are not released. Edit this Draft through the guided Automation Recipe controls.</p>
