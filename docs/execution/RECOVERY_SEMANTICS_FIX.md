@@ -307,3 +307,153 @@ suites; RoboCup Skill 18 passed; Application 71 passed with one explicitly opt-i
 smoke ignored. The Application regression also caught and repaired a Registry inconsistency where
 the public node catalog accepted `PromptCoverage` at Mask-to-BBox but the static operation catalog
 did not.
+
+## M4 — Builder evidence, real Draft and product regression
+
+### Builder-controlled recovery inspection
+
+Pipeline Builder now has three bounded, read-only tools instead of having to infer execution from
+node names:
+
+- `validate_recovery_paths` runs the same static recovery semantics used for publication and
+  reports the actual execution order and recovery-policy issues;
+- `inspect_recovery_execution_summary` reports selected routes, attempt counters, exhaustion,
+  candidate route decisions and whether the recovery/refinement nodes actually ran;
+- `inspect_model_input_summary` reports persisted model-input dimensions, regions, digests and
+  Provider-effective-dimension status without exposing image base64 or credentials.
+
+The Builder system rules require these observations after a Sample Test and explicitly distinguish
+a changed original-image view from a same-input repeat. The scripted Builder regression completes
+the full tool loop and proves all three tools were called successfully before the Draft was
+submitted for human approval. The branch-injection behavior itself remains covered by the M1–M3
+runtime tests: first-gate recovery, changed search B input, budget exhaustion, correlated-repeat
+handling and consumption of B rather than stale A.
+
+Direct template creation now goes through the same Registry binding helper as LLM and salvage
+paths. A newly created recovery Draft therefore selects ready, compatible non-fixture Model
+Profiles and Model Instances rather than leaving its Qwen and segmenter nodes unbound or silently
+using mock. The regression `direct_recovery_template_creation_binds_ready_registry_models` verifies
+all three VLM nodes and the prompted-segmentation node.
+
+### Persisted execution evidence in the product
+
+Every Sample Test node result now retains its runtime metadata. The Test page adds a prominent
+**What actually ran** section showing, per image:
+
+- the exact submitted model image, source pixel ROI, Crop and submitted dimensions;
+- preprocessing, submitted SHA-256 and Provider-effective dimensions;
+- model/backend, node latency, known cost or `Unknown`;
+- selected recovery routes, attempt counts, failure reason and whether a Mask was produced.
+
+The image is reconstructed from the immutable source image plus `ModelInputTrace` and is returned by
+`/api/workflow-sample-tests/{test}/samples/{index}/nodes/{node}/model-input`. The endpoint verifies
+the current source SHA, submitted PNG SHA and normalized RGB digest before returning bytes. It does
+not duplicate base64 payloads in SQLite. Sample Test sandbox executions now use the Project's
+persisted image identity rather than a transient UUID, so the trace remains resolvable after a
+refresh or process restart. VLM Provider usage metadata is also projected into runtime token usage;
+an absent price remains unknown rather than being presented in the UI as a real zero-dollar quote.
+
+The first real SAM attempt exposed a compatibility bug that synthetic tests had not found. The
+installed EfficientSAM binary correctly implements the declared Image + BoxPromptSet contract but
+predates the Core-only `prompt_coverage` Artifact variant. Passing every orchestration Artifact to
+the plugin caused HTTP 422 before inference. Prompt Coverage is now consumed and validated inside
+Core, then omitted from the model request; the plugin receives only Image and one prompt set. A
+contract-strict regression proves that Core control Artifacts cannot cross this boundary. Plugin
+HTTP errors now include a bounded local response body, which made the contract rejection
+diagnosable without logging secrets.
+
+### Real RoboCup Ball evaluation
+
+No saved history was changed or deleted. The repaired working Draft is
+`f1f0fae0-6095-41eb-af6d-b7f4019bdd9a`, revision 2. It binds all Qwen nodes to Model Profile
+`b9c5bbe8-e21a-5784-9c52-cade259b434f@2` (`qwen3.7-flash-2026-07-15`) and binds
+`refine_validated_prompt` to ready EfficientSAM Model Instance
+`ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72`.
+
+The controlled B Draft `260f8762-cb41-4c39-83e1-1b4478d3d274`, revision 2 uses the repaired 96 px
+Crop → actual 384 px submission and no same-input verifier, but begins with its recovery budget
+exhausted. This makes the no-search fallback explicit (`recovery_budget_exhausted`) rather than
+pretending Review is a relocalization. C uses the normal two-attempt recovery policy.
+
+| Case | Saved Sample Test | Images | Actual calls | Result |
+| --- | --- | ---: | --- | --- |
+| A — preserved historical baseline | `53c4c39d-cb9a-4e3d-9bea-79852a5d130a` | 1 | 3 correlated Qwen observations, 0 SAM | fake relocalize-to-Review; one coarse review candidate |
+| B — real 4× local input, no remaining recovery | `77c6aba3-2125-47e9-8993-7ea5938ab3e0` | 4 | 8 Qwen, 0 SAM; 6,260 input / 600 output tokens | 4 candidates, 4 Review, 0 failures; every recovery request ended with explicit budget exhaustion |
+| C — B plus real wider search B and SAM | `c21ee7c8-9fdf-4f5b-a411-22df302a3e48` | 4 | 11 Qwen, 4 EfficientSAM; 8,540 input / 824 output tokens | 4 refined candidates, 4 Review, 0 failures; 3 images used search B, all 4 reached SAM |
+
+C took 29.963 seconds versus 13.570 seconds for B. Search A inputs were derived from the root image
+and submitted at up to 384 px; search B used a different, wider root ROI and its own submitted PNG.
+For `color_1001525.png`, the final audit run
+`78cb04a1-fffe-4c83-b8ff-a3a68fddc1af` records:
+
+```text
+whole image:   source [0,0,544,448]   -> submitted 544×448
+search A:      source [222,186,96,96] -> submitted 384×384
+coverage A:    outside_prompt         -> search_tiles
+search B:      source [174,109,192,192] -> submitted 384×384
+coverage B:    partially_covered      -> refine (human review required)
+EfficientSAM:  source [0,0,544,448]   -> submitted 544×448
+final bbox:    [0.4963235, 0.4397321, 0.0220588, 0.0267857], needs_review
+```
+
+All four model-input preview requests for that test returned verified PNGs. The whole-image Qwen and
+SAM input SHA is `d304836b…`; search A and B have distinct SHA values, proving that request IDs alone
+did not create the recovery evidence.
+
+### Accuracy status
+
+Engineering correctness **passes** for the repaired path: search B really executes, inputs differ,
+SAM really runs, the final projection contains one candidate per lineage, and uncertainty is not
+auto-committed.
+
+Visual quality is **still provisional and not demonstrated as a general improvement**. There is no
+human-confirmed ground truth in the active database. Against the explicitly unverified historical
+YOLO export only, the four-image mean overlap was 0.5694 for B and 0.4082 for C. This proxy therefore
+does not support a claim that adding recovery + SAM improved the fixed set. Per-image C overlap was
+0.0940, 0.5195, 0.8910 and 0.1285, showing that SAM can tighten a good prompt but cannot repair an
+unstable or semantically wrong Qwen localization. A later stochastic audit of the first image
+produced overlap 0.6336 with that same unverified export and a visually plausible 12×12 pixel box;
+the variation itself is evidence that one successful call is insufficient.
+
+Product inspectability **passes at the API/build level**: results retain a single terminal
+candidate, Debug retains all stages, exact model inputs are refresh-safe, and reasons distinguish
+search exhaustion, uncertain refinement and actual model failure. Browser automation could not be
+visually re-captured during M4 because the host Mac was locked; the checked TypeScript, unit and
+production-build results are the UI evidence for this milestone rather than a fabricated
+screenshot claim.
+
+### Remaining work outside this repair
+
+- Establish a human-reviewed evaluation set with immutable annotation revisions before reporting
+  accuracy, recall or a production auto-accept threshold.
+- Calibrate Qwen localization and geometry decisions on that set. The current four-image result
+  supports mandatory Review, not automatic acceptance.
+- Provider-internal image dimensions remain `unknown` because this Provider does not report them.
+- Model Profile pricing is not configured, so remote cost is shown as `Unknown`; token counts and
+  node latencies are still recorded.
+- Candidate-level route decisions are persisted, but mixed routes in one set intentionally fail
+  closed until the executor has a typed item fan-out/fan-in implementation.
+
+### M4 verification
+
+```text
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+npm --prefix web run typecheck
+npm --prefix web run test -- --run
+npm --prefix web run build
+npm --prefix web run test:e2e
+```
+
+Results: formatting and Clippy passed without warnings; the Rust workspace completed 477 tests with
+477 passed and five explicitly opt-in real-weight or billable-Provider tests ignored; Web completed
+13 test files / 63 tests and 44 Playwright journeys with no failures. TypeScript checking and the
+production build passed. Vite reports only the existing advisory that the single application chunk
+is larger than 500 kB; it is not a correctness or release failure.
+
+The E2E suite additionally caught two product-level regressions during final verification. A
+persisted setup-required Builder result had its recovery actions inside a closed diagnostics panel;
+that panel now opens when Provider or Model setup is required. The Sample Test preview regression
+now derives the dialog name from the real Project image identity instead of incorrectly treating a
+classification label as a filename.

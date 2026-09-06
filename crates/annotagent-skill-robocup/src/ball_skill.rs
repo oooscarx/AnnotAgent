@@ -642,7 +642,7 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     ]);
 
     let mut recovery_resize = resize.clone();
-    recovery_resize.id = "resize_recovery_search".to_owned();
+    "resize_recovery_search".clone_into(&mut recovery_resize.id);
     recovery_resize
         .parameters
         .insert("recovery_attempt".to_owned(), serde_json::json!(2));
@@ -675,11 +675,11 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     );
 
     let mut recovery_validator = validator.clone();
-    recovery_validator.id = "validate_recovery_ball".to_owned();
+    "validate_recovery_ball".clone_into(&mut recovery_validator.id);
     let mut recovery_prompts = prompts.clone();
-    recovery_prompts.id = "recovery_box_prompts".to_owned();
+    "recovery_box_prompts".clone_into(&mut recovery_prompts.id);
     let mut recovery_coverage = coverage.clone();
-    recovery_coverage.id = "recovery_coverage_gate".to_owned();
+    "recovery_coverage_gate".clone_into(&mut recovery_coverage.id);
     recovery_coverage.parameters.insert(
         "recovery_route_policy".to_owned(),
         serde_json::json!({

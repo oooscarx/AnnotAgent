@@ -261,6 +261,23 @@ impl DagNodeRunner for PromptedSegmentationRunner {
             })
             .unwrap_or_default();
         let coverage_validation = validate_prompt_coverage(&context, prompt_count)?;
+        // PromptCoverage is a Core control artifact. It is consumed above to authorize
+        // refinement, but it is not part of the prompted-segmentation model contract. Keep
+        // backend requests limited to the image and prompt set so older, contract-compatible
+        // plugins do not have to deserialize Core orchestration artifacts they never use.
+        let backend_inputs = context
+            .input_pipeline_artifacts
+            .iter()
+            .filter(|artifact| {
+                matches!(
+                    artifact,
+                    PipelineArtifact::Image(_)
+                        | PipelineArtifact::BoxPromptSet(_)
+                        | PipelineArtifact::PointPromptSet(_)
+                )
+            })
+            .cloned()
+            .collect();
         let model_id = context
             .node
             .model_binding
@@ -278,7 +295,7 @@ impl DagNodeRunner for PromptedSegmentationRunner {
                     model_id: model_id.to_owned(),
                     operation: VisionCapability::PromptedSegmentation,
                     image: self.image.clone(),
-                    input_artifacts: context.input_pipeline_artifacts.clone(),
+                    input_artifacts: backend_inputs,
                     parameters: context.node.parameters.clone(),
                     timeout_ms: context
                         .node
@@ -358,6 +375,18 @@ impl PipelineModelBackend for MockPromptedSegmentationBackend {
         if cancellation.is_cancelled() {
             return Err(CoreError::Provider(
                 "mock prompted segmentation cancelled".to_owned(),
+            ));
+        }
+        if request.input_artifacts.iter().any(|artifact| {
+            !matches!(
+                artifact,
+                PipelineArtifact::Image(_)
+                    | PipelineArtifact::BoxPromptSet(_)
+                    | PipelineArtifact::PointPromptSet(_)
+            )
+        }) {
+            return Err(CoreError::Validation(
+                "prompted-segmentation backend received a Core control artifact".to_owned(),
             ));
         }
         let prompts = request
@@ -686,7 +715,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn covered_prompt_reaches_backend_and_returns_a_mask() {
+    async fn covered_prompt_reaches_backend_without_core_control_artifacts() {
         let image_id = ImageId::new();
         let source = ArtifactRef {
             artifact_id: "local-detections".to_owned(),

@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_HANDSHAKE_BYTES: usize = 16 * 1024;
 const MAX_LOG_BYTES: usize = 64 * 1024;
+const MAX_ERROR_BODY_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Error)]
 pub enum PluginHostError {
@@ -39,6 +40,11 @@ pub enum PluginHostError {
     InvalidHandshake(String),
     #[error("plugin request failed: {0}")]
     Transport(#[from] reqwest::Error),
+    #[error("plugin returned HTTP {status}: {body}")]
+    HttpStatus {
+        status: reqwest::StatusCode,
+        body: String,
+    },
     #[error("plugin process is no longer running")]
     Crashed,
 }
@@ -204,16 +210,23 @@ impl HostedPlugin {
         request: &PipelineInferenceRequest,
     ) -> Result<PipelineInferenceResponse, PluginHostError> {
         self.ensure_running().await?;
-        Ok(self
+        let response = self
             .client
             .post(self.base_url.join("v1/infer").expect("static endpoint"))
             .bearer_auth(&self.session_token)
             .json(request)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?)
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let mut body = response.text().await?;
+            if body.len() > MAX_ERROR_BODY_BYTES {
+                body.truncate(MAX_ERROR_BODY_BYTES);
+                body.push('…');
+            }
+            return Err(PluginHostError::HttpStatus { status, body });
+        }
+        Ok(response.json().await?)
     }
 
     pub async fn cancel_request(

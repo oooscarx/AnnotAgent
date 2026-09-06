@@ -1816,6 +1816,9 @@ pub enum PipelineBuilderTool {
     EstimatePipelineCost,
     DryRunPipeline,
     InspectDryRunSummary,
+    InspectRecoveryExecutionSummary,
+    InspectModelInputSummary,
+    ValidateRecoveryPaths,
     InspectFailureClasses,
     InspectGeometryQuality,
     InspectFailedSamples,
@@ -1829,7 +1832,7 @@ pub enum PipelineBuilderTool {
 }
 
 impl PipelineBuilderTool {
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 72] = [
         Self::GetPipelineBuilderContext,
         Self::ResolvePipelineFeasibility,
         Self::InspectNodesBatch,
@@ -1889,6 +1892,9 @@ impl PipelineBuilderTool {
         Self::EstimatePipelineCost,
         Self::DryRunPipeline,
         Self::InspectDryRunSummary,
+        Self::InspectRecoveryExecutionSummary,
+        Self::InspectModelInputSummary,
+        Self::ValidateRecoveryPaths,
         Self::InspectFailureClasses,
         Self::InspectGeometryQuality,
         Self::InspectFailedSamples,
@@ -1963,6 +1969,9 @@ impl PipelineBuilderTool {
             Self::EstimatePipelineCost => "estimate_pipeline_cost",
             Self::DryRunPipeline => "dry_run_pipeline",
             Self::InspectDryRunSummary => "inspect_dry_run_summary",
+            Self::InspectRecoveryExecutionSummary => "inspect_recovery_execution_summary",
+            Self::InspectModelInputSummary => "inspect_model_input_summary",
+            Self::ValidateRecoveryPaths => "validate_recovery_paths",
             Self::InspectFailureClasses => "inspect_failure_classes",
             Self::InspectGeometryQuality => "inspect_geometry_quality",
             Self::InspectFailedSamples => "inspect_failed_samples",
@@ -2084,11 +2093,14 @@ impl PipelineBuilderTool {
             | Self::SetUnresolvedBinding
             | Self::CreateUnresolvedModelRequirement
             | Self::UndoLastDraftChange => PipelineBuilderPermission::MutateDraft,
-            Self::ComparePipelineDrafts | Self::ValidatePipeline | Self::EstimatePipelineCost => {
-                PipelineBuilderPermission::ReadDraft
-            }
+            Self::ComparePipelineDrafts
+            | Self::ValidatePipeline
+            | Self::ValidateRecoveryPaths
+            | Self::EstimatePipelineCost => PipelineBuilderPermission::ReadDraft,
             Self::DryRunPipeline
             | Self::InspectDryRunSummary
+            | Self::InspectRecoveryExecutionSummary
+            | Self::InspectModelInputSummary
             | Self::InspectFailureClasses
             | Self::InspectGeometryQuality
             | Self::InspectFailedSamples
@@ -3350,7 +3362,7 @@ mod tests {
     fn tool_registry_rejects_every_unbounded_escape_hatch() {
         let registry = PipelineBuilderToolRegistry;
         let tools = registry.tools();
-        assert_eq!(tools.len(), 69);
+        assert_eq!(tools.len(), 72);
         assert_eq!(tools.len(), PipelineBuilderTool::ALL.len());
         for forbidden in [
             "publish_pipeline",
@@ -3371,6 +3383,24 @@ mod tests {
                 .resolve("validate_pipeline")
                 .expect("registered tool"),
             PipelineBuilderTool::ValidatePipeline
+        );
+        assert_eq!(
+            registry
+                .resolve("inspect_recovery_execution_summary")
+                .expect("recovery execution tool"),
+            PipelineBuilderTool::InspectRecoveryExecutionSummary
+        );
+        assert_eq!(
+            registry
+                .resolve("inspect_model_input_summary")
+                .expect("model input tool"),
+            PipelineBuilderTool::InspectModelInputSummary
+        );
+        assert_eq!(
+            registry
+                .resolve("validate_recovery_paths")
+                .expect("recovery validation tool"),
+            PipelineBuilderTool::ValidateRecoveryPaths
         );
         assert_eq!(
             registry

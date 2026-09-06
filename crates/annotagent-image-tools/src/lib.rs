@@ -94,6 +94,14 @@ pub fn to_model_image(
     })
 }
 
+/// Decode the exact bytes carried by a `ModelImage`. This is used by authenticated local preview
+/// endpoints after reconstructing and digest-checking a persisted model-input trace.
+pub fn model_image_bytes(image: &ModelImage) -> CoreResult<Vec<u8>> {
+    STANDARD.decode(&image.data_base64).map_err(|error| {
+        CoreError::Validation(format!("ModelImage payload is not valid base64: {error}"))
+    })
+}
+
 pub fn resize_exact(frame: &ImageFrame, width: u32, height: u32) -> CoreResult<ImageFrame> {
     frame.validate()?;
     if width == 0 || height == 0 {

@@ -928,18 +928,13 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         );
         let refinement_eligibility = match state {
             PromptCoverageState::Covered => PromptRefinementEligibility::PlausibleForRefinement,
-            PromptCoverageState::PartiallyCovered
+            PromptCoverageState::PartiallyCovered | PromptCoverageState::Unknown
                 if final_recovery_attempt && allow_uncertain_refinement && has_legal_candidate =>
             {
                 PromptRefinementEligibility::PlausibleForRefinement
             }
             PromptCoverageState::PartiallyCovered | PromptCoverageState::OutsidePrompt => {
                 PromptRefinementEligibility::NeedsRelocalization
-            }
-            PromptCoverageState::Unknown
-                if final_recovery_attempt && allow_uncertain_refinement && has_legal_candidate =>
-            {
-                PromptRefinementEligibility::PlausibleForRefinement
             }
             PromptCoverageState::Unknown => PromptRefinementEligibility::Unknown,
         };

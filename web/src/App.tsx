@@ -1306,6 +1306,11 @@ function BuildTestPublish({
   const uncertainSamples = report?.samples.filter((sample) => sample.review_count > 0 || sample.failed) ?? [];
   const needsAttention = (summary?.needs_review_count ?? 0) + (summary?.failed_count ?? 0);
   const fullRun = summary?.estimated_full_run;
+  const hasUnknownRemoteModelCost = report?.samples.some((sample) => sample.nodes.some((node) => (
+    asModelInputTrace(node)
+    && node.metadata?.provider !== "rust_plugin"
+    && (!node.estimated_cost || Number(node.estimated_cost) === 0)
+  ))) ?? false;
   const sampleLimit = Math.min(10, images.length);
   const currentDraft = drafts.find((draft) => draft.id === draftId);
   const inspectedSample = report?.samples.find(
@@ -1387,7 +1392,7 @@ function BuildTestPublish({
               <span>{summary.fallback_count} fallback{summary.fallback_count === 1 ? "" : "s"}</span>
               <span>{summary.cache_hit_count} cache hit{summary.cache_hit_count === 1 ? "" : "s"}</span>
               <span>{formatSampleDuration(summary.duration_ms)}</span>
-              <span>${summary.usage.estimated_cost} sample cost</span>
+              <span>{hasUnknownRemoteModelCost ? "Sample cost unknown" : `$${summary.usage.estimated_cost} sample cost`}</span>
               {restoredAt && <span title={new Date(restoredAt).toLocaleString()}>Restored saved Sample Test</span>}
             </div>
             {isActivated ? <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>This saved Sample Test belongs to the immutable active Version.</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div> : <>
@@ -1400,8 +1405,12 @@ function BuildTestPublish({
           </section>
           {fullRun && <section className="full-run-estimate" aria-label="Full Run Estimate">
             <div><span className="eyebrow">Full Run Estimate</span><h2>{fullRun.image_count} Project images</h2><p>Projected from this Sample Test; actual usage can vary with image content and Provider behavior.</p></div>
-            <dl><div><dt>Estimated cost</dt><dd>${fullRun.estimated_cost}</dd></div><div><dt>Estimated duration</dt><dd>{formatSampleDuration(fullRun.duration_ms)}</dd></div><div><dt>Review workload</dt><dd>{fullRun.review_count_min === fullRun.review_count_max ? fullRun.review_count_min : `${fullRun.review_count_min}–${fullRun.review_count_max}`} results</dd></div></dl>
+            <dl><div><dt>Estimated cost</dt><dd>{hasUnknownRemoteModelCost ? "Unknown" : `$${fullRun.estimated_cost}`}</dd></div><div><dt>Estimated duration</dt><dd>{formatSampleDuration(fullRun.duration_ms)}</dd></div><div><dt>Review workload</dt><dd>{fullRun.review_count_min === fullRun.review_count_max ? fullRun.review_count_min : `${fullRun.review_count_min}–${fullRun.review_count_max}`} results</dd></div></dl>
           </section>}
+          <SampleExecutionSummary
+            report={report}
+            sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
+          />
           <section className="sample-results-section" aria-labelledby="sample-results-title">
             <div className="section-heading"><div><span className="eyebrow">Results Gallery</span><h2 id="sample-results-title">What the automation found</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : "s"}</small></div>
             <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div>
@@ -1413,7 +1422,7 @@ function BuildTestPublish({
           <section className="sample-diagnostics" aria-label="Sample Test diagnostics">
             <div className="section-heading"><div><span className="eyebrow">Diagnostics</span><h2>Inspect only when you need to troubleshoot</h2></div></div>
             <details><summary>Pipeline Diagnostics</summary><div>{report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}{!report.validation.issues.length && <p>No blocking static or execution issues.</p>}</div></details>
-            <details><summary>Model Usage</summary><dl className="diagnostic-facts"><div><dt>Input tokens</dt><dd>{summary.usage.input_tokens.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{summary.usage.output_tokens.toLocaleString()}</dd></div><div><dt>Estimated cost</dt><dd>${summary.usage.estimated_cost}</dd></div></dl></details>
+            <details><summary>Model Usage</summary><dl className="diagnostic-facts"><div><dt>Input tokens</dt><dd>{summary.usage.input_tokens.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{summary.usage.output_tokens.toLocaleString()}</dd></div><div><dt>Estimated cost</dt><dd>{hasUnknownRemoteModelCost ? "Unknown" : `$${summary.usage.estimated_cost}`}</dd></div></dl></details>
             <details><summary>Node Timings</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`timing-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.map((node) => <span key={node.node_id}>{node.node_id}<small>{node.latency_ms} ms · {node.status}</small></span>)}</div>)}</details>
             <details><summary>Technical Artifacts</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`artifacts-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.filter((node) => node.output_types.length).map((node) => <span key={node.node_id}>{node.node_id}<small>{node.output_types.join(", ")}</small></span>)}</div>)}</details>
           </section>
@@ -1423,6 +1432,7 @@ function BuildTestPublish({
         sample={inspectedSample}
         image={images.find((item) => item.index === inspectedSample.image_index)}
         configuredRefiners={configuredRefiners}
+        sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
         onClose={() => setInspectedSampleIndex(undefined)}
       />}
       {!isActivated && <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>}
@@ -1434,6 +1444,105 @@ function formatSampleDuration(durationMs: number) {
   if (durationMs < 1_000) return `${durationMs} ms`;
   if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)} sec`;
   return `${Math.ceil(durationMs / 60_000)} min`;
+}
+
+type SampleNodeResult = WorkflowDryRunReport["samples"][number]["nodes"][number];
+
+type ModelInputTraceView = {
+  source_region_pixels: number[];
+  crop_dimensions: number[];
+  submitted_dimensions: number[];
+  submitted_image_sha256: string;
+  normalized_pixel_digest: string;
+  interpolation: string;
+  color_format: string;
+  letterbox_padding: number[];
+  provider_effective_dimensions?: unknown;
+};
+
+function asModelInputTrace(node: SampleNodeResult): ModelInputTraceView | undefined {
+  const value = node.metadata?.model_input_trace;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const trace = value as Partial<ModelInputTraceView>;
+  if (!Array.isArray(trace.source_region_pixels)
+    || !Array.isArray(trace.crop_dimensions)
+    || !Array.isArray(trace.submitted_dimensions)
+    || typeof trace.submitted_image_sha256 !== "string"
+    || typeof trace.normalized_pixel_digest !== "string") return undefined;
+  return trace as ModelInputTraceView;
+}
+
+function metadataText(value: unknown, fallback = "Not reported") {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (record.status === "observed" || record.status === "estimated") return `${record.status} · ${record.width}×${record.height}`;
+    if (record.status === "unknown") return "Unknown";
+  }
+  return JSON.stringify(value);
+}
+
+function sampleModelInputUrl(sampleTestId: string, imageIndex: number, nodeId: string) {
+  return `/api/workflow-sample-tests/${encodeURIComponent(sampleTestId)}/samples/${imageIndex}/nodes/${encodeURIComponent(nodeId)}/model-input`;
+}
+
+function modelCallCost(node: SampleNodeResult) {
+  if (node.metadata?.provider === "rust_plugin") return "$0 local";
+  if (!node.estimated_cost || Number(node.estimated_cost) === 0) return "Unknown";
+  return `$${node.estimated_cost}`;
+}
+
+function SampleExecutionSummary({
+  report,
+  sampleTestId,
+}: {
+  report: WorkflowDryRunReport;
+  sampleTestId?: string;
+}) {
+  const observed = report.samples.some((sample) => sample.nodes.some((node) => (
+    asModelInputTrace(node)
+    || node.metadata?.selected_route != null
+    || node.metadata?.requested_route != null
+  )));
+  return <section className="sample-execution-summary" aria-labelledby="sample-execution-title">
+    <div className="section-heading">
+      <div><span className="eyebrow">Execution Evidence</span><h2 id="sample-execution-title">What actually ran</h2></div>
+      <small>{observed ? "Persisted node facts" : "No execution trace available"}</small>
+    </div>
+    {!observed ? <div className="sample-execution-empty"><strong>This result has no model-input trace.</strong><span>Run this Draft again to record exact submitted pixels, recovery routes, and refiner execution.</span></div> : <div className="sample-execution-grid">
+      {report.samples.map((sample) => {
+        const calls = sample.nodes.flatMap((node) => {
+          const trace = asModelInputTrace(node);
+          return trace ? [{ node, trace }] : [];
+        });
+        const routes = sample.nodes.filter((node) => node.metadata?.selected_route != null || node.metadata?.requested_route != null);
+        return <article className="sample-execution-card" key={`execution-${sample.image_index}`}>
+          <header><div><strong>{sample.image_name}</strong><small>{calls.length} model call{calls.length === 1 ? "" : "s"} with input evidence</small></div><Status status={sample.failed ? "Failed" : sample.review_count ? "Needs review" : "Completed"} /></header>
+          {calls.length ? <div className="model-input-evidence-list">{calls.map(({ node, trace }) => <article key={node.node_id} className="model-input-evidence">
+            {sampleTestId ? <figure><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt={`Actual image submitted to ${node.node_id}`} /><figcaption>Actual submitted image</figcaption></figure> : <div className="model-input-placeholder">Saved preview unavailable</div>}
+            <div className="model-input-evidence-body">
+              <header><strong>{metadataText(node.metadata?.model, node.node_id)}</strong><small>{metadataText(node.metadata?.provider, "Model backend")}</small></header>
+              <dl>
+                <div><dt>Node</dt><dd>{node.node_id}</dd></div>
+                <div><dt>Source pixels</dt><dd>{trace.source_region_pixels.join(" × ")}</dd></div>
+                <div><dt>Crop → submitted</dt><dd>{trace.crop_dimensions.join("×")} → {trace.submitted_dimensions.join("×")}</dd></div>
+                <div><dt>Preprocessing</dt><dd>{trace.interpolation} · {trace.color_format}</dd></div>
+                <div><dt>Provider effective</dt><dd>{metadataText(trace.provider_effective_dimensions, "Unknown")}</dd></div>
+                <div><dt>Latency · cost</dt><dd>{node.latency_ms} ms · {modelCallCost(node)}</dd></div>
+              </dl>
+              <code title={trace.submitted_image_sha256}>Input SHA · {trace.submitted_image_sha256.slice(0, 16)}…</code>
+            </div>
+          </article>)}</div> : <p className="sample-execution-note">No model call with a persisted input trace executed for this image.</p>}
+          <div className="recovery-route-summary">
+            <strong>Recovery and refinement</strong>
+            {routes.length ? routes.map((node) => <div key={`route-${node.node_id}`}><span><b>{node.node_id}</b><small>attempt {metadataText(node.metadata?.recovery_attempt, "—")} / {metadataText(node.metadata?.maximum_recovery_attempts, "—")}</small></span><span><b>{metadataText(node.metadata?.selected_route, "No route")}</b><small>{metadataText(node.metadata?.failure_code, "No failure reason")}</small></span></div>) : <span className="sample-execution-note">No recovery Gate executed.</span>}
+            <small>{sample.nodes.some((node) => node.output_types.some((type) => String(type).toLowerCase().includes("mask"))) ? "Prompted segmentation produced a Mask Artifact." : "No Mask Artifact was produced; a configured refiner may not have been reached."}</small>
+          </div>
+        </article>;
+      })}
+    </div>}
+  </section>;
 }
 
 function SampleResultCard({
@@ -1511,11 +1620,13 @@ function SampleAnnotationDialog({
   sample,
   image,
   configuredRefiners,
+  sampleTestId,
   onClose,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
   image?: ImageItem;
   configuredRefiners: WorkflowDraftNode[];
+  sampleTestId?: string;
   onClose: () => void;
 }) {
   const stages = sample.projection?.debug_stages ?? [];
@@ -1537,6 +1648,10 @@ function SampleAnnotationDialog({
   const executedNodeIds = new Set(sample.nodes.map((node) => node.node_id));
   const reachedRefiners = configuredRefiners.filter((node) => executedNodeIds.has(node.id));
   const coverage = stages.find((stage) => stage.stage === "prompt_coverage");
+  const modelInputs = sample.nodes.flatMap((node) => {
+    const trace = asModelInputTrace(node);
+    return trace ? [{ node, trace }] : [];
+  });
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -1572,6 +1687,13 @@ function SampleAnnotationDialog({
           <section className="sample-preview-stage-detail">
             <strong>Stage evidence</strong>
             {selectedStage === "final" ? <span>Only terminal results eligible for Review or Commit are displayed.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}</span>) : <span>No Artifact was produced for this stage.</span>}
+          </section>
+          <section className="sample-preview-model-inputs">
+            <strong>Actual model inputs</strong>
+            {modelInputs.length ? modelInputs.map(({ node, trace }) => <article key={`preview-input-${node.node_id}`}>
+              {sampleTestId && <img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt={`Actual image submitted to ${node.node_id}`} />}
+              <span><b>{metadataText(node.metadata?.model, node.node_id)}</b><small>{trace.submitted_dimensions.join("×")} · {trace.interpolation} · {node.latency_ms} ms · {modelCallCost(node)}</small></span>
+            </article>) : <span>No persisted model-input evidence exists for this result.</span>}
           </section>
         </aside>
       </div>
@@ -3979,7 +4101,15 @@ function WorkflowsPage({
             <span><strong>{advisorProposal.draft.name}</strong><small>{advisorProposal.estimated_model_calls_per_image} Runtime model calls per image · {advisorProposal.unresolved_model_bindings.length ? `${advisorProposal.unresolved_model_bindings.length} unresolved bindings` : "bindings resolved"}</small></span>
             <Status status={advisorProposal.draft.status} />
           </div>}
-          <details className="advisor-result-details" open={!advisorProposalRecovered}>
+          <details
+            className="advisor-result-details"
+            open={
+              !advisorProposalRecovered ||
+              ["provider_setup_required", "blocked_draft_ready"].includes(
+                advisorProposal.agent_session?.outcome ?? "",
+              )
+            }
+          >
             <summary>{advisorProposalRecovered ? "View Builder reasoning and diagnostics" : "Review proposed automation"}</summary>
             <div className="advisor-result-details-body">
           <div className="advisor-proposal-grid">

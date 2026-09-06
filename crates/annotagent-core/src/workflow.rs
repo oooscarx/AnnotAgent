@@ -425,6 +425,10 @@ pub struct WorkflowDryRunNodeResult {
     pub issues: Vec<WorkflowValidationIssue>,
     #[serde(default)]
     pub failure_classes: Vec<crate::AnnotationFailureClass>,
+    /// Bounded, credential-free execution facts emitted by the node. Image bytes and headers are
+    /// never stored here; model-input traces use digests and typed coordinate transforms.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

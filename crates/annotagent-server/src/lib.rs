@@ -31,7 +31,7 @@ use annotagent_core::{
     GeometryQualitySummary, GeometrySemantics, GeometrySnapshot, GlobalModelDefaults,
     ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability, ModelBindingId,
     ModelBindingMatch, ModelBindingRole, ModelCapability, ModelCapabilityQualityContract,
-    ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ModelInputTrace, ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineImprovementId, PipelineImprovementPolicy,
     PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectId,
@@ -44,7 +44,9 @@ use annotagent_core::{
     WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence,
     check_model_compatibility, effective_model_quality_contracts,
 };
-use annotagent_image_tools::{load_image, to_model_image};
+use annotagent_image_tools::{
+    load_image, materialize_model_input, model_image_bytes, to_model_image,
+};
 use annotagent_model_bundle::{
     CommercialUseStatus, ExpectedOutputSummary, ModelBundleFile, ModelBundleId,
     ModelBundleManifest, ModelBundleSmokeRequest, ModelContractDocument, ModelContractReference,
@@ -726,6 +728,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/workflow-drafts/{draft_id}/sample-test",
             get(get_workflow_sample_test),
+        )
+        .route(
+            "/api/workflow-sample-tests/{test_id}/samples/{image_index}/nodes/{node_id}/model-input",
+            get(get_workflow_sample_model_input),
         )
         .route(
             "/api/workflow-drafts/{draft_id}/publish",
@@ -3737,6 +3743,74 @@ async fn get_workflow_sample_test(
         "sample_test": sample_test,
         "current": current,
     })))
+}
+
+async fn get_workflow_sample_model_input(
+    State(state): State<ServerState>,
+    AxumPath((test_id, image_index, node_id)): AxumPath<(String, usize, String)>,
+) -> ApiResult<Response> {
+    let sample_test = state
+        .application
+        .store()
+        .get_workflow_sample_test_by_id(&test_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Sample Test was not found"))?;
+    let sample = sample_test
+        .report
+        .samples
+        .iter()
+        .find(|sample| sample.image_index == image_index)
+        .ok_or_else(|| ApiError::not_found("Sample Test image was not found"))?;
+    let node = sample
+        .nodes
+        .iter()
+        .find(|node| node.node_id == node_id)
+        .ok_or_else(|| ApiError::not_found("Sample Test node was not found"))?;
+    let trace: ModelInputTrace = serde_json::from_value(
+        node.metadata
+            .get("model_input_trace")
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Node has no persisted model-input trace"))?,
+    )
+    .map_err(ApiError::internal)?;
+    let source_path = state
+        .application
+        .project_image_path(&sample_test.project_id, trace.source_image_id)
+        .map_err(ApiError::not_found)?;
+    let source = load_image(&source_path, 40_000_000).map_err(ApiError::internal)?;
+    if source.metadata.sha256 != trace.source_image_sha256 {
+        return Err(ApiError::bad_request(
+            "Source image changed after this Sample Test; the saved model input cannot be reproduced",
+        ));
+    }
+    let [submitted_width, submitted_height] = trace.submitted_dimensions;
+    let (model_image, reproduced) = materialize_model_input(
+        format!("sample-test:{test_id}:{node_id}"),
+        trace.source_image_id,
+        trace.source_image_artifact.clone(),
+        &source,
+        Some(trace.transform_to_original.source_region),
+        submitted_width,
+        submitted_height,
+    )
+    .map_err(ApiError::internal)?;
+    if reproduced.submitted_image_sha256 != trace.submitted_image_sha256
+        || reproduced.normalized_pixel_digest != trace.normalized_pixel_digest
+    {
+        return Err(ApiError::internal(
+            "Reproduced model input does not match the persisted digest",
+        ));
+    }
+    let bytes = model_image_bytes(&model_image).map_err(ApiError::internal)?;
+    let mut response = Response::new(Body::from(bytes));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -11806,6 +11880,46 @@ export:
         assert_eq!(dry_run["sandbox"], json!(true));
         assert_eq!(dry_run["samples"][0]["image_name"], json!("sample.png"));
 
+        // Seed one immutable, digest-backed model-input observation so this HTTP journey also
+        // verifies the preview endpoint independently of the test-only workflow's mock planner.
+        let mut traced_sample_test = application
+            .store()
+            .get_workflow_sample_test(&draft_id)
+            .expect("load Sample Test")
+            .expect("saved Sample Test");
+        traced_sample_test.id = "workflow-ui-model-input-trace".to_owned();
+        traced_sample_test.completed_at += chrono::Duration::milliseconds(1);
+        let project_image = application
+            .list_project_image_summaries("workflow-ui")
+            .expect("Project images")
+            .into_iter()
+            .next()
+            .expect("Project image");
+        let source_path = application
+            .project_image_path("workflow-ui", project_image.image_id)
+            .expect("source image path");
+        let source = load_image(&source_path, 40_000_000).expect("source image");
+        let (_, trace) = materialize_model_input(
+            "server-preview-fixture",
+            project_image.image_id,
+            None,
+            &source,
+            None,
+            source.metadata.width,
+            source.metadata.height,
+        )
+        .expect("model-input trace");
+        traced_sample_test.report.samples[0].nodes[0]
+            .metadata
+            .insert(
+                "model_input_trace".to_owned(),
+                serde_json::to_value(trace).expect("trace JSON"),
+            );
+        application
+            .store()
+            .save_workflow_sample_test(&traced_sample_test)
+            .expect("save traced Sample Test");
+
         let restored_sample_test = response_json(
             request(
                 &service,
@@ -11821,6 +11935,41 @@ export:
             restored_sample_test["sample_test"]["report"]["samples"][0]["image_name"],
             json!("sample.png")
         );
+        let sample_test_id = restored_sample_test["sample_test"]["id"]
+            .as_str()
+            .expect("Sample Test id");
+        let model_input_node = restored_sample_test["sample_test"]["report"]["samples"][0]["nodes"]
+            .as_array()
+            .and_then(|nodes| {
+                nodes.iter().find(|node| {
+                    node["metadata"]["model_input_trace"]["submitted_image_sha256"].is_string()
+                })
+            })
+            .expect("node with persisted model-input trace");
+        let model_input_node_id = model_input_node["node_id"]
+            .as_str()
+            .expect("model-input node id");
+        let model_input_response = request(
+            &service,
+            axum::http::Method::GET,
+            &format!(
+                "/api/workflow-sample-tests/{sample_test_id}/samples/0/nodes/{model_input_node_id}/model-input"
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(model_input_response.status(), StatusCode::OK);
+        assert_eq!(
+            model_input_response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/png")
+        );
+        let model_input_bytes = axum::body::to_bytes(model_input_response.into_body(), 40_000_000)
+            .await
+            .expect("model-input preview bytes");
+        assert!(model_input_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
         let drafts_after_sample_test = response_json(
             request(
                 &service,

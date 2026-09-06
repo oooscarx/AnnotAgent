@@ -215,6 +215,17 @@ impl VlmDetectionSkillRunner {
     }
 }
 
+fn provider_token_usage(metadata: &BTreeMap<String, serde_json::Value>) -> (u64, u64) {
+    let usage = metadata.get("usage");
+    let token = |name| {
+        usage
+            .and_then(|usage| usage.get(name))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default()
+    };
+    (token("input_tokens"), token("output_tokens"))
+}
+
 #[async_trait]
 impl DagNodeRunner for VlmDetectionSkillRunner {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -284,12 +295,13 @@ impl DagNodeRunner for VlmDetectionSkillRunner {
                 "VLM Detection backend must return one scoped DetectionSet Artifact",
             ));
         }
+        let (input_tokens, output_tokens) = provider_token_usage(&response.metadata);
         Ok(DagNodeOutput {
             pipeline_artifacts: response.artifacts,
             metadata: response.metadata,
             usage: annotagent_runtime::DagNodeUsage {
-                input_tokens: 0,
-                output_tokens: 0,
+                input_tokens,
+                output_tokens,
                 cost: Decimal::ZERO,
             },
             ..DagNodeOutput::default()
@@ -320,5 +332,15 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn provider_usage_metadata_becomes_runtime_token_usage() {
+        let metadata = BTreeMap::from([(
+            "usage".to_owned(),
+            serde_json::json!({"input_tokens": 826, "output_tokens": 75}),
+        )]);
+        assert_eq!(provider_token_usage(&metadata), (826, 75));
+        assert_eq!(provider_token_usage(&BTreeMap::new()), (0, 0));
     }
 }

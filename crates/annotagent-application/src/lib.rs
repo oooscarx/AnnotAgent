@@ -775,8 +775,8 @@ add prompted segmentation; consider Tile, zoom/crop search, an available open-vo
 detector, or Review. Semantic errors such as white footwear mistaken for a football require Crop \
 Classification, a Domain Validator, a second detector, Correction Memory, or Review; segmentation may \
 tighten the wrong object and is not the primary repair. Add Detection -> Box Prompt -> Prompted Segmentation \
--> Mask to BBox only when a semantically plausible candidate exists, independently observed Prompt Coverage \
-is Covered, inspected geometry evidence is poor, \
+-> Mask to BBox only when a semantically plausible candidate exists, Prompt Coverage says the prompt is \
+plausible for refinement under an explicit policy, inspected geometry evidence is poor, \
 the conversion path is registered, and an Available prompted-segmentation Model Profile passes its \
 contracts. CoarseLocalizationMiss or PromptCoverageFailure requires candidate-relative expansion, an \
 original-image Crop, local re-localization, coordinate projection, and a Prompt Coverage Gate before \
@@ -798,7 +798,17 @@ Publish. A VisionLanguage profile with image input and structured output or Tool
 a VLM Detection node that declares DetectionSet output; it is not a native ObjectDetection model unless \
 that capability is separately declared. Every proposal remains an editable Draft. Never publish, start a formal Run, set credentials, \
 create or delete Providers, emit code, request Shell/Python/package/download/arbitrary URL tools, or reveal \
-hidden reasoning. check_provider_availability is passive only and must not send a billable request.";
+hidden reasoning. A relocalize or search-tiles route is legal only when it executes a changed view derived \
+from the original image and a new localization call before returning to coverage or refinement; routing \
+directly to Review must be named review, not relocalize. Same model identity plus the same submitted image \
+digest and coordinate transform is correlated repetition, even through a different Profile, prompt, \
+temperature, request, or node name; do not count it as independent evidence. Keep prompt-refinement \
+eligibility separate from automatic-acceptance eligibility: uncertain final-attempt prompts may refine only \
+under an explicit policy and must remain HumanReviewRequired. Read the persisted Draft graph and latest Dry \
+Run execution facts; never infer that a branch, Resize, second search, or refiner executed merely because a \
+node exists. After a Dry Run use inspect_recovery_execution_summary, inspect_model_input_summary, and \
+validate_recovery_paths before claiming recovery correctness. check_provider_availability is passive only \
+and must not send a billable request.";
 
 fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefinition> {
     let node_definition_ids = input
@@ -1212,6 +1222,21 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
             no_arguments(),
         ),
         read(
+            PipelineBuilderTool::InspectRecoveryExecutionSummary,
+            "Read candidate-scoped recovery routes, attempts, exhaustion, failure reasons, and the actually executed second-search/refiner nodes from the latest Dry Run.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::InspectModelInputSummary,
+            "Read credential-free model-input traces from the latest Dry Run: source ROI, actual submitted dimensions and digests, preprocessing, transforms, and Provider-effective dimensions when reported.",
+            no_arguments(),
+        ),
+        read(
+            PipelineBuilderTool::ValidateRecoveryPaths,
+            "Statically verify that every recovery route produces a changed original-image search view and new localization before refinement, with bounded attempts and explicit Review fallbacks.",
+            no_arguments(),
+        ),
+        read(
             PipelineBuilderTool::InspectFailureClasses,
             "Inspect structured failure classes from the latest Dry Run; infrastructure, no-candidate, semantic and geometry failures stay distinct.",
             bounded_inspection_schema(),
@@ -1339,6 +1364,9 @@ fn pipeline_builder_visible_tools(
                     | PipelineBuilderTool::EstimatePipelineCost
                     | PipelineBuilderTool::DryRunPipeline
                     | PipelineBuilderTool::InspectDryRunSummary
+                    | PipelineBuilderTool::InspectRecoveryExecutionSummary
+                    | PipelineBuilderTool::InspectModelInputSummary
+                    | PipelineBuilderTool::ValidateRecoveryPaths
                     | PipelineBuilderTool::InspectFailureClasses
                     | PipelineBuilderTool::InspectFailedSamples
                     | PipelineBuilderTool::InspectReviewSamples
@@ -1408,6 +1436,7 @@ fn pipeline_builder_visible_tools(
                             tool,
                             PipelineBuilderTool::ValidatePipeline
                                 | PipelineBuilderTool::EstimatePipelineCost
+                                | PipelineBuilderTool::ValidateRecoveryPaths
                                 | PipelineBuilderTool::FinishWithSetupRequirements
                         )
                 }
@@ -1418,6 +1447,7 @@ fn pipeline_builder_visible_tools(
                             PipelineBuilderTool::ValidatePipeline
                                 | PipelineBuilderTool::EstimatePipelineCost
                                 | PipelineBuilderTool::DryRunPipeline
+                                | PipelineBuilderTool::ValidateRecoveryPaths
                                 | PipelineBuilderTool::FinishWithSetupRequirements
                         )
                 }
@@ -1427,6 +1457,9 @@ fn pipeline_builder_visible_tools(
                             tool,
                             PipelineBuilderTool::DryRunPipeline
                                 | PipelineBuilderTool::InspectDryRunSummary
+                                | PipelineBuilderTool::InspectRecoveryExecutionSummary
+                                | PipelineBuilderTool::InspectModelInputSummary
+                                | PipelineBuilderTool::ValidateRecoveryPaths
                                 | PipelineBuilderTool::InspectFailureClasses
                                 | PipelineBuilderTool::InspectGeometryQuality
                                 | PipelineBuilderTool::InspectFailedSamples
@@ -1443,6 +1476,7 @@ fn pipeline_builder_visible_tools(
                         || matches!(
                             tool,
                             PipelineBuilderTool::ValidatePipeline
+                                | PipelineBuilderTool::ValidateRecoveryPaths
                                 | PipelineBuilderTool::EstimatePipelineCost
                         )
                 }
@@ -10446,7 +10480,7 @@ impl LocalApplication {
         let project_path = self.project_path(project_id)?;
         let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let now = chrono::Utc::now();
-        let draft = if let Some(template_id) = template_id {
+        let mut draft = if let Some(template_id) = template_id {
             let enabled_ids = project
                 .project
                 .enabled_skill_versions()
@@ -10518,6 +10552,21 @@ impl LocalApplication {
                 updated_at: now,
             }
         };
+        if draft.nodes.iter().any(|node| {
+            matches!(
+                node.kind,
+                WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+            )
+        }) {
+            let binding_input = self.workflow_advisor_input_for_label(
+                project_id,
+                settings,
+                WorkflowConstraints::default(),
+                None,
+                None,
+            )?;
+            bind_available_registry_models(&mut draft, &binding_input);
+        }
         self.store.save_workflow_draft(&draft)?;
         self.store.get_workflow_draft(&draft.id).map_err(Into::into)
     }
@@ -14157,6 +14206,93 @@ impl LocalApplication {
                         validation = Some(report);
                         Ok(result)
                     }
+                    Ok(PipelineBuilderTool::ValidateRecoveryPaths) => {
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("create a Draft before validating recovery paths"))?;
+                        let mut report = if target.is_some() {
+                            PipelineGrammarValidator.validate(
+                                &suggestion.draft,
+                                &nodes,
+                                &models,
+                                &extensions,
+                                &enabled_skills,
+                                &builder_constraints,
+                            )
+                        } else {
+                            WorkflowStaticValidator.validate_for_publish(
+                                &suggestion.draft,
+                                &nodes,
+                                &models,
+                                &extensions,
+                                &enabled_skills,
+                                false,
+                            )
+                        };
+                        append_unresolved_binding_issues(&suggestion.draft, &mut report);
+                        let recovery_node_ids = suggestion
+                            .draft
+                            .edges
+                            .iter()
+                            .filter(|edge| {
+                                matches!(edge.route.as_deref(), Some("relocalize" | "search_tiles"))
+                            })
+                            .map(|edge| edge.from_node.clone())
+                            .collect::<BTreeSet<_>>();
+                        let recovery_gates = recovery_node_ids
+                            .iter()
+                            .filter_map(|node_id| {
+                                suggestion
+                                    .draft
+                                    .nodes
+                                    .iter()
+                                    .find(|node| &node.id == node_id)
+                                    .map(|node| {
+                                        json!({
+                                            "node_id": node.id,
+                                            "policy": node.parameters.get("recovery_route_policy"),
+                                            "routes": suggestion.draft.edges.iter()
+                                                .filter(|edge| edge.from_node == node.id)
+                                                .map(|edge| json!({"route": edge.route, "to_node": edge.to_node}))
+                                                .collect::<Vec<_>>(),
+                                        })
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+                        let recovery_issues = report
+                            .issues
+                            .iter()
+                            .filter(|issue| {
+                                issue.code.contains("recovery")
+                                    || issue.code.contains("relocalization")
+                                    || issue.code.contains("candidate_route")
+                                    || recovery_node_ids.iter().any(|node_id| {
+                                        issue.path.contains(node_id)
+                                    })
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            if recovery_issues.iter().any(|issue| issue.blocking) {
+                                "Recovery paths have blocking static issues"
+                            } else {
+                                "Recovery paths passed bounded static validation"
+                            },
+                            json!({
+                                "draft_id": suggestion.draft.id,
+                                "recovery_gate_count": recovery_gates.len(),
+                                "recovery_gates": recovery_gates,
+                                "issues": recovery_issues,
+                                "valid": !report.issues.iter().any(|issue| issue.blocking && (
+                                    issue.code.contains("recovery")
+                                        || issue.code.contains("relocalization")
+                                        || issue.code.contains("candidate_route")
+                                )),
+                                "validation_does_not_prove_branch_executed": true,
+                                "next_evidence": "inspect_recovery_execution_summary after dry_run_pipeline",
+                            }),
+                        ))
+                    }
                     Ok(PipelineBuilderTool::EstimatePipelineCost) => {
                         let suggestion = current
                             .as_ref()
@@ -14296,6 +14432,110 @@ impl LocalApplication {
                                 },
                                 "published": false,
                                 "formal_run_started": false,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectRecoveryExecutionSummary) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting recovery execution")
+                        })?;
+                        let suggestion = current
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Dry Run has no current Draft"))?;
+                        let samples = report
+                            .samples
+                            .iter()
+                            .filter_map(|sample| {
+                                let nodes = sample
+                                    .nodes
+                                    .iter()
+                                    .filter_map(|node| {
+                                        let operation = suggestion
+                                            .draft
+                                            .nodes
+                                            .iter()
+                                            .find(|draft_node| draft_node.id == node.node_id)
+                                            .map_or("unknown", |draft_node| {
+                                                draft_node.node_type.as_str()
+                                            });
+                                        let recovery_fact = node.metadata.contains_key("requested_route")
+                                            || node.metadata.contains_key("recovery_attempt")
+                                            || node.metadata.contains_key("candidate_route_decisions")
+                                            || node.node_id.contains("recovery")
+                                            || node.node_id.contains("relocalization");
+                                        recovery_fact.then(|| json!({
+                                            "node_id": node.node_id,
+                                            "operation": operation,
+                                            "status": node.status,
+                                            "selected_route": node.metadata.get("selected_route"),
+                                            "requested_route": node.metadata.get("requested_route"),
+                                            "recovery_attempt": node.metadata.get("recovery_attempt"),
+                                            "maximum_recovery_attempts": node.metadata.get("maximum_recovery_attempts"),
+                                            "recovery_exhausted": node.metadata.get("recovery_exhausted"),
+                                            "candidate_route_split": node.metadata.get("candidate_route_split"),
+                                            "candidate_route_decisions": node.metadata.get("candidate_route_decisions"),
+                                            "failure_code": node.metadata.get("failure_code"),
+                                        }))
+                                    })
+                                    .collect::<Vec<_>>();
+                                (!nodes.is_empty()).then(|| json!({
+                                    "image_index": sample.image_index,
+                                    "image_name": sample.image_name,
+                                    "nodes": nodes,
+                                }))
+                            })
+                            .collect::<Vec<_>>();
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected actually executed recovery branches",
+                            json!({
+                                "sample_count": samples.len(),
+                                "samples": samples,
+                                "node_presence_does_not_equal_execution": true,
+                                "branch_not_present_means_not_executed": true,
+                            }),
+                        ))
+                    }
+                    Ok(PipelineBuilderTool::InspectModelInputSummary) => {
+                        let report = dry_run.as_ref().ok_or_else(|| {
+                            anyhow!("run dry_run_pipeline before inspecting model inputs")
+                        })?;
+                        let samples = report
+                            .samples
+                            .iter()
+                            .filter_map(|sample| {
+                                let calls = sample
+                                    .nodes
+                                    .iter()
+                                    .filter_map(|node| {
+                                        node.metadata.get("model_input_trace").map(|trace| {
+                                            let priced = node.estimated_cost != "0"
+                                                && node.estimated_cost != "0.0";
+                                            json!({
+                                                "node_id": node.node_id,
+                                                "status": node.status,
+                                                "trace": trace,
+                                                "estimated_cost": priced.then_some(node.estimated_cost.as_str()),
+                                                "cost_status": if priced { "registry_estimate" } else { "unknown" },
+                                            })
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+                                (!calls.is_empty()).then(|| json!({
+                                    "image_index": sample.image_index,
+                                    "image_name": sample.image_name,
+                                    "calls": calls,
+                                }))
+                            })
+                            .collect::<Vec<_>>();
+                        inspected_dry_run = true;
+                        Ok(annotagent_core::AgentToolResult::summary(
+                            "Inspected actual submitted model-input traces",
+                            json!({
+                                "sample_count": samples.len(),
+                                "samples": samples,
+                                "image_bytes_exposed": false,
+                                "provider_effective_dimensions_are_unknown_unless_reported": true,
                             }),
                         ))
                     }
@@ -15503,6 +15743,7 @@ impl LocalApplication {
                                 )
                             })
                             .collect(),
+                        metadata: BTreeMap::new(),
                         issues: node_issues,
                     });
                 }
@@ -15697,6 +15938,7 @@ impl LocalApplication {
             .parent()
             .unwrap_or(&self.workspace)
             .to_path_buf();
+        let project_images = self.list_project_image_summaries(&projection_draft.project_id)?;
         let historical_corrections = self
             .store
             .list_project_corrections(stable_project_id(&project_root), 500)?;
@@ -15728,7 +15970,16 @@ impl LocalApplication {
             let path = images
                 .get(*index)
                 .ok_or_else(|| anyhow!("image index {index} was not found"))?;
+            let project_image = project_images
+                .get(*index)
+                .ok_or_else(|| anyhow!("Project image identity for index {index} was not found"))?;
             let image = Arc::new(load_image(path, 40_000_000).map_err(|error| anyhow!(error))?);
+            if project_image.content_hash != image.metadata.sha256 {
+                bail!(
+                    "Project image {} changed while preparing the Sample Test",
+                    project_image.name
+                );
+            }
             let model_image_max_dimension = if requires_original_model_image {
                 image.metadata.width.max(image.metadata.height)
             } else {
@@ -15742,7 +15993,7 @@ impl LocalApplication {
                 project_id: stable_project_id(&project_root),
                 project_root: project_root.clone(),
                 project: project.clone(),
-                image_id: ImageId::new(),
+                image_id: project_image.image_id,
                 image: image.clone(),
                 model_image: Some(model_image),
             };
@@ -15838,6 +16089,15 @@ impl LocalApplication {
                 .traces
                 .iter()
                 .map(|trace| {
+                    let mut metadata = result
+                        .checkpoint
+                        .node_outputs
+                        .get(&trace.node_id)
+                        .map(|output| output.metadata.clone())
+                        .unwrap_or_default();
+                    if let Some(route) = trace.route.as_ref() {
+                        metadata.insert("selected_route".to_owned(), json!(route));
+                    }
                     let issues = trace
                         .error
                         .iter()
@@ -15882,6 +16142,7 @@ impl LocalApplication {
                             .unwrap_or(u64::MAX),
                         estimated_cost: trace.usage.cost.to_string(),
                         failure_classes,
+                        metadata,
                         issues,
                     }
                 })
@@ -19441,6 +19702,85 @@ export:
     }
 
     #[test]
+    fn direct_recovery_template_creation_binds_ready_registry_models() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "direct-recovery-binding",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let builder = register_pipeline_builder_model(&application, "registry-builder");
+        let qwen = register_available_vision_model(
+            &application,
+            &builder,
+            "ready-qwen-vlm",
+            [ModelCapability::VisionLanguage],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &builder,
+            "ready-prompted-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut provider = application
+            .store
+            .get_provider_profile(builder.provider.id)
+            .expect("Provider Profile");
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.credential_ref = Some(annotagent_core::CredentialReference {
+            provider_id: provider.id,
+            source: annotagent_core::CredentialSource::EnvironmentVariable,
+            locator: "DIRECT_TEMPLATE_BINDING_FIXTURE_KEY".to_owned(),
+        });
+        provider.health.status = ProviderHealthStatus::Configured;
+        application
+            .store
+            .save_provider_profile(&provider)
+            .expect("ready Provider Profile");
+
+        let draft = application
+            .create_workflow_draft_with_template(
+                "direct-recovery-binding",
+                &load_settings(None).expect("settings"),
+                false,
+                Some("robocup.ball.small-object-recovery"),
+            )
+            .expect("bound Recovery Draft");
+        let vlm_nodes = draft
+            .nodes
+            .iter()
+            .filter(|node| node.node_type == "vlm_detection.detect")
+            .collect::<Vec<_>>();
+        assert_eq!(vlm_nodes.len(), 3);
+        assert!(vlm_nodes.iter().all(|node| {
+            node.model_profile_binding
+                .as_ref()
+                .is_some_and(|binding| binding.model_profile_id == qwen.id && binding.locked)
+                && node.unresolved_model_requirement.is_none()
+        }));
+        let segment = draft
+            .nodes
+            .iter()
+            .find(|node| node.node_type == "capability.segment")
+            .expect("Prompted Segmentation node");
+        assert!(
+            segment
+                .model_profile_binding
+                .as_ref()
+                .is_some_and(|binding| {
+                    binding.model_profile_id == segmenter.id && binding.locked
+                })
+        );
+        assert!(draft.nodes.iter().all(|node| {
+            node.model_binding
+                .as_deref()
+                .is_none_or(|binding| !binding.starts_with("mock"))
+        }));
+    }
+
+    #[test]
     fn pipeline_builder_context_compaction_keeps_tool_call_groups_intact() {
         let mut messages = vec![
             ModelMessage {
@@ -19550,7 +19890,7 @@ export:
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<BTreeSet<_>>();
-        assert_eq!(names.len(), 69);
+        assert_eq!(names.len(), 72);
         assert_eq!(
             names,
             PipelineBuilderTool::ALL
@@ -20140,6 +20480,14 @@ export:
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("find_geometry_refinement_path"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Grid overlays"));
         assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("exact Project, task/Label"));
+        assert!(
+            PIPELINE_BUILDER_SYSTEM_PROMPT.contains("changed view derived from the original image")
+        );
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("correlated repetition"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("HumanReviewRequired"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_recovery_execution_summary"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("inspect_model_input_summary"));
+        assert!(PIPELINE_BUILDER_SYSTEM_PROMPT.contains("validate_recovery_paths"));
         assert!(
             PIPELINE_BUILDER_SYSTEM_PROMPT.contains("Every proposal remains an editable Draft")
         );
@@ -22527,11 +22875,30 @@ export:
                 scripted_step("create_draft_from_template", json!({}), Some("models")),
                 scripted_step("validate_pipeline", json!({}), Some("draft_id")),
                 scripted_step(
+                    "validate_recovery_paths",
+                    json!({}),
+                    Some("execution_order"),
+                ),
+                scripted_step(
                     "dry_run_pipeline",
                     json!({"image_indices": [0]}),
-                    Some("valid"),
+                    Some("recovery_gate_count"),
                 ),
-                scripted_step("inspect_dry_run_summary", json!({}), Some("sandbox")),
+                scripted_step(
+                    "inspect_recovery_execution_summary",
+                    json!({}),
+                    Some("sandbox"),
+                ),
+                scripted_step(
+                    "inspect_model_input_summary",
+                    json!({}),
+                    Some("node_presence_does_not_equal_execution"),
+                ),
+                scripted_step(
+                    "inspect_dry_run_summary",
+                    json!({}),
+                    Some("provider_effective_dimensions_are_unknown_unless_reported"),
+                ),
                 scripted_step(
                     "submit_draft_for_human_approval",
                     json!({
@@ -22561,6 +22928,20 @@ export:
         assert_eq!(provider.remaining_steps(), 0);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
         assert!(report.approval_required);
+        for tool in [
+            "validate_recovery_paths",
+            "inspect_recovery_execution_summary",
+            "inspect_model_input_summary",
+        ] {
+            assert!(
+                report
+                    .session
+                    .steps
+                    .iter()
+                    .any(|step| step.tool_name == tool && step.success),
+                "missing successful {tool}"
+            );
+        }
         assert_eq!(
             report.session.build_mode,
             Some(annotagent_core::PipelineBuildMode::FromScratch)
@@ -22598,9 +22979,9 @@ export:
         );
         assert!(report.validation.as_ref().is_some_and(|value| value.valid));
         assert!(report.dry_run.as_ref().is_some_and(|value| value.sandbox));
-        assert_eq!(report.session.usage.input_tokens, 110);
-        assert_eq!(report.session.usage.output_tokens, 55);
-        assert_eq!(report.session.model_calls.len(), 11);
+        assert_eq!(report.session.usage.input_tokens, 140);
+        assert_eq!(report.session.usage.output_tokens, 70);
+        assert_eq!(report.session.model_calls.len(), 14);
         assert_eq!(
             report
                 .session
@@ -22639,7 +23020,10 @@ export:
                 "list_compatible_models",
                 "create_draft_from_template",
                 "validate_pipeline",
+                "validate_recovery_paths",
                 "dry_run_pipeline",
+                "inspect_recovery_execution_summary",
+                "inspect_model_input_summary",
                 "inspect_dry_run_summary",
                 "submit_draft_for_human_approval",
             ]
@@ -25296,6 +25680,80 @@ export:
                 .iter()
                 .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_sample_test_traces_the_persisted_project_image_identity() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "recovery-image-identity",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        generate_synthetic_robocup(
+            &temporary
+                .path()
+                .join("recovery-image-identity/images/sample.png"),
+        )
+        .expect("sample image");
+        let settings = load_settings(None).expect("settings");
+        let mut draft = application
+            .create_workflow_draft_with_template(
+                "recovery-image-identity",
+                &settings,
+                false,
+                Some("robocup.ball.small-object-recovery"),
+            )
+            .expect("Recovery Draft");
+        for node in &mut draft.nodes {
+            match node.node_type.as_str() {
+                "vlm_detection.detect" => {
+                    node.model_binding = Some("default-vision".to_owned());
+                    node.unresolved_model_requirement = None;
+                }
+                "capability.segment" => {
+                    node.model_binding = Some("mock-prompted-segmenter".to_owned());
+                    node.unresolved_model_requirement = None;
+                }
+                _ => {}
+            }
+        }
+        draft.label_pipeline = application
+            .suggest_label_pipeline_preview(
+                "recovery-image-identity",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("Label Pipeline metadata")
+            .draft
+            .label_pipeline;
+        let draft = application
+            .save_workflow_draft(draft)
+            .expect("bound Recovery Draft");
+        let report = application
+            .dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .expect("Recovery Sample Test");
+        assert!(report.validation.valid, "{:#?}", report.validation.issues);
+        let project_image_id = application
+            .list_project_image_summaries("recovery-image-identity")
+            .expect("Project images")
+            .into_iter()
+            .next()
+            .expect("Project image")
+            .image_id;
+        let trace_value = report.samples[0]
+            .nodes
+            .iter()
+            .find_map(|node| node.metadata.get("model_input_trace"))
+            .unwrap_or_else(|| panic!("ModelInputTrace missing from {:#?}", report.samples[0]));
+        let trace: annotagent_core::ModelInputTrace =
+            serde_json::from_value(trace_value.clone()).expect("typed ModelInputTrace");
+        assert_eq!(trace.source_image_id, project_image_id);
     }
 
     #[tokio::test]

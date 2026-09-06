@@ -322,7 +322,7 @@ impl DagNodeRunner for ChangedSearchViewRunner {
         };
         changed.width = 384;
         changed.height = 384;
-        changed.blob_ref = "artifact-cache://search-view-b".to_owned();
+        "artifact-cache://search-view-b".clone_into(&mut changed.blob_ref);
         changed.parent = Some(source.reference.clone());
         changed.root_region =
             Some(NormalizedRect::new(0.25, 0.20, 0.50, 0.50).expect("changed search region"));

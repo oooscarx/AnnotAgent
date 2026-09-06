@@ -681,8 +681,16 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   const sampleResult = page.locator(".sample-result-card").first();
   await expect(sampleResult).toContainText("day");
   await expect(sampleResult).toContainText("1 terminal result");
-  await sampleResult.getByRole("button", { name: /Open annotation preview for/ }).click();
-  const previewDialog = page.getByRole("dialog", { name: /day\.png/ });
+  const previewButton = sampleResult.getByRole("button", {
+    name: /Open annotation preview for/,
+  });
+  const imageName = (await previewButton.getAttribute("aria-label"))?.replace(
+    "Open annotation preview for ",
+    "",
+  );
+  expect(imageName).toBeTruthy();
+  await previewButton.click();
+  const previewDialog = page.getByRole("dialog", { name: imageName!, exact: true });
   await expect(previewDialog).toBeVisible();
   await expect(previewDialog.getByRole("navigation", { name: "Annotation stages" })).toContainText("Final");
   await expect(previewDialog.locator(".sample-preview-canvas img")).toBeVisible();

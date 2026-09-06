@@ -1292,6 +1292,7 @@ export interface WorkflowDryRunReport {
       estimated_cost: string;
       issues: WorkflowValidationReport["issues"];
       failure_classes?: AnnotationFailureClass[];
+      metadata: Record<string, unknown>;
     }[];
   }[];
   summary: {

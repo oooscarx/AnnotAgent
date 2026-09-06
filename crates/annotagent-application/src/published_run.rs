@@ -453,7 +453,6 @@ impl PublishedWorkflowRuntime {
                         Arc::new(BoundDetectionRunner {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
-                            model_image: request.model_image.clone(),
                             source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
@@ -467,7 +466,7 @@ impl PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundPromptedSegmentationRunner {
-                            model_image: request.model_image.clone(),
+                            source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
@@ -1174,7 +1173,6 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                         Arc::new(BoundDetectionRunner {
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
-                            model_image: request.model_image.clone(),
                             source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
@@ -1188,7 +1186,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundPromptedSegmentationRunner {
-                            model_image: request.model_image.clone(),
+                            source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
@@ -1780,7 +1778,6 @@ impl DagNodeRunner for BoundClassificationRunner {
 struct BoundDetectionRunner {
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
-    model_image: Option<annotagent_core::ModelImage>,
     source_image: Arc<annotagent_core::ImageFrame>,
     detection_workers: Vec<DetectionWorkerSettings>,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
@@ -1789,7 +1786,7 @@ struct BoundDetectionRunner {
 }
 
 struct BoundPromptedSegmentationRunner {
-    model_image: Option<annotagent_core::ModelImage>,
+    source_image: Arc<annotagent_core::ImageFrame>,
     detection_workers: Vec<DetectionWorkerSettings>,
     allow_test_fixtures: bool,
     plugin_registry: Arc<Mutex<PluginRegistry>>,
@@ -1806,21 +1803,8 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 "prompted segmentation requires a configured live Vision Worker",
             )
         })?;
-        if model_id.to_ascii_lowercase().starts_with("mock") {
-            if self.allow_test_fixtures {
-                return PromptedSegmentationRunner::new(
-                    Arc::new(MockPromptedSegmentationBackend::new(
-                        "workspace-mock-prompted-segmenter",
-                    )),
-                    model_id,
-                    self.model_image.clone(),
-                )
-                .map_err(|error| {
-                    DagNodeFailure::terminal("segmentation_binding", error.to_string())
-                })?
-                .run(context)
-                .await;
-            }
+        let fixture_bound = model_id.to_ascii_lowercase().starts_with("mock");
+        if fixture_bound && !self.allow_test_fixtures {
             return Err(DagNodeFailure::terminal(
                 "segmentation_binding",
                 "test-only segmentation fixtures cannot run in a product Workflow",
@@ -1828,7 +1812,11 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
         }
         let plugin_bound =
             model_id.starts_with("plugin:") || model_id.starts_with("model-instance:");
-        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if plugin_bound {
+        let backend: Arc<dyn annotagent_core::PipelineModelBackend> = if fixture_bound {
+            Arc::new(MockPromptedSegmentationBackend::new(
+                "workspace-mock-prompted-segmenter",
+            ))
+        } else if plugin_bound {
             start_plugin_pipeline_backend(
                 &self.plugin_registry,
                 &self.model_bundle_registry,
@@ -1883,13 +1871,37 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                 })?,
             )
         };
-        let mut output =
-            PromptedSegmentationRunner::new(backend, model_id, self.model_image.clone())
-                .map_err(|error| {
-                    DagNodeFailure::terminal("segmentation_binding", error.to_string())
-                })?
-                .run(context)
-                .await?;
+        let prepared = annotagent_image_tools::thumbnail(&self.source_image, 1280)
+            .map_err(|error| DagNodeFailure::terminal("segmentation_input", error.to_string()))?;
+        let source_artifact = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) if image.root_region.is_none() => {
+                    Some(image.reference.clone())
+                }
+                _ => None,
+            });
+        let (model_image, trace) = annotagent_image_tools::materialize_model_input(
+            format!("prompted-segmentation:{}", context.node.id),
+            context.image_id,
+            source_artifact,
+            &self.source_image,
+            None,
+            prepared.metadata.width,
+            prepared.metadata.height,
+        )
+        .map_err(|error| DagNodeFailure::terminal("segmentation_input", error.to_string()))?;
+        let mut output = PromptedSegmentationRunner::new(backend, model_id, Some(model_image))
+            .map_err(|error| DagNodeFailure::terminal("segmentation_binding", error.to_string()))?
+            .run(context)
+            .await?;
+        output.metadata.insert(
+            "model_input_trace".to_owned(),
+            serde_json::to_value(trace).map_err(|error| {
+                DagNodeFailure::terminal("model_input_trace_failed", error.to_string())
+            })?,
+        );
         if plugin_bound {
             add_plugin_execution_metadata(&mut output, model_id, &self.plugin_models);
         }
@@ -1989,7 +2001,28 @@ impl DagNodeRunner for BoundDetectionRunner {
                 Some(trace),
             )
         } else {
-            (self.model_image.clone(), None, None)
+            let prepared = annotagent_image_tools::thumbnail(&self.source_image, 1280)
+                .map_err(|error| DagNodeFailure::terminal("model_input", error.to_string()))?;
+            let source_artifact = context
+                .input_pipeline_artifacts
+                .iter()
+                .find_map(|artifact| match artifact {
+                    PipelineArtifact::Image(image) if image.root_region.is_none() => {
+                        Some(image.reference.clone())
+                    }
+                    _ => None,
+                });
+            let (model_image, trace) = annotagent_image_tools::materialize_model_input(
+                format!("model-input:{}", context.node.id),
+                context.image_id,
+                source_artifact.clone(),
+                &self.source_image,
+                None,
+                prepared.metadata.width,
+                prepared.metadata.height,
+            )
+            .map_err(|error| DagNodeFailure::terminal("model_input", error.to_string()))?;
+            (Some(model_image), source_artifact, Some(trace))
         };
         let execution = execution_for_node(
             &self.default_execution,
