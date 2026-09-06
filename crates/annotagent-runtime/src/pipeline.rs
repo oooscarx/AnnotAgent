@@ -891,7 +891,7 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         PipelineArtifact::PromptCoverage(artifact) => Some(artifact.state),
         _ => None,
     });
-    let route = if coverage.iter().all(|artifact| {
+    let requested_route = if coverage.iter().all(|artifact| {
         matches!(
             artifact,
             PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
@@ -925,6 +925,33 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
     } else {
         "review"
     };
+    let recovery_attempt = optional_u32_parameter(context, "recovery_attempt")?
+        .or_else(|| {
+            context
+                .node
+                .parameters
+                .get("recovery_route_policy")
+                .and_then(|policy| policy.get("attempt"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+        })
+        .unwrap_or(1);
+    let maximum_attempts = context
+        .node
+        .parameters
+        .get("recovery_route_policy")
+        .and_then(|policy| policy.get("maximum_attempts"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(2)
+        .max(1);
+    let recovery_exhausted = matches!(requested_route, "relocalize" | "search_tiles")
+        && recovery_attempt >= maximum_attempts;
+    let route = if recovery_exhausted {
+        "review"
+    } else {
+        requested_route
+    };
     let mut output = vec![PipelineArtifact::BoxPromptSet(prompts.clone())];
     if let Some(candidate_set) = candidate_set {
         let mut candidates = candidate_set.clone();
@@ -946,11 +973,31 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             ),
             (
                 "failure_code".to_owned(),
-                serde_json::json!(match route {
-                    "search_tiles" => Some("prompt_outside_target"),
-                    "relocalize" | "review" => Some("prompt_coverage_check_missing"),
-                    _ => None,
+                serde_json::json!(if recovery_exhausted {
+                    Some("recovery_budget_exhausted")
+                } else {
+                    match route {
+                        "search_tiles" => Some("prompt_outside_target"),
+                        "relocalize" | "review" => Some("prompt_coverage_check_missing"),
+                        _ => None,
+                    }
                 }),
+            ),
+            (
+                "requested_route".to_owned(),
+                serde_json::json!(requested_route),
+            ),
+            (
+                "recovery_attempt".to_owned(),
+                serde_json::json!(recovery_attempt),
+            ),
+            (
+                "maximum_recovery_attempts".to_owned(),
+                serde_json::json!(maximum_attempts),
+            ),
+            (
+                "recovery_exhausted".to_owned(),
+                serde_json::json!(recovery_exhausted),
             ),
         ]),
         ..DagNodeOutput::default()
@@ -3207,7 +3254,10 @@ mod tests {
         let output = CorePipelineRunner
             .run(node_context(
                 &gate,
-                vec![PipelineArtifact::BoxPromptSet(prompts), relocalized],
+                vec![
+                    PipelineArtifact::BoxPromptSet(prompts.clone()),
+                    relocalized.clone(),
+                ],
                 BTreeMap::new(),
             ))
             .await
@@ -3228,6 +3278,35 @@ mod tests {
             PromptCoverageAction::SearchTiles
         );
         assert_eq!(coverage.evidence.len(), 1);
+
+        let mut exhausted_gate = gate;
+        exhausted_gate.parameters.insert(
+            "recovery_route_policy".to_owned(),
+            serde_json::json!({
+                "action": "direct_review_after_exhaustion",
+                "required_effect": "record_recovery_exhausted",
+                "attempt": 2,
+                "maximum_attempts": 2
+            }),
+        );
+        let exhausted = CorePipelineRunner
+            .run(node_context(
+                &exhausted_gate,
+                vec![PipelineArtifact::BoxPromptSet(prompts), relocalized],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("budget exhaustion decision");
+        assert_eq!(exhausted.route.as_deref(), Some("review"));
+        assert_eq!(
+            exhausted.metadata["requested_route"],
+            serde_json::json!("search_tiles")
+        );
+        assert_eq!(
+            exhausted.metadata["failure_code"],
+            "recovery_budget_exhausted"
+        );
+        assert_eq!(exhausted.metadata["recovery_exhausted"], true);
     }
 
     #[tokio::test]

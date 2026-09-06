@@ -2160,6 +2160,7 @@ impl WorkflowStaticValidator {
         validate_required_inputs(draft, &mut issues);
         validate_fallbacks(draft, &ids, &mut issues);
         validate_prompt_coverage_safety(draft, &mut issues);
+        validate_recovery_path_semantics(draft, &mut issues);
         let execution_order = topological_order(draft).unwrap_or_else(|cycle| {
             issues.push(issue("workflow_cycle", "edges", &cycle));
             Vec::new()
@@ -2267,6 +2268,125 @@ fn validate_prompt_coverage_safety(
             "Prompted segmentation on an automatic bbox path requires an upstream Prompt Coverage Gate; route unknown or invalid coverage to re-localization or human review",
         ));
     }
+}
+
+fn validate_recovery_path_semantics(
+    draft: &WorkflowDraft,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    for (index, gate) in draft.nodes.iter().enumerate() {
+        let relocalization_edges = draft
+            .edges
+            .iter()
+            .filter(|edge| edge.from_node == gate.id && edge.route.as_deref() == Some("relocalize"))
+            .collect::<Vec<_>>();
+        if relocalization_edges.is_empty() {
+            continue;
+        }
+
+        let policy = gate
+            .parameters
+            .get("recovery_route_policy")
+            .and_then(serde_json::Value::as_object);
+        let valid_policy = policy.is_some_and(|policy| {
+            policy.get("action").and_then(serde_json::Value::as_str) == Some("relocalize")
+                && policy
+                    .get("required_effect")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("produce_new_search_view_and_detection")
+                && policy
+                    .get("on_unavailable")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("review")
+                && policy
+                    .get("on_budget_exhausted")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("review")
+        });
+        if !valid_policy {
+            issues.push(issue(
+                "recovery_route_policy_missing",
+                &format!("nodes[{index}].parameters.recovery_route_policy"),
+                "A relocalize route must declare action, required effect, unavailable fallback and budget-exhausted fallback",
+            ));
+        }
+
+        for edge in relocalization_edges {
+            let Some(target) = draft.nodes.iter().find(|node| node.id == edge.to_node) else {
+                continue;
+            };
+            if target.kind == WorkflowNodeKind::HumanReview {
+                issues.push(issue(
+                    "relocalization_branch_has_no_search",
+                    &format!("nodes[{index}].routes.relocalize"),
+                    "The relocalize route targets Human Review without producing a changed search view and a new detection",
+                ));
+                continue;
+            }
+            if !relocalization_path_produces_detection(draft, &target.id) {
+                issues.push(issue(
+                    "recovery_path_unreachable",
+                    &format!("nodes[{index}].routes.relocalize"),
+                    "The relocalize route cannot reach a detection model that consumes a new search view derived from the original image",
+                ));
+            }
+        }
+    }
+}
+
+fn relocalization_path_produces_detection(draft: &WorkflowDraft, start: &str) -> bool {
+    let mut pending = VecDeque::from([(start.to_owned(), false)]);
+    let mut visited = BTreeSet::new();
+    while let Some((node_id, changed_view)) = pending.pop_front() {
+        if !visited.insert((node_id.clone(), changed_view)) {
+            continue;
+        }
+        let Some(node) = draft.nodes.iter().find(|node| node.id == node_id) else {
+            continue;
+        };
+        if matches!(
+            node.kind,
+            WorkflowNodeKind::HumanReview | WorkflowNodeKind::Commit
+        ) {
+            continue;
+        }
+        let produces_changed_view = matches!(
+            node.node_type.as_str(),
+            "core.crop" | "core.tile" | "core.resize"
+        ) && node
+            .outputs
+            .iter()
+            .any(|port| port.artifact_type == ArtifactKind::Image)
+            && has_original_image_input(draft, &node.id);
+        let changed_view = changed_view || produces_changed_view;
+        let produces_detection = matches!(
+            node.kind,
+            WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
+        ) && node
+            .outputs
+            .iter()
+            .any(|port| port.artifact_type == ArtifactKind::DetectionSet);
+        if changed_view && produces_detection {
+            return true;
+        }
+        for edge in draft
+            .edges
+            .iter()
+            .filter(|edge| edge.from_node == node.id && edge.route.is_none())
+        {
+            pending.push_back((edge.to_node.clone(), changed_view));
+        }
+    }
+    false
+}
+
+fn has_original_image_input(draft: &WorkflowDraft, node_id: &str) -> bool {
+    draft
+        .edges
+        .iter()
+        .filter(|edge| edge.to_node == node_id)
+        .filter_map(|edge| draft.nodes.iter().find(|node| node.id == edge.from_node))
+        .any(|source| source.kind == WorkflowNodeKind::ImageInput)
 }
 
 fn has_commit_path_without_human_review(draft: &WorkflowDraft, source: &str) -> bool {
@@ -3145,6 +3265,112 @@ export:
         );
         let mut issues = Vec::new();
         validate_prompt_coverage_safety(&gated, &mut issues);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn relocalize_route_requires_a_changed_search_view_and_detection() {
+        let mut gate = node("coverage", WorkflowNodeKind::Gate);
+        gate.node_type = "core.prompt_coverage_gate".to_owned();
+        gate.parameters.insert(
+            "recovery_route_policy".to_owned(),
+            serde_json::json!({
+                "action": "relocalize",
+                "required_effect": "produce_new_search_view_and_detection",
+                "on_unavailable": "review",
+                "on_budget_exhausted": "review",
+                "attempt": 1,
+                "maximum_attempts": 2
+            }),
+        );
+        let review = node("review", WorkflowNodeKind::HumanReview);
+        let direct = draft(
+            vec![gate.clone(), review],
+            vec![WorkflowEdge {
+                from_node: "coverage".to_owned(),
+                from_port: "detections".to_owned(),
+                to_node: "review".to_owned(),
+                to_port: "detections".to_owned(),
+                route: Some("relocalize".to_owned()),
+            }],
+        );
+        let mut issues = Vec::new();
+        validate_recovery_path_semantics(&direct, &mut issues);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, "relocalization_branch_has_no_search");
+
+        let image = node("image", WorkflowNodeKind::ImageInput);
+        let mut expand = node("expand", WorkflowNodeKind::Transform);
+        expand.node_type = "core.expand_region".to_owned();
+        let mut crop = node("crop", WorkflowNodeKind::Transform);
+        crop.node_type = "core.crop".to_owned();
+        crop.outputs = vec![NodePort {
+            id: "images".to_owned(),
+            artifact_type: ArtifactKind::Image,
+            required: true,
+            multiple: true,
+        }];
+        let mut detector = node("detector", WorkflowNodeKind::VisionLanguageModel);
+        detector.outputs = vec![NodePort {
+            id: "detections".to_owned(),
+            artifact_type: ArtifactKind::DetectionSet,
+            required: true,
+            multiple: true,
+        }];
+        let recovered = draft(
+            vec![image, gate, expand, crop, detector],
+            vec![
+                WorkflowEdge {
+                    from_node: "coverage".to_owned(),
+                    from_port: "detections".to_owned(),
+                    to_node: "expand".to_owned(),
+                    to_port: "detections".to_owned(),
+                    route: Some("relocalize".to_owned()),
+                },
+                WorkflowEdge {
+                    from_node: "expand".to_owned(),
+                    from_port: "regions".to_owned(),
+                    to_node: "crop".to_owned(),
+                    to_port: "detections".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "image".to_owned(),
+                    from_port: "image".to_owned(),
+                    to_node: "crop".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+                WorkflowEdge {
+                    from_node: "crop".to_owned(),
+                    from_port: "images".to_owned(),
+                    to_node: "detector".to_owned(),
+                    to_port: "image".to_owned(),
+                    route: None,
+                },
+            ],
+        );
+        let mut issues = Vec::new();
+        validate_recovery_path_semantics(&recovered, &mut issues);
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+    }
+
+    #[test]
+    fn explicit_direct_review_is_not_a_relocalization_claim() {
+        let gate = node("coverage", WorkflowNodeKind::Gate);
+        let review = node("review", WorkflowNodeKind::HumanReview);
+        let direct_review = draft(
+            vec![gate, review],
+            vec![WorkflowEdge {
+                from_node: "coverage".to_owned(),
+                from_port: "detections".to_owned(),
+                to_node: "review".to_owned(),
+                to_port: "detections".to_owned(),
+                route: Some("review".to_owned()),
+            }],
+        );
+        let mut issues = Vec::new();
+        validate_recovery_path_semantics(&direct_review, &mut issues);
         assert!(issues.is_empty());
     }
 

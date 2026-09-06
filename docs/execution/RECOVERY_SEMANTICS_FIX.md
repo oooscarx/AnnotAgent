@@ -104,12 +104,82 @@ cargo test -p annotagent-skill-robocup relocalization_route_cannot_go_directly_t
 
 Expected M0 failure: the route target is `review_final_ball`, a `HumanReview` node.
 
-## Remaining milestones
+## Milestone map
 
-- M1: machine-checkable route semantics and a real bounded search view B.
+- M1: machine-checkable route semantics and a real bounded search view B — completed below.
 - M2: materialized Resize/model-input trace, shared coordinate transforms and correlated-evidence
   de-duplication.
 - M3: separate refinement eligibility from automatic acceptance and pass the selected recovered
   candidate through SAM/geometry/review safely.
 - M4: Builder inspection/validation tools, branch-injection tests, UI execution summary and fixed-set
   real evaluation. Engineering correctness and visual quality will be reported separately.
+
+## M1 — explicit bounded recovery branch
+
+Completed in code without modifying the saved M0 Draft or Sample Test.
+
+### Graph and policy changes
+
+- `WorkflowValidator` now checks every outgoing `relocalize` route. The source Gate must declare
+  `recovery_route_policy` with `action=relocalize`,
+  `required_effect=produce_new_search_view_and_detection`, and explicit Review fallbacks for an
+  unavailable backend or exhausted budget.
+- A `relocalize` edge that directly targets Human Review is blocked with
+  `relocalization_branch_has_no_search`.
+- A branch that cannot reach a detection-producing model after a new Image view derived directly
+  from the original Image Input is blocked with `recovery_path_unreachable`.
+- An ordinary `review` route remains legal and does not claim that recovery ran.
+
+The RoboCup small-object template now expands the former single search into two bounded attempts:
+
+```text
+original image + coarse candidate
+  -> 96 px search A -> localize A -> coverage A
+       | refine -------------------------------------------> SAM
+       | relocalize/search_tiles
+       v
+original image + candidate A
+  -> wider search B (minimum 192 px, factor 8, max 75%)
+  -> localize B -> coverage B
+       | refine -------------------------------------------> SAM
+       | otherwise -> Review (recovery_budget_exhausted when applicable)
+```
+
+Search B crops from the original Image Input, not from search A. Its localization node is explicitly
+marked as `same_model_multi_view`; it is a changed view, not an independent model observation. Both
+possible prompt/coverage pairs feed the same SAM and Mask-to-BBox tail, so only the active route is
+consumed. If no prompted-segmentation model is available while Builder applies this template, both
+refinement routes explicitly fall back to Review.
+
+The coverage runtime records `requested_route`, `recovery_attempt`,
+`maximum_recovery_attempts`, and `recovery_exhausted`. At the configured second-attempt limit,
+another search request is not executed; the selected route becomes `review` with
+`recovery_budget_exhausted`.
+
+### Behavioral regression evidence
+
+- Core tests reject `relocalize -> HumanReview`, accept a changed original-image Crop followed by a
+  detector, and accept an explicitly named direct Review route.
+- Runtime coverage tests force a second-attempt `search_tiles` decision and verify it becomes Review
+  with `recovery_budget_exhausted`.
+- The synthetic published-DAG runtime test forces the first Gate to select `relocalize`, then proves
+  that the second scripted detector actually executes and consumes `search-view-b` at 384×384
+  instead of the original Artifact. This proves routing only, not real model accuracy or outbound
+  pixel materialization.
+- The RoboCup template regression test is no longer ignored and proves no `relocalize` edge targets
+  Human Review.
+- Builder's incremental recovery patch test passes with and without a prompted segmenter; the full
+  `annotagent-application` suite passes (71 passed, one explicitly opt-in billable smoke ignored).
+
+Commands run for M1:
+
+```text
+cargo test -p annotagent-core workflow::tests::
+cargo test -p annotagent-runtime prompt_coverage_gate_
+cargo test -p annotagent-runtime relocalize_route_executes_a_detector_with_a_changed_search_view
+cargo test -p annotagent-skill-robocup --lib
+cargo test -p annotagent-application
+```
+
+M1 proves bounded control-flow correctness. It does not yet prove that the HTTP provider received
+resized bytes or that visual localization improved; those are M2 and M4 concerns.

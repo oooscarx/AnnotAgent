@@ -583,6 +583,115 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         ],
     );
     coverage.required_skills.clear();
+    coverage.parameters.insert(
+        "recovery_route_policy".to_owned(),
+        serde_json::json!({
+            "action": "relocalize",
+            "required_effect": "produce_new_search_view_and_detection",
+            "on_unavailable": "review",
+            "on_budget_exhausted": "review",
+            "attempt": 1,
+            "maximum_attempts": 2
+        }),
+    );
+
+    let mut recovery_expand = node(
+        "expand_recovery_search",
+        "core.expand_region",
+        WorkflowNodeKind::Transform,
+        vec![
+            port("image", ArtifactKind::Image),
+            multiple_port("detections", ArtifactKind::DetectionSet),
+        ],
+        vec![multiple_port("regions", ArtifactKind::DetectionSet)],
+    );
+    recovery_expand.required_skills.clear();
+    recovery_expand.parameters.extend([
+        (
+            "policy".to_owned(),
+            serde_json::json!({
+                "kind": "relative_to_candidate",
+                "width_factor": 8.0,
+                "height_factor": 8.0,
+                "minimum_width_px": 192,
+                "minimum_height_px": 192,
+                "maximum_image_fraction": 0.75
+            }),
+        ),
+        ("recovery_attempt".to_owned(), serde_json::json!(2)),
+        (
+            "search_source".to_owned(),
+            serde_json::json!("original_image"),
+        ),
+    ]);
+
+    let mut recovery_crop = node(
+        "crop_recovery_search_region",
+        "core.crop",
+        WorkflowNodeKind::Transform,
+        vec![
+            port("image", ArtifactKind::Image),
+            multiple_port("detections", ArtifactKind::DetectionSet),
+        ],
+        vec![
+            multiple_port("crops", ArtifactKind::CropSet),
+            multiple_port("images", ArtifactKind::Image),
+        ],
+    );
+    recovery_crop.required_skills.clear();
+    recovery_crop.parameters.extend([
+        ("padding".to_owned(), serde_json::json!(0.0)),
+        ("recovery_attempt".to_owned(), serde_json::json!(2)),
+        (
+            "search_source".to_owned(),
+            serde_json::json!("original_image"),
+        ),
+    ]);
+
+    let mut recovery_localize = node(
+        "relocalize_recovery_search",
+        "vlm_detection.detect",
+        WorkflowNodeKind::VisionLanguageModel,
+        vec![multiple_port("image", ArtifactKind::Image)],
+        vec![multiple_port("detections", ArtifactKind::DetectionSet)],
+    );
+    recovery_localize.parameters.extend([
+        ("labels".to_owned(), serde_json::json!(["ball"])),
+        (
+            "coordinate_space".to_owned(),
+            serde_json::json!("local_crop"),
+        ),
+        ("maximum_model_calls".to_owned(), serde_json::json!(1)),
+        ("recovery_attempt".to_owned(), serde_json::json!(2)),
+        (
+            "evidence_relationship".to_owned(),
+            serde_json::json!("same_model_multi_view"),
+        ),
+    ]);
+    bind_prompt_resource(
+        &mut recovery_localize,
+        "ball/resources/local-relocalization-prompt.md",
+        BALL_LOCAL_RELOCALIZATION_PROMPT_SHA256,
+        BALL_LOCAL_RELOCALIZATION_PROMPT,
+    );
+
+    let mut recovery_validator = validator.clone();
+    recovery_validator.id = "validate_recovery_ball".to_owned();
+    let mut recovery_prompts = prompts.clone();
+    recovery_prompts.id = "recovery_box_prompts".to_owned();
+    let mut recovery_coverage = coverage.clone();
+    recovery_coverage.id = "recovery_coverage_gate".to_owned();
+    recovery_coverage.parameters.insert(
+        "recovery_route_policy".to_owned(),
+        serde_json::json!({
+            "action": "direct_review_after_exhaustion",
+            "required_effect": "record_recovery_exhausted",
+            "on_unavailable": "review",
+            "on_budget_exhausted": "review",
+            "attempt": 2,
+            "maximum_attempts": 2
+        }),
+    );
 
     let mut segment = node(
         "refine_validated_prompt",
@@ -671,6 +780,13 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             project("project_verification_detection"),
             prompts,
             coverage,
+            recovery_expand,
+            recovery_crop,
+            recovery_localize,
+            project("project_recovery_detection"),
+            recovery_validator,
+            recovery_prompts,
+            recovery_coverage,
             segment,
             mask_to_bbox,
             geometry_quality,
@@ -699,15 +815,30 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             edge("image", "image", "refine_validated_prompt", "images", None),
             edge("prompt_coverage_gate", "prompts", "refine_validated_prompt", "box_prompts", Some("refine")),
             edge("prompt_coverage_gate", "coverage", "refine_validated_prompt", "coverage", Some("refine")),
+            edge("image", "image", "expand_recovery_search", "image", None),
+            edge("prompt_coverage_gate", "detections", "expand_recovery_search", "detections", Some("relocalize")),
+            edge("prompt_coverage_gate", "detections", "expand_recovery_search", "detections", Some("search_tiles")),
+            edge("image", "image", "crop_recovery_search_region", "image", None),
+            edge("expand_recovery_search", "regions", "crop_recovery_search_region", "detections", None),
+            edge("crop_recovery_search_region", "images", "relocalize_recovery_search", "image", None),
+            edge("crop_recovery_search_region", "images", "project_recovery_detection", "images", None),
+            edge("relocalize_recovery_search", "detections", "project_recovery_detection", "detections", None),
+            edge("project_recovery_detection", "detections", "validate_recovery_ball", "detections", None),
+            edge("validate_recovery_ball", "detections", "recovery_box_prompts", "detections", None),
+            edge("recovery_box_prompts", "prompts", "recovery_coverage_gate", "prompts", None),
+            edge("validate_recovery_ball", "detections", "recovery_coverage_gate", "candidates", None),
+            edge("validate_relocalized_ball", "detections", "recovery_coverage_gate", "evidence", None),
+            edge("recovery_coverage_gate", "prompts", "refine_validated_prompt", "box_prompts", Some("refine")),
+            edge("recovery_coverage_gate", "coverage", "refine_validated_prompt", "coverage", Some("refine")),
             edge("refine_validated_prompt", "masks", "project_mask_bbox", "masks", None),
             edge("prompt_coverage_gate", "prompts", "project_mask_bbox", "box_prompts", Some("refine")),
+            edge("recovery_coverage_gate", "prompts", "project_mask_bbox", "box_prompts", Some("refine")),
             edge("project_mask_bbox", "detections", "evaluate_refiner_geometry", "detections", None),
             edge("evaluate_refiner_geometry", "detections", "geometry_decision", "detections", None),
             edge("geometry_decision", "detections", "review_final_ball", "detections", Some("accept")),
             edge("geometry_decision", "detections", "review_final_ball", "detections", Some("review")),
-            edge("prompt_coverage_gate", "detections", "review_final_ball", "detections", Some("relocalize")),
-            edge("prompt_coverage_gate", "detections", "review_final_ball", "detections", Some("search_tiles")),
             edge("prompt_coverage_gate", "detections", "review_final_ball", "detections", Some("review")),
+            edge("recovery_coverage_gate", "detections", "review_final_ball", "detections", Some("review")),
             edge("review_final_ball", "detections", "commit_final_ball", "detections", None),
         ],
         resource_versions: ball_resources(),
@@ -1145,11 +1276,9 @@ mod tests {
         );
     }
 
-    /// M0 regression lock: the current template labels this route as a re-localization action,
-    /// but sends it directly to Human Review without producing a changed search view or running a
-    /// second localization model call. M1 removes `ignore` after the graph is repaired.
+    /// Regression lock: a re-localization route must enter the bounded second-search subgraph,
+    /// never masquerade as an immediate Human Review fallback.
     #[test]
-    #[ignore = "M1 must replace the fake re-localization route with a bounded second search"]
     fn relocalization_route_cannot_go_directly_to_review() {
         let skill = RoboCupBallSkill::new().expect("Ball Skill");
         let template = skill

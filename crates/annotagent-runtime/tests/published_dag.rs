@@ -285,6 +285,90 @@ impl DagNodeRunner for CountingPipelineRunner {
     }
 }
 
+struct RelocalizeGateRunner;
+
+#[async_trait]
+impl DagNodeRunner for RelocalizeGateRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        Ok(DagNodeOutput {
+            pipeline_artifacts: context.input_pipeline_artifacts,
+            route: Some("relocalize".to_owned()),
+            metadata: BTreeMap::from([("recovery_attempt".to_owned(), serde_json::json!(1))]),
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
+struct ChangedSearchViewRunner;
+
+#[async_trait]
+impl DagNodeRunner for ChangedSearchViewRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let source = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) => Some(image),
+                _ => None,
+            })
+            .expect("original search source");
+        let mut changed = source.clone();
+        changed.reference = ArtifactRef {
+            artifact_id: "search-view-b".to_owned(),
+            source_node: context.node.id.clone(),
+            port: "image".to_owned(),
+            artifact_type: ArtifactKind::Image,
+            item_id: None,
+        };
+        changed.width = 384;
+        changed.height = 384;
+        changed.blob_ref = "artifact-cache://search-view-b".to_owned();
+        changed.parent = Some(source.reference.clone());
+        changed.root_region =
+            Some(NormalizedRect::new(0.25, 0.20, 0.50, 0.50).expect("changed search region"));
+        Ok(DagNodeOutput {
+            pipeline_artifacts: vec![PipelineArtifact::Image(changed)],
+            metadata: BTreeMap::from([
+                ("search_attempt".to_owned(), serde_json::json!(2)),
+                ("search_input_changed".to_owned(), serde_json::json!(true)),
+            ]),
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
+struct RecordingSearchDetector {
+    observed_artifact: Arc<std::sync::Mutex<Option<(String, u32, u32)>>>,
+}
+
+#[async_trait]
+impl DagNodeRunner for RecordingSearchDetector {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let image = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) => Some(image),
+                _ => None,
+            })
+            .expect("re-localization input image");
+        *self.observed_artifact.lock().expect("observation lock") = Some((
+            image.reference.artifact_id.clone(),
+            image.width,
+            image.height,
+        ));
+        let consumed_search_view = image.reference.artifact_id.clone();
+        Ok(DagNodeOutput {
+            pipeline_artifacts: context.input_pipeline_artifacts,
+            metadata: BTreeMap::from([(
+                "consumed_search_view".to_owned(),
+                serde_json::json!(consumed_search_view),
+            )]),
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
 struct RefinerRunner;
 
 #[async_trait]
@@ -432,6 +516,131 @@ fn executor() -> PublishedDagExecutor {
         .register_runner("confidence_gate", Arc::new(ConfidenceGate), true)
         .expect("gate");
     executor
+}
+
+#[tokio::test]
+async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
+    let image_input = node(
+        "input",
+        "input",
+        WorkflowNodeKind::ImageInput,
+        Vec::new(),
+        vec![image_port("image")],
+    );
+    let gate = node(
+        "coverage",
+        "test_relocalize_gate",
+        WorkflowNodeKind::Gate,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    let search = node(
+        "search_b",
+        "test_changed_search_view",
+        WorkflowNodeKind::Transform,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    let detector = node(
+        "relocalize_b",
+        "test_recording_detector",
+        WorkflowNodeKind::VisionLanguageModel,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    let workflow = published(
+        vec![image_input, gate, search, detector],
+        vec![
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "coverage".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "coverage".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "search_b".to_owned(),
+                to_port: "image".to_owned(),
+                route: Some("relocalize".to_owned()),
+            },
+            WorkflowEdge {
+                from_node: "search_b".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "relocalize_b".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+        ],
+    );
+    let observed = Arc::new(std::sync::Mutex::new(None));
+    let mut executor = PublishedDagExecutor::new();
+    executor
+        .register_runner(
+            "test_relocalize_gate",
+            Arc::new(RelocalizeGateRunner),
+            false,
+        )
+        .expect("gate runner");
+    executor
+        .register_runner(
+            "test_changed_search_view",
+            Arc::new(ChangedSearchViewRunner),
+            false,
+        )
+        .expect("search runner");
+    executor
+        .register_runner(
+            "test_recording_detector",
+            Arc::new(RecordingSearchDetector {
+                observed_artifact: observed.clone(),
+            }),
+            false,
+        )
+        .expect("detector runner");
+    let image_id = ImageId::new();
+    let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
+        run_id: RunId::new(),
+        image_id,
+        initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: vec![PipelineArtifact::Image(ImageArtifact {
+            reference: ArtifactRef {
+                artifact_id: "original-image".to_owned(),
+                source_node: "input".to_owned(),
+                port: "image".to_owned(),
+                artifact_type: ArtifactKind::Image,
+                item_id: None,
+            },
+            image_id,
+            width: 544,
+            height: 448,
+            mime_type: "image/png".to_owned(),
+            blob_ref: "workspace://original-image".to_owned(),
+            parent: None,
+            root_region: None,
+        })],
+        cancellation: CancellationToken::new(),
+    };
+
+    let result = executor
+        .execute(&workflow, &request)
+        .await
+        .expect("bounded recovery execution");
+    assert_eq!(result.status, DagRunStatus::Completed);
+    assert_eq!(
+        result.checkpoint.node_statuses["relocalize_b"],
+        DagNodeStatus::Succeeded
+    );
+    assert_eq!(
+        *observed.lock().expect("observation lock"),
+        Some(("search-view-b".to_owned(), 384, 384))
+    );
+    assert_eq!(
+        result.checkpoint.node_outputs["search_b"].metadata["search_input_changed"],
+        true
+    );
 }
 
 #[tokio::test]

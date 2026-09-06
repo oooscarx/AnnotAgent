@@ -3975,15 +3975,17 @@ fn apply_localization_recovery_patch(
         }
     }
     if prompted_segmentation_model.is_none() {
-        let fallback = WorkflowEdge {
-            from_node: id_map["prompt_coverage_gate"].clone(),
-            from_port: "detections".to_owned(),
-            to_node: review_id,
-            to_port: "detections".to_owned(),
-            route: Some("refine".to_owned()),
-        };
-        if !draft.edges.contains(&fallback) {
-            draft.edges.push(fallback);
+        for gate in ["prompt_coverage_gate", "recovery_coverage_gate"] {
+            let fallback = WorkflowEdge {
+                from_node: id_map[gate].clone(),
+                from_port: "detections".to_owned(),
+                to_node: review_id.clone(),
+                to_port: "detections".to_owned(),
+                route: Some("refine".to_owned()),
+            };
+            if !draft.edges.contains(&fallback) {
+                draft.edges.push(fallback);
+            }
         }
     }
     draft
