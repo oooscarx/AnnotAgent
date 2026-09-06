@@ -7,12 +7,12 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use annotagent_core::{
-    ArtifactKind, ArtifactRef, ArtifactValidationState, BoxPromptSetArtifact, CoreError,
-    CoreResult, DetectionScore, MaskArtifactItem, MaskEncoding, MaskSetArtifact, ModelImage,
-    NormalizedPoint, PIPELINE_VISION_PROTOCOL_VERSION, PipelineArtifact, PipelineInferenceRequest,
-    PipelineInferenceResponse, PipelineModelBackend, PromptCoverageState, ScoreSemantics, Skill,
-    SkillKind, SkillManifest, SkillProductVisibility, SkillResource, SkillResourceRequest,
-    VisionCapability,
+    ArtifactKind, ArtifactRef, ArtifactValidationState, AutomaticAcceptanceEligibility,
+    BoxPromptSetArtifact, CoreError, CoreResult, DetectionScore, MaskArtifactItem, MaskEncoding,
+    MaskSetArtifact, ModelImage, NormalizedPoint, PIPELINE_VISION_PROTOCOL_VERSION,
+    PipelineArtifact, PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend,
+    PromptRefinementEligibility, ScoreSemantics, Skill, SkillKind, SkillManifest,
+    SkillProductVisibility, SkillResource, SkillResourceRequest, VisionCapability,
 };
 use annotagent_runtime::{DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner};
 use async_trait::async_trait;
@@ -191,20 +191,35 @@ fn validate_prompt_coverage(
             _ => None,
         })
         .collect::<Vec<_>>();
+    let allow_uncertain_refinement = context
+        .node
+        .parameters
+        .get("allow_uncertain_prompt_refinement")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     if coverage.len() != prompt_count
         || coverage.iter().any(|coverage| {
             coverage.image_id != context.image_id
                 || coverage.validate().is_err()
-                || coverage.state != PromptCoverageState::Covered
-                || coverage.evidence.is_empty()
+                || coverage.effective_refinement_eligibility()
+                    != PromptRefinementEligibility::PlausibleForRefinement
+                || (coverage.automatic_acceptance
+                    == AutomaticAcceptanceEligibility::HumanReviewRequired
+                    && !allow_uncertain_refinement)
         })
     {
         return Err(DagNodeFailure::terminal(
             "invalid_prompt_sent_to_refiner",
-            "Prompted Segmentation requires one independently evidenced Covered PromptCoverage Artifact for every prompt",
+            "Prompted Segmentation requires one valid plausible-for-refinement PromptCoverage Artifact for every prompt; uncertain prompts require an explicit review-preserving policy",
         ));
     }
-    Ok("covered")
+    if coverage.iter().any(|coverage| {
+        coverage.automatic_acceptance == AutomaticAcceptanceEligibility::HumanReviewRequired
+    }) {
+        Ok("plausible_for_refinement_review_required")
+    } else {
+        Ok("covered")
+    }
 }
 
 #[async_trait]
@@ -501,8 +516,8 @@ impl Skill for SegmentationCapabilitySkill {
 mod tests {
     use annotagent_core::{
         ArtifactId, BoxPrompt, ImageArtifact, ImageId, NodePort, ProjectId, PromptCoverageAction,
-        PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind, RunId,
-        WorkflowDraftNode,
+        PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind,
+        PromptCoverageState, RunId, WorkflowDraftNode,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -524,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn prompted_segmentation_accepts_only_independently_covered_prompts_when_required() {
+    fn prompted_segmentation_requires_plausible_coverage_and_explicit_uncertain_policy() {
         let image_id = ImageId::new();
         let source = ArtifactRef {
             artifact_id: "local-detections".to_owned(),
@@ -570,6 +585,16 @@ mod tests {
                     observation: "independent candidate overlaps the prompt".to_owned(),
                 }],
                 recommended_action,
+                refinement_eligibility: match state {
+                    PromptCoverageState::Covered => {
+                        PromptRefinementEligibility::PlausibleForRefinement
+                    }
+                    PromptCoverageState::PartiallyCovered | PromptCoverageState::OutsidePrompt => {
+                        PromptRefinementEligibility::NeedsRelocalization
+                    }
+                    PromptCoverageState::Unknown => PromptRefinementEligibility::Unknown,
+                },
+                automatic_acceptance: AutomaticAcceptanceEligibility::NotEvaluated,
             })
         };
         let node = WorkflowDraftNode {
@@ -614,6 +639,50 @@ mod tests {
         )
         .expect_err("outside prompt must never reach Refiner");
         assert_eq!(error.code, "invalid_prompt_sent_to_refiner");
+
+        let exploratory = PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+            reference: ArtifactRef {
+                artifact_id: "exploratory-coverage".to_owned(),
+                source_node: "coverage-gate".to_owned(),
+                port: "coverage".to_owned(),
+                artifact_type: ArtifactKind::PromptCoverage,
+                item_id: None,
+            },
+            image_id,
+            candidate_artifact_id: ArtifactId::new(),
+            search_region_artifact_id: None,
+            state: PromptCoverageState::Unknown,
+            evidence: Vec::new(),
+            recommended_action: PromptCoverageAction::ProceedToRefinement,
+            refinement_eligibility: PromptRefinementEligibility::PlausibleForRefinement,
+            automatic_acceptance: AutomaticAcceptanceEligibility::HumanReviewRequired,
+        });
+        assert!(
+            validate_prompt_coverage(&context(exploratory.clone()), 1).is_err(),
+            "uncertain refinement requires an explicit policy"
+        );
+        let allowed_node = WorkflowDraftNode {
+            parameters: BTreeMap::from([(
+                "allow_uncertain_prompt_refinement".to_owned(),
+                serde_json::json!(true),
+            )]),
+            ..node.clone()
+        };
+        let allowed_context = DagNodeContext {
+            project_id: ProjectId::new(),
+            run_id: RunId::new(),
+            image_id,
+            node: &allowed_node,
+            input_artifacts: Vec::new(),
+            input_pipeline_artifacts: vec![prompts, exploratory],
+            input_metadata: BTreeMap::new(),
+            cancellation: CancellationToken::new(),
+        };
+        assert_eq!(
+            validate_prompt_coverage(&allowed_context, 1)
+                .expect("explicit exploratory refinement policy"),
+            "plausible_for_refinement_review_required"
+        );
     }
 
     #[tokio::test]
@@ -678,6 +747,8 @@ mod tests {
                 observation: "independent candidate overlaps the prompt".to_owned(),
             }],
             recommended_action: PromptCoverageAction::ProceedToRefinement,
+            refinement_eligibility: PromptRefinementEligibility::PlausibleForRefinement,
+            automatic_acceptance: AutomaticAcceptanceEligibility::NotEvaluated,
         });
         let node = WorkflowDraftNode {
             id: "segment".to_owned(),

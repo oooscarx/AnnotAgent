@@ -1,20 +1,24 @@
 //! Domain-neutral executable Core nodes for Label Pipeline intermediate Artifacts.
 
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 use annotagent_core::{
     AnnotationCandidateSet, ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef,
-    ArtifactRole, ArtifactValidationState, AttributeValue, BoxPromptSetArtifact,
-    CandidateAgreement, CandidateCluster, CandidateClusterSetArtifact, ClassificationSetArtifact,
-    CorrectionRisk, CropSetArtifact, Detection, DetectionEvidence, DetectionSetArtifact,
-    EvidenceAcceptRule, EvidenceFallbackRule, EvidenceGateConfig, EvidenceGateDecision,
-    EvidenceGateInput, EvidenceGateReason, EvidenceGateReport, EvidenceRejectRule,
-    EvidenceReviewRule, GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION, GeometryRefinementThresholds,
-    GeometryRefinementTrace, IssueSeverity, LabelId, MaskEncoding, MaskSetArtifact,
-    PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact, PromptCoverageAction,
-    PromptCoverageArtifact, PromptCoverageEvidence, PromptCoverageEvidenceKind,
-    PromptCoverageState, RegionExpansionPolicy, SuggestedAction, TargetScaleProfile, TaskId,
-    ValidationEvidence, ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
+    ArtifactRole, ArtifactValidationState, AttributeValue, AutomaticAcceptanceEligibility,
+    BoxPromptSetArtifact, CandidateAgreement, CandidateCluster, CandidateClusterSetArtifact,
+    ClassificationSetArtifact, CorrectionRisk, CropSetArtifact, Detection, DetectionEvidence,
+    DetectionSetArtifact, EvidenceAcceptRule, EvidenceFallbackRule, EvidenceGateConfig,
+    EvidenceGateDecision, EvidenceGateInput, EvidenceGateReason, EvidenceGateReport,
+    EvidenceRejectRule, EvidenceReviewRule, GEOMETRY_REFINEMENT_TRACE_SCHEMA_VERSION,
+    GeometryRefinementThresholds, GeometryRefinementTrace, IssueSeverity, LabelId, MaskEncoding,
+    MaskSetArtifact, PipelineArtifact, PolygonArtifactItem, PolygonSetArtifact,
+    PromptCoverageAction, PromptCoverageArtifact, PromptCoverageEvidence,
+    PromptCoverageEvidenceKind, PromptCoverageState, PromptRefinementEligibility,
+    RegionExpansionPolicy, SuggestedAction, TargetScaleProfile, TaskId, ValidationEvidence,
+    ValidationIssue, VisionArtifact, VisionArtifactValue, VisionCapability,
     evaluate_geometry_refinement, mask_tight_bbox,
 };
 use async_trait::async_trait;
@@ -809,6 +813,39 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
                 _ => None,
             });
     let candidate_origin = candidate_set.and_then(evidence_origin);
+    let recovery_attempt = optional_u32_parameter(context, "recovery_attempt")?
+        .or_else(|| {
+            context
+                .node
+                .parameters
+                .get("recovery_route_policy")
+                .and_then(|policy| policy.get("attempt"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+        })
+        .unwrap_or(1);
+    let maximum_attempts = context
+        .node
+        .parameters
+        .get("recovery_route_policy")
+        .and_then(|policy| policy.get("maximum_attempts"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(2)
+        .max(1);
+    let allow_uncertain_refinement = context
+        .node
+        .parameters
+        .get("recovery_route_policy")
+        .and_then(|policy| policy.get("allow_uncertain_refinement"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let final_recovery_attempt = recovery_attempt >= maximum_attempts;
+    let has_legal_candidate = candidate_set.is_some_and(|set| {
+        !set.detections.is_empty()
+            && set.validate().is_ok()
+            && set.validation_state != ArtifactValidationState::Invalid
+    });
     let mut correlated_repeat_count = 0_u32;
     let mut same_model_multi_view_count = 0_u32;
     let mut different_model_source_count = 0_u32;
@@ -889,11 +926,45 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
                 )
             },
         );
-        let recommended_action = match state {
-            PromptCoverageState::Covered => PromptCoverageAction::ProceedToRefinement,
-            PromptCoverageState::PartiallyCovered => PromptCoverageAction::ExpandAndRelocalize,
-            PromptCoverageState::OutsidePrompt => PromptCoverageAction::SearchTiles,
-            PromptCoverageState::Unknown => PromptCoverageAction::HumanReview,
+        let refinement_eligibility = match state {
+            PromptCoverageState::Covered => PromptRefinementEligibility::PlausibleForRefinement,
+            PromptCoverageState::PartiallyCovered
+                if final_recovery_attempt && allow_uncertain_refinement && has_legal_candidate =>
+            {
+                PromptRefinementEligibility::PlausibleForRefinement
+            }
+            PromptCoverageState::PartiallyCovered | PromptCoverageState::OutsidePrompt => {
+                PromptRefinementEligibility::NeedsRelocalization
+            }
+            PromptCoverageState::Unknown
+                if final_recovery_attempt && allow_uncertain_refinement && has_legal_candidate =>
+            {
+                PromptRefinementEligibility::PlausibleForRefinement
+            }
+            PromptCoverageState::Unknown => PromptRefinementEligibility::Unknown,
+        };
+        let automatic_acceptance = if refinement_eligibility
+            == PromptRefinementEligibility::PlausibleForRefinement
+            && state != PromptCoverageState::Covered
+        {
+            AutomaticAcceptanceEligibility::HumanReviewRequired
+        } else {
+            AutomaticAcceptanceEligibility::NotEvaluated
+        };
+        let recommended_action = match refinement_eligibility {
+            PromptRefinementEligibility::PlausibleForRefinement => {
+                PromptCoverageAction::ProceedToRefinement
+            }
+            PromptRefinementEligibility::NeedsRelocalization => {
+                if state == PromptCoverageState::OutsidePrompt {
+                    PromptCoverageAction::SearchTiles
+                } else {
+                    PromptCoverageAction::ExpandAndRelocalize
+                }
+            }
+            PromptRefinementEligibility::Unknown | PromptRefinementEligibility::InvalidPrompt => {
+                PromptCoverageAction::HumanReview
+            }
         };
         let mut candidate_reference = coverage_reference.clone();
         candidate_reference.artifact_id =
@@ -906,6 +977,8 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             state,
             evidence,
             recommended_action,
+            refinement_eligibility,
+            automatic_acceptance,
         };
         artifact
             .validate()
@@ -916,60 +989,52 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         PipelineArtifact::PromptCoverage(artifact) => Some(artifact.state),
         _ => None,
     });
-    let requested_route = if coverage.iter().all(|artifact| {
-        matches!(
-            artifact,
-            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
-                state: PromptCoverageState::Covered,
-                ..
-            })
-        )
-    }) && !coverage.is_empty()
-    {
-        "refine"
-    } else if coverage.iter().any(|artifact| {
-        matches!(
-            artifact,
-            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
-                state: PromptCoverageState::PartiallyCovered,
-                ..
-            })
-        )
-    }) {
-        "relocalize"
-    } else if coverage.iter().any(|artifact| {
-        matches!(
-            artifact,
-            PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
-                state: PromptCoverageState::OutsidePrompt,
-                ..
-            })
-        )
-    }) {
-        "search_tiles"
-    } else {
-        "review"
-    };
-    let recovery_attempt = optional_u32_parameter(context, "recovery_attempt")?
-        .or_else(|| {
-            context
-                .node
-                .parameters
-                .get("recovery_route_policy")
-                .and_then(|policy| policy.get("attempt"))
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok())
+    let candidate_route_decisions = prompts
+        .prompts
+        .iter()
+        .zip(&coverage)
+        .filter_map(|(prompt, artifact)| match artifact {
+            PipelineArtifact::PromptCoverage(coverage) => {
+                let requested_route = if coverage.effective_refinement_eligibility()
+                    == PromptRefinementEligibility::PlausibleForRefinement
+                {
+                    "refine"
+                } else {
+                    match coverage.state {
+                        PromptCoverageState::PartiallyCovered => "relocalize",
+                        PromptCoverageState::OutsidePrompt => "search_tiles",
+                        PromptCoverageState::Covered | PromptCoverageState::Unknown => "review",
+                    }
+                };
+                Some(serde_json::json!({
+                    "candidate_item_id": prompt.subject.item_id,
+                    "prompt_id": prompt.id,
+                    "requested_route": requested_route,
+                    "refinement_eligibility": coverage.effective_refinement_eligibility(),
+                    "automatic_acceptance": coverage.automatic_acceptance,
+                }))
+            }
+            _ => None,
         })
-        .unwrap_or(1);
-    let maximum_attempts = context
-        .node
-        .parameters
-        .get("recovery_route_policy")
-        .and_then(|policy| policy.get("maximum_attempts"))
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(2)
-        .max(1);
+        .collect::<Vec<_>>();
+    let distinct_candidate_routes = candidate_route_decisions
+        .iter()
+        .filter_map(|decision| decision.get("requested_route").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    // The executor currently routes one Artifact set per edge. A mixed candidate decision must
+    // therefore fail closed instead of sending every candidate down the strictest branch. The
+    // candidate-scoped decisions remain observable so a future split/fan-in executor can resume
+    // without losing lineage.
+    let candidate_route_split = distinct_candidate_routes.len() > 1;
+    let requested_route = if candidate_route_split {
+        "review"
+    } else {
+        distinct_candidate_routes
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or("review")
+    };
     let recovery_exhausted = matches!(requested_route, "relocalize" | "search_tiles")
         && recovery_attempt >= maximum_attempts;
     let route = if recovery_exhausted {
@@ -977,6 +1042,14 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
     } else {
         requested_route
     };
+    let uncertain_refinement = route == "refine"
+        && coverage.iter().any(|artifact| {
+            matches!(artifact,
+                PipelineArtifact::PromptCoverage(artifact)
+                    if artifact.automatic_acceptance
+                        == AutomaticAcceptanceEligibility::HumanReviewRequired
+            )
+        });
     let mut output = vec![PipelineArtifact::BoxPromptSet(prompts.clone())];
     if let Some(candidate_set) = candidate_set {
         let mut candidates = candidate_set.clone();
@@ -998,8 +1071,12 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             ),
             (
                 "failure_code".to_owned(),
-                serde_json::json!(if recovery_exhausted {
+                serde_json::json!(if candidate_route_split {
+                    Some("candidate_route_split_requires_review")
+                } else if recovery_exhausted {
                     Some("recovery_budget_exhausted")
+                } else if uncertain_refinement {
+                    Some("localization_uncertain")
                 } else {
                     match route {
                         "search_tiles" => Some("prompt_outside_target"),
@@ -1011,6 +1088,14 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
             (
                 "requested_route".to_owned(),
                 serde_json::json!(requested_route),
+            ),
+            (
+                "candidate_route_split".to_owned(),
+                serde_json::json!(candidate_route_split),
+            ),
+            (
+                "candidate_route_decisions".to_owned(),
+                serde_json::json!(candidate_route_decisions),
             ),
             (
                 "recovery_attempt".to_owned(),
@@ -1069,6 +1154,16 @@ fn evidence_origin(set: &DetectionSetArtifact) -> Option<(String, String, String
 fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
     let masks = one_mask_set(context)?;
     let prompts = one_box_prompt_set(context)?;
+    let exploratory_refinement_requires_review = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| match artifact {
+            PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+            _ => None,
+        })
+        .any(|coverage| {
+            coverage.automatic_acceptance == AutomaticAcceptanceEligibility::HumanReviewRequired
+        });
     masks
         .validate()
         .map_err(|error| DagNodeFailure::terminal("invalid_mask_set", error))?;
@@ -1154,6 +1249,12 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
                 DagNodeFailure::terminal("mask_to_bbox_failed", error.to_string())
             })?,
         );
+        if exploratory_refinement_requires_review {
+            refined.attributes.insert(
+                "automatic_acceptance".to_owned(),
+                serde_json::json!("human_review_required"),
+            );
+        }
         detections.push(refined);
     }
     let refined = DetectionSetArtifact {
@@ -1161,7 +1262,11 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
         reference,
         image_id: masks.image_id,
         model_binding: masks.model_binding.clone(),
-        validation_state: masks.validation_state,
+        validation_state: if exploratory_refinement_requires_review {
+            ArtifactValidationState::NeedsReview
+        } else {
+            masks.validation_state
+        },
         detections,
         metadata: BTreeMap::from([
             (
@@ -1175,6 +1280,16 @@ fn run_mask_to_bbox(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNo
             (
                 "source_prompt_set".to_owned(),
                 serde_json::json!(prompts.reference.artifact_id),
+            ),
+            (
+                "requires_human_review".to_owned(),
+                serde_json::json!(exploratory_refinement_requires_review),
+            ),
+            (
+                "review_reason".to_owned(),
+                serde_json::json!(
+                    exploratory_refinement_requires_review.then_some("localization_uncertain")
+                ),
             ),
         ]),
     };
@@ -1257,16 +1372,28 @@ fn run_geometry_quality_evaluation(
         evaluations.push(evaluation);
     }
     detections.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
-    detections.validation_state = if unstable_count == 0 {
-        ArtifactValidationState::Unvalidated
-    } else {
-        ArtifactValidationState::NeedsReview
-    };
+    let policy_requires_review = detections
+        .metadata
+        .get("requires_human_review")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let upstream_requires_review =
+        detections.validation_state == ArtifactValidationState::NeedsReview;
+    detections.validation_state =
+        if unstable_count == 0 && !policy_requires_review && !upstream_requires_review {
+            ArtifactValidationState::Unvalidated
+        } else {
+            ArtifactValidationState::NeedsReview
+        };
     detections.metadata.insert(
         "geometry_evaluations".to_owned(),
         serde_json::to_value(&evaluations).map_err(|error| {
             DagNodeFailure::terminal("geometry_evaluation_failed", error.to_string())
         })?,
+    );
+    detections.metadata.insert(
+        "upstream_requires_human_review".to_owned(),
+        serde_json::json!(upstream_requires_review),
     );
     detections
         .validate()
@@ -1353,8 +1480,21 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
             Err(_) => unstable_count = unstable_count.saturating_add(1),
         }
     }
-    let accept =
-        !detections.detections.is_empty() && missing_evaluation_count == 0 && unstable_count == 0;
+    let policy_requires_review = detections
+        .metadata
+        .get("requires_human_review")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let upstream_requires_review = detections
+        .metadata
+        .get("upstream_requires_human_review")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let accept = !detections.detections.is_empty()
+        && missing_evaluation_count == 0
+        && unstable_count == 0
+        && !policy_requires_review
+        && !upstream_requires_review;
     detections.reference = output_reference(context, "detections", ArtifactKind::DetectionSet)?;
     detections.validation_state = if accept {
         ArtifactValidationState::Valid
@@ -1370,6 +1510,7 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
             "unstable_detection_count": unstable_count,
             "rejected_refinement_count": rejected_refinement_count,
             "failure_code": (rejected_refinement_count > 0).then_some("refiner_drift"),
+            "policy_requires_confirmation": policy_requires_review,
             "semantic_score_used": false,
         }),
     );
@@ -1394,7 +1535,15 @@ fn run_geometry_decision(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, 
             ),
             (
                 "failure_code".to_owned(),
-                serde_json::json!((rejected_refinement_count > 0).then_some("refiner_drift")),
+                serde_json::json!(if policy_requires_review {
+                    Some("policy_requires_confirmation")
+                } else {
+                    (rejected_refinement_count > 0).then_some("refiner_drift")
+                }),
+            ),
+            (
+                "policy_requires_confirmation".to_owned(),
+                serde_json::json!(policy_requires_review),
             ),
             ("semantic_score_used".to_owned(), serde_json::json!(false)),
         ]),
@@ -3465,6 +3614,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_unknown_but_legal_prompt_can_refine_without_gaining_acceptance() {
+        let image_id = ImageId::new();
+        let candidate = detection_set(
+            image_id,
+            "candidate-set",
+            "same-model-multi-view",
+            vec![detection(
+                "candidate-set",
+                "candidate",
+                "ball",
+                [0.2, 0.2, 0.2, 0.2],
+                Some(0.8),
+                "same-model-multi-view",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(candidate_set) = &candidate else {
+            panic!("candidate detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            candidate_set,
+            0.0,
+        )
+        .expect("box prompts");
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            parameters: BTreeMap::from([(
+                "recovery_route_policy".to_owned(),
+                serde_json::json!({
+                    "attempt": 2,
+                    "maximum_attempts": 2,
+                    "allow_uncertain_refinement": true
+                }),
+            )]),
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![PipelineArtifact::BoxPromptSet(prompts), candidate],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("exploratory refinement decision");
+        assert_eq!(output.route.as_deref(), Some("refine"));
+        assert_eq!(output.metadata["failure_code"], "localization_uncertain");
+        let coverage = output
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::Unknown);
+        assert_eq!(
+            coverage.refinement_eligibility,
+            PromptRefinementEligibility::PlausibleForRefinement
+        );
+        assert_eq!(
+            coverage.automatic_acceptance,
+            AutomaticAcceptanceEligibility::HumanReviewRequired
+        );
+        assert!(coverage.evidence.is_empty());
+    }
+
+    #[tokio::test]
     async fn prompt_coverage_gate_accepts_strong_independent_overlap() {
         let image_id = ImageId::new();
         let coarse = detection_set(
@@ -3557,6 +3802,133 @@ mod tests {
                 .observation
                 .contains("intersection over union")
         );
+    }
+
+    #[tokio::test]
+    async fn mixed_candidate_routes_fail_closed_instead_of_cross_routing_the_set() {
+        let image_id = ImageId::new();
+        let candidates = detection_set(
+            image_id,
+            "candidate-set",
+            "coarse-model",
+            vec![
+                detection(
+                    "candidate-set",
+                    "candidate-covered",
+                    "ball",
+                    [0.10, 0.10, 0.10, 0.10],
+                    Some(0.8),
+                    "coarse-model",
+                    VisionCapability::VisionLanguage,
+                ),
+                detection(
+                    "candidate-set",
+                    "candidate-outside",
+                    "ball",
+                    [0.70, 0.70, 0.10, 0.10],
+                    Some(0.7),
+                    "coarse-model",
+                    VisionCapability::VisionLanguage,
+                ),
+            ],
+        );
+        let PipelineArtifact::DetectionSet(candidate_set) = &candidates else {
+            panic!("candidate detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            candidate_set,
+            0.0,
+        )
+        .expect("box prompts");
+        let evidence = detection_set(
+            image_id,
+            "evidence-set",
+            "independent-model",
+            vec![
+                detection(
+                    "evidence-set",
+                    "covered-evidence",
+                    "ball",
+                    [0.10, 0.10, 0.10, 0.10],
+                    Some(0.9),
+                    "independent-model",
+                    VisionCapability::ObjectDetection,
+                ),
+                detection(
+                    "evidence-set",
+                    "displaced-evidence",
+                    "ball",
+                    [0.40, 0.40, 0.10, 0.10],
+                    Some(0.9),
+                    "independent-model",
+                    VisionCapability::ObjectDetection,
+                ),
+            ],
+        );
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let output = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![
+                    PipelineArtifact::BoxPromptSet(prompts),
+                    candidates,
+                    evidence,
+                ],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("candidate-scoped coverage decision");
+
+        assert_eq!(output.route.as_deref(), Some("review"));
+        assert_eq!(output.metadata["candidate_route_split"], true);
+        assert_eq!(
+            output.metadata["failure_code"],
+            "candidate_route_split_requires_review"
+        );
+        let decisions = output.metadata["candidate_route_decisions"]
+            .as_array()
+            .expect("candidate decisions");
+        assert_eq!(decisions.len(), 2);
+        assert!(decisions.iter().any(|decision| {
+            decision["candidate_item_id"] == "candidate-covered"
+                && decision["requested_route"] == "refine"
+        }));
+        assert!(decisions.iter().any(|decision| {
+            decision["candidate_item_id"] == "candidate-outside"
+                && decision["requested_route"] == "search_tiles"
+        }));
     }
 
     #[tokio::test]
@@ -4465,7 +4837,7 @@ mod tests {
         let refined_output = CorePipelineRunner
             .run(node_context(
                 &bbox_node,
-                vec![prompt_output.pipeline_artifacts[0].clone(), masks],
+                vec![prompt_output.pipeline_artifacts[0].clone(), masks.clone()],
                 BTreeMap::new(),
             ))
             .await
@@ -4537,6 +4909,65 @@ mod tests {
             .expect("geometry decision");
         assert_eq!(accepted.route.as_deref(), Some("accept"));
         assert_eq!(accepted.metadata["semantic_score_used"], false);
+
+        let exploratory_coverage = PipelineArtifact::PromptCoverage(PromptCoverageArtifact {
+            reference: ArtifactRef {
+                artifact_id: "exploratory-coverage".to_owned(),
+                source_node: "coverage".to_owned(),
+                port: "coverage".to_owned(),
+                artifact_type: ArtifactKind::PromptCoverage,
+                item_id: None,
+            },
+            image_id,
+            candidate_artifact_id: ArtifactId::new(),
+            search_region_artifact_id: None,
+            state: PromptCoverageState::Unknown,
+            evidence: Vec::new(),
+            recommended_action: PromptCoverageAction::ProceedToRefinement,
+            refinement_eligibility: PromptRefinementEligibility::PlausibleForRefinement,
+            automatic_acceptance: AutomaticAcceptanceEligibility::HumanReviewRequired,
+        });
+        let exploratory_refined = CorePipelineRunner
+            .run(node_context(
+                &bbox_node,
+                vec![
+                    prompt_output.pipeline_artifacts[0].clone(),
+                    masks,
+                    exploratory_coverage,
+                ],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("exploratory mask to bbox");
+        let exploratory_evaluated = CorePipelineRunner
+            .run(node_context(
+                &evaluation_node,
+                exploratory_refined.pipeline_artifacts,
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("exploratory geometry quality");
+        assert_eq!(
+            exploratory_evaluated.metadata["unstable_detection_count"],
+            0
+        );
+        let exploratory_review = CorePipelineRunner
+            .run(node_context(
+                &decision_node,
+                exploratory_evaluated.pipeline_artifacts,
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("exploratory geometry decision");
+        assert_eq!(exploratory_review.route.as_deref(), Some("review"));
+        assert_eq!(
+            exploratory_review.metadata["failure_code"],
+            "policy_requires_confirmation"
+        );
+        assert_eq!(
+            exploratory_review.metadata["policy_requires_confirmation"],
+            true
+        );
 
         let strict_evaluation_node = WorkflowDraftNode {
             parameters: BTreeMap::from([(

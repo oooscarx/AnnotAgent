@@ -688,7 +688,8 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             "on_unavailable": "review",
             "on_budget_exhausted": "review",
             "attempt": 2,
-            "maximum_attempts": 2
+            "maximum_attempts": 2,
+            "allow_uncertain_refinement": true
         }),
     );
 
@@ -708,6 +709,10 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         "require_prompt_coverage".to_owned(),
         serde_json::json!(true),
     );
+    segment.parameters.insert(
+        "allow_uncertain_prompt_refinement".to_owned(),
+        serde_json::json!(true),
+    );
 
     let mut mask_to_bbox = node(
         "project_mask_bbox",
@@ -716,6 +721,7 @@ fn small_object_recovery_template() -> WorkflowTemplate {
         vec![
             multiple_port("masks", ArtifactKind::MaskSet),
             multiple_port("box_prompts", ArtifactKind::BoxPromptSet),
+            optional_port("coverage", ArtifactKind::PromptCoverage),
         ],
         vec![multiple_port("detections", ArtifactKind::DetectionSet)],
     );
@@ -830,7 +836,9 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             edge("recovery_coverage_gate", "coverage", "refine_validated_prompt", "coverage", Some("refine")),
             edge("refine_validated_prompt", "masks", "project_mask_bbox", "masks", None),
             edge("prompt_coverage_gate", "prompts", "project_mask_bbox", "box_prompts", Some("refine")),
+            edge("prompt_coverage_gate", "coverage", "project_mask_bbox", "coverage", Some("refine")),
             edge("recovery_coverage_gate", "prompts", "project_mask_bbox", "box_prompts", Some("refine")),
+            edge("recovery_coverage_gate", "coverage", "project_mask_bbox", "coverage", Some("refine")),
             edge("project_mask_bbox", "detections", "evaluate_refiner_geometry", "detections", None),
             edge("evaluate_refiner_geometry", "detections", "geometry_decision", "detections", None),
             edge("geometry_decision", "detections", "review_final_ball", "detections", Some("accept")),

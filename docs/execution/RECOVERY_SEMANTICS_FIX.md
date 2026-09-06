@@ -110,7 +110,7 @@ Expected M0 failure: the route target is `review_final_ball`, a `HumanReview` no
 - M2: materialized Resize/model-input trace, shared coordinate transforms and correlated-evidence
   de-duplication — completed below.
 - M3: separate refinement eligibility from automatic acceptance and pass the selected recovered
-  candidate through SAM/geometry/review safely.
+  candidate through SAM/geometry/review safely — completed below.
 - M4: Builder inspection/validation tools, branch-injection tests, UI execution summary and fixed-set
   real evaluation. Engineering correctness and visual quality will be reported separately.
 
@@ -257,3 +257,53 @@ billable Provider smoke ignored. The Provider boundary test decodes the actual i
 `ModelRequest`, verifies 384×384 dimensions and sentinel pixels, rather than checking UI metadata.
 
 These tests establish byte/coordinate/evidence semantics. They do not establish football accuracy.
+
+## M3 — refinement eligibility is not automatic acceptance
+
+Prompt coverage now records three separate facts instead of overloading a single `Covered` value:
+
+- observed coverage state: `covered`, `partially_covered`, `outside_prompt`, or `unknown`;
+- prompt-refinement eligibility: `plausible_for_refinement`, `needs_relocalization`, `unknown`, or
+  `invalid_prompt`;
+- automatic-acceptance eligibility: `not_evaluated` or `human_review_required`.
+
+On the configured final recovery attempt, an explicit policy may allow a valid, non-empty candidate
+with `unknown` or partial coverage to enter prompted segmentation as exploratory refinement. This
+does not turn uncertainty into coverage evidence: `automatic_acceptance` is set to
+`human_review_required`, `localization_uncertain` is retained, and the Mask-to-BBox and geometry
+tail preserve that requirement until the terminal Review route. Without the explicit policy, the
+same input cannot enter the segmenter.
+
+The RoboCup template passes the active A or B `PromptCoverage` Artifact into Mask-to-BBox. Stable
+refined geometry can be accepted by the geometry calculation only when upstream policy permits it;
+uncertain exploratory refinement still routes to Human Review. Refiner drift restores the coarse
+box, records `refiner_drift`, and also routes to Review. No SAM score is interpreted as semantic
+proof that the mask is a football.
+
+Coverage decisions are retained per candidate ID in `candidate_route_decisions`. Because the
+current DAG executor routes Artifact sets rather than individual items, a set containing different
+candidate routes fails closed to Review with `candidate_route_split_requires_review`. It is never
+sent wholesale into the strictest candidate's relocalize/search/refine branch. The football alpha
+expects one ball candidate; this conservative fallback prevents cross-candidate corruption until a
+typed split/fan-in executor is implemented.
+
+The synthetic published-DAG recovery test now forces A to relocalize, executes B from the changed
+search view, then forces B to refine and verifies that the refiner consumes B rather than stale A.
+This is execution/lineage evidence only, not an accuracy result.
+
+Regression commands for M3:
+
+```text
+cargo fmt --all -- --check
+cargo test -p annotagent-core
+cargo test -p annotagent-skill-segmentation
+cargo test -p annotagent-runtime
+cargo test -p annotagent-skill-robocup
+cargo test -p annotagent-application
+```
+
+Results: Core 112 passed; Segmentation Skill 3 passed; Runtime 36 passed across unit/integration
+suites; RoboCup Skill 18 passed; Application 71 passed with one explicitly opt-in billable Provider
+smoke ignored. The Application regression also caught and repaired a Registry inconsistency where
+the public node catalog accepted `PromptCoverage` at Mask-to-BBox but the static operation catalog
+did not.

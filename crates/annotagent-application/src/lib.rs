@@ -4748,7 +4748,11 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             id: annotagent_runtime::CORE_MASK_TO_BBOX.to_owned(),
             display_name: "Convert masks to bounding boxes".to_owned(),
             required_capabilities: Vec::new(),
-            accepts: vec![ArtifactKind::MaskSet, ArtifactKind::BoxPromptSet],
+            accepts: vec![
+                ArtifactKind::MaskSet,
+                ArtifactKind::BoxPromptSet,
+                ArtifactKind::PromptCoverage,
+            ],
             produces: vec![ArtifactKind::DetectionSet],
             deterministic: true,
         },
@@ -5100,6 +5104,7 @@ fn register_public_annotation_catalog(nodes: &mut NodeRegistry) -> Result<()> {
             input_ports: vec![
                 catalog_port("masks", ArtifactKind::MaskSet, true, many),
                 catalog_port("box_prompts", ArtifactKind::BoxPromptSet, true, many),
+                catalog_port("coverage", ArtifactKind::PromptCoverage, false, many),
             ],
             output_ports: vec![catalog_port(
                 "detections",

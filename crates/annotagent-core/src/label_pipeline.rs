@@ -369,6 +369,26 @@ pub enum PromptCoverageAction {
     HumanReview,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptRefinementEligibility {
+    PlausibleForRefinement,
+    NeedsRelocalization,
+    #[default]
+    Unknown,
+    InvalidPrompt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomaticAcceptanceEligibility {
+    /// Coverage does not grant acceptance; downstream calibrated geometry policy must decide.
+    #[default]
+    NotEvaluated,
+    /// An exploratory refinement may run, but its terminal result still requires a human.
+    HumanReviewRequired,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptCoverageEvidenceKind {
@@ -399,6 +419,10 @@ pub struct PromptCoverageArtifact {
     pub state: PromptCoverageState,
     pub evidence: Vec<PromptCoverageEvidence>,
     pub recommended_action: PromptCoverageAction,
+    #[serde(default)]
+    pub refinement_eligibility: PromptRefinementEligibility,
+    #[serde(default)]
+    pub automatic_acceptance: AutomaticAcceptanceEligibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -960,6 +984,19 @@ impl PipelineArtifact {
 }
 
 impl PromptCoverageArtifact {
+    #[must_use]
+    pub fn effective_refinement_eligibility(&self) -> PromptRefinementEligibility {
+        if self.refinement_eligibility == PromptRefinementEligibility::Unknown
+            && self.state == PromptCoverageState::Covered
+            && self.recommended_action == PromptCoverageAction::ProceedToRefinement
+        {
+            // Backward-compatible interpretation for historical v1 coverage Artifacts.
+            PromptRefinementEligibility::PlausibleForRefinement
+        } else {
+            self.refinement_eligibility
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         validate_set_reference(&self.reference, ArtifactKind::PromptCoverage)?;
         if self
@@ -969,17 +1006,35 @@ impl PromptCoverageArtifact {
         {
             return Err("Prompt coverage evidence observations cannot be empty".to_owned());
         }
-        let expected_action = match self.state {
-            PromptCoverageState::Covered => PromptCoverageAction::ProceedToRefinement,
-            PromptCoverageState::PartiallyCovered => PromptCoverageAction::ExpandAndRelocalize,
-            PromptCoverageState::OutsidePrompt => PromptCoverageAction::SearchTiles,
-            PromptCoverageState::Unknown => PromptCoverageAction::HumanReview,
+        let expected_action = match self.effective_refinement_eligibility() {
+            PromptRefinementEligibility::PlausibleForRefinement => {
+                PromptCoverageAction::ProceedToRefinement
+            }
+            PromptRefinementEligibility::NeedsRelocalization => {
+                if self.state == PromptCoverageState::OutsidePrompt {
+                    PromptCoverageAction::SearchTiles
+                } else {
+                    PromptCoverageAction::ExpandAndRelocalize
+                }
+            }
+            PromptRefinementEligibility::Unknown | PromptRefinementEligibility::InvalidPrompt => {
+                PromptCoverageAction::HumanReview
+            }
         };
         if self.recommended_action != expected_action {
             return Err("Prompt coverage state and recommended action disagree".to_owned());
         }
         if self.state != PromptCoverageState::Unknown && self.evidence.is_empty() {
             return Err("Known prompt coverage requires observable evidence".to_owned());
+        }
+        if self.automatic_acceptance == AutomaticAcceptanceEligibility::HumanReviewRequired
+            && self.effective_refinement_eligibility()
+                != PromptRefinementEligibility::PlausibleForRefinement
+        {
+            return Err(
+                "Human-review-required refinement must still be plausible for refinement"
+                    .to_owned(),
+            );
         }
         Ok(())
     }

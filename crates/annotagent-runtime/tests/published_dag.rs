@@ -341,6 +341,43 @@ struct RecordingSearchDetector {
     observed_artifact: Arc<std::sync::Mutex<Option<(String, u32, u32)>>>,
 }
 
+struct RefineGateRunner;
+
+#[async_trait]
+impl DagNodeRunner for RefineGateRunner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        Ok(DagNodeOutput {
+            pipeline_artifacts: context.input_pipeline_artifacts,
+            route: Some("refine".to_owned()),
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
+struct RecordingRefinerInput {
+    observed_artifact: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+#[async_trait]
+impl DagNodeRunner for RecordingRefinerInput {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let image = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::Image(image) => Some(image),
+                _ => None,
+            })
+            .expect("refiner input from selected recovery branch");
+        *self.observed_artifact.lock().expect("refiner input lock") =
+            Some(image.reference.artifact_id.clone());
+        Ok(DagNodeOutput {
+            pipeline_artifacts: context.input_pipeline_artifacts,
+            ..DagNodeOutput::default()
+        })
+    }
+}
+
 #[async_trait]
 impl DagNodeRunner for RecordingSearchDetector {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -548,8 +585,22 @@ async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
         vec![image_port("image")],
         vec![image_port("image")],
     );
+    let second_gate = node(
+        "coverage_b",
+        "test_refine_gate",
+        WorkflowNodeKind::Gate,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
+    let refiner = node(
+        "sam",
+        "test_recording_refiner",
+        WorkflowNodeKind::VisionModel,
+        vec![image_port("image")],
+        vec![image_port("image")],
+    );
     let workflow = published(
-        vec![image_input, gate, search, detector],
+        vec![image_input, gate, search, detector, second_gate, refiner],
         vec![
             WorkflowEdge {
                 from_node: "input".to_owned(),
@@ -572,9 +623,24 @@ async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
                 to_port: "image".to_owned(),
                 route: None,
             },
+            WorkflowEdge {
+                from_node: "relocalize_b".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "coverage_b".to_owned(),
+                to_port: "image".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "coverage_b".to_owned(),
+                from_port: "image".to_owned(),
+                to_node: "sam".to_owned(),
+                to_port: "image".to_owned(),
+                route: Some("refine".to_owned()),
+            },
         ],
     );
     let observed = Arc::new(std::sync::Mutex::new(None));
+    let refiner_observed = Arc::new(std::sync::Mutex::new(None));
     let mut executor = PublishedDagExecutor::new();
     executor
         .register_runner(
@@ -599,6 +665,18 @@ async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
             false,
         )
         .expect("detector runner");
+    executor
+        .register_runner("test_refine_gate", Arc::new(RefineGateRunner), false)
+        .expect("second coverage gate runner");
+    executor
+        .register_runner(
+            "test_recording_refiner",
+            Arc::new(RecordingRefinerInput {
+                observed_artifact: refiner_observed.clone(),
+            }),
+            false,
+        )
+        .expect("refiner runner");
     let image_id = ImageId::new();
     let request = DagExecutionRequest {
         project_id: annotagent_core::ProjectId::new(),
@@ -640,6 +718,11 @@ async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
     assert_eq!(
         result.checkpoint.node_outputs["search_b"].metadata["search_input_changed"],
         true
+    );
+    assert_eq!(
+        *refiner_observed.lock().expect("refiner input lock"),
+        Some("search-view-b".to_owned()),
+        "the refiner must consume the second-attempt view, never the stale first prompt"
     );
 }
 
