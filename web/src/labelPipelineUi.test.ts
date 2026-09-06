@@ -11,6 +11,7 @@ import {
   pipelineNodeKind,
   pipelineNodeOutput,
   pipelineNodeParameters,
+  projectOriginalRectToSubmitted,
   guidedPipelineStepGroups,
   guidedWorkflowNodes,
   geometrySemanticsLabel,
@@ -21,6 +22,30 @@ import {
 import type { Annotation, PipelineArtifact, PipelineStep } from "./types";
 
 describe("Label Pipeline product helpers", () => {
+  it("projects final geometry onto the exact cropped and letterboxed model input", () => {
+    const trace = {
+      source_region_pixels: [100, 50, 200, 100],
+      crop_dimensions: [200, 100],
+      submitted_dimensions: [400, 400],
+      submitted_image_sha256: "submitted",
+      normalized_pixel_digest: "pixels",
+      interpolation: "catmull_rom",
+      color_format: "rgb8",
+      letterbox_padding: [0, 40, 0, 40],
+      transform_to_original: {
+        source_region: [0.25, 0.25, 0.5, 0.5],
+        content_region: [0, 0.1, 1, 0.8],
+      },
+    };
+    const projected = projectOriginalRectToSubmitted([0.5, 0.5, 0.1, 0.1], trace);
+    expect(projected).toBeDefined();
+    expect(projected![0]).toBeCloseTo(0.5);
+    expect(projected![1]).toBeCloseTo(0.5);
+    expect(projected![2]).toBeCloseTo(0.2);
+    expect(projected![3]).toBeCloseTo(0.16);
+    expect(projectOriginalRectToSubmitted([0, 0, 0.1, 0.1], trace)).toBeUndefined();
+  });
+
   it("selects models from the exact node capability contract", () => {
     expect(workflowNodeModelCapability("vlm_detection.detect")).toBe("vision_language");
     expect(workflowNodeModelCapability("yolo_detection.detect")).toBe("object_detection");

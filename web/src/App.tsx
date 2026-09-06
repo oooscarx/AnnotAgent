@@ -1458,6 +1458,17 @@ type ModelInputTraceView = {
   color_format: string;
   letterbox_padding: number[];
   provider_effective_dimensions?: unknown;
+  transform_to_original?: {
+    source_region: number[];
+    content_region: number[];
+  };
+};
+
+type ModelInputOverlay = {
+  id: string;
+  label: string;
+  rect: [number, number, number, number];
+  tone: "prediction" | "final";
 };
 
 type ModelInputInspection = {
@@ -1465,6 +1476,7 @@ type ModelInputInspection = {
   node: SampleNodeResult;
   trace: ModelInputTraceView;
   url: string;
+  overlays: ModelInputOverlay[];
 };
 
 function asModelInputTrace(node: SampleNodeResult): ModelInputTraceView | undefined {
@@ -1498,6 +1510,57 @@ function modelCallCost(node: SampleNodeResult) {
   if (node.metadata?.provider === "rust_plugin") return "$0 local";
   if (!node.estimated_cost || Number(node.estimated_cost) === 0) return "Unknown";
   return `$${node.estimated_cost}`;
+}
+
+function clampUnit(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+export function projectOriginalRectToSubmitted(
+  rect: [number, number, number, number],
+  trace: ModelInputTraceView,
+): [number, number, number, number] | undefined {
+  const source = trace.transform_to_original?.source_region;
+  const content = trace.transform_to_original?.content_region;
+  if (!source || source.length !== 4 || !content || content.length !== 4
+    || source[2] <= 0 || source[3] <= 0) return undefined;
+  const left = Math.max(rect[0], source[0]);
+  const top = Math.max(rect[1], source[1]);
+  const right = Math.min(rect[0] + rect[2], source[0] + source[2]);
+  const bottom = Math.min(rect[1] + rect[3], source[1] + source[3]);
+  if (right <= left || bottom <= top) return undefined;
+  const x = content[0] + ((left - source[0]) / source[2]) * content[2];
+  const y = content[1] + ((top - source[1]) / source[3]) * content[3];
+  const width = ((right - left) / source[2]) * content[2];
+  const height = ((bottom - top) / source[3]) * content[3];
+  return [clampUnit(x), clampUnit(y), clampUnit(width), clampUnit(height)];
+}
+
+function modelInputOverlays(
+  sample: WorkflowDryRunReport["samples"][number],
+  node: SampleNodeResult,
+  trace: ModelInputTraceView,
+): ModelInputOverlay[] {
+  const direct = (sample.projection?.debug_stages ?? []).flatMap((stage) => {
+    if (stage.node_id !== node.node_id || stage.value?.kind !== "bounding_box") return [];
+    return [{
+      id: `prediction-${stage.artifact_id}-${stage.lineage_id}`,
+      label: `${stage.label ?? "Object"} · node output`,
+      rect: stage.value.rect,
+      tone: "prediction" as const,
+    }];
+  });
+  const final = sample.outcomes.flatMap((outcome) => {
+    if (outcome.value?.kind !== "bounding_box") return [];
+    const rect = projectOriginalRectToSubmitted(outcome.value.rect, trace);
+    return rect ? [{
+      id: `final-${outcome.id}`,
+      label: `${outcome.label} · final`,
+      rect,
+      tone: "final" as const,
+    }] : [];
+  });
+  return [...direct, ...final];
 }
 
 function SampleExecutionSummary({
@@ -1538,6 +1601,7 @@ function SampleExecutionSummary({
                 node,
                 trace,
                 url: sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id),
+                overlays: modelInputOverlays(sample, node, trace),
               })}
             ><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt="" /><span>Actual submitted image<small>Open full size</small></span></button> : <div className="model-input-placeholder">Saved preview unavailable</div>}
             <div className="model-input-evidence-body">
@@ -1592,8 +1656,16 @@ function ModelInputPreviewDialog({
         <button type="button" onClick={onClose} aria-label="Close model input preview">Close</button>
       </header>
       <div className="model-input-preview-layout">
-        <figure><img src={inspection.url} alt={`Actual image submitted to ${inspection.node.node_id}`} /></figure>
+        <figure><div className="model-input-preview-canvas" style={{ aspectRatio: `${inspection.trace.submitted_dimensions[0]} / ${inspection.trace.submitted_dimensions[1]}` }}>
+          <img src={inspection.url} alt={`Actual image submitted to ${inspection.node.node_id}`} />
+          {inspection.overlays.map((overlay) => <span
+            className={`model-input-overlay ${overlay.tone}`}
+            key={overlay.id}
+            style={{ left: `${overlay.rect[0] * 100}%`, top: `${overlay.rect[1] * 100}%`, width: `${overlay.rect[2] * 100}%`, height: `${overlay.rect[3] * 100}%` }}
+          ><b>{overlay.label}</b></span>)}
+        </div></figure>
         <aside>
+          <div className="model-input-overlay-legend"><span>Visible overlays</span>{inspection.overlays.length ? inspection.overlays.map((overlay) => <strong className={overlay.tone} key={`legend-${overlay.id}`}>{overlay.label}</strong>) : <strong>No bbox is associated with this model call</strong>}<small>Overlays are drawn by AnnotAgent and were not part of the submitted image bytes.</small></div>
           <div><span>Model</span><strong>{metadataText(inspection.node.metadata?.model, inspection.node.node_id)}</strong></div>
           <div><span>Source region</span><strong>{inspection.trace.source_region_pixels.join(" × ")} px</strong></div>
           <div><span>Crop → submitted</span><strong>{inspection.trace.crop_dimensions.join("×")} → {inspection.trace.submitted_dimensions.join("×")}</strong></div>

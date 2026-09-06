@@ -808,6 +808,18 @@ test("actual model input thumbnails open an inspectable detail dialog", async ({
       provider_effective_dimensions: { status: "unknown" },
     },
   };
+  sample.projection.debug_stages.push({
+    artifact_id: "submitted-input-detection",
+    artifact_ref: "detection-set:submitted-input",
+    node_id: node.node_id,
+    lineage_id: "detection:ball",
+    stage: "coarse",
+    source: "E2E submitted-input model",
+    label: "ball",
+    confidence: 0.9,
+    value: { kind: "bounding_box", rect: [0.4, 0.4, 0.1, 0.1] },
+    terminal: false,
+  });
   await page.route(
     `**/api/workflow-drafts/${sampleEvidenceDraftId}/sample-test*`,
     (route) => route.fulfill({ json: saved }),
@@ -836,6 +848,8 @@ test("actual model input thumbnails open an inspectable detail dialog", async ({
   await expect(dialog.getByRole("img", {
     name: `Actual image submitted to ${node.node_id}`,
   })).toBeVisible();
+  await expect(dialog.locator(".model-input-overlay.prediction")).toHaveCount(1);
+  await expect(dialog.locator(".model-input-overlay-legend")).toContainText("ball · node output");
   expect(await dialog.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
