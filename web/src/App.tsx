@@ -1460,6 +1460,13 @@ type ModelInputTraceView = {
   provider_effective_dimensions?: unknown;
 };
 
+type ModelInputInspection = {
+  imageName: string;
+  node: SampleNodeResult;
+  trace: ModelInputTraceView;
+  url: string;
+};
+
 function asModelInputTrace(node: SampleNodeResult): ModelInputTraceView | undefined {
   const value = node.metadata?.model_input_trace;
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -1500,12 +1507,14 @@ function SampleExecutionSummary({
   report: WorkflowDryRunReport;
   sampleTestId?: string;
 }) {
+  const [inspectedInput, setInspectedInput] = useState<ModelInputInspection>();
   const observed = report.samples.some((sample) => sample.nodes.some((node) => (
     asModelInputTrace(node)
     || node.metadata?.selected_route != null
     || node.metadata?.requested_route != null
   )));
-  return <section className="sample-execution-summary" aria-labelledby="sample-execution-title">
+  return <>
+    <section className="sample-execution-summary" aria-labelledby="sample-execution-title">
     <div className="section-heading">
       <div><span className="eyebrow">Execution Evidence</span><h2 id="sample-execution-title">What actually ran</h2></div>
       <small>{observed ? "Persisted node facts" : "No execution trace available"}</small>
@@ -1520,7 +1529,17 @@ function SampleExecutionSummary({
         return <article className="sample-execution-card" key={`execution-${sample.image_index}`}>
           <header><div><strong>{sample.image_name}</strong><small>{calls.length} model call{calls.length === 1 ? "" : "s"} with input evidence</small></div><Status status={sample.failed ? "Failed" : sample.review_count ? "Needs review" : "Completed"} /></header>
           {calls.length ? <div className="model-input-evidence-list">{calls.map(({ node, trace }) => <article key={node.node_id} className="model-input-evidence">
-            {sampleTestId ? <figure><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt={`Actual image submitted to ${node.node_id}`} /><figcaption>Actual submitted image</figcaption></figure> : <div className="model-input-placeholder">Saved preview unavailable</div>}
+            {sampleTestId ? <button
+              type="button"
+              className="model-input-evidence-preview"
+              aria-label={`Open actual image submitted to ${node.node_id}`}
+              onClick={() => setInspectedInput({
+                imageName: sample.image_name,
+                node,
+                trace,
+                url: sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id),
+              })}
+            ><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt="" /><span>Actual submitted image<small>Open full size</small></span></button> : <div className="model-input-placeholder">Saved preview unavailable</div>}
             <div className="model-input-evidence-body">
               <header><strong>{metadataText(node.metadata?.model, node.node_id)}</strong><small>{metadataText(node.metadata?.provider, "Model backend")}</small></header>
               <dl>
@@ -1542,7 +1561,49 @@ function SampleExecutionSummary({
         </article>;
       })}
     </div>}
-  </section>;
+    </section>
+    {inspectedInput && <ModelInputPreviewDialog
+      inspection={inspectedInput}
+      onClose={() => setInspectedInput(undefined)}
+    />}
+  </>;
+}
+
+function ModelInputPreviewDialog({
+  inspection,
+  onClose,
+}: {
+  inspection: ModelInputInspection;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return <div className="modal-backdrop model-input-preview-backdrop" onMouseDown={(event) => {
+    if (event.target === event.currentTarget) onClose();
+  }}>
+    <section className="model-input-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="model-input-preview-title">
+      <header>
+        <div><span className="eyebrow">Submitted model input</span><h2 id="model-input-preview-title">{inspection.node.node_id}</h2><small>{inspection.imageName}</small></div>
+        <button type="button" onClick={onClose} aria-label="Close model input preview">Close</button>
+      </header>
+      <div className="model-input-preview-layout">
+        <figure><img src={inspection.url} alt={`Actual image submitted to ${inspection.node.node_id}`} /></figure>
+        <aside>
+          <div><span>Model</span><strong>{metadataText(inspection.node.metadata?.model, inspection.node.node_id)}</strong></div>
+          <div><span>Source region</span><strong>{inspection.trace.source_region_pixels.join(" × ")} px</strong></div>
+          <div><span>Crop → submitted</span><strong>{inspection.trace.crop_dimensions.join("×")} → {inspection.trace.submitted_dimensions.join("×")}</strong></div>
+          <div><span>Preprocessing</span><strong>{inspection.trace.interpolation} · {inspection.trace.color_format}</strong></div>
+          <div><span>Provider effective</span><strong>{metadataText(inspection.trace.provider_effective_dimensions, "Unknown")}</strong></div>
+          <div><span>Submitted SHA-256</span><code>{inspection.trace.submitted_image_sha256}</code></div>
+        </aside>
+      </div>
+    </section>
+  </div>;
 }
 
 function SampleResultCard({

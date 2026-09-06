@@ -20,6 +20,8 @@ let runId = "";
 let reviewId = "";
 let reviewImageId = "";
 let cropRunId = "";
+let sampleEvidenceDraftId = "";
+let sampleEvidenceTestId = "";
 
 async function ensurePipelineBuilderFixture(request: APIRequestContext) {
   const providersResponse = await request.get("/api/providers");
@@ -727,6 +729,9 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
   await expect(page.getByRole("heading", { name: "Sample test complete" })).toBeVisible();
   await expect(page.getByText("Restored saved Sample Test")).toBeVisible();
+  sampleEvidenceDraftId = testedDraftId;
+  sampleEvidenceTestId = new URL(page.url()).searchParams.get("test") ?? "";
+  expect(sampleEvidenceTestId).toBeTruthy();
 
   const state = await dashboard(request);
   const project = state.projects.find((item: { id: string }) => item.id === projectId);
@@ -775,6 +780,65 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
     },
   });
   expect(createdReview.status()).toBe(201);
+});
+
+test("actual model input thumbnails open an inspectable detail dialog", async ({ page, request }, testInfo) => {
+  expect(sampleEvidenceDraftId).toBeTruthy();
+  expect(sampleEvidenceTestId).toBeTruthy();
+  const savedResponse = await request.get(
+    `/api/workflow-drafts/${sampleEvidenceDraftId}/sample-test?test_id=${sampleEvidenceTestId}`,
+  );
+  expect(savedResponse.ok()).toBeTruthy();
+  const saved = await savedResponse.json();
+  const sample = saved.sample_test.report.samples[0];
+  const node = sample.nodes[0];
+  node.metadata = {
+    ...node.metadata,
+    model: "E2E submitted-input model",
+    provider: "open_ai_compatible",
+    model_input_trace: {
+      source_region_pixels: [0, 0, sample.width, sample.height],
+      crop_dimensions: [sample.width, sample.height],
+      submitted_dimensions: [sample.width, sample.height],
+      submitted_image_sha256: "a".repeat(64),
+      normalized_pixel_digest: "b".repeat(64),
+      interpolation: "nearest",
+      color_format: "rgb8",
+      letterbox_padding: [0, 0, 0, 0],
+      provider_effective_dimensions: { status: "unknown" },
+    },
+  };
+  await page.route(
+    `**/api/workflow-drafts/${sampleEvidenceDraftId}/sample-test*`,
+    (route) => route.fulfill({ json: saved }),
+  );
+  await page.route("**/api/workflow-sample-tests/**/model-input", (route) =>
+    route.fulfill({
+      path: resolve(
+        String(testInfo.config.metadata.e2eImport),
+        "synthetic-robocup.png",
+      ),
+      contentType: "image/png",
+    }));
+
+  await page.goto(
+    `/projects/${projectId}/build/test?draft=${sampleEvidenceDraftId}&test=${sampleEvidenceTestId}`,
+  );
+  const execution = page.getByRole("region", { name: "What actually ran" });
+  const preview = execution.getByRole("button", {
+    name: `Open actual image submitted to ${node.node_id}`,
+  });
+  await expect(preview).toBeVisible();
+  await preview.click();
+  const dialog = page.getByRole("dialog", { name: node.node_id, exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("E2E submitted-input model")).toBeVisible();
+  await expect(dialog.getByRole("img", {
+    name: `Actual image submitted to ${node.node_id}`,
+  })).toBeVisible();
+  expect(await dialog.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 });
 
 test("open Run Artifact from history without entering an ID", async ({ page }) => {

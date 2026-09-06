@@ -144,9 +144,11 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .sample-execution-empty span { color: var(--aa-text-muted); font-size: 10px; }
 .model-input-evidence-list { display: grid; gap: 9px; }
 .model-input-evidence { min-width: 0; display: grid; grid-template-columns: minmax(120px, .42fr) minmax(0, 1fr); gap: 12px; padding: 10px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface); }
-.model-input-evidence figure { align-self: start; margin: 0; overflow: hidden; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); }
-.model-input-evidence figure img { display: block; width: 100%; max-height: 150px; object-fit: contain; }
-.model-input-evidence figcaption { padding: 6px 8px; border-top: 1px solid var(--aa-border); color: var(--aa-text-muted); font-size: 8px; text-align: center; }
+.model-input-evidence-preview { align-self: start; min-width: 0; overflow: hidden; display: grid; padding: 0; border-color: var(--aa-border); border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); box-shadow: none; color: var(--aa-text); text-align: left; }
+.model-input-evidence-preview:hover:not(:disabled), .model-input-evidence-preview:focus-visible { border-color: var(--aa-primary); background: var(--aa-primary-soft); }
+.model-input-evidence-preview img { display: block; width: 100%; height: auto; max-height: 150px; margin: 0; object-fit: contain; background: var(--aa-surface-muted); }
+.model-input-evidence-preview > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border-top: 1px solid var(--aa-border); font-size: 8px; }
+.model-input-evidence-preview small { color: var(--aa-primary); white-space: nowrap; }
 .model-input-placeholder { display: grid; min-height: 90px; place-items: center; padding: 8px; border: 1px dashed var(--aa-border-strong); border-radius: var(--aa-radius-sm); color: var(--aa-text-muted); font-size: 9px; text-align: center; }
 .model-input-evidence-body { min-width: 0; display: grid; align-content: start; gap: 9px; }
 .model-input-evidence-body > header { display: grid; gap: 2px; }
@@ -157,6 +159,19 @@ button.danger-text { color: var(--aa-danger-text); border-color: color-mix(in sr
 .model-input-evidence-body dt { color: var(--aa-text-muted); font-size: 8px; font-weight: 700; text-transform: uppercase; }
 .model-input-evidence-body dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 9px; font-weight: 650; }
 .model-input-evidence-body code { max-width: 100%; overflow: hidden; color: var(--aa-text-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.model-input-preview-backdrop { z-index: 80; }
+.model-input-preview-dialog { width: min(1220px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); overflow: auto; display: grid; gap: 16px; padding: 20px; box-sizing: border-box; border: 1px solid var(--aa-border-strong); border-radius: var(--aa-radius-lg); background: var(--aa-surface); box-shadow: var(--aa-shadow-md); }
+.model-input-preview-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.model-input-preview-dialog > header > div { min-width: 0; display: grid; gap: 4px; }
+.model-input-preview-dialog h2 { margin: 0; overflow-wrap: anywhere; font-size: 22px; }
+.model-input-preview-dialog header small { color: var(--aa-text-muted); overflow-wrap: anywhere; }
+.model-input-preview-layout { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 310px); gap: 16px; align-items: start; }
+.model-input-preview-layout figure { min-width: 0; min-height: 320px; max-height: calc(100dvh - 150px); display: grid; place-items: center; margin: 0; overflow: auto; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); background: var(--aa-surface-muted); }
+.model-input-preview-layout figure img { display: block; max-width: 100%; max-height: calc(100dvh - 154px); object-fit: contain; }
+.model-input-preview-layout aside { min-width: 0; display: grid; gap: 8px; }
+.model-input-preview-layout aside > div { min-width: 0; display: grid; gap: 3px; padding: 10px 11px; border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); }
+.model-input-preview-layout aside span { color: var(--aa-text-muted); font-size: 8px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.model-input-preview-layout aside strong, .model-input-preview-layout aside code { overflow-wrap: anywhere; font-size: 10px; }
 .recovery-route-summary { display: grid; gap: 7px; padding-top: 11px; border-top: 1px solid var(--aa-border); }
 .recovery-route-summary > div { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto); gap: 12px; padding: 8px 9px; border-radius: var(--aa-radius-sm); background: var(--aa-surface); }
 .recovery-route-summary > div > span { min-width: 0; display: grid; gap: 2px; }
@@ -1622,8 +1637,11 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 
 @media (max-width: 760px) {
   .model-input-evidence { grid-template-columns: 1fr; }
-  .model-input-evidence figure img { max-height: 220px; }
+  .model-input-evidence-preview img { max-height: 220px; }
   .model-input-evidence-body dl { grid-template-columns: 1fr; }
+  .model-input-preview-layout { grid-template-columns: 1fr; }
+  .model-input-preview-layout figure { min-height: 220px; max-height: 58dvh; }
+  .model-input-preview-layout figure img { max-height: 58dvh; }
   .recovery-route-summary > div { grid-template-columns: 1fr; }
   .recovery-route-summary > div > span:last-child { text-align: left; }
   .registry-page-header { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; }
@@ -1798,6 +1816,8 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
   .sample-result-card.compact { grid-template-columns: 1fr; }
   .sample-preview-backdrop { align-items: end; padding: 8px; }
   .sample-preview-dialog { width: 100%; max-height: calc(100dvh - 16px); padding: 16px; }
+  .model-input-preview-backdrop { align-items: end; padding: 8px; }
+  .model-input-preview-dialog { width: 100%; max-height: calc(100dvh - 16px); padding: 16px; }
   .sample-preview-layout { grid-template-columns: 1fr; }
   .sample-preview-canvas { min-height: 180px; }
   .pipeline-model-overview > header { align-items: flex-start; }
