@@ -9255,6 +9255,42 @@ impl LocalApplication {
         Ok(self.store.conversation_tasks(&owner, conversation)?)
     }
 
+    /// HTTP callers must validate the concrete Registry/data scope before admission.
+    pub fn authorize_conversation_task_calls(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        grant: &annotagent_storage::ConversationCallGrant,
+    ) -> Result<()> {
+        if !self
+            .conversation_tasks(project_id, conversation)?
+            .iter()
+            .any(|task| task.input.id == grant.task_id)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.authorize_conversation_calls(&owner, grant)?)
+    }
+
+    pub fn conversation_call_receipt(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+        call: uuid::Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationCallReceipt>> {
+        if !self
+            .conversation_tasks(project_id, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.conversation_call(&owner, task, call)?)
+    }
+
     pub fn project_conversation(&self, project_id: &str) -> Result<Option<uuid::Uuid>> {
         let owner = self.conversation_project_identity(project_id)?;
         Ok(self.store.project_conversation(&owner)?)

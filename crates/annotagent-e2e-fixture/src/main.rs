@@ -373,6 +373,17 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if tools.contains_key("propose_annotation_schema") {
+        let serialized = request.to_string();
+        if serialized.contains("image_url") {
+            return Json(json!({"error":"TEST schema proposal must be text only"}));
+        }
+        let classification = serialized.contains("室内");
+        let arguments = json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"});
+        return Json(
+            json!({"id":format!("TEST-schema-{}",uuid::Uuid::new_v4()),"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"test-schema-call","type":"function","function":{"name":"propose_annotation_schema","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}}),
+        );
+    }
     let called = called_tools(&request);
     let preferences = [
         "get_pipeline_builder_context",

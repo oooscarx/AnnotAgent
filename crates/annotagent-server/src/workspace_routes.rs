@@ -29,6 +29,9 @@ use super::{
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-preview", get(super::conversation_schema::preview))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-proposals", post(super::conversation_schema::propose))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}", get(super::conversation_schema::receipt))
         .route(
             "/api/projects/{project_id}/conversations",
             get(super::conversations::current).post(super::conversations::create),

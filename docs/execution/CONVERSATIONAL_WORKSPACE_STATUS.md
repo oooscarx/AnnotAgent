@@ -239,6 +239,42 @@ No frontend changes/screenshots or restart of the real user workspace.
 M4: exact publication/Batch cards, Review/export and management returns, reconnect,
 performance, split-pane keyboard/narrow layout, full regressions and two golden paths.
 
+### Registry-backed Schema HTTP consent boundary (M2, continued)
+
+Added Project/Conversation/Task-owned `schema-preview`, `schema-proposals` and call
+receipt GET routes. Preview resolves the existing planning-model Registry binding,
+checks task ownership/current Schema and hashes actual model revision, Provider
+configuration, task identity and text-only scope. Public output contains model,
+destination, one-call cap, output-token bound, expiry and **unknown cost**, not secrets.
+POST requires explicit unknown-cost acknowledgement and the unchanged scope digest;
+credential resolution reuses the existing secret service. It authorizes one Schema
+completion, not dataset processing, publication or annotation acceptance.
+
+This path forces OpenAI-compatible `max_retries=0` before creating the existing
+Provider, so one reservation cannot hide that adapter's transport retries. The
+endpoint is included in the existing expensive-operation concurrency limiter.
+Only POST can call the Provider; GET restores immutable receipts. Same consent/key
+returns the same saved result; a fresh key cannot silently replace the task grant.
+
+Actual isolated HTTP test (`conversation-schema.spec.ts`) **1/1 passed**, 19.2s,
+workspace `/tmp/annotagent-guided-e2e-78198`. It traverses API → Registry credential
+resolution → existing OpenAI-compatible HTTP transport → explicitly scripted TEST
+fixture → durable receipt for both bbox and Chinese classification. It checks no
+consent/stale scope rejection, identical POST/GET recovery, fresh-key rejection,
+retained usage and unchanged Project Schema. Fixture refuses image-url input.
+This is protocol integration evidence, not Live LLM inference/accuracy evidence.
+Server/Application/fixture all-target/all-feature strict Clippy and production
+web build passed; existing chunk-size warning remains. No new screen capture: the
+conversation UI has not yet been wired to this operation.
+
+Before default UI rollout: add directly reachable cancellation and task progress,
+then bind the consent card and persisted proposal card to these endpoints. Explicit
+additional authorization must extend the existing task ledger without resetting
+spent calls before Builder and image testing can proceed. Current one-call Schema
+consent deliberately cannot authorize those later phases. Full task cancellation,
+budget extension, Schema Draft persistence/application and Builder linkage remain
+unfinished; they are not substituted by this HTTP slice.
+
 No live Provider validation, new UI usability claim, accuracy claim or human-user
 testing has been performed. Native zoom and OS assistive-technology checks remain
 unexecuted. No new model, Python Worker, autonomous install or permissive tool API.
