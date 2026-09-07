@@ -1,5 +1,14 @@
 # Guided Journey UI — execution record
 
+## Scoped resume: Builder Draft to sample test (2026-09-08)
+
+- User resumed only the blocked sample-test transition; broader Journey development remains paused.
+- Root causes: guidance excluded `ReadyForHumanReview` and other editable Builder outcomes; registered Provider/native bindings incorrectly depended on the legacy workspace connection.
+- Guidance now recognizes all non-published/non-archived working outcomes while retaining graph validation, binding checks, sample evidence and publication boundaries. Empty working drafts remain NeedsAutomation.
+- Isolated regressions: all eight editable statuses survive application restart without pretending sample success/publication; Registry/native versus legacy credential requirement checks (2 tests passed). Existing persisted sample/publication guidance regression passed. Application strict all-target/all-feature Clippy, cargo fmt check and all-feature CLI build passed.
+- Browser verified the existing yellow_cylinder Draft f3bba068 on its exact project-scoped test deep link after restart: selected Draft preserved, sample count 1, enabled Test samples button, no blocker. Summary is ready_for_sample_test with no blockers. No live sample call, publication or dataset run performed.
+- Existing unrelated/uncommitted changes preserved; only this scoped fix and this log addition committed locally. No push or remote edits.
+
 ## Baseline (M0, 2026-09-07)
 
 Base: `main` at `3ff165a`, ten local commits ahead of origin. No AGENTS.md in

@@ -110,12 +110,13 @@ impl LocalApplication {
             }
         }
 
+        // Builder outcomes (including ReadyForHumanReview and BlockedBySetup)
+        // are still working Drafts. Existence is distinct from validation,
+        // model readiness and measured sample quality, checked below.
         let editable_draft = drafts.iter().find(|draft| {
-            matches!(
+            !matches!(
                 draft.status,
-                WorkflowDraftStatus::Suggested
-                    | WorkflowDraftStatus::Editing
-                    | WorkflowDraftStatus::Validated
+                WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
             )
         });
         let automation = published
@@ -144,11 +145,14 @@ impl LocalApplication {
                 )
             })
             .collect::<Vec<_>>();
-        let all_model_nodes_bound = model_nodes.iter().all(|node| node.model_binding.is_some());
+        let all_model_nodes_bound = model_nodes
+            .iter()
+            .all(|node| node.model_binding.is_some() || node.model_profile_binding.is_some());
         let needs_workspace_connection = model_nodes.iter().any(|node| {
-            node.model_binding
-                .as_deref()
-                .is_some_and(|binding| !binding.starts_with("mock"))
+            needs_legacy_workspace_connection(
+                node.model_profile_binding.is_some(),
+                node.model_binding.as_deref(),
+            )
         });
         let has_model_binding =
             all_model_nodes_bound && (!needs_workspace_connection || workspace_model_connected);
@@ -220,5 +224,107 @@ impl LocalApplication {
             guidance,
             readiness,
         })
+    }
+}
+
+// Registered Provider profiles and native Plugin bindings have their own
+// readiness checks. They do not depend on the legacy workspace API key.
+fn needs_legacy_workspace_connection(has_profile: bool, binding: Option<&str>) -> bool {
+    !has_profile
+        && binding.is_some_and(|binding| {
+            !binding.starts_with("mock") && !super::plugin_model_selection(binding)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ProjectStage, WorkflowConstraints, load_settings};
+
+    #[test]
+    fn registry_and_native_bindings_do_not_require_legacy_credentials() {
+        assert!(!needs_legacy_workspace_connection(
+            true,
+            Some("default-vision")
+        ));
+        assert!(!needs_legacy_workspace_connection(true, None));
+        assert!(!needs_legacy_workspace_connection(
+            false,
+            Some("model-instance:ae3efb4b-ef31-59e0-ad8d-e5bc30a6da72")
+        ));
+        assert!(!needs_legacy_workspace_connection(
+            false,
+            Some("plugin:example")
+        ));
+        assert!(!needs_legacy_workspace_connection(
+            false,
+            Some("mock-vision")
+        ));
+        assert!(needs_legacy_workspace_connection(
+            false,
+            Some("default-vision")
+        ));
+    }
+
+    #[test]
+    fn builder_outcome_drafts_remain_reachable_after_restart() {
+        let temporary = tempfile::tempdir().expect("isolated workspace");
+        let settings = load_settings(None).expect("settings");
+        let app = LocalApplication::new(temporary.path()).expect("application");
+        app.create_project("inspection", "version: 1\nproject:\n  name: Test inspection\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [component]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n")
+            .expect("Project");
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("inspection/images/sample.png"),
+        )
+        .expect("test image");
+        let mut draft = app
+            .suggest_workflow("inspection", &settings, &WorkflowConstraints::default())
+            .expect("test Draft")
+            .draft;
+        for status in [
+            WorkflowDraftStatus::Suggested,
+            WorkflowDraftStatus::Editing,
+            WorkflowDraftStatus::Invalid,
+            WorkflowDraftStatus::Valid,
+            WorkflowDraftStatus::Tested,
+            WorkflowDraftStatus::BlockedBySetup,
+            WorkflowDraftStatus::ReadyForHumanReview,
+            WorkflowDraftStatus::Validated,
+        ] {
+            draft.status = status;
+            app.store
+                .save_workflow_draft(&draft)
+                .expect("persist Builder outcome");
+            let restarted = LocalApplication::new(temporary.path()).expect("restart");
+            let guidance = restarted
+                .project_guidance("inspection", &settings, true)
+                .expect("guidance");
+            assert_eq!(
+                guidance.stage,
+                ProjectStage::ReadyForSampleTest,
+                "{status:?}: a valid plan without sample evidence still needs testing"
+            );
+            assert!(guidance.journey.iter().any(|step| step.id == "automation"
+                && step.state == crate::ProjectJourneyState::Complete));
+            assert!(
+                restarted
+                    .store
+                    .list_published_workflow_versions(Some("inspection"))
+                    .expect("versions")
+                    .is_empty()
+            );
+        }
+        draft.nodes.clear();
+        draft.edges.clear();
+        draft.label_pipeline = None;
+        app.store
+            .save_workflow_draft(&draft)
+            .expect("empty working Draft");
+        assert_eq!(
+            app.project_guidance("inspection", &settings, true)
+                .expect("empty guidance")
+                .stage,
+            ProjectStage::NeedsAutomation
+        );
     }
 }
