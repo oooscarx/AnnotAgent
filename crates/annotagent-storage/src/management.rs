@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{cmp::Reverse, collections::BTreeSet};
 
 use annotagent_core::{
     BatchStatus, LifecycleUsageTotals, ManagementAction, ManagementBlocker, ManagementImpact,
@@ -17,6 +17,15 @@ use crate::{SqliteStore, StorageError};
 pub struct ManagementScope {
     pub project_id: String,
     pub stable_project_id: ProjectId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchLifecycleMetadata {
+    pub lifecycle_revision: u64,
+    pub archived_at: Option<String>,
+    pub deleted_at: Option<String>,
+    pub deletion_operation_id: Option<String>,
+    pub deleted_child_runs: usize,
 }
 
 #[derive(Debug)]
@@ -387,7 +396,7 @@ impl SqliteStore {
                     &operation_id,
                     now,
                 )?,
-                _ => {
+                ManagementAction::CancelAndDelete => {
                     return Err(management_error(
                         "unsupported_management_action",
                         "this lifecycle action is not implemented for Run or Dataset Run objects",
@@ -805,7 +814,7 @@ impl SqliteStore {
                     )?);
                 }
             }
-            entries.sort_by(|left, right| right.deleted_at.cmp(&left.deleted_at));
+            entries.sort_by_key(|entry| Reverse(entry.deleted_at));
             Ok(entries)
         })
     }
@@ -900,7 +909,7 @@ impl SqliteStore {
     pub fn batch_lifecycle_metadata(
         &self,
         batch_id: &str,
-    ) -> Result<(u64, Option<String>, Option<String>, Option<String>, usize), StorageError> {
+    ) -> Result<BatchLifecycleMetadata, StorageError> {
         self.with_connection(|connection| {
             connection
                 .query_row(
@@ -912,13 +921,14 @@ impl SqliteStore {
                      FROM dataset_batches b WHERE b.id = ?1",
                     [batch_id],
                     |row| {
-                        Ok((
-                            to_u64(row.get(0)?),
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            usize::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(usize::MAX),
-                        ))
+                        Ok(BatchLifecycleMetadata {
+                            lifecycle_revision: to_u64(row.get(0)?),
+                            archived_at: row.get(1)?,
+                            deleted_at: row.get(2)?,
+                            deletion_operation_id: row.get(3)?,
+                            deleted_child_runs: usize::try_from(row.get::<_, i64>(4)?.max(0))
+                                .unwrap_or(usize::MAX),
+                        })
                     },
                 )
                 .optional()?
@@ -1494,17 +1504,17 @@ fn check_version(
             }
         }
         ManagementAction::ClearDefault => {
-            if read_default(connection, &scope.project_id)?.as_ref()
-                != Some(&WorkflowVersionRef {
-                    workflow_id: version.workflow_id.clone(),
-                    version: version.version,
-                })
-            {
-                blockers.push(blocker(
+            let expected = WorkflowVersionRef {
+                workflow_id: version.workflow_id.clone(),
+                version: version.version,
+            };
+            match read_default(connection, &scope.project_id)? {
+                Some(current) if current == expected => {}
+                _ => blockers.push(blocker(
                     "default_not_selected",
                     object,
                     "This Version is not the current Project default.",
-                ));
+                )),
             }
         }
         _ => {}
@@ -1580,15 +1590,13 @@ fn check_pipeline(
             pipeline_children(connection, scope, &pipeline.workflow_id, true, None)?
                 .into_iter()
                 .filter(|child| match child.kind {
-                    ManagementObjectKind::WorkflowDraft => {
-                        read_draft(connection, &child.id).ok().is_some_and(|draft| {
+                    ManagementObjectKind::WorkflowDraft => read_draft(connection, &child.id)
+                        .is_ok_and(|draft| {
                             draft.deletion_operation_id.as_deref() != deletion_operation
-                        })
-                    }
+                        }),
                     ManagementObjectKind::WorkflowVersion => {
                         read_version(connection, &child.id, child.version.expect("Version child"))
-                            .ok()
-                            .is_some_and(|version| {
+                            .is_ok_and(|version| {
                                 version.deletion_operation_id.as_deref() != deletion_operation
                             })
                     }

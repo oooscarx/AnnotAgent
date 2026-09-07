@@ -5,7 +5,7 @@ mod management;
 mod summary;
 
 pub use batch::{BatchClaimResult, BatchImageListSummary};
-pub use management::ManagementScope;
+pub use management::{BatchLifecycleMetadata, ManagementScope};
 pub use summary::{
     PageRequest, ProjectExecutionHead, ReviewCountSummary, StoredBatchSummary, StoredReviewSummary,
     StoredRunSummary, SummaryPage,

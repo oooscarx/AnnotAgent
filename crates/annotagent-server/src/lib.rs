@@ -5548,27 +5548,32 @@ fn batch_summary_value(
         .filter_map(|image| image.get("child_run_id").cloned())
         .filter(|run_id| !run_id.is_null())
         .collect::<Vec<_>>();
-    let (lifecycle_revision, archived_at, deleted_at, deletion_operation_id, deleted_child_runs) =
-        state
-            .application
-            .store()
-            .batch_lifecycle_metadata(&batch.id.to_string())
-            .map_err(|error| ApiError::management(error.into()))?;
-    let in_trash = deleted_at.is_some();
+    let lifecycle = state
+        .application
+        .store()
+        .batch_lifecycle_metadata(&batch.id.to_string())
+        .map_err(|error| ApiError::management(error.into()))?;
+    let in_trash = lifecycle.deleted_at.is_some();
     let mut summary = serde_json::to_value(batch).map_err(ApiError::internal)?;
     if let Value::Object(fields) = &mut summary {
         fields.insert("progress".to_owned(), json!(progress));
         fields.insert("child_run_ids".to_owned(), Value::Array(child_run_ids));
         fields.insert("images".to_owned(), Value::Array(images));
-        fields.insert("lifecycle_revision".to_owned(), json!(lifecycle_revision));
-        fields.insert("archived_at".to_owned(), json!(archived_at));
-        fields.insert("deleted_at".to_owned(), json!(deleted_at));
+        fields.insert(
+            "lifecycle_revision".to_owned(),
+            json!(lifecycle.lifecycle_revision),
+        );
+        fields.insert("archived_at".to_owned(), json!(lifecycle.archived_at));
+        fields.insert("deleted_at".to_owned(), json!(lifecycle.deleted_at));
         fields.insert(
             "deletion_operation_id".to_owned(),
-            json!(deletion_operation_id),
+            json!(lifecycle.deletion_operation_id),
         );
         fields.insert("in_trash".to_owned(), json!(in_trash));
-        fields.insert("deleted_child_runs".to_owned(), json!(deleted_child_runs));
+        fields.insert(
+            "deleted_child_runs".to_owned(),
+            json!(lifecycle.deleted_child_runs),
+        );
     }
     Ok(summary)
 }

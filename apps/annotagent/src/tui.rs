@@ -1109,7 +1109,10 @@ impl TuiState {
                     .lifecycle_revision
             }
             ManagementObjectKind::Batch => {
-                self.application.store().batch_lifecycle_metadata(&id)?.0
+                self.application
+                    .store()
+                    .batch_lifecycle_metadata(&id)?
+                    .lifecycle_revision
             }
             ManagementObjectKind::WorkflowDraft => self
                 .application
