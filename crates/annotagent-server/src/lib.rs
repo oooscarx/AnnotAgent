@@ -3518,6 +3518,8 @@ struct SuggestWorkflowRequest {
     target_task_id: Option<String>,
     target_label: Option<String>,
     agent_model_profile_id: Option<ModelProfileId>,
+    /// The bounded Journey confirms a concrete connection and saved goal before sending text.
+    planning_authorization: Option<PlanningAuthorization>,
     /// Optional persisted session/Draft used for a progress-safe retry. Fresh budgets are created;
     /// the editable Draft and its unresolved requirements are retained.
     retry_session_id: Option<uuid::Uuid>,
@@ -3530,6 +3532,15 @@ struct SuggestWorkflowRequest {
     constraints: WorkflowConstraints,
     #[serde(default)]
     builder_constraints: PipelineBuilderConstraints,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanningAuthorization {
+    model_revision: u64,
+    provider_id: ProviderId,
+    base_url: String,
+    goal_revision: String,
 }
 
 fn default_workflow_advisor() -> String {
@@ -3618,6 +3629,22 @@ async fn suggest_workflow(
                 .application
                 .resolve_pipeline_builder_model(&request.project_id, request.agent_model_profile_id)
                 .map_err(ApiError::bad_request)?;
+            if let Some(approval) = &request.planning_authorization {
+                let goal = state
+                    .application
+                    .project_goal(&request.project_id)
+                    .map_err(ApiError::bad_request)?;
+                if selected_model.model.revision != approval.model_revision
+                    || selected_model.provider.id != approval.provider_id
+                    || selected_model.provider.base_url.as_str() != approval.base_url
+                    || goal["revision"].as_str() != Some(approval.goal_revision.as_str())
+                    || request.builder_constraints.maximum_dry_runs != 0
+                {
+                    return Err(ApiError::bad_request(
+                        "Planning scope changed. Return to the saved goal and review the connection again; no model request was sent.",
+                    ));
+                }
+            }
             if selected_model.provider.adapter == ProviderAdapterKind::Mock {
                 return Err(ApiError::bad_request(
                     "Scripted Mock is available through advisor=mock; choose an OpenAI-compatible Model Profile for advisor=llm",

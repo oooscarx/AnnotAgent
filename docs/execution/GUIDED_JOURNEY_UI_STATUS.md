@@ -385,3 +385,13 @@ recovery, management deletion/restoration and existing SDK/plugin checks.
   native model bundles. Existing plugin installation remains in management until
   a task-scoped native setup return path is implemented and verified. This is
   not reported as a completed local-model first-use path.
+
+### Planning confirmation freshness
+
+Guided planning submits the displayed model revision, Provider identity/endpoint
+and saved goal revision. The server rejects a stale scope before resolving
+credentials or creating the Agent session; this path also requires zero image
+dry runs. This is an entry-time validation, not a lock on all subsequent Project
+edits. Isolated browser regression tested five rejected scopes, unchanged session
+inventory, then the authorized planning → samples → processing path (1/1 passed).
+No live Provider was used. Check: `cargo check --workspace` passed.

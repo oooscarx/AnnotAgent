@@ -120,7 +120,9 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
         priority: "balanced", max_model_calls_per_image: 4, allow_external_models: true,
         allow_human_review: true, maximum_agent_turns: 16, maximum_tool_calls: 48,
         maximum_dry_runs: 0, maximum_agent_cost: "1",
-      }, model.id);
+      }, model.id, undefined, { kind: "from_scratch" }, {
+        model_revision: model.revision, provider_id: model.provider_id, base_url: destination, goal_revision: saved!.revision,
+      });
       if (!mounted.current) return;
       leaving.current = true; onNavigationGuardChange(undefined);
       if (proposal.agent_session && proposal.agent_session.outcome !== "draft_ready_for_human_review") {

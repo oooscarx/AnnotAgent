@@ -752,6 +752,7 @@ export const api = {
     agentModelProfileId?: string,
     retry?: { session_id?: string; base_draft_id?: string },
     buildMode: PipelineBuildMode = { kind: "from_scratch" },
+    planningAuthorization?: { model_revision: number; provider_id: string; base_url: string; goal_revision: string },
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",
@@ -764,6 +765,7 @@ export const api = {
         constraints: { require_review_gate: true, ...constraints },
         builder_constraints: builderConstraints,
         build_mode: buildMode,
+        ...(planningAuthorization ? { planning_authorization: planningAuthorization } : {}),
         ...(agentModelProfileId
           ? { agent_model_profile_id: agentModelProfileId }
           : {}),

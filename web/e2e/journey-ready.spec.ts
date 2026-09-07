@@ -27,6 +27,27 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Prepare sample results", exact: true }).click();
   await expect(page.getByRole("region", { name: "Planning authorization" })).toBeVisible();
   expect(sampleRequests).toEqual([]);
+  // A stale confirmation must be rejected before creating a planning session.
+  await page.route("**/api/workflow-drafts/suggest", async (route) => {
+    const input = route.request().postDataJSON();
+    expect(input.planning_authorization.model_revision).toBeGreaterThan(0);
+    const before = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
+    for (const patch of [
+      { model_revision: input.planning_authorization.model_revision + 1 },
+      { provider_id: crypto.randomUUID() },
+      { base_url: "http://127.0.0.1:1/not-approved" },
+      { goal_revision: "stale-goal" },
+    ]) {
+      const rejected = await request.post("/api/workflow-drafts/suggest", { data: { ...input, planning_authorization: { ...input.planning_authorization, ...patch } } });
+      expect(rejected.status()).toBe(400);
+      expect(await rejected.text()).toContain("no model request was sent");
+    }
+    const withImageCalls = await request.post("/api/workflow-drafts/suggest", { data: { ...input, builder_constraints: { ...input.builder_constraints, maximum_dry_runs: 1 } } });
+    expect(withImageCalls.status()).toBe(400);
+    const after = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
+    expect(after.sessions).toEqual(before.sessions);
+    await route.continue();
+  }, { times: 1 });
   await page.getByRole("button", { name: "Authorize planning", exact: true }).click();
   await expect(page).toHaveURL(/\/task\/samples\?draft=/, { timeout: 60_000 });
   await expect(page.getByRole("region", { name: "Sample authorization" })).toBeVisible();
