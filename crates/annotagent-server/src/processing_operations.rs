@@ -295,6 +295,13 @@ async fn execute_confirmation(
             revision: input.expected_revision,
             models: serde_json::from_value(authorization["models"].clone())
                 .map_err(ApiError::internal)?,
+            plugin_models: serde_json::from_value(
+                authorization
+                    .get("plugin_models")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(ApiError::internal)?,
             project_schema_hash: authorization["project_schema_hash"]
                 .as_str()
                 .unwrap_or_default()

@@ -6374,6 +6374,7 @@ pub struct PublicationApproval {
     pub sample_test_id: String,
     pub revision: u64,
     pub models: Vec<ModelProfileSnapshot>,
+    pub plugin_models: Vec<PluginModelSnapshot>,
     pub project_schema_hash: String,
 }
 
@@ -17012,6 +17013,14 @@ impl LocalApplication {
         Ok((draft, profiles))
     }
 
+    /// Freeze installed native identities using the same checks as immutable publication.
+    pub fn workflow_draft_plugin_model_snapshots(
+        &self,
+        draft: &WorkflowDraft,
+    ) -> Result<Vec<PluginModelSnapshot>> {
+        self.freeze_plugin_models(draft)
+    }
+
     fn freeze_plugin_models(&self, draft: &WorkflowDraft) -> Result<Vec<PluginModelSnapshot>> {
         let referenced = draft
             .nodes
@@ -17440,14 +17449,15 @@ impl LocalApplication {
             bail!("workflow cannot be published: {blockers}");
         }
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
+        let plugin_models = self.freeze_plugin_models(&draft)?;
         if let Some(approval) = approval
             && (model_profiles != approval.models
+                || plugin_models != approval.plugin_models
                 || self.project_execution_schema_hash(&draft.project_id)?
                     != approval.project_schema_hash)
         {
             bail!("The approved models or Project definition changed before publication");
         }
-        let plugin_models = self.freeze_plugin_models(&draft)?;
         let (_, models) = self.workflow_catalog(settings)?;
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())

@@ -615,4 +615,37 @@ Web typecheck/build passed, and 90 unit tests passed. It verifies persisted
 missing-target reason matches the server response immediately, stable addition ID
 across edits/reloads, identical revision body after a lost successful response,
 no inherited model score on corrections, and unchanged formal export readiness.
+
+Human subject increment commit: `c98d968`.
+
+### Native-model scope prerequisite — one call allowance, frozen approval
+
+Audit confirmed why native models cannot simply be enabled in the guided gate:
+the existing request allowance wrapped remote providers/backends, but native
+PipelineModelBackend instances were constructed later and did not share it.
+The existing adapter now wraps native classification, detection and prompted
+segmentation calls in both published execution paths. It uses the same shared
+sample allowance or durable Batch allowance; it is not a second Runtime. Remote
+calls retain their existing wrappers and are not counted twice. A plugin process
+may be prepared before an exhausted inference is rejected, but no inference
+request is sent after the allowance is exhausted.
+
+PublicationApproval now explicitly compares native snapshots as well as Provider
+profiles. The read-only native snapshot helper reuses publication's installed
+version/digest/readiness checks. Existing confirmations without native models keep
+an empty native scope. Guided native execution is NOT enabled yet: consent,
+sample seals, partial-publication recovery and task setup still need to include
+and display this scope before the unsupported-binding gate can be lifted safely.
+
+Verification: native pipeline adapter test proves concurrent calls across two
+backends share a quota with other adapters and fail before inference when the
+durable Batch allowance is missing. Strict all-feature Clippy and **513 Rust
+tests passed / 5 real-weight tests ignored**. Existing plugin process fixture
+tests ran, but are not a real SAM accuracy claim. Build and guided confirmation
+browser regression are checked below before commit.
+
+All-feature build passed. The isolated end-to-end journey **1/1 passed**,
+including exact-revision publication, partial-start recovery and fixed Batch
+creation. This increment changes no default model availability claim and makes
+no external call against a real Provider or model installation.
 Full suite evidence above remains 62/62 before these narrowly retested changes.

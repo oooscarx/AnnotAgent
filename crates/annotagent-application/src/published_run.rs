@@ -89,6 +89,7 @@ impl ApplicationImageRuntime for AgentRuntime {
 }
 
 pub(crate) struct PublishedWorkflowRuntime {
+    call_allowance: Option<crate::sample_limits::SampleCalls>,
     workflow: PublishedWorkflowVersion,
     provider_name: String,
     model_name: String,
@@ -128,6 +129,7 @@ impl PublishedWorkflowRuntime {
     }
 
     fn apply_request_allowance(&mut self, calls: &crate::sample_limits::SampleCalls) {
+        self.call_allowance = Some(calls.clone());
         self.external_backend = self
             .external_backend
             .take()
@@ -258,6 +260,7 @@ impl PublishedWorkflowRuntime {
         };
         let (events, _) = broadcast::channel(512);
         Ok(Self {
+            call_allowance: None,
             workflow,
             provider_name,
             model_name,
@@ -421,6 +424,7 @@ impl PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundClassificationRunner {
+                            call_allowance: self.call_allowance.clone(),
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
@@ -484,6 +488,7 @@ impl PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundDetectionRunner {
+                            call_allowance: self.call_allowance.clone(),
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             source_image: request.image.clone(),
@@ -499,6 +504,7 @@ impl PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundPromptedSegmentationRunner {
+                            call_allowance: self.call_allowance.clone(),
                             source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
@@ -1141,6 +1147,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundClassificationRunner {
+                            call_allowance: self.call_allowance.clone(),
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             model_image: request.model_image.clone(),
@@ -1204,6 +1211,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundDetectionRunner {
+                            call_allowance: self.call_allowance.clone(),
                             default_execution: self.default_execution(),
                             profile_executions: self.profile_executions.clone(),
                             source_image: request.image.clone(),
@@ -1219,6 +1227,7 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                     executor.register_runner(
                         node.node_type.clone(),
                         Arc::new(BoundPromptedSegmentationRunner {
+                            call_allowance: self.call_allowance.clone(),
                             source_image: request.image.clone(),
                             detection_workers: self.detection_workers.clone(),
                             allow_test_fixtures: self.provider_name == "mock",
@@ -1744,6 +1753,7 @@ impl DagNodeRunner for ExistingAnnotationsRunner {
 }
 
 struct BoundClassificationRunner {
+    call_allowance: Option<crate::sample_limits::SampleCalls>,
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     model_image: Option<annotagent_core::ModelImage>,
@@ -1792,6 +1802,10 @@ impl DagNodeRunner for BoundClassificationRunner {
                 "classification requires a configured live Provider Model Profile",
             ));
         };
+        let backend = match (plugin_model_id, &self.call_allowance) {
+            (Some(_), Some(calls)) => calls.pipeline(backend),
+            _ => backend,
+        };
         let runner = ClassificationSkillRunner::new(
             backend,
             plugin_model_id.unwrap_or(&execution.model_name).to_owned(),
@@ -1809,6 +1823,7 @@ impl DagNodeRunner for BoundClassificationRunner {
 }
 
 struct BoundDetectionRunner {
+    call_allowance: Option<crate::sample_limits::SampleCalls>,
     default_execution: ModelExecution,
     profile_executions: BTreeMap<ModelProfileId, ModelExecution>,
     source_image: Arc<annotagent_core::ImageFrame>,
@@ -1819,6 +1834,7 @@ struct BoundDetectionRunner {
 }
 
 struct BoundPromptedSegmentationRunner {
+    call_allowance: Option<crate::sample_limits::SampleCalls>,
     source_image: Arc<annotagent_core::ImageFrame>,
     detection_workers: Vec<DetectionWorkerSettings>,
     allow_test_fixtures: bool,
@@ -1925,6 +1941,10 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
             prepared.metadata.height,
         )
         .map_err(|error| DagNodeFailure::terminal("segmentation_input", error.to_string()))?;
+        let backend = match (plugin_bound, &self.call_allowance) {
+            (true, Some(calls)) => calls.pipeline(backend),
+            _ => backend,
+        };
         let mut output = PromptedSegmentationRunner::new(backend, model_id, Some(model_image))
             .map_err(|error| DagNodeFailure::terminal("segmentation_binding", error.to_string()))?
             .run(context)
@@ -2075,6 +2095,10 @@ impl DagNodeRunner for BoundDetectionRunner {
             )
             .await
             .map_err(|error| DagNodeFailure::terminal("detection_plugin", error.to_string()))?;
+            let backend = match &self.call_allowance {
+                Some(calls) => calls.pipeline(backend),
+                None => backend,
+            };
             ObjectDetectionSkillRunner::new(backend, model_id, model_image.clone())
                 .map_err(|error| DagNodeFailure::terminal("detection_binding", error.to_string()))?
                 .run(context)

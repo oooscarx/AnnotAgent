@@ -1,6 +1,7 @@
 //! A shared sandbox-call allowance around existing model adapters, not a new executor.
 use annotagent_core::{
-    CoreError, CoreResult, ModelCapabilities, ModelRequest, ModelResponse, VisionBackendKind,
+    CoreError, CoreResult, ModelCapabilities, ModelRequest, ModelResponse,
+    PipelineInferenceRequest, PipelineInferenceResponse, PipelineModelBackend, VisionBackendKind,
     VisionCapability, VisionInferenceRequest, VisionInferenceResponse, VisionModelBackend,
     VisionModelProvider,
 };
@@ -21,6 +22,15 @@ enum CallAllowance {
     ),
 }
 impl SampleCalls {
+    pub(crate) fn pipeline(
+        &self,
+        inner: Arc<dyn PipelineModelBackend>,
+    ) -> Arc<dyn PipelineModelBackend> {
+        Arc::new(LimitedPipeline {
+            inner,
+            calls: self.clone(),
+        })
+    }
     pub(crate) fn new(limit: u64) -> Self {
         Self(Arc::new(CallAllowance::Sample(AtomicU64::new(limit))))
     }
@@ -68,6 +78,27 @@ impl SampleCalls {
             inner,
             calls: self.clone(),
         })
+    }
+}
+struct LimitedPipeline {
+    inner: Arc<dyn PipelineModelBackend>,
+    calls: SampleCalls,
+}
+#[async_trait]
+impl PipelineModelBackend for LimitedPipeline {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn capability(&self) -> VisionCapability {
+        self.inner.capability()
+    }
+    async fn infer_pipeline(
+        &self,
+        request: PipelineInferenceRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<PipelineInferenceResponse> {
+        self.calls.reserve()?;
+        self.inner.infer_pipeline(request, cancellation).await
     }
 }
 struct LimitedProvider {
@@ -119,6 +150,87 @@ impl VisionModelBackend for LimitedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct CountingPipeline(Arc<AtomicU64>);
+    #[async_trait]
+    impl PipelineModelBackend for CountingPipeline {
+        fn id(&self) -> &str {
+            "offline-call-counter"
+        }
+        fn capability(&self) -> VisionCapability {
+            VisionCapability::Classification
+        }
+        async fn infer_pipeline(
+            &self,
+            _request: PipelineInferenceRequest,
+            _cancellation: CancellationToken,
+        ) -> CoreResult<PipelineInferenceResponse> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(PipelineInferenceResponse::default())
+        }
+    }
+    fn pipeline_request() -> PipelineInferenceRequest {
+        PipelineInferenceRequest {
+            protocol_version: annotagent_core::PIPELINE_VISION_PROTOCOL_VERSION,
+            request_id: "bounded-call-test".into(),
+            run_id: annotagent_core::RunId::new(),
+            image_id: annotagent_core::ImageId::new(),
+            node_id: "classify".into(),
+            model_id: "offline-call-counter".into(),
+            operation: VisionCapability::Classification,
+            image: None,
+            input_artifacts: Vec::new(),
+            parameters: std::collections::BTreeMap::new(),
+            timeout_ms: None,
+        }
+    }
+    #[tokio::test]
+    async fn native_pipeline_calls_share_the_allowance_and_fail_before_inference() {
+        let calls = SampleCalls::new(3);
+        let invoked = Arc::new(AtomicU64::new(0));
+        let first = calls.pipeline(Arc::new(CountingPipeline(invoked.clone())));
+        let second = calls.pipeline(Arc::new(CountingPipeline(invoked.clone())));
+        assert_eq!(first.id(), "offline-call-counter");
+        assert_eq!(first.capability(), VisionCapability::Classification);
+        // One reservation by another adapter leaves only two native calls.
+        calls.reserve().unwrap();
+        let mut handles = Vec::new();
+        for index in 0..16 {
+            let backend = if index % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            handles.push(tokio::spawn(async move {
+                backend
+                    .infer_pipeline(pipeline_request(), CancellationToken::new())
+                    .await
+                    .is_ok()
+            }));
+        }
+        let mut successes = 0;
+        for handle in handles {
+            successes += usize::from(handle.await.unwrap());
+        }
+        assert_eq!(successes, 2);
+        assert_eq!(invoked.load(Ordering::SeqCst), 2);
+        assert!(calls.reserve().is_err());
+        let batch = SampleCalls::batch(
+            Arc::new(annotagent_storage::SqliteStore::open_in_memory().unwrap()),
+            annotagent_core::BatchId::new(),
+        );
+        let backend = batch.pipeline(Arc::new(CountingPipeline(invoked.clone())));
+        assert!(
+            backend
+                .infer_pipeline(pipeline_request(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            invoked.load(Ordering::SeqCst),
+            2,
+            "missing durable allowance must fail closed"
+        );
+    }
     #[test]
     fn allowance_is_shared_across_images_models_and_parallel_calls() {
         let calls = SampleCalls::new(12);
