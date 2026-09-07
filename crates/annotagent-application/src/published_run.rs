@@ -1922,7 +1922,11 @@ impl DagNodeRunner for BoundPromptedSegmentationRunner {
                         DagNodeFailure::terminal("segmentation_credential", error.to_string())
                     })?,
                     expected_model_identity: Some(worker.model_id.clone()),
-                    max_retries: worker.max_retries,
+                    max_retries: if self.call_allowance.is_some() {
+                        0
+                    } else {
+                        worker.max_retries
+                    },
                     max_response_bytes: worker.max_response_bytes,
                     allow_remote: worker.allow_remote,
                 })

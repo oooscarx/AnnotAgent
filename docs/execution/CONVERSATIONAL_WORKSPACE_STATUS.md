@@ -616,3 +616,36 @@ HTTP-fixture integration after the consent route is connected.
 Verification: Application all-features **93 passed, 1 billable smoke ignored**;
 Application/server all-targets/all-features Clippy passed. No browser or Live run in
 this increment; user data and unrelated dirty screenshots preserved, no push.
+
+### Conversation sample consent and history API (M2)
+
+Extended the existing project Sample Operation POST with an optional typed conversation
+consent. No parallel executor/table was introduced. A task-scoped read-only preview
+combines the existing actual model/destination/image/Draft fingerprint with a frozen
+conversation/task/Schema owner, operation ID and cumulative allowance. Start requires
+explicit unknown-cost acknowledgement, nonexpired consent and the same scope; the
+existing worker receives the composed Runtime allowance. Provider transport retries
+are disabled for this consent path. Bounded HTTP prompted-segmentation adapters also
+disable internal retries, so one admission cannot conceal several transport requests.
+
+The existing operation request stores its consent alongside execution inputs, while
+non-conversation request serialization remains unchanged. Exact repeated POSTs read
+the original receipt before resolving credentials or advancing a grant. GET history
+indexes the same Sample Operations by Project/conversation/task (latest 100; pagination
+still pending). An interrupted gap between grant persistence and operation admission
+can reuse the historical previous grant without increasing the ceiling again.
+
+Evidence: Server all-features **36/36** and Storage sample-operation **4/4** passed;
+strict server all-targets/all-features Clippy passed. Scope regression checks changed
+fingerprints, foreign tasks, stale grants, zero inference on preview and recovery of
+the authorization/admission gap. Storage regression checks consent-preserving reopen,
+duplicate admission and changed-context rejection. These tests are not a successful
+conversation HTTP vision golden path; that and the frontend sample/terminal canvas
+integration remain required. Existing Journey browser regression is being rerun in
+its isolated workspace; no paid/real workspace invocation was authorized or performed.
+
+Journey regression completed: **1/1**, 29.1s test / 46.3s total, fresh
+`/tmp/annotagent-guided-e2e-87121`. Existing actual HTTP fixture sampling, duplicate
+start, changed-scope rejection, cancellation and lost-response behavior passed. This
+is the existing Journey path, not evidence that the new conversation consent is wired
+to the UI. Production build passed with its existing >500 kB chunk warning.

@@ -18,6 +18,23 @@ pub struct SampleOperation {
 }
 
 impl SqliteStore {
+    /// Read-only index of the existing Sample Operations linked to one conversation task.
+    /// Application/HTTP callers must first validate the stable conversation owner.
+    pub fn conversation_sample_operations(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+    ) -> Result<Vec<SampleOperation>, StorageError> {
+        let ids = self.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT id FROM sample_operations WHERE project_id=?1 AND json_extract(request_json,'$.conversation.conversation_id')=?2 AND json_extract(request_json,'$.conversation.task_id')=?3 ORDER BY rowid DESC LIMIT 100")?;
+            Ok(statement.query_map(params![project,conversation.to_string(),task.to_string()], |row| row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?)
+        })?;
+        ids.iter()
+            .map(|id| self.sample_operation(id))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| items.into_iter().flatten().collect())
+    }
     pub fn sample_operation(&self, id: &str) -> Result<Option<SampleOperation>, StorageError> {
         self.with_connection(|connection| {
             connection.query_row(
@@ -165,6 +182,43 @@ mod tests {
         assert!(store.reserve_sample_operation(&one).unwrap());
         assert!(store.reserve_sample_operation(&two).unwrap());
         assert!(store.reserve_sample_operation(&three).is_err());
+    }
+
+    #[test]
+    fn conversation_index_preserves_consent_and_rejects_changed_retry_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-sample-context.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let conversation = uuid::Uuid::new_v4();
+        let task = uuid::Uuid::new_v4();
+        let mut value = operation("conversation-sample");
+        value.request = serde_json::json!({"execution":{"image_indices":[0]},"conversation":{"conversation_id":conversation,"task_id":task,"scope_hash":"TEST-scope"}});
+        assert!(store.reserve_sample_operation(&value).unwrap());
+        store.finish_sample_operation(&value.id, None).unwrap();
+        assert!(!store.reserve_sample_operation(&value).unwrap());
+        let mut changed = value.clone();
+        changed.request["conversation"]["task_id"] = serde_json::json!(uuid::Uuid::new_v4());
+        assert!(store.reserve_sample_operation(&changed).is_err());
+        drop(store);
+        let store = SqliteStore::open(path).unwrap();
+        let saved = store
+            .conversation_sample_operations("project", conversation, task)
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].request, value.request);
+        assert_eq!(saved[0].status, "succeeded");
+        assert!(
+            store
+                .conversation_sample_operations("foreign", conversation, task)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .conversation_sample_operations("project", conversation, uuid::Uuid::new_v4())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
