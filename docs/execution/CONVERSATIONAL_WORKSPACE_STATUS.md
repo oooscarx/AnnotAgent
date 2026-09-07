@@ -533,3 +533,38 @@ shared sample allowance/canvas/human requests/processing/review/export. Expired 
 changed-registry POST retries may require GET recovery and a new explicit consent;
 they never automatically re-execute. No real workspace migration/restart, Live calls,
 push, remote mutation or human usability validation occurred.
+
+### Conversation Builder card (M2, continued)
+
+The editable Schema card now offers a real Builder consent panel, with actual model/
+endpoint, no-image scope, previous spend, bounded additional calls, cumulative ceiling
+and unknown cost acknowledgement. Starting calls the implemented HTTP operation;
+progress reads its real Agent Session phase/next action. Stop remains directly visible.
+Model work is never started by mounting, polling or reload. Polls are read-only and
+locally deduplicated. A lost completion response is recovered from operation history;
+known pre-admission rejection no longer leaves the screen permanently "running".
+
+Saved outcomes show setup requirements rather than implying a runnable plan. The
+existing project-scoped Pipeline details deep link carries its Draft and Session.
+Builder history now reports the frozen Schema revision; changing saved labels does
+not relabel an older operation as using the latest revision. Schema edits cannot be
+submitted as a new build while the edit is unsaved. Starting another operation clears
+the previous local Session display so its phase cannot masquerade as new progress.
+
+Evidence: Web typecheck and **105/105** unit tests passed, strict Application/server
+Clippy passed. Isolated browser **1/1**, 7.4s, `/tmp/annotagent-guided-e2e-85369`, exercises
+Schema revision 3→consent checkbox→real Builder HTTP→saved outcome and scoped detail
+link. It drops the completed POST response and restores via GET, verifies reload sends
+zero POST requests, and verifies a held Builder POST can be stopped before admission,
+settles interrupted and stays stopped after reload. Updated desktop/mobile Schema
+screenshots and added `builder-cancelled.png`; mobile outcome wrapping inspected.
+These are deliberately TEST goal-before-upload/setup-required results, not Live model
+quality evidence. Production build retains its existing chunk-size warning.
+
+Remaining: successful sample inference/terminal canvas in this workspace, structured
+human feedback/outbox, resumable repair of existing Builder operations, native-model
+shared budget, complete processing/review/export and global default rollout. The
+current "another build" is explicitly a new Draft request, not a resumed repair.
+Active in-flight Provider cancellation still needs dedicated browser verification.
+No real workspace restart/data changes, push, remote changes or real-user usability
+test occurred. The full objective remains active.

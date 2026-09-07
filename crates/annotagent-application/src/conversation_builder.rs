@@ -103,7 +103,8 @@ impl LocalApplication {
                     .get_agent_session(operation.id)
                     .ok()
                     .filter(|session| session.project_id.as_deref() == Some(project));
-                serde_json::json!({"operation":operation,"session":session})
+                let schema_revision=self.store.get_workflow_draft(&operation.id.to_string()).ok().filter(|draft|draft.project_id==project).and_then(|draft|draft.annotation_schema.map(|binding|binding.revision));
+                serde_json::json!({"operation":operation,"session":session,"schema_revision":schema_revision})
             })
             .collect::<Vec<_>>();
         Ok(serde_json::json!({"items":items}))
@@ -226,7 +227,7 @@ impl LocalApplication {
                 Some(execution.operation_id),
             )
             .await?;
-        self.store.settle_conversation_builder(&owner,execution.task_id,execution.operation_id,true,&serde_json::json!({"session_id":report.session.id,"draft_id":report.suggestion.as_ref().map(|suggestion|&suggestion.draft.id),"outcome":report.session.outcome,"published":false,"samples_tested":false}))?;
+        self.store.settle_conversation_builder(&owner,execution.task_id,execution.operation_id,true,&serde_json::json!({"session_id":report.session.id,"draft_id":report.suggestion.as_ref().map(|suggestion|&suggestion.draft.id),"outcome":report.session.outcome,"schema_id":execution.schema_id,"schema_revision":execution.schema_revision,"published":false,"samples_tested":false}))?;
         self.store
             .conversation_builder_operation(&owner, execution.task_id, execution.operation_id)?
             .ok_or_else(|| anyhow!("Builder receipt missing"))

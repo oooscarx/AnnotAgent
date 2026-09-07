@@ -117,12 +117,45 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await expect(page.getByLabel("Labels · one per line",{exact:true})).toHaveValue("TEST recovered edit");
   await page.getByRole("button",{name:"Retry same Schema save",exact:true}).click();
   await expect(page.getByText("Schema Draft saved · Revision 3",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Build Pipeline Draft",exact:true})).toBeDisabled();
+  await page.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown",exact:true}).check();
+  await page.route("**/builder-operations",async(route)=>{
+    if(route.request().method()!=="POST"){await route.continue();return;}
+    const response=await route.fetch();expect(response.ok()).toBeTruthy();await route.abort("failed");
+  },{times:1});
+  await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Open saved Pipeline details",exact:true})).toHaveAttribute("href",new RegExp(`/projects/${uiProject}/build/pipeline\\?`));
+  reloadWrites=0;
+  await page.reload();
+  await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
+  expect(reloadWrites).toBe(0);
   for (const width of [1440,390]) {
     await page.setViewportSize({width,height:width===390?844:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({path:`../docs/execution/conversational-workspace/schema-${width}.png`,fullPage:true,animations:"disabled"});
   }
   const cancelProject = `${uiProject}-cancel`;
+  await page.getByRole("button",{name:"Review another build request",exact:true}).click();
+  await page.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown",exact:true}).check();
+  let releaseBuilder!:()=>void;
+  const holdBuilder=new Promise<void>((resolve)=>{releaseBuilder=resolve;});
+  await page.route("**/builder-operations",async(route)=>{if(route.request().method()==="POST")await holdBuilder;await route.continue();});
+  const builderSubmitted=page.waitForRequest((req)=>req.method()==="POST" && req.url().endsWith("/builder-operations"));
+  await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  const builderPending=await builderSubmitted;
+  await page.getByRole("button",{name:"Stop Builder",exact:true}).click();
+  await expect(page.getByText(/^Cancellation saved\. Waiting for the server/)).toBeVisible();
+  const builderStopped=page.waitForResponse((res)=>res.url()===builderPending.url() && res.request().method()==="POST");
+  releaseBuilder();expect((await builderStopped).status()).toBe(400);
+  await page.unroute("**/builder-operations");
+  await expect(page.getByText("Build interrupted",{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Build interrupted",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Stop Builder",exact:true})).toHaveCount(0);
+  await page.screenshot({path:"../docs/execution/conversational-workspace/builder-cancelled.png",fullPage:true,animations:"disabled"});
   expect((await request.post("/api/projects",{data:{id:cancelProject,yaml}})).ok()).toBeTruthy();
   await page.setViewportSize({width:1440,height:900});
   await page.goto(`/projects/${cancelProject}/work`);

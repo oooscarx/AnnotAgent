@@ -1879,6 +1879,20 @@ export interface ConversationSchemaDraft {
     attributes: Record<string, { type: string; required: boolean; values: string[] }>;
   } };
 }
+export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string }
+export interface ConversationBuilderPreview {
+  selection: ConversationBuilderSelection; previous_grant_id: string; scope_hash: string; expires_at: string;
+  model_name: string; remote_model: string; destination: string; maximum_builder_calls: number; maximum_calls: number;
+  used_calls: number; image_count: number; estimated_cost: null; data_scope: string; operation: string;
+}
+export interface ConversationBuilderConsent {
+  selection: ConversationBuilderSelection; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean;
+}
+export interface ConversationBuilderOperation {
+  id: string; task_id: string; request_hash: string; status: "reserved" | "completed" | "interrupted";
+  evidence?: { draft_id?: string; session_id?: string; outcome?: string; error?: string; schema_revision?: number; schema_id?: string };
+}
+export interface ConversationBuilderItem { operation: ConversationBuilderOperation; session?: AgentSession | null; schema_revision?: number | null }
 export interface ConversationCallReceipt {
   id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
   evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };

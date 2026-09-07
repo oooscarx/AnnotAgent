@@ -100,7 +100,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: saved goals can produce a Schema proposal after authorization. Pipeline execution is not connected here yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: propose labels and build a Pipeline Draft after authorization. Sample execution and annotation editing are not connected here yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
