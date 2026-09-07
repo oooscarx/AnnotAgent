@@ -22,7 +22,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   navigation?: ReactNode;
 }) {
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
-    id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label,
+    id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.value.kind === "classification" ? outcome.value.labels.join(", ") : outcome.label,
     value: outcome.value, attributes: {}, confidence: outcome.confidence ?? undefined,
     source: "sample test", review_status: "needs_review" as const, provenance: { sample_test_id: testId }, created_at: "",
   }] : []);
@@ -65,8 +65,8 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       if (!current) return;
       setRevisions(values);
       const restored = original.map((annotation) => {
-        const revision = [...values].reverse().find((value) => value.outcome_id === annotation.id && value.corrected_value);
-        return revision?.corrected_value ? { ...annotation, value: revision.corrected_value } : annotation;
+        const changes = values.filter((value) => value.outcome_id === annotation.id);
+        return changes.reduce((item, change) => ({ ...item, value: change.corrected_value ?? item.value, label: change.corrected_label ?? item.label }), annotation);
       });
       setAnnotations(restored);
       const last = values.at(-1);
@@ -83,7 +83,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     return () => window.removeEventListener("beforeunload", guard);
   }, [dirty]);
   const edit = (annotation: Annotation) => {
-    if (!loaded || busy || showOriginal || showBefore || annotation.id !== selected || annotation.value.kind !== "bounding_box") return;
+    if (!loaded || busy || showOriginal || showBefore || annotation.id !== selected) return;
     setAnnotations((items) => items.map((item) => item.id === annotation.id ? annotation : item));
     setDirty(true); setSaved(false); setReason("poor_boundary"); setAttentionOpen(true);
   };
@@ -94,7 +94,8 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       revision_id: crypto.randomUUID(), sample_test_id: testId, image_id: image.image_id,
       sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason: confirm ? "correct" : reason, note,
       outcome_id: !confirm && reason === "missing_target" ? null : selected,
-      corrected_value: (confirm || reason !== "missing_target") && selectedAnnotation?.value.kind === "bounding_box" ? selectedAnnotation.value : null,
+      corrected_value: (confirm || reason !== "missing_target") ? selectedAnnotation?.value : null,
+      corrected_label: (confirm || reason !== "missing_target") ? selectedAnnotation?.label : null,
       created_at: new Date().toISOString(),
     };
     try {
@@ -109,12 +110,18 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     <section className="sample-feedback-image">
       <div className="button-row"><button aria-pressed={showOriginal} onClick={() => { setShowOriginal(true); setShowBefore(false); }}>{t("Original image")}</button>{before && <button aria-pressed={showBefore} onClick={() => { setShowOriginal(false); setShowBefore(true); }}>{t("Before adjustment")}</button>}<button aria-pressed={!showOriginal && !showBefore} onClick={() => { setShowOriginal(false); setShowBefore(false); }}>{t("Current candidates")}</button></div>
       {before && <p>{t("Compare two saved tests of this same image. A proposed change is not proof of improved accuracy.")}</p>}
-      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showBefore || selectedAnnotation?.value.kind !== "bounding_box"} onSelect={(id) => {
+      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showOriginal || showBefore} onSelect={(id) => {
         if (showBefore) return;
         if (dirty && selected !== id) { setError(t("Save or undo this correction before selecting another result.")); return; }
         setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
+    {selectedAnnotation && !showOriginal && !showBefore && <label className="sample-feedback-label">{t("Correct label")}<input aria-label={t("Correct label")} value={selectedAnnotation.label} disabled={!loaded || busy} maxLength={256} onChange={(event) => {
+      const label = event.target.value;
+      setHistory((items) => [...items, annotations]);
+      edit({ ...selectedAnnotation, label, value: selectedAnnotation.value.kind === "classification" ? { kind: "classification", labels: label.split(/[,，]/).map((item) => item.trim()).filter(Boolean) } : selectedAnnotation.value });
+      setReason("wrong_target");
+    }} /></label>}
     <details className="sample-feedback-decision" open={attentionOpen} onToggle={(event) => setAttentionOpen(event.currentTarget.open)}>
       <summary>{t("Result needs attention")}</summary>
       <div className="sample-feedback-fields">

@@ -2022,6 +2022,7 @@ export interface SampleFeedbackRevision {
   reason: "correct" | "wrong_target" | "poor_boundary" | "missing_target" | "cannot_judge";
   outcome_id?: string | null;
   corrected_value?: AnnotationValue | null;
+  corrected_label?: string | null;
   note: string;
   created_at: string;
 }

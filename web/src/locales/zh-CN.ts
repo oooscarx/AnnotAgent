@@ -1046,6 +1046,7 @@ export const zhCN: Record<string, string> = {
   "Sample Test is out of date": "样本测试已过期",
   "This saved result belongs to an earlier plan. It remains visible for reference, but cannot authorize the changed plan. Review the current sample scope before testing again.": "这是旧方案的已保存结果，仅供参考，不能用来确认修改后的方案。请先检查本次样例的范围，再重新测试。",
   "Review new sample scope": "检查新样例的授权范围",
+  "Correct label": "修正标签",
   "Back to sample adjustment": "返回样例调整",
   "The annotation goal changed during setup. Return to the saved task and check its required connection again.": "配置期间标注目标发生了变化。请返回已保存的任务，重新检查所需模型。",
   "Connect planning model": "连接方案规划模型",

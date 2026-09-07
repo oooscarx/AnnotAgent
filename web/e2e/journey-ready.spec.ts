@@ -114,7 +114,16 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   expect(JSON.stringify(annotations)).not.toContain("human_accepted");
   // Feedback revisions use a preserved copy and a separate planning/image authorization.
   await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole("button", { name: /^Annotation list/ }).click();
+  await page.locator(".canvas-annotation-list button").first().click();
+  await page.getByLabel("Correct label", { exact: true }).fill("night, indoor");
+  await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(page.getByText("Sample feedback saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("night, indoor");
+  expect(await (await request.get(`/api/projects/${projectId}/export-readiness`)).json()).toEqual(annotations);
   await page.getByText("Result needs attention", { exact: true }).click();
+  await page.getByLabel("Result to inspect", { exact: true }).selectOption("");
   await page.getByLabel("What needs attention?", { exact: true }).selectOption("cannot_judge");
   await page.getByLabel("Feedback note", { exact: true }).fill("TEST evidence: check day classification. Do not infer improvement from this fixture.");
   await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();

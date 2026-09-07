@@ -61,6 +61,7 @@ mod tests {
             sequence: 1,
             reason: SampleFeedbackReason::PoorBoundary,
             outcome_id: Some("final-1".into()),
+            corrected_label: None,
             corrected_value: Some(
                 serde_json::from_value(
                     serde_json::json!({"kind": "bounding_box", "rect": [0.51, 0.52, 0.08, 0.09]}),
@@ -213,6 +214,57 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn sample_feedback_accepts_typed_label_and_polygon_edits_not_type_changes() {
+        for (original, correction) in [
+            (
+                serde_json::json!({"kind":"classification","labels":["day"]}),
+                serde_json::json!({"kind":"classification","labels":["night"]}),
+            ),
+            (
+                serde_json::json!({"kind":"polygon","rings":[[[0.1,0.1],[0.4,0.1],[0.3,0.4]]]}),
+                serde_json::json!({"kind":"polygon","rings":[[[0.2,0.1],[0.4,0.1],[0.3,0.4]]]}),
+            ),
+        ] {
+            let store = SqliteStore::open_in_memory().unwrap();
+            let mut feedback = fixture(&store);
+            let mut sample = store
+                .get_workflow_sample_test_by_id("test-1")
+                .unwrap()
+                .unwrap();
+            sample.id = "typed-test".into();
+            sample.report.samples[0].outcomes[0].value =
+                Some(serde_json::from_value(original).unwrap());
+            store.save_workflow_sample_test(&sample).unwrap();
+            feedback.sample_test_id = sample.id.clone();
+            feedback.corrected_label = Some("Corrected target".into());
+            feedback.corrected_value = Some(serde_json::from_value(correction).unwrap());
+            store.save_sample_feedback(&feedback).unwrap();
+            assert_eq!(
+                store
+                    .sample_feedback(&sample.id, &feedback.image_id)
+                    .unwrap(),
+                vec![feedback.clone()]
+            );
+            assert_eq!(
+                store.get_workflow_sample_test_by_id(&sample.id).unwrap(),
+                Some(sample)
+            );
+            feedback.revision_id = "invalid-edit".into();
+            feedback.sequence = 2;
+            feedback.corrected_value = Some(
+                serde_json::from_value(
+                    serde_json::json!({"kind":"bounding_box","rect":[0.1,0.1,0.2,0.2]}),
+                )
+                .unwrap(),
+            );
+            assert!(store.save_sample_feedback(&feedback).is_err());
+            feedback.corrected_value = None;
+            feedback.corrected_label = Some(" ".into());
+            assert!(store.save_sample_feedback(&feedback).is_err());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -224,6 +276,8 @@ pub struct SampleFeedbackRevision {
     pub reason: SampleFeedbackReason,
     pub outcome_id: Option<String>,
     pub corrected_value: Option<annotagent_core::VisionArtifactValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrected_label: Option<String>,
     pub note: String,
     pub created_at: DateTime<Utc>,
 }
@@ -351,6 +405,15 @@ impl SqliteStore {
                 "Invalid feedback note or sequence".into(),
             ));
         }
+        if feedback
+            .corrected_label
+            .as_ref()
+            .is_some_and(|label| label.trim().is_empty() || label.len() > 256)
+        {
+            return Err(StorageError::InvalidEnum(
+                "A corrected label must contain 1–256 bytes".into(),
+            ));
+        }
         if let Some(id) = &feedback.outcome_id {
             let original = sample
                 .outcomes
@@ -360,23 +423,25 @@ impl SqliteStore {
                     StorageError::InvalidEnum("Outcome does not belong to Sample Test image".into())
                 })?;
             if let Some(value) = &feedback.corrected_value {
-                // First editable geometry is a box. Other feedback remains supported without edits.
-                let (
-                    annotagent_core::VisionArtifactValue::BoundingBox { rect },
-                    Some(annotagent_core::VisionArtifactValue::BoundingBox { .. }),
-                ) = (value, &original.value)
-                else {
+                if original.value.as_ref().is_none_or(|original| {
+                    std::mem::discriminant(value) != std::mem::discriminant(original)
+                }) {
                     return Err(StorageError::InvalidEnum(
-                        "Only bounding-box corrections are currently supported".into(),
+                        "A sample correction must retain its original output type".into(),
                     ));
-                };
-                if rect.width() <= 0.0 || rect.height() <= 0.0 {
+                }
+                value.validate().map_err(|error| {
+                    StorageError::InvalidEnum(format!("Invalid sample correction: {error}"))
+                })?;
+                if let annotagent_core::VisionArtifactValue::BoundingBox { rect } = value
+                    && (rect.width() <= 0.0 || rect.height() <= 0.0)
+                {
                     return Err(StorageError::InvalidEnum(
-                        "Corrected box must be within the original image".into(),
+                        "Corrected box must have positive dimensions".into(),
                     ));
                 }
             }
-        } else if feedback.corrected_value.is_some() {
+        } else if feedback.corrected_value.is_some() || feedback.corrected_label.is_some() {
             return Err(StorageError::InvalidEnum(
                 "A correction requires a source outcome".into(),
             ));

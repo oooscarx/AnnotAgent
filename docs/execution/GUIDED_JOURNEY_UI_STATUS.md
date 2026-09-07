@@ -542,3 +542,23 @@ unchanged write-rate protection, including its explicit lost-request retry.
 Outstanding scope is still task-native provisioning/execution compatibility,
 wider sample corrections, freshness/late-request audit and final cross-screen
 accessibility evidence. This is not a completion claim for the entire goal.
+
+Model return increment commit: `9a48c98`.
+
+### Sample correction coverage — labels and existing geometry
+
+Selected sample results now expose a compact label input outside the diagnostic
+panel. Classification supports multiple comma-separated labels without truncating
+the input while typing. Existing polygon/line/keypoint geometry uses the same
+AnnotationCanvas editor as Review; no new editing engine was introduced.
+Feedback persists optional corrected label and same-type value, replayed in
+sequence on reload. Core geometry validation and positive box dimensions apply;
+type changes and label-only edits without a source outcome are rejected.
+The immutable model prediction and formal Annotation tables are not modified.
+
+Verification: 4 storage feedback tests pass, including classification/polygon
+correction, blank labels and illegal output-type changes. Strict all-feature
+Clippy, Web typecheck and 90 Web unit tests pass. Extended isolated journey E2E
+passed (1/1): multi-label correction saves/reloads while formal export readiness
+remains byte-equivalent. Missing-target additions still need their own stable
+human subject reference and are the next implementation item, not claimed here.
