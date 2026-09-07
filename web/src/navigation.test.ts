@@ -11,8 +11,17 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("preserves exact sample image identity without moving page focus", () => {
+    const path = projectBuildPath("same name", "test", { draftId: "draft", sampleTestId: "test", imageId: "stable image" });
+    const url = new URL(path, "http://localhost");
+    const route = parseWorkspaceRoute(url.pathname, url.search);
+    expect(route).toMatchObject({ projectId: "same name", draftId: "draft", sampleTestId: "test", imageId: "stable image", canonicalPath: path });
+    const other = parseWorkspaceRoute(url.pathname, "?draft=draft&test=test&image=other");
+    expect(routeFocusKey(route)).toBe(routeFocusKey(other));
+    expect(routeFocusKey(parseWorkspaceRoute("/projects", "?new=1"))).not.toBe(routeFocusKey(parseWorkspaceRoute("/projects")));
+  });
   it("maps the five primary destinations", () => {
-    expect(parseWorkspaceRoute("/").kind).toBe("home");
+    expect(parseWorkspaceRoute("/").kind).toBe("projects");
     expect(parseWorkspaceRoute("/projects").kind).toBe("projects");
     expect(parseWorkspaceRoute("/runs").kind).toBe("runs");
     expect(parseWorkspaceRoute("/review").kind).toBe("review");
@@ -20,7 +29,7 @@ describe("guided workspace routing", () => {
   });
 
   it("migrates legacy registry routes", () => {
-    expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/");
+    expect(parseWorkspaceRoute("/dashboard").canonicalPath).toBe("/projects");
     expect(parseWorkspaceRoute("/models").canonicalPath).toBe("/settings/models");
     expect(parseWorkspaceRoute("/providers").canonicalPath).toBe("/settings");
     expect(parseWorkspaceRoute("/settings/providers").canonicalPath).toBe(

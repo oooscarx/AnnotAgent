@@ -39,6 +39,33 @@ code, pre { font-family: var(--aa-font-mono); }
 .skip-link:focus { transform: translateY(0); }
 
 .app-shell { display: grid; grid-template-columns: var(--aa-sidebar-width, 15rem) minmax(0, 1fr); min-height: 100vh; }
+.app-shell.focus-layout { display: block; }
+.focus-layout main { padding-bottom: 0; }
+.focus-header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--aa-border); background: var(--aa-surface); flex-wrap: wrap; }
+.focus-heading { flex: 1 1 220px; min-width: 0; }
+.focus-heading span, .focus-connection { color: var(--aa-text-muted); font-size: 0.8rem; }
+.focus-heading h1 { font-size: 1.15rem; margin: 0.2rem 0 0; }
+.focus-heading h1:focus { outline: none; }
+.focus-project-menu { position: relative; }
+.focus-project-menu nav { position: absolute; right: 0; top: 100%; z-index: 12; display: grid; min-width: 240px; padding: 0.75rem; gap: 0.5rem; background: var(--aa-surface); border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); box-shadow: var(--aa-shadow-md); }
+.focus-project-menu a { padding: 0.5rem; color: var(--aa-text); }
+.focus-layout .build-steps, .focus-layout .project-breadcrumb { display: none; }
+.focus-preparation { padding: 1.5rem; }
+.focus-preparation .first-result-example-grid { min-height: min(65vh, 700px); grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); }
+.focus-preparation .first-result-decision { max-width: 38rem; }
+.task-action-bar { display: flex; gap: 0.75rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 1rem 0; border-top: 1px solid var(--aa-border); margin-top: 1rem; }
+.task-action-bar > span { margin-right: auto; }
+.project-search { display: grid; gap: 0.5rem; max-width: 36rem; }
+.project-examples { margin-top: 1.5rem; }
+.sample-preview-workspace { display: grid; gap: 1rem; }
+.sample-risk-notice { margin: 0; color: var(--aa-warning-text); }
+.focus-layout .sample-feedback-workspace { grid-template-columns: minmax(0, 1fr); }
+.focus-layout .sample-feedback-decision { padding-block: 0.75rem; border-top: 1px solid var(--aa-border); }
+.focus-layout .sample-feedback-decision:not([open]) > :not(summary) { display: none; }
+.focus-layout .sample-feedback-decision[open] { max-width: 50rem; }
+.sample-confirm-action { display: flex; justify-content: flex-end; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.focus-layout .sample-feedback-image .annotation-canvas { height: clamp(280px, 58dvh, 760px); min-height: 0; width: 100%; }
+@media (max-width: 780px) { .focus-header { padding: 0.75rem; gap: 0.65rem; } .focus-preparation { padding: 1rem; } .focus-preparation .first-result-example-grid { grid-template-columns: minmax(0, 1fr); } .focus-connection { display: none; } }
 .sidebar { position: sticky; top: 0; z-index: 5; height: 100vh; padding: 24px 16px 18px; background: var(--aa-bg); color: var(--aa-text); display: flex; flex-direction: column; border-right: 1px solid var(--aa-border); }
 .brand { display: flex; align-items: center; min-height: 64px; padding: 0 6px 22px; border-bottom: 1px solid var(--aa-border); }
 .brand-lockup { display: block; width: 100%; height: auto; max-height: 58px; object-fit: contain; object-position: left center; }
@@ -2139,6 +2166,9 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .sample-feedback-workspace { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr); gap: 1.5rem; margin-block: 1.5rem; }
 .sample-feedback-image { min-width: 0; }
 .sample-feedback-decision h3, .sample-feedback-decision p { margin: 0; }
+.sample-feedback-fields { display: grid; gap: 1rem; padding-top: 1rem; line-height: 1.5; }
+.sample-feedback-fields .inline-notice { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.sample-feedback-decision > summary, .sample-technical-details > summary { cursor: pointer; font-weight: 600; padding-block: 0.5rem; }
 .sample-feedback-coordinates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 @media (max-width: 850px) { .sample-feedback-workspace { grid-template-columns: minmax(0, 1fr); } }
 .first-result-entry { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 2rem; align-items: center; padding: clamp(1rem, 3vw, 2.5rem); background: var(--aa-surface); border-radius: var(--aa-radius-lg); }

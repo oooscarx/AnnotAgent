@@ -10,9 +10,10 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed }: {
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
+  onConfirmed?: () => void;
 }) {
   const original: Annotation[] = sample.outcomes.flatMap((outcome) => outcome.value ? [{
     id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label,
@@ -61,12 +62,12 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange }: {
     setAnnotations((items) => items.map((item) => item.id === annotation.id ? annotation : item));
     setDirty(true); setSaved(false); setReason("poor_boundary");
   };
-  const save = async () => {
+  const save = async (confirm = false) => {
     if (busy || !loaded) return;
     setBusy(true); setError("");
     const revision: SampleFeedbackRevision = {
       revision_id: crypto.randomUUID(), sample_test_id: testId, image_id: image.image_id,
-      sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason, note,
+      sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason: confirm ? "correct" : reason, note,
       outcome_id: reason === "missing_target" ? null : selected,
       corrected_value: reason !== "missing_target" && selectedAnnotation?.value.kind === "bounding_box" ? selectedAnnotation.value : null,
       created_at: new Date().toISOString(),
@@ -74,6 +75,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange }: {
     try {
       const value = await api.saveSampleFeedback(revision);
       setRevisions((items) => [...items, value.revision]); setDirty(false); setSaved(true); setHistory([]);
+      if (confirm) { setReason("correct"); onDirtyChange(false); onConfirmed?.(); }
     } catch (error) { setError((error as Error).message); }
     finally { setBusy(false); }
   };
@@ -85,7 +87,9 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange }: {
         setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
-    <aside className="sample-feedback-decision">
+    <details className="sample-feedback-decision" open={dirty || undefined}>
+      <summary>{t("Result needs attention")}</summary>
+      <div className="sample-feedback-fields">
       <h3>{t("Your decision on this image")}</h3>
       <p>{t("Feedback is saved to this Sample Test. It does not accept formal annotations or change the Pipeline automatically.")}</p>
       <label>{t("Result to inspect")}<select aria-label={t("Result to inspect")} value={selected ?? ""} disabled={dirty || busy} onChange={(event) => setSelected(event.target.value || undefined)}><option value="">{t("Whole image")}</option>{annotations.map((annotation, index) => <option key={annotation.id} value={annotation.id}>{index + 1}. {annotation.label}</option>)}</select></label>
@@ -98,10 +102,10 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange }: {
       }} /></label>)}</div>}
       <label>{t("What needs attention?")}<select aria-label={t("What needs attention?")} value={reason} disabled={!loaded || busy} onChange={(event) => { setReason(event.target.value as SampleFeedbackRevision["reason"]); setDirty(true); setSaved(false); }}>{reasons.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
       <label>{t("Feedback note")}<textarea aria-label={t("Feedback note")} maxLength={4000} disabled={!loaded || busy} value={note} onChange={(event) => { setNote(event.target.value); setDirty(true); setSaved(false); }} /></label>
-      <div className="button-row"><button className="primary" disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button><button disabled={!history.length || busy} onClick={() => { setAnnotations(history.at(-1)!); setHistory((items) => items.slice(0, -1)); setDirty(true); }}>{t("Undo edit")}</button></div>
-      {saved && <p role="status">{t("Sample feedback saved")} · {revisions.length}</p>}
-      {error && <p role="alert">{error}</p>}
+      <div className="button-row"><button disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button><button disabled={!history.length || busy} onClick={() => { setAnnotations(history.at(-1)!); setHistory((items) => items.slice(0, -1)); setDirty(true); }}>{t("Undo edit")}</button></div>
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
-    </aside>
+      </div>
+    </details>
+    <div className="sample-confirm-action"><button className="primary" disabled={!loaded || busy} onClick={() => void save(true)}>{t(onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
   </div>;
 }

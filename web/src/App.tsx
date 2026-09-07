@@ -6,6 +6,7 @@ import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { FirstResultEntry } from "./components/FirstResultEntry";
 import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
+import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -258,7 +259,6 @@ export function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [runs, setRuns] = useState<HistoryRun[]>([]);
   const [models, setModels] = useState<ModelBinding[]>([]);
-  const [reviewQueue, setReviewQueue] = useState(0);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setErrorState] = useState<{ message: string; scope: string }>();
   const [loaded, setLoaded] = useState(false);
@@ -328,7 +328,6 @@ export function App() {
     setProjects(data.projects);
     setRuns(data.runs);
     setModels(data.models);
-    setReviewQueue(data.review_queue);
     setLoaded(true);
   };
   const refresh = (force = true) =>
@@ -423,7 +422,6 @@ export function App() {
                 (signal) => api.reviews(undefined, signal),
                 { force: true },
               )
-              .then((value) => setReviewQueue(value.progress.remaining_count))
               .catch(() => undefined);
           }
           if (
@@ -541,10 +539,11 @@ export function App() {
         ? "review"
         : route.kind;
 
+  const focusLayout = usesFocusLayout(route);
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${focusLayout ? "focus-layout" : ""}`} data-layout={focusLayout ? "focus" : "management"}>
       <a className="skip-link" href="#main-content">{t("Skip to workspace")}</a>
-      <aside className="sidebar aa-dark">
+      {!focusLayout && <aside className="sidebar aa-dark">
         <a
           className="brand"
           href="/"
@@ -597,14 +596,14 @@ export function App() {
             {events.at(-1)?.kind.replaceAll("_", " ") ?? t("waiting for events")}
           </small>
         </div>
-      </aside>
+      </aside>}
       <main
         key={`${routeScope}:${routeRetryVersion}`}
         id="main-content"
         aria-busy={!loaded}
         className={page === "review" ? "review-main" : undefined}
       >
-        <header className="topbar">
+        {focusLayout ? <FocusHeader project={selectedProject} route={route} titleRef={pageTitleRef} loaded={loaded} connection={connection} onNavigate={navigate} /> : <header className="topbar">
           <div>
             <span className="product-tagline">{t(PRODUCT_TAGLINE)}</span>
             <h1 ref={pageTitleRef} tabIndex={-1}>{t(PAGE_TITLES[page])}</h1>
@@ -637,7 +636,7 @@ export function App() {
               ))}
             </select>
           </div>}
-        </header>
+        </header>}
         {visibleError && (
           <div className="error-banner" role="alert">
             <span className="error-message">
@@ -652,27 +651,13 @@ export function App() {
           </div>
         )}
         {!loaded && <div className="loading-banner" role="status">{t("Loading workspace state…")}</div>}
-        {loaded && route.kind === "home" && (
-          <Dashboard
-            projects={projects}
-            runs={runs}
-            reviewQueue={reviewQueue}
-            onSelect={openProject}
-            onNewProject={() => navigate("/projects?new=1")}
-            onOpenRuns={() => navigate("/runs")}
-            onOpenReview={() => navigate("/review")}
-            onRefresh={refresh}
-          />
-        )}
         {loaded && route.kind === "projects" && (
           <ProjectsPage
             projects={projects}
             createOnOpen={route.create}
+            onNavigate={navigate}
+            onNavigationGuardChange={setNavigationGuard}
             onSelect={openProject}
-            onCustomize={(id) => {
-              setProjectContext(id);
-              navigate(`/projects/${encodeURIComponent(id)}/build/pipeline`);
-            }}
             onRefresh={refresh}
             onError={setError}
           />
@@ -732,13 +717,16 @@ export function App() {
             step={route.step}
             selectedDraftId={route.draftId}
             selectedSampleTestId={route.sampleTestId}
+            selectedSampleImageId={route.imageId}
+            onNavigationGuardChange={setNavigationGuard}
             onNavigate={(step, draftId, replace) =>
               navigate(projectBuildPath(route.projectId, step, { draftId }), replace)
             }
-            onSelectTestContext={(draftId, sampleTestId, replace) =>
+            onSelectTestContext={(draftId, sampleTestId, replace, imageId) =>
               navigate(projectBuildPath(route.projectId, "test", {
                 draftId,
                 sampleTestId,
+                imageId,
               }), replace)
             }
             onOpenRuns={(batchId) =>
@@ -912,6 +900,8 @@ function BuildWorkspace({
   step,
   selectedDraftId,
   selectedSampleTestId,
+  selectedSampleImageId,
+  onNavigationGuardChange,
   onNavigate,
   onSelectTestContext,
   onOpenRuns,
@@ -924,8 +914,10 @@ function BuildWorkspace({
   step: "data" | "labels" | "test";
   selectedDraftId?: string;
   selectedSampleTestId?: string;
+  selectedSampleImageId?: string;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
-  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean) => void;
+  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean, imageId?: string) => void;
   onOpenRuns: (batchId?: string) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
@@ -952,7 +944,7 @@ function BuildWorkspace({
       ) : step === "labels" ? (
         <BuildLabels project={project} onRefresh={onRefresh} onError={onError} />
       ) : (
-        <BuildTestPublish project={project} selectedDraftId={selectedDraftId} selectedSampleTestId={selectedSampleTestId} onSelectTestContext={onSelectTestContext} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
+        <BuildTestPublish project={project} selectedDraftId={selectedDraftId} selectedSampleTestId={selectedSampleTestId} selectedSampleImageId={selectedSampleImageId} onNavigationGuardChange={onNavigationGuardChange} onSelectTestContext={onSelectTestContext} onNavigate={onNavigate} onOpenRuns={onOpenRuns} onRefresh={onRefresh} onError={onError} />
       )}
       {project && summary && allowed && step !== "test" && <BuildFooter
         previous={previousStep}
@@ -1233,6 +1225,8 @@ function BuildTestPublish({
   project,
   selectedDraftId,
   selectedSampleTestId,
+  selectedSampleImageId,
+  onNavigationGuardChange,
   onSelectTestContext,
   onNavigate,
   onOpenRuns,
@@ -1242,7 +1236,9 @@ function BuildTestPublish({
   project: ProjectSummary;
   selectedDraftId?: string;
   selectedSampleTestId?: string;
-  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean) => void;
+  selectedSampleImageId?: string;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
+  onSelectTestContext: (draftId: string, sampleTestId?: string, replace?: boolean, imageId?: string) => void;
   onNavigate: (step: BuildStep, draftId?: string, replace?: boolean) => void;
   onOpenRuns: (batchId?: string) => void;
   onRefresh: () => Promise<void>;
@@ -1263,7 +1259,13 @@ function BuildTestPublish({
   const [activated, setActivated] = useState<{ workflow_id: string; version: number }>();
   const [busy, setBusy] = useState(false);
   const [startingRun, setStartingRun] = useState(false);
-  const [inspectedSampleIndex, setInspectedSampleIndex] = useState<number>();
+  const inspectedPosition = report?.sample_inputs?.findIndex((input) => input.image_id === selectedSampleImageId) ?? -1;
+  const inspectedSampleIndex = inspectedPosition >= 0 ? report?.samples[inspectedPosition]?.image_index : undefined;
+  const setInspectedSampleIndex = (index: number | undefined) => {
+    const position = report?.samples.findIndex((sample) => sample.image_index === index) ?? -1;
+    const imageId = position >= 0 ? report?.sample_inputs?.[position]?.image_id : undefined;
+    onSelectTestContext(draftId, activeSampleTest?.id, false, imageId);
+  };
   const sampleLoadGeneration = useRef(0);
   const load = (selectFallback = true) => workspaceQueries.load(
     queryKeys.workflowDrafts(project.id),
@@ -1442,6 +1444,16 @@ function BuildTestPublish({
     <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? t("Testing…") : isActivated ? t("Already activated") : sampleLimit === 0 ? t("Add images first") : report ? t("Test again") : t("Test samples")}</button>
     {sampleLimit === 0 && <button onClick={() => onNavigate("data")}>{t("Open Data step")}</button>}
   </div>;
+  if (selectedSampleImageId && reportLoading) return <p role="status">{t("Restoring the saved Sample Test…")}</p>;
+  if (selectedSampleImageId && !reportLoading && !inspectedSample) return <section role="alert"><h2>{t("Sample image unavailable")}</h2><p>{t("This image is not part of the selected saved Sample Test. No other result was substituted.")}</p><button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button></section>;
+  if (inspectedSample) return <SampleAnnotationDialog key={`${activeSampleTest?.id}:${selectedSampleImageId}`}
+    sample={inspectedSample} image={sampleImage(inspectedSample)} configuredRefiners={configuredRefiners}
+    sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
+    onClose={() => setInspectedSampleIndex(undefined)} onNavigationGuardChange={onNavigationGuardChange}
+    position={inspectedPosition + 1} count={report?.samples.length ?? 0}
+    onPrevious={inspectedPosition > 0 ? () => setInspectedSampleIndex(report!.samples[inspectedPosition - 1].image_index) : undefined}
+    onNext={inspectedPosition + 1 < (report?.samples.length ?? 0) ? () => setInspectedSampleIndex(report!.samples[inspectedPosition + 1].image_index) : undefined}
+  />;
   return (
     <>
       <div className="toolbar-panel sample-test-toolbar">
@@ -1509,13 +1521,6 @@ function BuildTestPublish({
           </section>
         </>
       ) : reportLoading ? <div className="loading-banner" role="status">{t("Restoring the saved Sample Test…")}</div> : staleReport ? <Empty title={t("Sample Test is out of date")} detail={t("This Draft changed after its saved Sample Test. Test the current Draft again before activation.")} /> : <Empty title={t("No Sample Test result")} detail={t("Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace.")} />}
-      {inspectedSample && <SampleAnnotationDialog
-        sample={inspectedSample}
-        image={sampleImage(inspectedSample)}
-        configuredRefiners={configuredRefiners}
-        sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
-        onClose={() => setInspectedSampleIndex(undefined)}
-      />}
       {!isActivated && <details className="advanced-settings"><summary>{t("Discard this Draft")}</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>{t("Discard unpublished changes")}</button></details>}
     </>
   );
@@ -1836,17 +1841,22 @@ function SampleAnnotationDialog({
   configuredRefiners,
   sampleTestId,
   onClose: closeDialog,
+  onNavigationGuardChange, position, count, onPrevious, onNext,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
   image?: ImageItem;
   configuredRefiners: WorkflowDraftNode[];
   sampleTestId?: string;
   onClose: () => void;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
+  position: number; count: number; onPrevious?: () => void; onNext?: () => void;
 }) {
   const [feedbackDirty, setFeedbackDirty] = useState(false);
-  const onClose = () => {
-    if (!feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) closeDialog();
-  };
+  const onClose = closeDialog;
+  useEffect(() => {
+    onNavigationGuardChange(() => !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?")));
+    return () => onNavigationGuardChange(undefined);
+  }, [feedbackDirty, onNavigationGuardChange]);
   const stages = sample.projection?.debug_stages ?? [];
   const [selectedStage, setSelectedStage] = useState<ResultLineageStage>("final");
   const stageOrder: ResultLineageStage[] = ["coarse", "search_region", "relocalized", "prompt_coverage", "mask", "refined", "final"];
@@ -1870,25 +1880,17 @@ function SampleAnnotationDialog({
     const trace = asModelInputTrace(node);
     return trace ? [{ node, trace }] : [];
   });
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-  return <div className="modal-backdrop sample-preview-backdrop" onMouseDown={(event) => {
-    if (event.target === event.currentTarget) onClose();
-  }}>
-    <section className="sample-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-preview-title">
+  return <section className="sample-preview-workspace" aria-labelledby="sample-preview-title">
       <header className="sample-preview-header">
-        <div><span className="eyebrow">{t("Sample annotation")}</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
-        <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("Close")}</button>
+        <div><span>{t("Sandbox sample")} · {position}/{count}</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
+        <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("View all sample images")}</button>
       </header>
+      <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
+      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} />}
+      <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
         {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
       </nav>
-      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} />}
       <details open={selectedStage !== "final" || !sampleTestId}><summary>{t("Technical evidence")}</summary><div className="sample-preview-layout">
         <figure className="sample-preview-canvas" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
           {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">{t("Preview unavailable")}</div>}
@@ -1917,8 +1919,10 @@ function SampleAnnotationDialog({
         </aside>
       </div>
       </details>
+      </details>
+      <footer className="task-action-bar"><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count} · {t("Sandbox only")}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></footer>
     </section>
-  </div>;
+  ;
 }
 
 function SettingsWorkspace({
@@ -1971,139 +1975,44 @@ function SettingsWorkspace({
   );
 }
 
-function Dashboard({
-  projects,
-  runs,
-  reviewQueue,
-  onSelect,
-  onNewProject,
-  onOpenRuns,
-  onOpenReview,
-  onRefresh,
-}: {
-  projects: ProjectSummary[];
-  runs: HistoryRun[];
-  reviewQueue: number;
-  onSelect: (id: string) => void;
-  onNewProject: () => void;
-  onOpenRuns: () => void;
-  onOpenReview: () => void;
-  onRefresh: () => void;
-}) {
-  const activeRuns = runs.filter(
-    (run) =>
-      run.controllable && (run.status === "running" || run.status === "paused"),
-  ).length;
-  const failures = runs.filter((run) =>
-    ["failed", "interrupted", "budget_exceeded"].includes(run.status),
-  );
-  const tokens = runs.reduce(
-    (sum, run) => sum + run.input_tokens + run.output_tokens,
-    0,
-  );
-  const cost = runs.reduce((sum, run) => sum + Number(run.cost || 0), 0);
-  return (
-    <section className="page-stack">
-      <FirstResultEntry returning={projects.length > 0} onStart={onNewProject} />
-      {projects.length > 0 && <Panel title={t("Continue your work")} eyebrow={t("Recent projects")}><ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} /></Panel>}
-      <details className="workspace-overview"><summary>{t("Workspace overview")}</summary>
-      <div className="metrics-grid platform-metrics">
-        <Metric
-          label={t("Projects")}
-          value={projects.length}
-          detail={t("{count} images registered", { count: projects.reduce((sum, project) => sum + project.image_count, 0) })}
-        />
-        <Metric
-          label={t("Active runs")}
-          value={activeRuns}
-          detail={t("{count} total executions", { count: runs.length })}
-          live={activeRuns > 0}
-        />
-        <Metric
-          label={t("Review queue")}
-          value={reviewQueue}
-          detail={t("Annotations requiring attention")}
-          accent={reviewQueue > 0}
-        />
-      </div>
-      <p className="platform-usage-line" aria-label={t("Workspace model usage")}>{t("Persisted model usage across")}{" "}{runs.length}{" "}{t("Run")}{runs.length === 1 ? "" : t("s")}: <strong>{tokens.toLocaleString(localeTag())}{" "}{t("tokens")}</strong> · <strong>${cost.toFixed(4)}</strong></p>
-      <div className="platform-grid">
-        <Panel title={t("Recent projects")} eyebrow={t("Concrete annotation work")}>
-          <ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} />
-        </Panel>
-        <Panel title={t("Active runs")} eyebrow={t("Work in progress")}>
-          <button className="summary-link" onClick={onOpenRuns}>
-            <strong>{activeRuns}{" "}{t("active")}</strong>
-            <small>{t("Open progress, errors, cost, and artifacts")}</small>
-          </button>
-        </Panel>
-        <Panel title={t("Needs review")} eyebrow={t("Human decisions")}>
-          <button className="summary-link" onClick={onOpenReview}>
-            <strong>{reviewQueue}{" "}{t("waiting")}</strong>
-            <small>{t("Accept, edit, reject, or remove results")}</small>
-          </button>
-        </Panel>
-        <Panel title={t("Recent failures")} eyebrow={t("Requires attention")}>
-          {failures.length ? (
-            <button className="summary-link" onClick={onOpenRuns}>
-              <strong>{failures[0].workflow_name}</strong>
-              <small>{failures[0].terminal_reason ?? failures[0].status}</small>
-            </button>
-          ) : (
-            <Empty title={t("No recent failures")} detail={t("Recent terminal runs are healthy.")} />
-          )}
-        </Panel>
-      </div>
-      <button onClick={onRefresh}>{t("Refresh state")}</button>
-      </details>
-    </section>
-  );
-}
 
 function ProjectsPage({
   projects,
   createOnOpen,
   onSelect,
-  onCustomize,
   onRefresh,
   onError,
+  onNavigate,
+  onNavigationGuardChange,
 }: {
   projects: ProjectSummary[];
   createOnOpen?: boolean;
   onSelect: (id: string) => void;
-  onCustomize: (id: string) => void;
   onRefresh: () => Promise<void>;
   onError: (value: string) => void;
+  onNavigate: (path: string) => void;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
-  const [creating, setCreating] = useState(Boolean(createOnOpen));
+  const [search, setSearch] = useState("");
+  if (createOnOpen) return <CreateProject onClose={() => onNavigate("/projects")} onNavigationGuardChange={onNavigationGuardChange} onCreated={(id) => {
+    onNavigationGuardChange(undefined);
+    void onRefresh().then(() => onSelect(id));
+  }} onError={onError} />;
   return (
     <section className="page-stack">
       <div className="toolbar-panel">
         <div>
           <span className="eyebrow">{t("Project inventory")}</span>
-          <h2>{t("Datasets, schemas, Workflows, and bindings")}</h2>
+          <h2>{t("My projects")}</h2>
           <p>
-            A Project is concrete annotation work; Skills remain reusable
-            extensions.
+            {t("Choose a Project to continue, or bring images for a new annotation task.")}
           </p>
         </div>
-        <button className="primary" onClick={() => setCreating(true)}>{t("New project")}</button>
+        <button className="primary" onClick={() => onNavigate("/projects?new=1")}>{t("New annotation project")}</button>
       </div>
-      <Panel title={t("All projects")} eyebrow={`${projects.length} configured`}>
-        <ProjectList projects={projects} onSelect={onSelect} />
-      </Panel>
-      {creating && (
-        <CreateProject
-          onClose={() => setCreating(false)}
-          onCreated={(projectId, customize) => {
-            setCreating(false);
-            void onRefresh().then(() =>
-              customize ? onCustomize(projectId) : onSelect(projectId),
-            );
-          }}
-          onError={onError}
-        />
-      )}
+      <label className="project-search">{t("Search projects")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <ProjectList projects={projects.filter((project) => project.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))} onSelect={onSelect} />
+      <details className="project-examples"><summary>{t("Input and output examples")}</summary><FirstResultEntry returning={false} onStart={() => onNavigate("/projects?new=1")} /></details>
     </section>
   );
 }
@@ -10794,11 +10703,12 @@ export:
 }
 
 function CreateProject({
-  onClose, onCreated, onError,
+  onClose, onCreated, onError, onNavigationGuardChange,
 }: {
   onClose: () => void;
   onCreated: (projectId: string, customize: boolean) => void;
   onError: (value: string) => void;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
   const [projectName, setProjectName] = useState("");
   const [labelName, setLabelName] = useState("");
@@ -10812,9 +10722,8 @@ function CreateProject({
   const identity = useRef("project-" + crypto.randomUUID());
   const created = useRef(false);
   const draftCreated = useRef(false);
-  const dialog = useRef<HTMLDialogElement>(null);
+  const completed = useRef(false);
   useEffect(() => {
-    dialog.current?.showModal();
     void api.models().then((result) => setModelsReady(result.models.some((model) => model.enabled && model.availability_group === "ready"))).catch(() => setModelsReady(false));
   }, []);
   useEffect(() => {
@@ -10822,9 +10731,15 @@ function CreateProject({
     setPreviews(urls);
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
+  useEffect(() => {
+    const dirty = Boolean(files.length || goal || projectName);
+    onNavigationGuardChange(() => completed.current || (!busy && (!dirty || window.confirm(t("Discard unsaved project input?")))));
+    const guard = (event: BeforeUnloadEvent) => { if (dirty || busy) event.preventDefault(); };
+    window.addEventListener("beforeunload", guard);
+    return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", guard); };
+  }, [files.length, goal, projectName, busy, onNavigationGuardChange]);
   const close = () => {
     if (busy) return;
-    if ((files.length || goal || projectName) && !window.confirm(t("Discard unsaved project input?"))) return;
     onClose();
   };
   const finish = async () => {
@@ -10849,18 +10764,19 @@ function CreateProject({
         await api.createWorkflowDraft(identity.current);
         draftCreated.current = true;
       }
+      completed.current = true;
       onCreated(identity.current, false);
     } catch (error) {
       onError((error as Error).message);
       setProgress(t("Your saved Project and imported images are retained. Retry resumes importing; matching image content is skipped."));
     } finally { setBusy(false); }
   };
-  return <dialog ref={dialog} className="first-result-example" aria-label={t("Create Project")} onCancel={(event) => { event.preventDefault(); close(); }}>
-    <header className="first-result-example-header"><div><span>{t("Define your goal")}</span><h2>{t("Images and your goal")}</h2></div><button onClick={close} disabled={busy}>{t("Cancel")}</button></header>
+  return <section className="focus-preparation" aria-label={t("Create Project")}>
     <div className="first-result-example-grid">
       <section className="first-result-input-images">
         <label>{t("Choose images")}<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || created.current} onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /></label>
         <small>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</small>
+        <p className="unsaved-file-notice">{t("Selected files are local previews until you save. Reloading now requires selecting them again.")}</p>
         <div className="first-result-thumbnails">{files.map((file, index) => <figure key={index}><img src={previews[index]} alt={file.name} /><figcaption>{file.name}</figcaption></figure>)}</div>
       </section>
       <section className="first-result-decision">
@@ -10872,11 +10788,11 @@ function CreateProject({
         <p>{t("Saving defines the label and an editable Draft. No model is called; the goal is not automatically parsed.")}</p>
         {kind === "bounding_box" && <p>{t("A confident prediction is not geometry proof. Initial boxes still require the Project's review and calibration policy.")}</p>}
         {modelsReady === false && <p role="status">{t("No Ready model is configured. You can save your images and goal now; connect a compatible model before testing.")}</p>}
-        <button className="primary" disabled={busy || !files.length || !projectName.trim() || !labelName.trim()} onClick={() => void finish()}>{t("Save goal and images")}</button>
         {progress && <p role="status">{progress}</p>}
       </section>
     </div>
-  </dialog>;
+    <footer className="task-action-bar"><span>{t("No model call when saving this goal.")}</span><button onClick={close} disabled={busy}>{t("Cancel")}</button><button className="primary" disabled={busy || !files.length || !projectName.trim() || !labelName.trim()} onClick={() => void finish()}>{t("Save goal and images")}</button></footer>
+  </section>;
 }
 
 function Panel({

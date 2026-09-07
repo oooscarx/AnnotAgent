@@ -7,7 +7,7 @@ test("browser images and a goal are saved without any model request", async ({ p
     if (request.method() === "POST" && /suggest|dry-run|agent-sessions/.test(request.url())) inference.push(request.url());
   });
   await page.goto("/projects?new=1");
-  const wizard = page.getByRole("dialog", { name: "Create Project", exact: true });
+  const wizard = page.getByRole("region", { name: "Create Project", exact: true });
   await wizard.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await expect(wizard.getByAltText("synthetic-robocup.png", { exact: true })).toBeVisible();
   await wizard.getByLabel("Project name", { exact: true }).fill(`First result ${Date.now()}`);

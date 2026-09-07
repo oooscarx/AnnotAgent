@@ -7,7 +7,7 @@ test("one canonical project inventory opens page-level preparation without mutat
   });
   await page.goto("/");
   await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole("textbox", { name: "Search projects", exact: true })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search projects", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "New annotation project", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\?new=1$/);
   await expect(page.locator(".app-shell")).toHaveAttribute("data-layout", "focus");

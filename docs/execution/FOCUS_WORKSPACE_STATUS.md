@@ -50,3 +50,39 @@ Known pre-existing implementation gaps: aggregate scoped sample authorization an
 sample execution, durable combined publish/start receipt, sample label/new-object corrections,
 and real 200% zoom evidence. Do not advertise these as solved by layout changes.
 Real-person usability testing has not been performed; automated tests are not a substitute.
+
+## M1: same-data focused preparation and sample inspection
+
+Implemented canonical `/projects` (`/`, `/home`, `/dashboard` replace-redirect), searchable
+inventory and page-level creation. `FocusHeader` is the existing App shell's alternative
+header, not a second application or execution engine. It removes the global Sidebar and
+repeated breadcrumb/build-step bars on task routes. The project menu retains canonical
+data, automation, processing history, Review, export, labels/settings and Trash destinations.
+
+Creation reuses real upload/schema APIs and previews selected images. Explicit dirty guards
+protect locally selected files and goal fields. Saving succeeds before navigation and does
+not require an LLM or initiate inference. Existing Registry forms remain available in the
+same Draft. Sample inspection is a page canvas, not a fullscreen/modal preview. Stable
+`image` joins Project/Draft/Test in the typed URL; refresh restores the same sample and its
+server-persisted feedback. Direct bbox edits, Undo, original/candidate toggles and structured
+feedback use the existing sandbox revision API. Confirmation waits for save success before
+advancing. Formal Review/Annotation APIs are not used by this editor. Diagnostic stages are
+collapsed, with honest confidence/geometry and sandbox scope notices near the image.
+Removed the canvas's default wheel interception; explicit Zoom/Fit/Pan controls remain.
+
+Verification: **55/55 E2E**, **71/71 unit tests**, TypeScript check, production build (E2E
+preflight) and `cargo fmt --all --check`. Requested all-feature Rust clippy/test/build also
+passed; Rust tests reported **500 passed, 5 ignored** including doc-test result groups.
+Logs: `/tmp/annotagent-focus-{e2e,unit,clippy,rust,build}.log`. Browser evidence is isolated
+fixture execution, not live model quality: `after-prepare`, `after-sample`, `after-no-model`,
+`after-run`, `after-review`, `after-export` in `focus-workspace/`. These capture the current
+checkpoint; later stages still need to reduce the interiors of Run/Review/Builder.
+
+M1 limitations: creation still saves before the existing Project → automation → sample
+steps, rather than automatically synthesizing and testing; there is no authorization to
+silently add those calls. Sample label changes/new boxes are not supported by the existing
+feedback contract. Do not count these as completed acceptance criteria. Current browser
+coverage includes 1024/720/640 CSS-pixel reflow and phone paths; **native 200% browser zoom
+has not been tested**. No real-person usability test performed.
+
+Commits: M0 `a4e36f9`; M1 is recorded by the next local commit containing this ledger.

@@ -8,8 +8,9 @@ test("first-result entry and offline example do not perform server mutations", a
   });
   await page.goto("/");
   await page.screenshot({ path: resolve("../docs/execution/first-result/entry.png"), fullPage: true });
-  await expect(page.getByRole("button", { name: "Start with images", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Explore an example", exact: true }).click();
+  await expect(page.getByRole("button", { name: "New annotation project", exact: true })).toBeVisible();
+  await page.getByText("Input and output examples", { exact: true }).click();
+    await page.getByRole("button", { name: "Explore an example", exact: true }).click();
   const example = page.getByRole("dialog", { name: "Offline annotation example" });
   await expect(example.getByText("Offline demo · no model inference", { exact: true })).toBeVisible();
   await example.getByRole("button", { name: "See a sample", exact: true }).click();
@@ -24,6 +25,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768
     await page.setViewportSize(viewport);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
+    await page.getByText("Input and output examples", { exact: true }).click();
     await page.getByRole("button", { name: "Explore an example", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Offline annotation example", exact: true });
     await dialog.getByRole("button", { name: "See a sample", exact: true }).click();

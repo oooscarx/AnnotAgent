@@ -23,6 +23,7 @@ export type WorkspaceRoute =
       agentSessionId?: string;
       improvementSessionId?: string;
       sampleTestId?: string;
+      imageId?: string;
     }
   | {
       kind: "runs";
@@ -76,6 +77,7 @@ export type BuildUrlContext = {
   agentSessionId?: string;
   improvementSessionId?: string;
   sampleTestId?: string;
+  imageId?: string;
 };
 
 function runContextSearch(context: RunUrlContext): string {
@@ -140,12 +142,15 @@ export function projectBuildPath(
     params.set("improvement", context.improvementSessionId);
   if (step === "test" && context.sampleTestId)
     params.set("test", context.sampleTestId);
+  if (step === "test" && context.imageId) params.set("image", context.imageId);
   const suffix = params.size ? `?${canonicalSearch(params)}` : "";
   return `/projects/${encodeURIComponent(projectId)}/build/${step}${suffix}`;
 }
 
 export function routeFocusKey(route: WorkspaceRoute): string {
   switch (route.kind) {
+    case "projects":
+      return route.create ? "project-create" : "projects";
     case "build":
       return `build:${route.projectId}:${route.step}`;
     case "projectRun":
@@ -205,7 +210,7 @@ export function parseWorkspaceRoute(
   const params = new URLSearchParams(search);
 
   if (clean === "/" || clean === "/home" || clean === "/dashboard")
-    return { kind: "home", canonicalPath: "/" };
+    return { kind: "projects", create: params.get("new") === "1", canonicalPath: params.get("new") === "1" ? "/projects?new=1" : "/projects" };
   if (clean === "/workflows") {
     const projectId = params.get("project_id") ?? params.get("project");
     return projectId
@@ -389,6 +394,7 @@ export function parseWorkspaceRoute(
     const agentSessionId = step === "pipeline" ? params.get("session") ?? undefined : undefined;
     const improvementSessionId = step === "pipeline" ? params.get("improvement") ?? undefined : undefined;
     const sampleTestId = step === "test" ? params.get("test") ?? undefined : undefined;
+    const imageId = step === "test" ? params.get("image") ?? undefined : undefined;
     const canonicalPath = projectBuildPath(projectId, step, {
       draftId,
       workflowId,
@@ -396,6 +402,7 @@ export function parseWorkspaceRoute(
       agentSessionId,
       improvementSessionId,
       sampleTestId,
+      imageId,
     });
     return {
       kind: "build",
@@ -407,6 +414,7 @@ export function parseWorkspaceRoute(
       agentSessionId,
       improvementSessionId,
       sampleTestId,
+      imageId,
       canonicalPath,
     };
   }

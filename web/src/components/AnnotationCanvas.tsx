@@ -2,7 +2,7 @@ import { t } from "../i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
-import { clampCanvasZoom, zoomAroundPoint } from "../canvasViewport";
+import { zoomAroundPoint } from "../canvasViewport";
 import type { Annotation, Point } from "../types";
 
 interface Props {
@@ -226,14 +226,6 @@ export function AnnotationCanvas({
           if (event.target === event.currentTarget) {
             setDrag({ type: "pan", start: localPoint(event), original: pan });
           }
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const anchor = canvasPoint(event.clientX, event.clientY);
-          applyZoom(
-            clampCanvasZoom(zoom * Math.exp(-event.deltaY * 0.001)),
-            anchor,
-          );
         }}
       >
         <defs>

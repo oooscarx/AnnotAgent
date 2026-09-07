@@ -21,12 +21,11 @@ describe("AnnotAgent product shell", () => {
 
   it("uses the five-destination guided product navigation", () => {
     expect(PRIMARY_NAVIGATION.map((item) => item.label)).toEqual([
-      "Home",
       "Projects",
       "Runs",
       "Review",
       "Settings",
     ]);
-    expect(PRIMARY_NAVIGATION).toHaveLength(5);
+    expect(PRIMARY_NAVIGATION).toHaveLength(4);
   });
 });

@@ -185,7 +185,8 @@ export:
   expect(dryRunReport.validation.valid, JSON.stringify(dryRunReport.validation.issues)).toBeTruthy();
   await page.goto(`/projects/${cropProjectId}/build/test?draft=${draft.id}&test=${dryRunReport.sample_test_id}`);
   await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
-  const sampleEditor = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Your decision on this image" }) });
+  const sampleEditor = page.locator(".sample-preview-workspace");
+  await sampleEditor.locator(".sample-feedback-decision > summary").click();
   const box = dryRunReport.samples[0].outcomes.find((outcome: any) => outcome.value?.kind === "bounding_box");
   expect(box).toBeTruthy();
   await sampleEditor.getByLabel("Result to inspect", { exact: true }).selectOption(box.id);
@@ -202,7 +203,8 @@ export:
   await sampleEditor.getByRole("button", { name: "Save sample feedback", exact: true }).click();
   await expect(sampleEditor.getByRole("status")).toContainText("Sample feedback saved");
   await page.reload();
-  await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
+  await expect(page).toHaveURL(/image=/);
+  await sampleEditor.locator(".sample-feedback-decision > summary").click();
   await expect(sampleEditor.getByLabel("Result to inspect", { exact: true })).toHaveValue(box.id);
   expect(Number(await x.inputValue())).toBeCloseTo(correctedX);
   await expect(sampleEditor.getByLabel("What needs attention?", { exact: true })).toHaveValue("poor_boundary");
@@ -239,8 +241,8 @@ test("empty workspace stays generic and contains no RoboCup product content", as
     });
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Home" })).toBeFocused();
-  await expect(page.getByRole("button", { name: "Start with images", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "New annotation project", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("RoboCup");
   await page.screenshot({ path: `${screenshots}/01-empty-workspace.png`, fullPage: true });
 });
@@ -248,7 +250,7 @@ test("empty workspace stays generic and contains no RoboCup product content", as
 test("create and open a generic Project", async ({ page, request }) => {
   const modelProfileId = await ensurePipelineBuilderFixture(request);
   await page.goto("/projects?new=1");
-  const dialog = page.getByRole("dialog", { name: "Create Project" });
+  const dialog = page.getByRole("region", { name: "Create Project" });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await dialog.getByLabel("Project name", { exact: true }).fill(projectName);
@@ -340,10 +342,8 @@ export:
 test("Build blocks direct navigation past an incomplete prerequisite", async ({ page }) => {
   await page.goto(`/projects/${emptyProjectId}/build/test`);
   await expect(page.getByLabel("Build step blocked")).toContainText("Add images to start this Project");
-  const blockedStep = page.getByRole("button", { name: /Test & Activate unavailable/ });
-  await expect(blockedStep).toHaveAttribute("aria-disabled", "true");
-  await blockedStep.focus();
-  await expect(blockedStep).toBeFocused();
+  await expect(page.locator(".build-steps")).not.toBeVisible();
+  await expect(page.locator(".sidebar")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add images" })).toBeVisible();
 });
 
@@ -362,7 +362,8 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
     ["Labels", "labels"],
     ["Automation", "pipeline"],
   ] as const) {
-    await page.getByLabel("Build steps").getByRole("button").filter({ hasText: name }).click();
+    await page.locator(".focus-project-menu > summary").click();
+    await page.getByRole("link", { name: name === "Labels" ? "Project labels and settings" : "Automation", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(
       `/projects/${projectId}/build/${path}${path === "pipeline" ? "(?:\\?draft=[0-9a-f-]+)?" : ""}$`,
     ));
@@ -380,7 +381,7 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
     if (path === "pipeline")
       await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
   }
-  const testStep = page.getByLabel("Build steps").getByRole("button").filter({ hasText: "Test & Activate" });
+  const testStep = page.locator(".build-steps button").filter({ hasText: "Test & Activate" });
   await expect(testStep).toHaveAttribute(
     "title",
     /Complete the earlier Build step first|Not run|Passed|Results need attention/,
@@ -688,10 +689,11 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   );
   expect(imageName).toBeTruthy();
   await previewButton.click();
-  const previewDialog = page.getByRole("dialog", { name: imageName!, exact: true });
+  const previewDialog = page.getByRole("region", { name: imageName!, exact: true });
   await expect(previewDialog).toBeVisible();
-  await expect(previewDialog.getByRole("navigation", { name: "Annotation stages" })).toContainText("Final");
+  await expect(previewDialog.locator(".sample-technical-details")).not.toHaveAttribute("open", "");
   await expect(previewDialog.locator(".sample-feedback-image svg image")).toBeVisible();
+  await previewDialog.locator(".sample-feedback-decision > summary").click();
   await previewDialog.getByLabel("What needs attention?", { exact: true }).selectOption("wrong_target");
   await previewDialog.getByLabel("Feedback note", { exact: true }).fill("The scene needs human inspection.");
   await previewDialog.getByRole("button", { name: "Save sample feedback", exact: true }).click();
@@ -701,6 +703,7 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await expect(previewDialog).toBeHidden();
   await page.reload();
   await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
+  await previewDialog.locator(".sample-feedback-decision > summary").click();
   await expect(previewDialog.getByLabel("Feedback note", { exact: true })).toHaveValue("The scene needs human inspection.");
   await expect(previewDialog.getByLabel("What needs attention?", { exact: true })).toHaveValue("wrong_target");
   await previewDialog.getByRole("button", { name: "Close annotation preview" }).click();
@@ -1234,7 +1237,7 @@ test("feature-truth surfaces are read-only, capability-safe, and explicit about 
   await expect(page.getByText("This is not a browser file picker.", { exact: false })).toBeVisible();
 
   await page.goto("/projects?new=1");
-  const dialog = page.getByRole("dialog", { name: "Create Project" });
+  const dialog = page.getByRole("region", { name: "Create Project" });
   await dialog.getByLabel("What you will get", { exact: true }).selectOption("bounding_box");
   await dialog.getByLabel("Project name").fill("Geometry-safe recommendation");
   await dialog.getByLabel("Object name").fill("ball");
@@ -1509,7 +1512,7 @@ export:
     expect(dialog.type()).toBe("confirm");
     await dialog.dismiss();
   });
-  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await page.getByRole("button", { name: "Back to project", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
   await page.getByRole("button", { name: "View revision history" }).click();
   const revisionHistory = page.getByRole("dialog", { name: "Annotation revisions" });
@@ -1643,7 +1646,8 @@ test("Build and Runs state survives refresh plus browser history", async ({ page
   await page.goto(`/projects/${projectId}`);
   await page.getByRole("button", { name: "Build", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
-  await page.getByLabel("Build steps").getByRole("button").filter({ hasText: "Labels" }).click();
+  await page.locator(".focus-project-menu > summary").click();
+  await page.getByRole("link", { name: "Project labels and settings", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
@@ -1652,10 +1656,10 @@ test("Build and Runs state survives refresh plus browser history", async ({ page
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
   await expect(page.getByRole("heading", { name: "What do you want to annotate?" })).toBeVisible();
 
-  await page.getByLabel("Active project").selectOption(emptyProjectId);
+  await page.goto(`/projects/${emptyProjectId}/build/labels`);
   await expect(page).toHaveURL(new RegExp(`/projects/${emptyProjectId}/build/labels$`));
   await expect(page.getByLabel("Build step blocked")).toBeVisible();
-  await page.getByLabel("Active project").selectOption(projectId);
+  await page.goto(`/projects/${projectId}/build/labels`);
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/labels$`));
 
   await page.goto(`/runs?project_id=${projectId}`);
@@ -1670,7 +1674,7 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
   await page.route("**/api/events", (route) => route.abort("connectionfailed"));
   await page.goto(`/projects/${projectId}/export`);
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
-  await expect(page.locator(".sidebar-foot")).toContainText("SSE reconnecting");
+  await expect(page.locator(".focus-connection")).toContainText("SSE reconnecting");
   const reconnectReviewId = randomUUID();
   const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
     data: {
@@ -1699,7 +1703,7 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
   expect(createdReview.status()).toBe(201);
 
   await page.unroute("**/api/events");
-  await expect(page.locator(".sidebar-foot")).toContainText("SSE connected", { timeout: 15_000 });
+  await expect(page.locator(".focus-connection")).toContainText("SSE connected", { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Export needs attention" })).toBeVisible();
   await expect(page.getByText("1 annotation still requires a human decision.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toHaveCount(0);
@@ -1898,7 +1902,7 @@ test("reduced motion and server-state error recovery are explicit", async ({ pag
   await page.goto("/");
   await expect(page.getByRole("status").filter({ hasText: "Loading workspace state" })).toBeVisible();
   releaseProjects();
-  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 });
 
 test("a newly created template Draft opens immediately and survives refresh", async ({ page }) => {

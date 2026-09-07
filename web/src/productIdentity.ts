@@ -7,7 +7,6 @@ export const PRODUCT_TAGLINE = "Composable annotation workflows for vision data.
 export const NO_PROJECT_MESSAGE = "No project opened";
 
 export const PRIMARY_NAVIGATION = [
-  { page: "home", label: "Home", icon: "history", href: "/" },
   { page: "projects", label: "Projects", icon: "bbox", href: "/projects" },
   { page: "runs", label: "Runs", icon: "agent-trace", href: "/runs" },
   { page: "review", label: "Review", icon: "review", href: "/review" },
