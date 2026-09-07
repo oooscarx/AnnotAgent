@@ -1,4 +1,5 @@
 import { t, localeTag, useLocale } from "./i18n";
+import { recoveryNodeIds, builderStopLabel, builderPlanSource } from "./pipelinePresentation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelector } from "./components/LanguageSelector";
 import { ApiRequestError, api, subscribeEvents } from "./api";
@@ -3918,7 +3919,7 @@ function WorkflowsPage({
           model.metadata.model_instance_id === instanceId,
       );
       const executedImageCount = report?.samples.filter((sample) =>
-        sample.nodes.some((result) => result.node_id === node.id),
+        sample.nodes.some((result) => result.node_id === node.id && !["skipped", "cancelled", "pending"].includes(result.status)),
       ).length ?? 0;
       return {
         node,
@@ -3929,6 +3930,17 @@ function WorkflowsPage({
         executedImageCount,
       };
     });
+  const recoveryIds = recoveryNodeIds(draft ?? { nodes: [], edges: [] });
+  const mainModelCalls = pipelineModelCalls.filter(({ node }) => !recoveryIds.has(node.id));
+  const recoveryModelCalls = pipelineModelCalls.filter(({ node }) => recoveryIds.has(node.id));
+  const renderModelCall = ({ node, modelName, providerName, executedImageCount }: typeof pipelineModelCalls[number], index: number) => (
+    <li key={node.id} className={report && !executedImageCount ? "not-reached" : ""}>
+      <span className="pipeline-model-call-index">{index + 1}</span>
+      <span className="pipeline-model-call-copy"><strong>{node.node_type === "vlm_detection.detect" ? t(node.parameters.coordinate_space === "local_crop" ? "Locate within crops" : "Find candidates") : t(workflowNodeTitle(node.node_type))}</strong><small>{node.id.replaceAll("_", " ")}</small></span>
+      <span className="pipeline-model-call-model"><strong>{modelName}</strong>{providerName && <small>via {providerName}</small>}</span>
+      <span className={`status ${!report || executedImageCount ? "status-auto-accepted" : "status-needs-review"}`}>{!report ? t("Configured") : executedImageCount ? t("Reached on {count} images", { count: executedImageCount }) : t("Not reached")}</span>
+    </li>
+  );
   const latestPromptCoverage = report?.samples
     .flatMap((sample) => sample.projection?.debug_stages ?? [])
     .find((stage) => stage.stage === "prompt_coverage");
@@ -4006,16 +4018,17 @@ function WorkflowsPage({
       <section className="pipeline-model-overview" aria-labelledby="pipeline-model-overview-title">
         <header>
           <div><span className="eyebrow">{t("Runtime model calls")}</span><h2 id="pipeline-model-overview-title">{t("Models this automation will call")}</h2><p>{t("The Builder LLM plans the Draft; only the calls below process your images.")}</p></div>
-          <strong>{pipelineModelCalls.length}</strong>
+          <strong aria-label={t("Main model stages")}>{mainModelCalls.length}</strong>
         </header>
-        {pipelineModelCalls.length ? <ol className="pipeline-model-call-list">
-          {pipelineModelCalls.map(({ node, modelName, providerName, executedImageCount }, index) => <li key={node.id} className={report && !executedImageCount ? "not-reached" : ""}>
-            <span className="pipeline-model-call-index">{index + 1}</span>
-            <span className="pipeline-model-call-copy"><strong>{node.id.replaceAll("_", " ")}</strong><small>{node.node_type.replaceAll("_", " ")}</small></span>
-            <span className="pipeline-model-call-model"><strong>{modelName}</strong>{providerName && <small>via {providerName}</small>}</span>
-            <span className={`status ${!report || executedImageCount ? "status-auto-accepted" : "status-needs-review"}`}>{!report ? t("Configured") : executedImageCount ? `Reached · ${executedImageCount}/${report.samples.length}` : t("Not reached")}</span>
-          </li>)}
+        {pipelineModelCalls.length ? <ol className="pipeline-model-call-list" aria-label={t("Main model stages")}>
+          {mainModelCalls.map(renderModelCall)}
         </ol> : <div className="pipeline-model-empty"><strong>{t("No image-processing model is bound")}</strong><span>Choose a Draft or ask AnnotAgent to propose a model-backed automation.</span></div>}
+        {!!recoveryModelCalls.length && <details className="pipeline-recovery-stages">
+          <summary>{t("Conditional recovery")} · {recoveryModelCalls.length}</summary>
+          <p>{t("Runs only when the gate requests another search. These are not additional steps for every image.")}</p>
+          <ol className="pipeline-model-call-list">{recoveryModelCalls.map(renderModelCall)}</ol>
+        </details>}
+        {!!pipelineModelCalls.length && <small>{t("Stage count is not a per-image request estimate. Crops can fan out; recovery is conditional.")}</small>}
         {configuredRefinerSkipped && <aside className="pipeline-model-warning"><strong>Segmentation was configured but did not run in the latest Sample Test.</strong><span>{latestPromptCoverage?.detail ?? t("An earlier gate routed the candidate away from refinement.")}</span></aside>}
       </section>
       <div className="workflow-command-grid">
@@ -10099,7 +10112,7 @@ function agentOutcomeLabel(session: AgentSession): string {
     budget_exceeded: "Progress-safety budget reached",
     failed: "Agent needs attention",
   };
-  if (session.outcome) return labels[session.outcome];
+  if (session.outcome) return t(labels[session.outcome]);
   if (session.status === "running") return "Agent is running";
   if (session.status === "waiting_for_human") return "Waiting for your action";
   return session.status.replaceAll("_", " ");
@@ -10214,7 +10227,7 @@ function AgentSessionTrace({
           label={t("Dry Run")}
           value={dryRun ? `${dryRun.summary.image_count} image · ${dryRun.summary.failed_count} failed` : "Not run"}
         />
-        <Fact label={t("Stop reason")} value={session.stop_reason ?? "Running"} />
+        <Fact label={t("Stop reason")} value={t(builderStopLabel(session))} />
         <Fact
           label={t("Human action")}
           value={session.pending_human_action ?? "None"}
@@ -10223,7 +10236,9 @@ function AgentSessionTrace({
         {session.build_mode && <Fact label={t("Build mode")} value={session.build_mode.kind.replaceAll("_", " ")} />}
       </div>
       {!!session.plan_candidates?.length && (
-        <section className="agent-plan-candidates" aria-label={t("Pipeline plan candidates")}>
+        <details className="agent-plan-candidates" aria-label={t("Pipeline plan candidates")}>
+          <summary>{t("Alternative plans and selection details")} · {session.plan_candidates?.length}</summary>
+          <p>{t("Alternatives are not extra pipelines being executed. Structural ranking does not measure annotation accuracy.")}</p>
           <div className="section-heading compact">
             <div>
               <span className="eyebrow">{t("Preserved plans")}</span>
@@ -10289,18 +10304,19 @@ function AgentSessionTrace({
               </ol>
             </details>
           )}
-        </section>
+        </details>
       )}
       {session.status !== "running" && (
         <section className={`agent-outcome-card ${needsSetup ? "setup" : ""}`} aria-label={t("Pipeline Builder outcome")}>
           <div>
             <span className="eyebrow">{t("Outcome")}</span>
             <h4>{agentOutcomeLabel(session)}</h4>
-            <p>{session.next_action ?? readableErrorMessage(session.stop_reason ?? "Open the saved session for details.")}</p>
+            <p>{session.salvage_outcome === "runnable_draft_materialized" ? t("Review the statically checked Draft, then test sample images. Annotation quality has not been verified.") : t(session.next_action ?? readableErrorMessage(session.stop_reason ?? "Open the saved session for details."))}</p>
           </div>
           <div className="agent-outcome-facts">
             {session.draft_id && <span><small>{t("Draft")}</small><strong>{session.draft_id.slice(0, 8)}</strong></span>}
-            <span><small>{t("Stop reason")}</small><strong>{session.builder_stop_reason?.replaceAll("_", " ") ?? session.stop_reason ?? t("Completed")}</strong></span>
+            <span><small>{t("Stop reason")}</small><strong>{t(builderStopLabel(session))}</strong></span>
+            <span><small>{t("Plan source")}</small><strong>{t(builderPlanSource(session))}</strong></span>
             {!!session.unresolved_bindings?.length && <span><small>{t("Unresolved")}</small><strong>{session.unresolved_bindings.length} model binding{session.unresolved_bindings.length === 1 ? "" : t("s")}</strong></span>}
           </div>
           <div className="button-row">

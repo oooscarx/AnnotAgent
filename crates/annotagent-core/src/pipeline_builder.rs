@@ -646,9 +646,20 @@ impl RegistryPipelineSynthesizer {
             )
         {
             reasons.push(
-                "Localization recovery is rewarded only when expansion, coordinate projection, and prompt coverage are explicit"
+                "Local evidence handling includes expansion, coordinate projection, and prompt coverage; this is not measured accuracy"
                     .to_owned(),
             );
+        }
+        if candidate.node_blueprints.iter().any(|node| {
+            node.parameters
+                .get("recovery_attempt")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|attempt| attempt > 1)
+        }) {
+            // A more complex branch is not evidence of better predictions. Keep it available
+            // for an explicit sample comparison, but do not reward it merely for existing.
+            deterministic_total -= 75_000;
+            reasons.push("Optional recovery is unproven; compare samples before choosing its extra model calls".to_owned());
         }
         PlanCandidateScore {
             runnable,
@@ -4096,6 +4107,25 @@ mod tests {
     #[test]
     fn registry_synthesizer_ranks_by_explicit_quality_and_cost_not_candidate_source() {
         let synthesizer = RegistryPipelineSynthesizer;
+        let primary = runnable_candidate(
+            "primary",
+            PipelineCandidateSource::RegistrySynthesis,
+            CandidateGeometrySafety::Evaluated,
+            3,
+        );
+        let mut recovery = primary.clone();
+        recovery.id = "recovery".to_owned();
+        recovery.node_blueprints.push(WorkflowDraftNode {
+            id: "conditional-retry".to_owned(),
+            parameters: BTreeMap::from([("recovery_attempt".to_owned(), serde_json::json!(2))]),
+            ..WorkflowDraftNode::default()
+        });
+        let mut alternatives = vec![recovery, primary];
+        synthesizer.rank_candidates(&mut alternatives, OptimizationPriority::Balanced);
+        assert_eq!(
+            alternatives[0].id, "primary",
+            "extra recovery is not measured quality evidence"
+        );
         let baseline = runnable_candidate(
             "baseline",
             PipelineCandidateSource::TemplateSeed,
@@ -4157,7 +4187,7 @@ mod tests {
                 .score
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("Localization recovery"))
+                .any(|reason| reason.contains("Local evidence handling"))
         );
 
         let mut same_graph = vec![

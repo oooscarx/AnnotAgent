@@ -741,10 +741,12 @@ immutable Workflow Version and must write every change into a new editable Draft
 ResolveBindings preserve the specified Draft identity; ResolveBindings must repair bindings without \
 rediscovering or replacing its graph. \
 Use only registered tools, public Node Definitions, available Model Profiles, typed Artifact contracts, \
-and inspected evidence. Start with get_pipeline_builder_context. For a bounding-box target, inspect \
-inspect_model_quality_contract, inspect_project_geometry_policy, inspect_geometry_correction_summary, \
-inspect_geometry_calibration, and find_geometry_refinement_path before calling the deterministic \
-resolve_pipeline_feasibility tool. Do not \
+and inspected evidence. Start with get_pipeline_builder_context. For a bounding-box target, use \
+inspect_model_quality_contract and find_geometry_refinement_path only for missing facts that would \
+change the plan. Copy exact Registry model IDs, including model-instance: prefixes. Use \
+inspect_project_geometry_policy, inspect_geometry_correction_summary and inspect_geometry_calibration \
+only when their evidence is relevant and not already known; no saved corrections or calibration is \
+not a reason to keep inspecting. Then call resolve_pipeline_feasibility. Do not \
 enumerate the catalog with single-item inspection calls. \
 Request one batch inspection only when an omitted contract would materially change the Draft. Never \
 repeat an identical Tool Call: reuse the returned observation reference and advance the phase. Respect \
@@ -754,10 +756,13 @@ successful conversion-path observation is automatically persisted as a Pipeline 
 Candidate. Once a complete runnable Candidate exists, stop broad discovery: Candidate selection, \
 materialization, validation, and salvage are deterministic Runtime responsibilities. Workflow templates \
 are ordinary Candidate seeds, never the only legal plan and never an override for a stronger compatible \
-Registry-composed Candidate. If the discovery limit is reached, materialize the best saved Candidate \
+Registry-composed Candidate. The discovery checkpoint is soft: continue only for new decision-relevant \
+facts while total and finalization budgets permit. If discovery stalls, materialize a saved Candidate \
 instead of restarting from a bootstrap template or discarding prior evidence. A \
 missing compatible model is a setup requirement, not a reason to continue discovery: preserve an \
-unresolved binding and finish_with_setup_requirements. Never spend the finalization reserve on broad \
+unresolved binding and finish_with_setup_requirements. Prefer the smallest safe testable main path. \
+An extra recovery branch needs an explicit failure condition and sample comparison before adoption; \
+structural scores are not measured accuracy. Never spend the finalization reserve on broad \
 inspection, and always terminate with an explicit typed outcome. Never create, bind, recommend, or preserve a Mock Provider, Mock Model, \
 fixture backend, or test-only fallback. If a real binding is unavailable, leave it explicitly unresolved \
 and explain the required Provider or Vision Worker setup. Use list_ready_models, \
@@ -811,7 +816,70 @@ node exists. After a Dry Run use inspect_recovery_execution_summary, inspect_mod
 validate_recovery_paths before claiming recovery correctness. check_provider_availability is passive only \
 and must not send a billable request.";
 
+fn builder_model_ids(input: &WorkflowAdvisorInput) -> Vec<String> {
+    input
+        .model_profiles
+        .iter()
+        .map(|model| model.id.to_string())
+        .chain(
+            input
+                .expert_models
+                .iter()
+                .map(|model| model.model_id.clone()),
+        )
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Resolve only exact IDs or a unique, explicitly registered local-instance alias.
+/// Never guess from a display name or silently choose between ambiguous identities.
+fn resolve_builder_model_id(input: &WorkflowAdvisorInput, id: &str) -> Result<String> {
+    let ids = builder_model_ids(input);
+    resolve_builder_model_reference(&ids, id)
+}
+
+fn resolve_builder_model_reference(ids: &[String], id: &str) -> Result<String> {
+    let matches = ids
+        .iter()
+        .filter(|candidate| {
+            candidate.as_str() == id || candidate.strip_prefix("model-instance:") == Some(id)
+        })
+        .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        return Ok(matches[0].clone());
+    }
+    bail!(
+        "invalid declared tool value: model_id {id:?} must identify exactly one Registry model; available IDs: {}",
+        ids.join(", ")
+    )
+}
+
+/// Discovery has a soft checkpoint, while the total/turn budgets remain hard limits.
+/// Successful new observations may continue past the checkpoint; stalled exploration cannot.
+fn builder_discovery_should_stop(
+    session: &AgentSession,
+    checkpoint: u32,
+    last_progress_call: u32,
+    no_tool_turns: u32,
+    model_turns: u32,
+    max_model_turns: u32,
+) -> bool {
+    let reserve = session.builder_budget.as_ref().map_or(9, |budget| {
+        budget.reserved_materialization_calls
+            + budget.reserved_validation_calls
+            + budget.reserved_finalization_calls
+    });
+    let total_limit = session.budget.max_tool_calls.min(session.budget.max_steps);
+    session.usage.tool_calls >= total_limit.saturating_sub(reserve)
+        || model_turns >= max_model_turns
+        || (session.usage.tool_calls >= checkpoint
+            && (session.usage.tool_calls.saturating_sub(last_progress_call) >= 4
+                || no_tool_turns >= 2))
+}
+
 fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefinition> {
+    let model_ids = builder_model_ids(input);
     let node_definition_ids = input
         .node_catalog
         .iter()
@@ -896,7 +964,7 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         read(
             PipelineBuilderTool::InspectModelsBatch,
             "Inspect only the specific Model Profiles whose omitted details would change a binding. At most eight IDs.",
-            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}),
+            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":input.model_profiles.iter().map(|model| model.id.to_string()).collect::<Vec<_>>()}}}}),
         ),
         read(
             PipelineBuilderTool::InspectContractsBatch,
@@ -1058,8 +1126,8 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         read(
             PipelineBuilderTool::InspectModelQualityContract,
-            "Inspect operation-scoped score semantics, geometry semantics, auto-accept eligibility, exact calibration status, and passive availability for one registered model.",
-            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string"}}}),
+            "Inspect one registered model. Copy model_id exactly from the enum, including the model-instance: prefix for local models. Score semantics and geometry quality are separate.",
+            json!({"type":"object","additionalProperties":false,"required":["model_id"],"properties":{"model_id":{"type":"string","enum":model_ids}}}),
         ),
         read(
             PipelineBuilderTool::InspectProjectGeometryPolicy,
@@ -2377,6 +2445,60 @@ fn candidate_from_draft(
     }
 }
 
+/// Keep the first localization/refinement pass, but make recovery an explicit alternative.
+/// Required-port propagation retains merge nodes shared with the normal path.
+fn without_optional_recovery(draft: &WorkflowDraft) -> Option<WorkflowDraft> {
+    let mut removed = draft
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.route.as_deref(), Some("relocalize" | "search_tiles")))
+        .map(|edge| edge.to_node.clone())
+        .collect::<BTreeSet<_>>();
+    if removed.is_empty() {
+        return None;
+    }
+    loop {
+        let before = removed.len();
+        for node in &draft.nodes {
+            if node.inputs.iter().filter(|port| port.required).any(|port| {
+                let producers = draft
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.to_node == node.id && edge.to_port == port.id)
+                    .collect::<Vec<_>>();
+                !producers.is_empty()
+                    && producers
+                        .iter()
+                        .all(|edge| removed.contains(&edge.from_node))
+            }) {
+                removed.insert(node.id.clone());
+            }
+        }
+        if removed.len() == before {
+            break;
+        }
+    }
+    let mut primary = draft.clone();
+    primary.nodes.retain(|node| !removed.contains(&node.id));
+    primary
+        .edges
+        .retain(|edge| !removed.contains(&edge.from_node) && !removed.contains(&edge.to_node));
+    for node in &mut primary.nodes {
+        node.depends_on.retain(|id| !removed.contains(id));
+        if let Some(policy) = node.parameters.get_mut("recovery_route_policy") {
+            if !policy.is_object() {
+                return None;
+            }
+            policy["attempt"] = json!(1);
+            policy["maximum_attempts"] = json!(1);
+            policy["action"] = json!("direct_review_after_exhaustion");
+            policy["on_budget_exhausted"] = json!("review");
+            policy["required_effect"] = json!("record_recovery_exhausted");
+        }
+    }
+    Some(primary)
+}
+
 fn synthesize_registry_plan_candidates(
     session: &mut AgentSession,
     safe_suggestion: &WorkflowSuggestion,
@@ -2435,6 +2557,20 @@ fn synthesize_registry_plan_candidates(
         );
         bind_available_registry_models(&mut localized, input);
         freeze_node_prompt_resources(&mut localized);
+        if let Some(primary) = without_optional_recovery(&localized) {
+            session.record_plan_candidate(candidate_from_draft(
+                CandidateDraftSource {
+                    id: format!("registry-localization-primary-{}", session.id),
+                    name: "Localize, refine and review".to_owned(),
+                    source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                    fragment_ids: vec![template.id.clone()],
+                    evidence: Vec::new(),
+                },
+                &primary,
+                input,
+                &registry_revision,
+            ));
+        }
         let candidate = candidate_from_draft(
             CandidateDraftSource {
                 id: format!("registry-localization-recovery-{}", session.id),
@@ -2797,7 +2933,7 @@ fn salvage_best_discovered_plan(
         },
         trigger,
         if runnable {
-            "Review the Draft created from the best compatible preserved plan"
+            "Review the statically checked Draft, then test sample images. Annotation quality has not been verified."
         } else {
             "Resolve the Draft's explicit setup or validation blockers"
         },
@@ -2814,7 +2950,7 @@ fn salvage_best_discovered_plan(
             estimated_cost_tier: safe_suggestion.estimated_cost_tier.clone(),
             unresolved_model_bindings: unresolved,
             warnings: vec![
-                "Discovery stopped and the best compatible preserved plan was materialized deterministically."
+                "System-composed Draft selected by structural checks, not measured annotation accuracy. Optional recovery requires sample comparison before adoption."
                     .to_owned(),
             ],
             alternatives: session
@@ -11860,6 +11996,7 @@ impl LocalApplication {
         let mut observation_cache = BTreeMap::<String, CachedBuilderObservation>::new();
         let mut provider_turns = 0_u32;
         let mut consecutive_no_tool_responses = 0_u32;
+        let mut last_discovery_progress_call = 0_u32;
 
         while session.status == AgentSessionStatus::Running {
             if cancellation.is_cancelled() {
@@ -11879,8 +12016,15 @@ impl LocalApplication {
                 annotagent_core::PipelineBuildMode::FromScratch
                     | annotagent_core::PipelineBuildMode::ImproveExisting { .. }
             );
-            let discovery_limit_reached =
-                current.is_none() && session.usage.tool_calls >= forced_progress_deadline;
+            let discovery_limit_reached = current.is_none()
+                && builder_discovery_should_stop(
+                    &session,
+                    forced_progress_deadline,
+                    last_discovery_progress_call,
+                    consecutive_no_tool_responses,
+                    provider_turns,
+                    builder_constraints.maximum_agent_turns,
+                );
             if runtime_materializes_discovery
                 && (discovery_limit_reached || has_complete_runnable_candidate)
             {
@@ -11920,7 +12064,11 @@ impl LocalApplication {
                         settings,
                         &models,
                         builder_constraints.priority,
-                        annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage,
+                        if has_complete_runnable_candidate {
+                            annotagent_core::BuilderStopReason::RunnableCandidateTriggeredSalvage
+                        } else {
+                            annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage
+                        },
                     )?;
                     current = Some(created);
                     validation = Some(salvage_validation);
@@ -12196,7 +12344,18 @@ impl LocalApplication {
                     );
                     break;
                 }
-                if current.is_none() && session.usage.tool_calls >= forced_progress_deadline {
+                if current.is_none()
+                    && session.usage.tool_calls
+                        >= session
+                            .budget
+                            .max_tool_calls
+                            .min(session.budget.max_steps)
+                            .saturating_sub(session.builder_budget.as_ref().map_or(9, |budget| {
+                                budget.reserved_materialization_calls
+                                    + budget.reserved_validation_calls
+                                    + budget.reserved_finalization_calls
+                            }))
+                {
                     break;
                 }
                 let resolved = PipelineBuilderToolRegistry.resolve(&call.name);
@@ -13077,6 +13236,7 @@ impl LocalApplication {
                     }
                     Ok(PipelineBuilderTool::InspectModelQualityContract) => {
                         let model_id = required_string_argument(&call.arguments, "model_id")?;
+                        let model_id = resolve_builder_model_id(&input, &model_id)?;
                         if let Some(model) = input
                             .model_profiles
                             .iter()
@@ -15004,6 +15164,7 @@ impl LocalApplication {
                     success = false;
                 }
                 if success && !used_cache {
+                    last_discovery_progress_call = session.usage.tool_calls.saturating_add(1);
                     if let Some(key) = cache_key {
                         observation_cache.insert(
                             key,
@@ -19449,6 +19610,122 @@ mod tests {
     use super::*;
 
     #[test]
+    fn builder_model_reference_preserves_prefix_and_rejects_ambiguous_ids() {
+        let ids = vec![
+            "model-instance:sam-instance".to_owned(),
+            "vlm-profile".to_owned(),
+        ];
+        assert_eq!(
+            resolve_builder_model_reference(&ids, "sam-instance").unwrap(),
+            "model-instance:sam-instance"
+        );
+        assert_eq!(
+            resolve_builder_model_reference(&ids, "model-instance:sam-instance").unwrap(),
+            "model-instance:sam-instance"
+        );
+        assert!(
+            resolve_builder_model_reference(&ids, "SAM")
+                .unwrap_err()
+                .to_string()
+                .contains("available IDs")
+        );
+        let ambiguous = vec![
+            "sam-instance".to_owned(),
+            "model-instance:sam-instance".to_owned(),
+        ];
+        assert!(resolve_builder_model_reference(&ambiguous, "sam-instance").is_err());
+    }
+
+    #[test]
+    fn builder_discovery_checkpoint_allows_progress_but_reserves_finalization() {
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            AgentBudget {
+                max_steps: 48,
+                max_tool_calls: 48,
+                ..AgentBudget::default()
+            },
+        );
+        session.usage.tool_calls = 8;
+        assert!(!builder_discovery_should_stop(&session, 8, 8, 0, 3, 16));
+        session.usage.tool_calls = 12;
+        assert!(!builder_discovery_should_stop(&session, 8, 12, 0, 4, 16));
+        assert!(builder_discovery_should_stop(&session, 8, 8, 0, 4, 16));
+        assert!(builder_discovery_should_stop(&session, 8, 12, 2, 4, 16));
+        assert!(builder_discovery_should_stop(&session, 8, 12, 0, 16, 16));
+        session.usage.tool_calls = 39;
+        assert!(builder_discovery_should_stop(&session, 8, 39, 0, 10, 16));
+    }
+
+    #[test]
+    fn primary_localization_keeps_shared_refiner_and_routes_uncertainty_to_review() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        app.create_project(
+            "primary",
+            include_str!("../../../examples/robocup/project.yaml"),
+        )
+        .unwrap();
+        let original = app
+            .create_workflow_draft_with_template(
+                "primary",
+                &load_settings(None).unwrap(),
+                true,
+                Some("robocup.ball.small-object-recovery"),
+            )
+            .unwrap();
+        let primary = without_optional_recovery(&original).unwrap();
+        assert!(primary.nodes.len() < original.nodes.len());
+        assert_eq!(
+            primary
+                .nodes
+                .iter()
+                .filter(|node| node.node_type == "vlm_detection.detect")
+                .count(),
+            2
+        );
+        assert_eq!(
+            primary
+                .nodes
+                .iter()
+                .filter(|node| node.node_type == "capability.segment")
+                .count(),
+            1
+        );
+        assert!(
+            !primary
+                .nodes
+                .iter()
+                .any(|node| node.id == "expand_recovery_search")
+        );
+        assert!(
+            primary
+                .nodes
+                .iter()
+                .any(|node| node.id == "review_final_ball")
+        );
+        assert!(primary.edges.iter().all(|edge| {
+            primary.nodes.iter().any(|node| node.id == edge.from_node)
+                && primary.nodes.iter().any(|node| node.id == edge.to_node)
+        }));
+        let gate = primary
+            .nodes
+            .iter()
+            .find(|node| node.id == "prompt_coverage_gate")
+            .unwrap();
+        assert_eq!(
+            gate.parameters["recovery_route_policy"]["maximum_attempts"],
+            json!(1)
+        );
+        assert!(
+            original
+                .nodes
+                .iter()
+                .any(|node| node.id == "expand_recovery_search")
+        );
+    }
+
+    #[test]
     fn advisor_execution_guard_finalizes_interruption_and_preserves_terminal_results() {
         let temp = tempfile::tempdir().expect("workspace");
         let application = LocalApplication::new(temp.path()).expect("application");
@@ -23397,7 +23674,10 @@ export:
             report.session.builder_stop_reason,
             Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
         );
-        assert_eq!(report.session.usage.tool_calls, 8);
+        assert_eq!(
+            report.session.usage.tool_calls, 9,
+            "finish the provider tool batch before stopping stalled discovery"
+        );
         assert_eq!(
             report
                 .suggestion
@@ -23553,7 +23833,7 @@ export:
             .expect("persisted conversion-path observation");
         assert_eq!(path.result["model_payload"]["runnable"], json!(true));
         assert_eq!(report.session.discovered_conversion_paths.len(), 1);
-        assert_eq!(report.session.plan_candidates.len(), 4);
+        assert_eq!(report.session.plan_candidates.len(), 5);
         let selected_candidate = report
             .session
             .selected_candidate_id
@@ -23573,6 +23853,17 @@ export:
         assert!(
             selected_candidate.is_runnable(),
             "selected Candidate is blocked: {selected_candidate:#?}"
+        );
+        assert!(
+            selected_candidate
+                .id
+                .starts_with("registry-localization-primary-")
+        );
+        assert!(
+            !selected_candidate
+                .node_blueprints
+                .iter()
+                .any(|node| node.id == "expand_recovery_search")
         );
         assert!(
             selected_candidate
@@ -23650,7 +23941,7 @@ export:
         );
         assert_eq!(
             report.session.builder_stop_reason,
-            Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
+            Some(annotagent_core::BuilderStopReason::RunnableCandidateTriggeredSalvage)
         );
         assert_eq!(
             report.session.salvage_outcome,
@@ -23730,6 +24021,12 @@ export:
                     json!({"node_type": "capability.segment"}),
                 ),
                 step("list_pipeline_templates", json!({})),
+                // Healthy discovery may pass eight calls. Repeated observations eventually
+                // trigger salvage, without spending the reserved finalization budget.
+                step("get_pipeline_builder_context", json!({})),
+                step("get_pipeline_builder_context", json!({})),
+                step("get_pipeline_builder_context", json!({})),
+                step("get_pipeline_builder_context", json!({})),
             ],
         });
 
@@ -24266,14 +24563,17 @@ export:
             .await
             .expect("bounded Pipeline Builder loop");
 
-        assert_eq!(provider.remaining_steps(), 5);
+        assert_eq!(provider.remaining_steps(), 4);
         assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
-        assert_eq!(report.session.usage.tool_calls, 6);
-        assert_eq!(report.session.model_calls.len(), 2);
-        assert_eq!(report.session.usage.input_tokens, 27_236);
-        assert!(report.session.usage.input_tokens < 95_326 * 40 / 100);
+        assert!(
+            report.session.usage.tool_calls <= 12,
+            "stop within three complete four-call batches"
+        );
+        assert_eq!(report.session.model_calls.len(), 3);
+        assert_eq!(report.session.usage.input_tokens, 40_854);
+        assert!(report.session.usage.input_tokens < 95_326 / 2);
         assert_eq!(report.session.cache_hits, 1);
-        assert_eq!(report.session.duplicate_tool_calls, 4);
+        assert!(report.session.duplicate_tool_calls >= 4);
         assert_eq!(
             report
                 .session

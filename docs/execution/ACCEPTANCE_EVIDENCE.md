@@ -1,5 +1,29 @@
 # AnnotAgent Acceptance Evidence
 
+## Builder progress and readable model stages — 2026-09-07
+
+- Reproduced session `5bc381b0-659b-4988-a813-8fa62fa0ee50` read-only: eight tool calls,
+  one missing-prefix local model lookup failure, and a system-synthesized recovery Draft.
+- Application tests prove continuation beyond eight fresh observations, bounded stalled discovery,
+  finalization reserves, exact/unique-alias/ambiguous model references, and a smaller localization
+  candidate retaining the shared segmentation/review path. The existing live-script regression
+  verifies this candidate passes static validation and preserves historical published versions.
+- `cargo test -p annotagent-application --lib`: 78 passed, 1 ignored (pre-existing).
+- `cargo test -p annotagent-core --lib pipeline_builder`: 12 passed. Structural complexity is not
+  treated as empirical benefit; conditional retries are penalized pending explicit comparison.
+- `npm --prefix web test -- --run`: 70 passed. New tests cover recovery-only propagation through
+  required ports, shared fan-in preservation, non-inference from node names, and Chinese stop text.
+- Targeted Core/Application Clippy and production Web build passed (existing large-bundle warning).
+- Runtime prompt-coverage tests: 3 passed. Local CLI build and formatting check passed; the server
+  was restarted after checking there were no active Agent sessions, Runs or Batches. HTTP returned 200.
+- Read-only Chromium check of Draft `67767407-0c9a-429e-8a08-aa407907b284`: three primary model
+  stages plus one collapsed conditional recovery call; source and untested-quality explanation
+  visible in Chinese. No horizontal overflow at 640 px; also checked at 1440 px.
+- No original acceptance screenshot was overwritten. No credential was printed or reused from
+  conversation history. No paid inference, automatic activation, or real Draft mutation occurred.
+- Scope boundary: this verifies planning/control/presentation, not B-Human accuracy. Recovery
+  alternatives still need a representative Sample Test comparison before a user adopts them.
+
 ## Web interface languages — 2026-09-07
 
 - TypeScript check and production build passed; Vitest: 14 files, 67 tests passed.

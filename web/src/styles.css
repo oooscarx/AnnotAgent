@@ -876,6 +876,10 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .pipeline-model-call-list li { display: grid; grid-template-columns: 28px minmax(160px, .8fr) minmax(190px, 1fr) auto; gap: 11px; align-items: center; min-width: 0; padding: 11px 13px; }
 .pipeline-model-call-list li + li { border-top: 1px solid var(--aa-border); }
 .pipeline-model-call-list li.not-reached { background: color-mix(in srgb, var(--aa-warning) 7%, var(--aa-surface)); }
+.pipeline-recovery-stages { padding: 14px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-md); min-width: 0; }
+.pipeline-recovery-stages > summary, details.agent-plan-candidates > summary { cursor: pointer; font-weight: 650; overflow-wrap: anywhere; }
+.pipeline-recovery-stages > p, details.agent-plan-candidates > p { margin: 12px 0; color: var(--aa-text-muted); }
+.agent-outcome-facts strong { overflow-wrap: anywhere; }
 .pipeline-model-call-index { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; background: var(--aa-primary-soft); color: var(--aa-primary); font-size: 9px; font-weight: 800; }
 .pipeline-model-call-copy, .pipeline-model-call-model { min-width: 0; }
 .pipeline-model-call-copy strong, .pipeline-model-call-copy small, .pipeline-model-call-model strong, .pipeline-model-call-model small { display: block; overflow-wrap: anywhere; }

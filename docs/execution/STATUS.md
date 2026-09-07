@@ -2,6 +2,24 @@
 
 Last updated: 2026-09-07 CST
 
+## Builder progress and minimal model stages — 2026-09-07
+
+- Discovery's eight-call setting is now a soft checkpoint. New uncached successful observations
+  may continue; stalled discovery, model-turn limits and the reserved total budget still stop it.
+  Tool batches are no longer cut at the soft checkpoint. No maximum budget was raised.
+- Quality-contract tools expose exact Registry IDs. Unique local-instance aliases are resolved
+  safely; unknown and ambiguous IDs fail with the allowed choices.
+- Registry synthesis preserves a one-pass localization/refinement/review candidate separately
+  from optional recovery. Required-port propagation keeps the shared segmenter and review tail;
+  uncertain prompts route to Review. Existing Drafts and published versions are not rewritten.
+- Extra recovery is not rewarded as demonstrated accuracy. It remains an alternative for explicit
+  sample comparison; automatic quality benchmarking or model training is not claimed.
+- GUI separates main model stages from collapsed conditional recovery and hides candidate details
+  by default. Chinese outcomes explain system composition, static checks and untested quality.
+- Verification: application 78 passed / 1 pre-existing ignored; Core Builder 12 passed; Web 70 passed;
+  production Web build and targeted Clippy passed. Real saved Draft inspected at 1440 and 640 px.
+  No paid model request, automatic publication or dataset run was performed.
+
 ## Pipeline Builder interrupted-session cleanup — 2026-09-07
 
 - Advisor execution now owns a drop guard that finalizes still-running persisted sessions and
