@@ -6815,6 +6815,33 @@ pub struct LocalApplication {
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
 }
 
+/// Persist a terminal state even when an advisor future returns early or is dropped.
+struct AgentExecutionGuard<'a> {
+    application: &'a LocalApplication,
+    session_id: uuid::Uuid,
+}
+
+impl Drop for AgentExecutionGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut session) = self.application.store.get_agent_session(self.session_id)
+            && session.status == AgentSessionStatus::Running
+        {
+            session.fail("Pipeline Builder execution ended before producing a final result (request interrupted or internal error). The saved Draft and execution evidence were preserved.");
+            session.next_action =
+                Some("Inspect the saved steps and retry from the preserved Draft".to_owned());
+            if let Err(error) = self.application.store.save_agent_session(&session) {
+                eprintln!(
+                    "could not finalize interrupted Agent session {}: {error}",
+                    self.session_id
+                );
+            }
+        }
+        if let Ok(mut cancellations) = self.application.agent_cancellations.lock() {
+            cancellations.remove(&self.session_id);
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct DryRunRuntimeProvider<'a> {
     kind: &'a str,
@@ -6879,6 +6906,16 @@ impl LocalApplication {
         let database_path = database_path.as_ref().to_path_buf();
         let store = Arc::new(SqliteStore::open(&database_path)?);
         store.reconcile_interrupted_runs()?;
+        for mut session in store.list_agent_sessions(None)? {
+            if session.kind == AgentKind::PipelineBuilder
+                && session.status == AgentSessionStatus::Running
+            {
+                session.fail("Pipeline Builder was interrupted before this server started. The saved Draft and execution evidence were preserved.");
+                session.next_action =
+                    Some("Inspect the saved steps and retry from the preserved Draft".to_owned());
+                store.save_agent_session(&session)?;
+            }
+        }
         store.recover_orphaned_batch_leases(chrono::Utc::now())?;
         let mut registry = SkillRegistry::new();
         registry.register(Arc::new(
@@ -10671,6 +10708,10 @@ impl LocalApplication {
             .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
             .insert(session.id, cancellation.clone());
         self.store.save_agent_session(&session)?;
+        let _execution_guard = AgentExecutionGuard {
+            application: self,
+            session_id: session.id,
+        };
         let abort = |session: AgentSession| WorkflowAdvisorAgentReport {
             session,
             suggestion: None,
@@ -11682,6 +11723,10 @@ impl LocalApplication {
             .map_err(|_| anyhow!("Agent cancellation registry lock poisoned"))?
             .insert(session.id, cancellation.clone());
         self.store.save_agent_session(&session)?;
+        let _execution_guard = AgentExecutionGuard {
+            application: self,
+            session_id: session.id,
+        };
         let mut messages = vec![
             ModelMessage {
                 role: ModelRole::System,
@@ -19402,6 +19447,87 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn advisor_execution_guard_finalizes_interruption_and_preserves_terminal_results() {
+        let temp = tempfile::tempdir().expect("workspace");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        for terminal in [false, true] {
+            let mut session = AgentSession::start(
+                AgentKind::PipelineBuilder,
+                annotagent_core::AgentBudget::default(),
+            )
+            .with_project("generic");
+            session.draft_id = Some("preserved-draft".to_owned());
+            if terminal {
+                session.succeed("finished normally");
+            }
+            application
+                .store
+                .save_agent_session(&session)
+                .expect("save");
+            application
+                .agent_cancellations
+                .lock()
+                .unwrap()
+                .insert(session.id, CancellationToken::default());
+            drop(AgentExecutionGuard {
+                application: &application,
+                session_id: session.id,
+            });
+            let saved = application
+                .store
+                .get_agent_session(session.id)
+                .expect("session");
+            assert_eq!(saved.draft_id, session.draft_id);
+            assert_eq!(
+                saved.status,
+                if terminal {
+                    AgentSessionStatus::Succeeded
+                } else {
+                    AgentSessionStatus::Failed
+                }
+            );
+            assert!(
+                !application
+                    .agent_cancellations
+                    .lock()
+                    .unwrap()
+                    .contains_key(&session.id)
+            );
+            if terminal {
+                assert_eq!(saved.stop_reason, session.stop_reason);
+            } else {
+                assert!(saved.stop_reason.unwrap().contains("execution ended"));
+            }
+        }
+    }
+
+    #[test]
+    fn advisor_running_session_is_reconciled_after_restart_without_losing_evidence() {
+        let temp = tempfile::tempdir().expect("workspace");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            annotagent_core::AgentBudget::default(),
+        )
+        .with_project("generic");
+        session.draft_id = Some("saved-working-draft".to_owned());
+        application
+            .store
+            .save_agent_session(&session)
+            .expect("save");
+        drop(application);
+        let restarted = LocalApplication::new(temp.path()).expect("restart");
+        let recovered = restarted
+            .store
+            .get_agent_session(session.id)
+            .expect("session");
+        assert_eq!(recovered.status, AgentSessionStatus::Failed);
+        assert_eq!(recovered.draft_id, session.draft_id);
+        assert_eq!(recovered.created_at, session.created_at);
+        assert!(recovered.stop_reason.unwrap().contains("server started"));
+    }
 
     const GENERIC_PROJECT: &str = r"
 version: 1

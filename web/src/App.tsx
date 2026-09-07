@@ -3128,6 +3128,7 @@ function WorkflowsPage({
   const [busy, setBusy] = useState(false);
   const [advisorRunning, setAdvisorRunning] = useState(false);
   const advisorRequestActive = useRef(false);
+  const advisorRequestStartedAt = useRef(0);
   const persistedDrafts = useRef(new Map<string, string>());
   const autosaveTimer = useRef<number | undefined>(undefined);
   const autosaveController = useRef<AbortController | undefined>(undefined);
@@ -3418,7 +3419,8 @@ function WorkflowsPage({
         if (stopped) return;
         const context = selectedContextRef.current;
         const latest = sessions.find((session) => session.kind === "pipeline_builder" && !context.published && (
-          context.agentSessionId ? session.id === context.agentSessionId
+          advisorRequestActive.current ? Date.parse(session.created_at) >= advisorRequestStartedAt.current - 1_000
+          : context.agentSessionId ? session.id === context.agentSessionId
             : !context.draftId || session.draft_id === context.draftId
         ));
         if (latest) {
@@ -3507,6 +3509,7 @@ function WorkflowsPage({
     setBusy(true);
     setAdvisorRunning(true);
     advisorRequestActive.current = true;
+    advisorRequestStartedAt.current = Date.now();
     setActiveAgentSession(undefined);
     setAdvisorProposalRecovered(false);
     setProposalDiff(undefined);

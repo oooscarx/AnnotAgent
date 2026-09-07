@@ -2,6 +2,15 @@
 
 Last updated: 2026-09-07 CST
 
+## Pipeline Builder interrupted-session cleanup — 2026-09-07
+
+- Advisor execution now owns a drop guard that finalizes still-running persisted sessions and
+  releases cancellation handles on early error or dropped requests. Normal terminal outcomes remain intact.
+- Startup reconciles interrupted Pipeline Builder sessions while retaining Draft IDs and evidence.
+- A new from-scratch request can discover its newly created session instead of polling only the old Draft.
+- Verified the stuck RoboCup session is now failed and the Ask button is enabled after restart.
+  Six advisor tests, 67 Web unit tests, Web build and application Clippy passed. No paid retry was made.
+
 ## Web interface languages — 2026-09-07
 
 - Added persistent English/Simplified Chinese selection in the page header, browser-language
