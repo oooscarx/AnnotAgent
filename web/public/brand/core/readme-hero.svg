@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title description">
+  <title id="title">AnnotAgent</title>
+  <desc id="description">Composable annotation workflows for vision data.</desc>
+  <defs>
+    <linearGradient id="aaGradient" x1="24" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00B3A4"/>
+      <stop offset="0.48" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="440" rx="20" fill="#0B1727"/>
+  <!-- Original AnnotAgent mark; geometry and brand colours are unchanged. -->
+  <g transform="translate(108 140) scale(1.25)">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="7">
+      <path d="M33 14H22a8 8 0 0 0-8 8v11" stroke="#FFFFFF"/>
+      <path d="M95 14h11a8 8 0 0 1 8 8v11" stroke="#FFFFFF"/>
+      <path d="M14 95v11a8 8 0 0 0 8 8h11" stroke="#2DD4BF"/>
+      <path d="M114 95v11a8 8 0 0 1-8 8H95" stroke="#A78BFA"/>
+    </g>
+    <path fill="url(#aaGradient)" fill-rule="evenodd" d="M36 99 59.5 31.5C61.2 26.6 64.6 24 69.8 24h5.1c5.1 0 8.6 2.7 10.3 7.5L109 99H86.4l-6.7-20.3H54.4L47.9 99H36Zm25.1-41.1h12.2l-6-18.1-6.2 18.1Z"/>
+    <path d="M55.3 77.8h23.6" stroke="#FFFFFF" stroke-opacity=".72" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g font-family="'Helvetica Neue', Inter, Helvetica, Arial, sans-serif">
+    <text x="324" y="225" font-size="76" font-weight="700" letter-spacing="-2.5" fill="#F8FAFC">Annot<tspan fill="#2DD4BF">Agent</tspan></text>
+    <text x="328" y="278" font-size="25" font-weight="400" fill="#B7C5D6">Composable annotation workflows for vision data.</text>
+  </g>
+</svg>

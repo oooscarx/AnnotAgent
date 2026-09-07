@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/brand/core/og-card.png" alt="AnnotAgent — composable annotation workflows for vision data" width="100%">
+  <img src="web/public/brand/core/readme-hero.svg" alt="AnnotAgent — composable annotation workflows for vision data" width="100%">
 </p>
 
 AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes
