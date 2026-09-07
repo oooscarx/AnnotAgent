@@ -6304,6 +6304,11 @@ impl<'a> DatasetCoordinator<'a> {
             .to_owned();
         let published_workflow = workflow
             .map(|(workflow_id, version)| {
+                self.application.store.ensure_published_workflow_available(
+                    &project_id,
+                    workflow_id,
+                    version,
+                )?;
                 let published = self
                     .application
                     .store
@@ -8887,31 +8892,41 @@ impl LocalApplication {
         let published = self
             .store
             .list_published_workflow_versions(Some(project_id))?;
+        let explicit_default = self.store.project_workflow_default(project_id)?;
+        let management_scope = self.management_scope(project_id)?;
+        let pipeline_aliases = self
+            .store
+            .list_project_pipeline_lifecycle(&management_scope, false, false)?
+            .into_iter()
+            .map(|pipeline| (pipeline.workflow_id, pipeline.display_name))
+            .collect::<BTreeMap<_, _>>();
         let mut available_workflow_versions = published
             .iter()
-            .enumerate()
-            .map(|(index, version)| {
-                published_workflow_summary(version, index + 1 == published.len())
+            .map(|version| {
+                let is_default = explicit_default.as_ref().is_some_and(|candidate| {
+                    candidate.workflow_id == version.workflow_id
+                        && candidate.version == version.version
+                });
+                let mut summary = published_workflow_summary(version, is_default);
+                if let Some(alias) = pipeline_aliases.get(&version.workflow_id) {
+                    summary.name.clone_from(alias);
+                }
+                summary
             })
             .collect::<Vec<_>>();
         if available_workflow_versions.is_empty() {
             available_workflow_versions.push(compatibility.clone());
         }
         let active_workflow = available_workflow_versions
-            .last()
+            .iter()
+            .find(|workflow| workflow.is_default)
+            .or_else(|| available_workflow_versions.last())
             .cloned()
             .unwrap_or_else(|| compatibility.clone());
         let default_workflow_version = available_workflow_versions
             .iter()
             .find(|workflow| workflow.is_default && workflow.status == WorkflowStatus::Published)
-            .cloned()
-            .or_else(|| {
-                available_workflow_versions
-                    .iter()
-                    .rev()
-                    .find(|workflow| workflow.status == WorkflowStatus::Published)
-                    .cloned()
-            });
+            .cloned();
         let workflows = available_workflow_versions
             .iter()
             .map(|workflow| WorkflowSummary {
@@ -15304,12 +15319,32 @@ impl LocalApplication {
     }
 
     pub fn archive_workflow_draft(&self, draft_id: &str) -> Result<WorkflowDraft> {
-        let mut draft = self.store.get_workflow_draft(draft_id)?;
+        let draft = self.store.get_workflow_draft(draft_id)?;
         self.project_path(&draft.project_id)?;
-        draft.status = WorkflowDraftStatus::Archived;
-        draft.updated_at = chrono::Utc::now();
-        self.store.save_workflow_draft(&draft)?;
-        Ok(draft)
+        let scope = self.management_scope(&draft.project_id)?;
+        let lifecycle = self
+            .store
+            .list_project_pipeline_lifecycle(&scope, true, true)?
+            .into_iter()
+            .flat_map(|pipeline| pipeline.drafts)
+            .find(|item| item.object.id == draft_id)
+            .ok_or_else(|| anyhow!("Pipeline Draft lifecycle was not found"))?;
+        let mut request = annotagent_core::ManagementRequest {
+            project_id: draft.project_id.clone(),
+            objects: vec![lifecycle.object],
+            action: annotagent_core::ManagementAction::Archive,
+            replacement_default_version: None,
+            clear_default: false,
+            display_name: None,
+            idempotency_key: format!("legacy-archive-draft-{}", uuid::Uuid::new_v4()),
+            confirmation_token: None,
+        };
+        let preview = self.preview_management(&request)?;
+        request.confirmation_token = Some(preview.confirmation_token);
+        self.execute_management(&request)?;
+        let mut response = draft;
+        response.status = WorkflowDraftStatus::Archived;
+        Ok(response)
     }
 
     pub fn clone_workflow_version(&self, workflow_id: &str, version: u32) -> Result<WorkflowDraft> {
@@ -15604,6 +15639,49 @@ impl LocalApplication {
     }
 
     pub async fn dry_run_workflow_samples_with_provider_record(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+        provider_kind: &str,
+        temporary_api_key: Option<&str>,
+    ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
+        let draft = self.store.get_workflow_draft(draft_id)?;
+        let scope = self.management_scope(&draft.project_id)?;
+        let object = annotagent_core::ManagementObjectRef {
+            kind: annotagent_core::ManagementObjectKind::WorkflowDraft,
+            id: draft_id.to_owned(),
+            version: None,
+            expected_revision: 1,
+        };
+        let owner = uuid::Uuid::new_v4().to_string();
+        self.store.acquire_management_lease(
+            &scope,
+            &object,
+            "sample_test",
+            &owner,
+            chrono::Duration::hours(2),
+        )?;
+        let result = self
+            .dry_run_workflow_samples_with_provider_record_unleased(
+                draft_id,
+                settings,
+                image_indices,
+                provider_kind,
+                temporary_api_key,
+            )
+            .await;
+        let release = self
+            .store
+            .release_management_lease(&scope, &object, "sample_test", &owner);
+        match (result, release) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error.into()),
+        }
+    }
+
+    async fn dry_run_workflow_samples_with_provider_record_unleased(
         &self,
         draft_id: &str,
         settings: &Settings,
@@ -16685,6 +16763,38 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
     ) -> Result<PublishedWorkflowVersion> {
+        let draft = self.store.get_workflow_draft(draft_id)?;
+        let scope = self.management_scope(&draft.project_id)?;
+        let object = annotagent_core::ManagementObjectRef {
+            kind: annotagent_core::ManagementObjectKind::WorkflowDraft,
+            id: draft_id.to_owned(),
+            version: None,
+            expected_revision: 1,
+        };
+        let owner = uuid::Uuid::new_v4().to_string();
+        self.store.acquire_management_lease(
+            &scope,
+            &object,
+            "publication",
+            &owner,
+            chrono::Duration::minutes(30),
+        )?;
+        let result = self.publish_workflow_unleased(draft_id, settings);
+        let release = self
+            .store
+            .release_management_lease(&scope, &object, "publication", &owner);
+        match (result, release) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error.into()),
+        }
+    }
+
+    fn publish_workflow_unleased(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+    ) -> Result<PublishedWorkflowVersion> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
         if matches!(
             draft.status,
@@ -17047,14 +17157,16 @@ impl LocalApplication {
         self.ensure_no_active_batch(&canonical)?;
         let published_workflow = workflow
             .map(|(workflow_id, version)| {
-                let published = self
-                    .store
-                    .get_published_workflow_version(workflow_id, version)?;
                 let project_id = canonical
                     .parent()
                     .and_then(Path::file_name)
                     .and_then(|name| name.to_str())
                     .unwrap_or_default();
+                self.store
+                    .ensure_published_workflow_available(project_id, workflow_id, version)?;
+                let published = self
+                    .store
+                    .get_published_workflow_version(workflow_id, version)?;
                 if published.project_id != project_id {
                     bail!("selected Workflow Version belongs to a different Project");
                 }

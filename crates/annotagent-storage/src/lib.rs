@@ -66,6 +66,8 @@ const BOUNDED_WORKSPACE_SUMMARIES_MIGRATION: &str =
     include_str!("../../../migrations/0017_bounded_workspace_summaries.sql");
 const RUN_PIPELINE_MANAGEMENT_MIGRATION: &str =
     include_str!("../../../migrations/0018_run_pipeline_management.sql");
+const PIPELINE_LIFECYCLE_MIGRATION: &str =
+    include_str!("../../../migrations/0019_pipeline_lifecycle.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -518,6 +520,20 @@ impl SqliteStore {
                 transaction.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (18, ?1, ?2)",
                     params!["run_pipeline_management", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
+            let has_pipeline_lifecycle = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 19)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_pipeline_lifecycle {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute_batch(PIPELINE_LIFECYCLE_MIGRATION)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (19, ?1, ?2)",
+                    params!["pipeline_lifecycle", Utc::now().to_rfc3339()],
                 )?;
                 transaction.commit()?;
             }
@@ -2276,17 +2292,37 @@ impl SqliteStore {
 
     pub fn save_workflow_draft(&self, draft: &WorkflowDraft) -> Result<(), StorageError> {
         self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
             let current = connection
                 .query_row(
-                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    "SELECT revision, content_hash, deleted_at, archived_at FROM workflow_drafts WHERE id = ?1",
                     [&draft.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
                 )
                 .optional()?;
-            let persisted = persisted_workflow_draft(draft, current.as_ref())?;
+            if current
+                .as_ref()
+                .is_some_and(|current| current.2.is_some() || current.3.is_some())
+            {
+                return Err(StorageError::Management {
+                    code: "entity_unavailable".to_owned(),
+                    message: "Pipeline Draft is archived or in Trash and cannot be saved".to_owned(),
+                });
+            }
+            let current_integrity = current
+                .as_ref()
+                .map(|current| (current.0, current.1.clone()));
+            let persisted = persisted_workflow_draft(draft, current_integrity.as_ref())?;
             let status = enum_string(persisted.status)?;
             let draft_json = serde_json::to_string(&persisted)?;
-            connection.execute(
+            transaction.execute(
                 "INSERT INTO workflow_drafts
                  (id, project_id, status, draft_json, created_at, updated_at, revision, content_hash)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -2307,6 +2343,20 @@ impl SqliteStore {
                     persisted.content_hash,
                 ],
             )?;
+            transaction.execute(
+                "INSERT INTO workflow_pipelines
+                 (workflow_id, project_id, display_name, lifecycle_revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?5)
+                 ON CONFLICT(workflow_id) DO UPDATE SET updated_at = excluded.updated_at",
+                params![
+                    persisted.id,
+                    persisted.project_id,
+                    persisted.name,
+                    persisted.created_at.to_rfc3339(),
+                    persisted.updated_at.to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -2321,23 +2371,37 @@ impl SqliteStore {
             let transaction = connection.unchecked_transaction()?;
             let current = transaction
                 .query_row(
-                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    "SELECT revision, content_hash, deleted_at, archived_at FROM workflow_drafts WHERE id = ?1",
                     [&draft.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
                 )
                 .optional()?;
             let Some(current) = current else {
                 return Ok(None);
             };
+            if current.2.is_some() || current.3.is_some() {
+                return Err(StorageError::Management {
+                    code: "entity_unavailable".to_owned(),
+                    message: "Pipeline Draft is archived or in Trash and cannot be saved".to_owned(),
+                });
+            }
             if u64::try_from(current.0).ok() != Some(expected_revision) {
                 return Ok(None);
             }
-            let persisted = persisted_workflow_draft(draft, Some(&current))?;
+            let current_integrity = (current.0, current.1);
+            let persisted = persisted_workflow_draft(draft, Some(&current_integrity))?;
             let changed = transaction.execute(
                 "UPDATE workflow_drafts
                  SET status = ?2, draft_json = ?3, updated_at = ?4,
                      revision = ?5, content_hash = ?6
-                 WHERE id = ?1 AND revision = ?7",
+                 WHERE id = ?1 AND revision = ?7 AND deleted_at IS NULL",
                 params![
                     persisted.id,
                     enum_string(persisted.status)?,
@@ -2351,6 +2415,11 @@ impl SqliteStore {
             if changed != 1 {
                 return Ok(None);
             }
+            transaction.execute(
+                "UPDATE workflow_pipelines SET updated_at = ?2
+                 WHERE workflow_id = ?1 AND deleted_at IS NULL",
+                params![persisted.id, persisted.updated_at.to_rfc3339()],
+            )?;
             transaction.commit()?;
             Ok(Some(persisted))
         })
@@ -2362,10 +2431,10 @@ impl SqliteStore {
     ) -> Result<Vec<WorkflowDraft>, StorageError> {
         self.with_connection(|connection| {
             let (sql, parameter) = project_id.map_or(
-                ("SELECT draft_json, revision, content_hash FROM workflow_drafts ORDER BY updated_at DESC", None),
+                ("SELECT draft_json, revision, content_hash FROM workflow_drafts WHERE deleted_at IS NULL AND archived_at IS NULL AND status != 'archived' ORDER BY updated_at DESC", None),
                 |project_id| {
                     (
-                        "SELECT draft_json, revision, content_hash FROM workflow_drafts WHERE project_id = ?1 ORDER BY updated_at DESC",
+                        "SELECT draft_json, revision, content_hash FROM workflow_drafts WHERE project_id = ?1 AND deleted_at IS NULL AND archived_at IS NULL AND status != 'archived' ORDER BY updated_at DESC",
                         Some(project_id),
                     )
                 },
@@ -2419,7 +2488,8 @@ impl SqliteStore {
             let transaction = connection.unchecked_transaction()?;
             let (current_revision, current_hash) = transaction
                 .query_row(
-                    "SELECT revision, content_hash FROM workflow_drafts WHERE id = ?1",
+                    "SELECT revision, content_hash FROM workflow_drafts
+                     WHERE id = ?1 AND deleted_at IS NULL AND archived_at IS NULL",
                     [&draft.id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
                 )
@@ -2461,15 +2531,17 @@ impl SqliteStore {
             };
             transaction.execute(
                 "INSERT INTO workflow_versions
-                 (workflow_id, version, project_id, source_draft_id, version_json, published_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (workflow_id, version, project_id, source_draft_id, version_json, published_at,
+                  display_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     version.workflow_id,
                     version.version,
                     version.project_id,
                     version.source_draft_id,
                     serde_json::to_string(&version)?,
-                    version.published_at.to_rfc3339()
+                    version.published_at.to_rfc3339(),
+                    version.draft.name,
                 ],
             )?;
             let changed = transaction.execute(
@@ -2489,6 +2561,30 @@ impl SqliteStore {
                     current: current_revision,
                 });
             }
+            transaction.execute(
+                "INSERT INTO workflow_pipelines
+                 (workflow_id, project_id, display_name, lifecycle_revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?4)
+                 ON CONFLICT(workflow_id) DO UPDATE SET updated_at = excluded.updated_at",
+                params![
+                    version.workflow_id,
+                    version.project_id,
+                    version.draft.name,
+                    version.published_at.to_rfc3339(),
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO project_workflow_defaults (project_id, workflow_id, version, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id) DO UPDATE SET workflow_id = excluded.workflow_id,
+                   version = excluded.version, updated_at = excluded.updated_at",
+                params![
+                    version.project_id,
+                    version.workflow_id,
+                    version.version,
+                    version.published_at.to_rfc3339(),
+                ],
+            )?;
             transaction.commit()?;
             Ok(version)
         })
@@ -2501,12 +2597,20 @@ impl SqliteStore {
         self.with_connection(|connection| {
             let (sql, parameter) = project_id.map_or(
                 (
-                    "SELECT version_json FROM workflow_versions ORDER BY project_id, published_at, workflow_id, version",
+                    "SELECT v.version_json FROM workflow_versions v
+                     JOIN workflow_pipelines p ON p.workflow_id = v.workflow_id
+                     WHERE v.deleted_at IS NULL AND v.archived_at IS NULL
+                       AND p.deleted_at IS NULL AND p.archived_at IS NULL
+                     ORDER BY v.project_id, v.published_at, v.workflow_id, v.version",
                     None,
                 ),
                 |project_id| {
                     (
-                        "SELECT version_json FROM workflow_versions WHERE project_id = ?1 ORDER BY published_at, workflow_id, version",
+                        "SELECT v.version_json FROM workflow_versions v
+                         JOIN workflow_pipelines p ON p.workflow_id = v.workflow_id
+                         WHERE v.project_id = ?1 AND v.deleted_at IS NULL AND v.archived_at IS NULL
+                           AND p.deleted_at IS NULL AND p.archived_at IS NULL
+                         ORDER BY v.published_at, v.workflow_id, v.version",
                         Some(project_id),
                     )
                 },

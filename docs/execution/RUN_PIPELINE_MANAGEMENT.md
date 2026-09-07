@@ -109,6 +109,46 @@ cargo test -p annotagent-server management_http_preview --lib
 M1 intentionally does not yet expose permanent cleanup or Pipeline lifecycle actions. Those typed
 actions return explicit unsupported blockers until their later milestones are committed.
 
+### M2 — Pipeline identity, defaults, archive, alias, and lifecycle
+
+- Added a Draft lifecycle revision that is separate from authoring revision and content hash.
+  `workflow_id` remains the stable Pipeline identity; `workflow_pipelines` stores only alias and
+  lifecycle metadata.
+- New Drafts and publications transactionally ensure their Pipeline parent. Publication now writes
+  an explicit Project default pointer, preserving the existing activate-on-publish behavior without
+  inferring “latest” later. Project reads use only that explicit pointer and never silently promote
+  another Version.
+- Added Pipeline lifecycle inventory with Draft/Version membership, aliases, lifecycle revisions,
+  default state, immutable hashes, and historical Run reference counts. Normal selectors exclude
+  archived and trashed parents/children.
+- Added Draft, immutable Version, and whole-Pipeline trash/restore; Version/Pipeline archive and
+  unarchive; Pipeline alias rename; and Version set/clear-default actions to the shared management
+  transaction. Deleting/archiving a current default requires an explicit valid replacement or an
+  explicit clear. Whole-Pipeline restore uses deletion-operation membership and never revives a
+  child deleted earlier.
+- Active Builder sessions, Sample Tests, publication leases, active Runs, active Dataset Runs, and
+  lifecycle revisions are blockers. Sample Test and publication entry points now own durable,
+  expiring leases. Deleted/archived Published Versions are rejected for new Runs while historical
+  snapshots and clone/inspection paths remain readable.
+- The existing clone-Version operation remains the single “copy as new Draft” path. Legacy Draft
+  archive now writes lifecycle metadata and leaves Draft execution content/hash untouched.
+
+Verification:
+
+```text
+cargo check -p annotagent-server
+passed
+
+cargo test -p annotagent-storage management --lib
+5 passed
+
+cargo test -p annotagent-server pipeline_management_http --lib
+1 passed
+
+cargo test -p annotagent-application workflow_alpha_editor_journey_is_persistent_and_version_explicit --lib
+1 passed
+```
+
 ## Known baseline limitations
 
 - No management endpoint or Trash view exists.

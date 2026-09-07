@@ -1,6 +1,6 @@
 use annotagent_core::{
     ManagementAction, ManagementBlocker, ManagementObjectKind, ManagementPreview,
-    ManagementReceipt, ManagementRequest, ProjectId, RunId, TrashEntry,
+    ManagementReceipt, ManagementRequest, PipelineLifecycleSummary, ProjectId, RunId, TrashEntry,
 };
 use annotagent_storage::{ManagementScope, StorageError};
 use anyhow::{Result, anyhow};
@@ -90,6 +90,18 @@ impl LocalApplication {
         let scope = self.management_scope(project_id)?;
         self.store
             .list_project_trash(&scope, kind)
+            .map_err(Into::into)
+    }
+
+    pub fn list_pipeline_lifecycle(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+        include_deleted: bool,
+    ) -> Result<Vec<PipelineLifecycleSummary>> {
+        let scope = self.management_scope(project_id)?;
+        self.store
+            .list_project_pipeline_lifecycle(&scope, include_archived, include_deleted)
             .map_err(Into::into)
     }
 

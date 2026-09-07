@@ -76,6 +76,32 @@ pub struct WorkflowVersionRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowLifecycleItem {
+    pub object: ManagementObjectRef,
+    pub display_name: String,
+    pub content_hash: String,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deletion_operation_id: Option<String>,
+    pub is_default: bool,
+    pub historical_run_references: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineLifecycleSummary {
+    pub project_id: String,
+    pub workflow_id: String,
+    pub display_name: String,
+    pub lifecycle_revision: u64,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deletion_operation_id: Option<String>,
+    pub default_version: Option<u32>,
+    pub drafts: Vec<WorkflowLifecycleItem>,
+    pub versions: Vec<WorkflowLifecycleItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagementRequest {
     pub project_id: String,
     pub objects: Vec<ManagementObjectRef>,
@@ -127,6 +153,14 @@ impl ManagementRequest {
             && (self.objects.len() != 1 || self.display_name.is_none())
         {
             return Err("rename requires exactly one object and a display_name".to_owned());
+        }
+        if matches!(
+            self.action,
+            ManagementAction::SetDefault | ManagementAction::ClearDefault
+        ) && (self.objects.len() != 1
+            || self.objects[0].kind != ManagementObjectKind::WorkflowVersion)
+        {
+            return Err("default management requires exactly one Published Version".to_owned());
         }
         Ok(())
     }

@@ -3183,6 +3183,26 @@ struct TrashQuery {
     kind: Option<ManagementObjectKind>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct PipelineLifecycleQuery {
+    #[serde(default)]
+    include_archived: bool,
+    #[serde(default)]
+    include_deleted: bool,
+}
+
+async fn list_project_pipeline_lifecycle(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<PipelineLifecycleQuery>,
+) -> ApiResult<Json<Value>> {
+    let pipelines = state
+        .application
+        .list_pipeline_lifecycle(&project_id, query.include_archived, query.include_deleted)
+        .map_err(ApiError::management)?;
+    Ok(Json(json!({"pipelines": pipelines})))
+}
+
 async fn preview_project_management(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
@@ -12002,6 +12022,146 @@ export:
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn pipeline_management_http_requires_explicit_default_transition() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        application
+            .create_project(
+                "pipeline-manage",
+                include_str!(
+                    "../../../examples/label-pipelines/whole-image-classification/project.yaml"
+                ),
+            )
+            .expect("Project");
+        let now = Utc::now();
+        let draft = annotagent_core::WorkflowDraft {
+            schema_version: 2,
+            id: "managed-pipeline".to_owned(),
+            project_id: "pipeline-manage".to_owned(),
+            name: "Managed Pipeline".to_owned(),
+            status: annotagent_core::WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: vec![annotagent_core::WorkflowDraftNode {
+                id: "commit".to_owned(),
+                node_type: "commit".to_owned(),
+                kind: annotagent_core::WorkflowNodeKind::Commit,
+                ..annotagent_core::WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store()
+            .save_workflow_draft(&draft)
+            .expect("Draft");
+        let published = application
+            .store()
+            .publish_workflow_draft(
+                &draft,
+                "immutable-http-hash".to_owned(),
+                annotagent_core::WorkflowSnapshot {
+                    schema_version: 2,
+                    draft: Some(draft.clone()),
+                    ..annotagent_core::WorkflowSnapshot::default()
+                },
+            )
+            .expect("Version");
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+
+        let catalog = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/pipeline-manage/pipelines",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(catalog["pipelines"].as_array().map(Vec::len), Some(1));
+        assert_eq!(catalog["pipelines"][0]["default_version"], json!(1));
+        let version = catalog["pipelines"][0]["versions"][0]["object"].clone();
+        let mut archive = json!({
+            "project_id": "pipeline-manage",
+            "objects": [version],
+            "action": "archive",
+            "idempotency_key": "archive-default-http"
+        });
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/pipeline-manage/management/preview",
+                Some(archive.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["can_execute"], json!(false));
+        assert!(preview["blockers"].as_array().is_some_and(|blockers| {
+            blockers
+                .iter()
+                .any(|blocker| blocker["code"] == json!("default_replacement_required"))
+        }));
+
+        archive["clear_default"] = json!(true);
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/pipeline-manage/management/preview",
+                Some(archive.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["can_execute"], json!(true));
+        archive["confirmation_token"] = preview["confirmation_token"].clone();
+        let response = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/pipeline-manage/management/actions",
+            Some(archive),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let project = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/pipeline-manage",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(project["project"]["default_workflow_version"].is_null());
+        assert_eq!(
+            application
+                .store()
+                .get_published_workflow_version(&published.workflow_id, published.version)
+                .expect("historical immutable Version")
+                .content_hash,
+            "immutable-http-hash"
+        );
     }
 
     #[tokio::test]

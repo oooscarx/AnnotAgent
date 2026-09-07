@@ -18,12 +18,13 @@ use super::{
     get_run_debug_summary, get_run_geometry_quality, get_run_result_summary, get_workflow_catalog,
     image_content, import_annotations, import_images, inspect_run_pipeline_artifacts, list_batches,
     list_images, list_project_agent_sessions, list_project_correction_memory,
-    list_project_geometry_calibrations, list_project_geometry_corrections, list_project_reviews,
-    list_project_trash, list_reviews, list_run_annotations, list_run_reviews, list_run_summaries,
-    patch_annotation, pause_batch, pause_run, preview_project_management, project_review_revisions,
-    put_project_geometry_policy, reject_project_review_and_next, reject_review_and_next,
-    remove_image, replay_run_from_node, resume_batch, resume_run, review_decision, run_events,
-    set_project_skills, start_batch, start_run,
+    list_project_geometry_calibrations, list_project_geometry_corrections,
+    list_project_pipeline_lifecycle, list_project_reviews, list_project_trash, list_reviews,
+    list_run_annotations, list_run_reviews, list_run_summaries, patch_annotation, pause_batch,
+    pause_run, preview_project_management, project_review_revisions, put_project_geometry_policy,
+    reject_project_review_and_next, reject_review_and_next, remove_image, replay_run_from_node,
+    resume_batch, resume_run, review_decision, run_events, set_project_skills, start_batch,
+    start_run,
 };
 
 pub(super) fn routes() -> Router<ServerState> {
@@ -106,6 +107,10 @@ pub(super) fn routes() -> Router<ServerState> {
             get(get_project_management_operation),
         )
         .route("/api/projects/{project_id}/trash", get(list_project_trash))
+        .route(
+            "/api/projects/{project_id}/pipelines",
+            get(list_project_pipeline_lifecycle),
+        )
         .route("/api/projects/{project_id}/batches", post(start_batch))
         .route("/api/batches", get(list_batches))
         .route("/api/batches/{batch_id}", get(get_batch))

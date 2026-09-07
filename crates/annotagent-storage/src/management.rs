@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use annotagent_core::{
     BatchStatus, ManagementAction, ManagementBlocker, ManagementImpact, ManagementObjectKind,
     ManagementObjectRef, ManagementOperationStatus, ManagementPreview, ManagementReceipt,
-    ManagementRequest, ProjectId, RunStatus, TrashEntry,
+    ManagementRequest, PipelineLifecycleSummary, ProjectId, RunStatus, TrashEntry,
+    WorkflowLifecycleItem, WorkflowVersionRef,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -38,7 +39,192 @@ struct BatchLifecycle {
     deletion_operation_id: Option<String>,
 }
 
+#[derive(Debug)]
+struct DraftLifecycle {
+    id: String,
+    project_id: String,
+    name: String,
+    authoring_revision: u64,
+    lifecycle_revision: u64,
+    content_hash: String,
+    archived_at: Option<String>,
+    deleted_at: Option<String>,
+    deletion_operation_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct VersionLifecycle {
+    workflow_id: String,
+    version: u32,
+    project_id: String,
+    name: String,
+    lifecycle_revision: u64,
+    content_hash: String,
+    archived_at: Option<String>,
+    deleted_at: Option<String>,
+    deletion_operation_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct PipelineLifecycle {
+    workflow_id: String,
+    project_id: String,
+    name: String,
+    lifecycle_revision: u64,
+    archived_at: Option<String>,
+    deleted_at: Option<String>,
+    deletion_operation_id: Option<String>,
+}
+
 impl SqliteStore {
+    pub fn acquire_management_lease(
+        &self,
+        scope: &ManagementScope,
+        object: &ManagementObjectRef,
+        lease_kind: &str,
+        owner: &str,
+        ttl: chrono::Duration,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let now = Utc::now();
+            transaction.execute(
+                "DELETE FROM management_entity_leases WHERE expires_at <= ?1",
+                [now.to_rfc3339()],
+            )?;
+            let existing = transaction.query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM management_entity_leases
+                   WHERE project_id = ?1 AND object_kind = ?2 AND object_id = ?3
+                     AND object_version = ?4
+                 )",
+                params![
+                    scope.project_id,
+                    enum_json(object.kind)?,
+                    object.id,
+                    object.version.unwrap_or(0),
+                ],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if existing {
+                return Err(management_error(
+                    "operation_in_progress",
+                    "another operation already holds this lifecycle lease",
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO management_entity_leases
+                 (project_id, object_kind, object_id, object_version, lease_kind, owner,
+                  expires_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    scope.project_id,
+                    enum_json(object.kind)?,
+                    object.id,
+                    object.version.unwrap_or(0),
+                    lease_kind,
+                    owner,
+                    (now + ttl).to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn release_management_lease(
+        &self,
+        scope: &ManagementScope,
+        object: &ManagementObjectRef,
+        lease_kind: &str,
+        owner: &str,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM management_entity_leases
+                 WHERE project_id = ?1 AND object_kind = ?2 AND object_id = ?3
+                   AND object_version = ?4 AND lease_kind = ?5 AND owner = ?6",
+                params![
+                    scope.project_id,
+                    enum_json(object.kind)?,
+                    object.id,
+                    object.version.unwrap_or(0),
+                    lease_kind,
+                    owner,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn project_workflow_default(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<WorkflowVersionRef>, StorageError> {
+        self.with_connection(|connection| read_default(connection, project_id))
+    }
+
+    pub fn ensure_published_workflow_available(
+        &self,
+        project_id: &str,
+        workflow_id: &str,
+        version: u32,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|connection| {
+            let lifecycle = read_version(connection, workflow_id, version)?;
+            let pipeline = read_pipeline(connection, workflow_id)?;
+            if lifecycle.project_id != project_id || pipeline.project_id != project_id {
+                return Err(management_error(
+                    "foreign_project_object",
+                    "Published Version does not belong to this Project",
+                ));
+            }
+            if lifecycle.deleted_at.is_some() || pipeline.deleted_at.is_some() {
+                return Err(management_error(
+                    "entity_in_trash",
+                    "Published Version or its Pipeline is in Trash",
+                ));
+            }
+            if lifecycle.archived_at.is_some() || pipeline.archived_at.is_some() {
+                return Err(management_error(
+                    "entity_archived",
+                    "Published Version or its Pipeline is archived",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn list_project_pipeline_lifecycle(
+        &self,
+        scope: &ManagementScope,
+        include_archived: bool,
+        include_deleted: bool,
+    ) -> Result<Vec<PipelineLifecycleSummary>, StorageError> {
+        self.with_connection(|connection| {
+            let mut sql =
+                "SELECT workflow_id FROM workflow_pipelines WHERE project_id = ?1".to_owned();
+            if !include_archived {
+                sql.push_str(" AND archived_at IS NULL");
+            }
+            if !include_deleted {
+                sql.push_str(" AND deleted_at IS NULL");
+            }
+            sql.push_str(" ORDER BY updated_at DESC, workflow_id");
+            let pipeline_ids = connection
+                .prepare(&sql)?
+                .query_map([&scope.project_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            pipeline_ids
+                .into_iter()
+                .map(|id| {
+                    pipeline_summary(connection, scope, &id, include_archived, include_deleted)
+                })
+                .collect()
+        })
+    }
+
     pub fn preview_management(
         &self,
         scope: &ManagementScope,
@@ -136,6 +322,7 @@ impl SqliteStore {
                 ],
             )?;
 
+            apply_default_transition(&transaction, scope, request, &current_preview.objects, &now)?;
             let affected = match request.action {
                 ManagementAction::MoveToTrash => move_to_trash(
                     &transaction,
@@ -151,6 +338,33 @@ impl SqliteStore {
                     &operation_id,
                     now,
                 )?,
+                ManagementAction::Archive | ManagementAction::Unarchive => change_archive_state(
+                    &transaction,
+                    scope,
+                    &current_preview.objects,
+                    &operation_id,
+                    now,
+                    request.action == ManagementAction::Archive,
+                )?,
+                ManagementAction::Rename => rename_pipeline(
+                    &transaction,
+                    scope,
+                    &current_preview.objects[0],
+                    &operation_id,
+                    now,
+                    request
+                        .display_name
+                        .as_deref()
+                        .expect("validated display name"),
+                )?,
+                ManagementAction::SetDefault | ManagementAction::ClearDefault => {
+                    record_default_action(
+                        &transaction,
+                        scope,
+                        &current_preview.objects,
+                        &operation_id,
+                    )?
+                }
                 _ => {
                     return Err(management_error(
                         "unsupported_management_action",
@@ -260,6 +474,107 @@ impl SqliteStore {
                     });
                 }
             }
+            if kind.is_none() || kind == Some(ManagementObjectKind::WorkflowDraft) {
+                let mut statement = connection.prepare(
+                    "SELECT id, COALESCE(json_extract(draft_json, '$.name'), id),
+                            lifecycle_revision, deleted_at, deletion_operation_id
+                     FROM workflow_drafts
+                     WHERE project_id = ?1 AND deleted_at IS NOT NULL
+                     ORDER BY deleted_at DESC, id",
+                )?;
+                let rows = statement.query_map([&scope.project_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (id, name, revision, deleted_at, operation_id) = row?;
+                    entries.push(trash_entry(
+                        scope,
+                        ManagementObjectRef {
+                            kind: ManagementObjectKind::WorkflowDraft,
+                            id,
+                            version: None,
+                            expected_revision: to_u64(revision),
+                        },
+                        name,
+                        &deleted_at,
+                        operation_id,
+                    )?);
+                }
+            }
+            if kind.is_none() || kind == Some(ManagementObjectKind::WorkflowVersion) {
+                let mut statement = connection.prepare(
+                    "SELECT workflow_id, version,
+                            COALESCE(display_name, json_extract(version_json, '$.draft.name'), workflow_id),
+                            lifecycle_revision, deleted_at, deletion_operation_id
+                     FROM workflow_versions
+                     WHERE project_id = ?1 AND deleted_at IS NOT NULL
+                     ORDER BY deleted_at DESC, workflow_id, version",
+                )?;
+                let rows = statement.query_map([&scope.project_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (id, version, name, revision, deleted_at, operation_id) = row?;
+                    entries.push(trash_entry(
+                        scope,
+                        ManagementObjectRef {
+                            kind: ManagementObjectKind::WorkflowVersion,
+                            id,
+                            version: Some(version),
+                            expected_revision: to_u64(revision),
+                        },
+                        format!("{name} · v{version}"),
+                        &deleted_at,
+                        operation_id,
+                    )?);
+                }
+            }
+            if kind.is_none() || kind == Some(ManagementObjectKind::Pipeline) {
+                let mut statement = connection.prepare(
+                    "SELECT workflow_id, display_name, lifecycle_revision, deleted_at,
+                            deletion_operation_id
+                     FROM workflow_pipelines
+                     WHERE project_id = ?1 AND deleted_at IS NOT NULL
+                     ORDER BY deleted_at DESC, workflow_id",
+                )?;
+                let rows = statement.query_map([&scope.project_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (id, name, revision, deleted_at, operation_id) = row?;
+                    entries.push(trash_entry(
+                        scope,
+                        ManagementObjectRef {
+                            kind: ManagementObjectKind::Pipeline,
+                            id,
+                            version: None,
+                            expected_revision: to_u64(revision),
+                        },
+                        name,
+                        &deleted_at,
+                        operation_id,
+                    )?);
+                }
+            }
             entries.sort_by(|left, right| right.deleted_at.cmp(&left.deleted_at));
             Ok(entries)
         })
@@ -343,14 +658,37 @@ fn preview(
                 impact.child_runs += child_runs.len();
                 impacted_runs.extend(child_runs);
             }
-            _ => blockers.push(ManagementBlocker {
-                code: "unsupported_management_action".to_owned(),
-                object: object.clone(),
-                message:
-                    "Pipeline lifecycle management is delivered by the next management milestone."
-                        .to_owned(),
-                related_ids: Vec::new(),
-            }),
+            ManagementObjectKind::WorkflowDraft => {
+                let draft = read_draft(connection, &object.id)?;
+                check_draft(
+                    connection,
+                    scope,
+                    request.action,
+                    object,
+                    &draft,
+                    &mut blockers,
+                )?;
+            }
+            ManagementObjectKind::WorkflowVersion => {
+                let version = read_version(
+                    connection,
+                    &object.id,
+                    object.version.expect("validated version"),
+                )?;
+                check_version(connection, scope, request, object, &version, &mut blockers)?;
+                impact.historical_run_references += historical_run_references(
+                    connection,
+                    scope,
+                    &version.workflow_id,
+                    Some(version.version),
+                )?;
+            }
+            ManagementObjectKind::Pipeline => {
+                let pipeline = read_pipeline(connection, &object.id)?;
+                check_pipeline(connection, scope, request, object, &pipeline, &mut blockers)?;
+                impact.historical_run_references +=
+                    historical_run_references(connection, scope, &pipeline.workflow_id, None)?;
+            }
         }
     }
     for run_id in impacted_runs {
@@ -438,10 +776,21 @@ fn normalize_objects(
             child_runs.extend(batch_child_runs(connection, &batch_id)?);
         }
     }
+    let selected_pipelines = objects
+        .iter()
+        .filter(|object| object.kind == ManagementObjectKind::Pipeline)
+        .map(|object| object.id.as_str())
+        .collect::<BTreeSet<_>>();
     let mut normalized = objects
         .iter()
         .filter(|object| {
-            object.kind != ManagementObjectKind::Run || !child_runs.contains(&object.id)
+            (object.kind != ManagementObjectKind::Run || !child_runs.contains(&object.id))
+                && !matches!(
+                    object.kind,
+                    ManagementObjectKind::WorkflowDraft | ManagementObjectKind::WorkflowVersion
+                )
+                .then(|| selected_pipelines.contains(object.id.as_str()))
+                .unwrap_or(false)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -612,6 +961,322 @@ fn check_batch(
     Ok(())
 }
 
+fn check_draft(
+    connection: &Connection,
+    scope: &ManagementScope,
+    action: ManagementAction,
+    object: &ManagementObjectRef,
+    draft: &DraftLifecycle,
+    blockers: &mut Vec<ManagementBlocker>,
+) -> Result<(), StorageError> {
+    if draft.project_id != scope.project_id {
+        blockers.push(blocker(
+            "foreign_project_object",
+            object,
+            "Pipeline Draft does not belong to this Project.",
+        ));
+        return Ok(());
+    }
+    lifecycle_revision_blocker(object, draft.lifecycle_revision, "Pipeline Draft", blockers);
+    lifecycle_state_blockers(
+        action,
+        object,
+        draft.archived_at.as_deref(),
+        draft.deleted_at.as_deref(),
+        blockers,
+    );
+    if matches!(
+        action,
+        ManagementAction::MoveToTrash | ManagementAction::Archive
+    ) && draft_has_active_writer(connection, scope, &draft.id)?
+    {
+        blockers.push(blocker(
+            "active_builder_session",
+            object,
+            "An active Builder or Sample Test is using this Draft.",
+        ));
+    }
+    if matches!(
+        action,
+        ManagementAction::Rename | ManagementAction::SetDefault | ManagementAction::ClearDefault
+    ) {
+        blockers.push(blocker(
+            "unsupported_management_action",
+            object,
+            "This action is not supported for Pipeline Drafts.",
+        ));
+    }
+    Ok(())
+}
+
+fn check_version(
+    connection: &Connection,
+    scope: &ManagementScope,
+    request: &ManagementRequest,
+    object: &ManagementObjectRef,
+    version: &VersionLifecycle,
+    blockers: &mut Vec<ManagementBlocker>,
+) -> Result<(), StorageError> {
+    if version.project_id != scope.project_id {
+        blockers.push(blocker(
+            "foreign_project_object",
+            object,
+            "Published Version does not belong to this Project.",
+        ));
+        return Ok(());
+    }
+    lifecycle_revision_blocker(
+        object,
+        version.lifecycle_revision,
+        "Published Version",
+        blockers,
+    );
+    lifecycle_state_blockers(
+        request.action,
+        object,
+        version.archived_at.as_deref(),
+        version.deleted_at.as_deref(),
+        blockers,
+    );
+    let parent = read_pipeline(connection, &version.workflow_id)?;
+    if matches!(
+        request.action,
+        ManagementAction::Restore | ManagementAction::SetDefault
+    ) && (parent.deleted_at.is_some() || parent.archived_at.is_some())
+    {
+        blockers.push(blocker(
+            "parent_pipeline_unavailable",
+            object,
+            "Restore or unarchive the parent Pipeline before using this Version.",
+        ));
+    }
+    if matches!(
+        request.action,
+        ManagementAction::MoveToTrash | ManagementAction::Archive
+    ) && version_has_active_execution(connection, scope, &version.workflow_id, version.version)?
+    {
+        blockers.push(blocker(
+            "run_active",
+            object,
+            "An active Run or Dataset Run is using this immutable Version.",
+        ));
+    }
+    if matches!(
+        request.action,
+        ManagementAction::MoveToTrash | ManagementAction::Archive
+    ) {
+        check_default_transition(
+            connection,
+            scope,
+            request,
+            object,
+            &version.workflow_id,
+            Some(version.version),
+            blockers,
+        )?;
+    }
+    match request.action {
+        ManagementAction::Rename => blockers.push(blocker(
+            "unsupported_management_action",
+            object,
+            "Rename the Pipeline display alias instead of immutable Version content.",
+        )),
+        ManagementAction::SetDefault => {
+            if version.deleted_at.is_some() || version.archived_at.is_some() {
+                blockers.push(blocker(
+                    "entity_unavailable",
+                    object,
+                    "A deleted or archived Version cannot be the Project default.",
+                ));
+            }
+        }
+        ManagementAction::ClearDefault => {
+            if read_default(connection, &scope.project_id)?.as_ref()
+                != Some(&WorkflowVersionRef {
+                    workflow_id: version.workflow_id.clone(),
+                    version: version.version,
+                })
+            {
+                blockers.push(blocker(
+                    "default_not_selected",
+                    object,
+                    "This Version is not the current Project default.",
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn check_pipeline(
+    connection: &Connection,
+    scope: &ManagementScope,
+    request: &ManagementRequest,
+    object: &ManagementObjectRef,
+    pipeline: &PipelineLifecycle,
+    blockers: &mut Vec<ManagementBlocker>,
+) -> Result<(), StorageError> {
+    if pipeline.project_id != scope.project_id {
+        blockers.push(blocker(
+            "foreign_project_object",
+            object,
+            "Pipeline does not belong to this Project.",
+        ));
+        return Ok(());
+    }
+    lifecycle_revision_blocker(object, pipeline.lifecycle_revision, "Pipeline", blockers);
+    lifecycle_state_blockers(
+        request.action,
+        object,
+        pipeline.archived_at.as_deref(),
+        pipeline.deleted_at.as_deref(),
+        blockers,
+    );
+    if matches!(
+        request.action,
+        ManagementAction::MoveToTrash | ManagementAction::Archive
+    ) {
+        if draft_has_active_writer(connection, scope, &pipeline.workflow_id)? {
+            blockers.push(blocker(
+                "active_builder_session",
+                object,
+                "An active Builder or Sample Test is using this Pipeline.",
+            ));
+        }
+        if pipeline_has_active_execution(connection, scope, &pipeline.workflow_id)? {
+            blockers.push(blocker(
+                "run_active",
+                object,
+                "An active Run or Dataset Run is using a Version of this Pipeline.",
+            ));
+        }
+        check_default_transition(
+            connection,
+            scope,
+            request,
+            object,
+            &pipeline.workflow_id,
+            None,
+            blockers,
+        )?;
+    }
+    if matches!(
+        request.action,
+        ManagementAction::SetDefault | ManagementAction::ClearDefault
+    ) {
+        blockers.push(blocker(
+            "unsupported_management_action",
+            object,
+            "Set or clear the Project default on a specific Published Version.",
+        ));
+    }
+    Ok(())
+}
+
+fn lifecycle_revision_blocker(
+    object: &ManagementObjectRef,
+    current: u64,
+    label: &str,
+    blockers: &mut Vec<ManagementBlocker>,
+) {
+    if object.expected_revision != current {
+        blockers.push(blocker(
+            "revision_conflict",
+            object,
+            &format!(
+                "{label} changed after selection (expected revision {}, current revision {current}).",
+                object.expected_revision
+            ),
+        ));
+    }
+}
+
+fn lifecycle_state_blockers(
+    action: ManagementAction,
+    object: &ManagementObjectRef,
+    archived_at: Option<&str>,
+    deleted_at: Option<&str>,
+    blockers: &mut Vec<ManagementBlocker>,
+) {
+    match action {
+        ManagementAction::MoveToTrash if deleted_at.is_some() => blockers.push(blocker(
+            "entity_in_trash",
+            object,
+            "The selected item is already in Trash.",
+        )),
+        ManagementAction::Restore | ManagementAction::Purge if deleted_at.is_none() => blockers
+            .push(blocker(
+                "entity_not_in_trash",
+                object,
+                "The selected item is not in Trash.",
+            )),
+        ManagementAction::Archive if archived_at.is_some() => blockers.push(blocker(
+            "entity_archived",
+            object,
+            "The selected item is already archived.",
+        )),
+        ManagementAction::Unarchive if archived_at.is_none() => blockers.push(blocker(
+            "entity_not_archived",
+            object,
+            "The selected item is not archived.",
+        )),
+        _ => {}
+    }
+    if !matches!(action, ManagementAction::Restore | ManagementAction::Purge)
+        && deleted_at.is_some()
+    {
+        blockers.push(blocker(
+            "entity_in_trash",
+            object,
+            "Restore this item before applying another lifecycle action.",
+        ));
+    }
+}
+
+fn check_default_transition(
+    connection: &Connection,
+    scope: &ManagementScope,
+    request: &ManagementRequest,
+    object: &ManagementObjectRef,
+    workflow_id: &str,
+    version: Option<u32>,
+    blockers: &mut Vec<ManagementBlocker>,
+) -> Result<(), StorageError> {
+    let Some(current) = read_default(connection, &scope.project_id)? else {
+        return Ok(());
+    };
+    let targets_default = current.workflow_id == workflow_id
+        && version.is_none_or(|version| current.version == version);
+    if !targets_default {
+        return Ok(());
+    }
+    if !request.clear_default && request.replacement_default_version.is_none() {
+        blockers.push(blocker(
+            "default_replacement_required",
+            object,
+            "Choose another available Published Version or explicitly clear the Project default.",
+        ));
+        return Ok(());
+    }
+    if let Some(replacement) = &request.replacement_default_version {
+        match read_version(connection, &replacement.workflow_id, replacement.version) {
+            Ok(candidate)
+                if candidate.project_id == scope.project_id
+                    && candidate.deleted_at.is_none()
+                    && candidate.archived_at.is_none()
+                    && !(candidate.workflow_id == workflow_id
+                        && version.is_none_or(|version| candidate.version == version)) => {}
+            _ => blockers.push(blocker(
+                "default_replacement_invalid",
+                object,
+                "The replacement must be another available Published Version in this Project.",
+            )),
+        }
+    }
+    Ok(())
+}
+
 fn move_to_trash(
     transaction: &Transaction<'_>,
     scope: &ManagementScope,
@@ -698,7 +1363,89 @@ fn move_to_trash(
                     ..object.clone()
                 });
             }
-            _ => unreachable!("preview blocks unsupported objects"),
+            ManagementObjectKind::WorkflowDraft => {
+                let draft = read_draft(transaction, &object.id)?;
+                record_item(transaction, operation_id, object, &draft_state(&draft))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_drafts SET deleted_at = ?2, deletion_operation_id = ?3,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE id = ?1 AND project_id = ?4 AND lifecycle_revision = ?5
+                           AND deleted_at IS NULL",
+                        params![
+                            object.id,
+                            now,
+                            operation_id,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline Draft changed during deletion",
+                )?;
+                affected.push(incremented(object));
+            }
+            ManagementObjectKind::WorkflowVersion => {
+                let version_number = object.version.expect("validated version");
+                let version = read_version(transaction, &object.id, version_number)?;
+                record_item(transaction, operation_id, object, &version_state(&version))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_versions SET deleted_at = ?3, deletion_operation_id = ?4,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE workflow_id = ?1 AND version = ?2 AND project_id = ?5
+                           AND lifecycle_revision = ?6 AND deleted_at IS NULL",
+                        params![
+                            object.id,
+                            version_number,
+                            now,
+                            operation_id,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Published Version changed during deletion",
+                )?;
+                affected.push(incremented(object));
+            }
+            ManagementObjectKind::Pipeline => {
+                let pipeline = read_pipeline(transaction, &object.id)?;
+                for child in pipeline_children(transaction, scope, &object.id, false, None)? {
+                    record_and_set_child_deleted(
+                        transaction,
+                        operation_id,
+                        &child,
+                        &now,
+                        Some(operation_id),
+                    )?;
+                    affected.push(incremented(&child));
+                }
+                record_item(
+                    transaction,
+                    operation_id,
+                    object,
+                    &pipeline_state(&pipeline),
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_pipelines SET deleted_at = ?3, deletion_operation_id = ?4,
+                           lifecycle_revision = lifecycle_revision + 1, updated_at = ?3
+                         WHERE workflow_id = ?1 AND project_id = ?2 AND lifecycle_revision = ?5
+                           AND deleted_at IS NULL",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            now,
+                            operation_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline changed during deletion",
+                )?;
+                affected.push(incremented(object));
+            }
         }
     }
     affected.sort();
@@ -788,11 +1535,384 @@ fn restore(
                     ..object.clone()
                 });
             }
-            _ => unreachable!("preview blocks unsupported objects"),
+            ManagementObjectKind::WorkflowDraft => {
+                let draft = read_draft(transaction, &object.id)?;
+                record_item(transaction, operation_id, object, &draft_state(&draft))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_drafts SET deleted_at = NULL, deletion_operation_id = NULL,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+                           AND deleted_at IS NOT NULL",
+                        params![object.id, scope.project_id, to_i64(object.expected_revision)],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline Draft changed during restore",
+                )?;
+                affected.push(incremented(object));
+            }
+            ManagementObjectKind::WorkflowVersion => {
+                let version_number = object.version.expect("validated version");
+                let version = read_version(transaction, &object.id, version_number)?;
+                record_item(transaction, operation_id, object, &version_state(&version))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_versions SET deleted_at = NULL, deletion_operation_id = NULL,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE workflow_id = ?1 AND version = ?2 AND project_id = ?3
+                           AND lifecycle_revision = ?4 AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            version_number,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Published Version changed during restore",
+                )?;
+                affected.push(incremented(object));
+            }
+            ManagementObjectKind::Pipeline => {
+                let pipeline = read_pipeline(transaction, &object.id)?;
+                let deletion_operation =
+                    pipeline.deletion_operation_id.clone().ok_or_else(|| {
+                        management_error("entity_not_in_trash", "Pipeline is not in Trash")
+                    })?;
+                for child in pipeline_children(
+                    transaction,
+                    scope,
+                    &object.id,
+                    true,
+                    Some(&deletion_operation),
+                )? {
+                    record_and_set_child_deleted(transaction, operation_id, &child, "", None)?;
+                    affected.push(incremented(&child));
+                }
+                record_item(
+                    transaction,
+                    operation_id,
+                    object,
+                    &pipeline_state(&pipeline),
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_pipelines SET deleted_at = NULL,
+                           deletion_operation_id = NULL, lifecycle_revision = lifecycle_revision + 1,
+                           updated_at = ?4
+                         WHERE workflow_id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+                           AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                            Utc::now().to_rfc3339(),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline changed during restore",
+                )?;
+                affected.push(incremented(object));
+            }
         }
     }
     affected.sort();
     Ok(affected)
+}
+
+fn change_archive_state(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    objects: &[ManagementObjectRef],
+    operation_id: &str,
+    now: DateTime<Utc>,
+    archived: bool,
+) -> Result<Vec<ManagementObjectRef>, StorageError> {
+    let now = now.to_rfc3339();
+    let mut affected = Vec::new();
+    for object in objects {
+        let archived_value = archived.then_some(now.as_str());
+        match object.kind {
+            ManagementObjectKind::WorkflowDraft => {
+                let draft = read_draft(transaction, &object.id)?;
+                record_item(transaction, operation_id, object, &draft_state(&draft))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_drafts SET archived_at = ?2,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE id = ?1 AND project_id = ?3 AND lifecycle_revision = ?4",
+                        params![
+                            object.id,
+                            archived_value,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline Draft changed during archive action",
+                )?;
+            }
+            ManagementObjectKind::WorkflowVersion => {
+                let number = object.version.expect("validated version");
+                let version = read_version(transaction, &object.id, number)?;
+                record_item(transaction, operation_id, object, &version_state(&version))?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_versions SET archived_at = ?3,
+                           lifecycle_revision = lifecycle_revision + 1
+                         WHERE workflow_id = ?1 AND version = ?2 AND project_id = ?4
+                           AND lifecycle_revision = ?5",
+                        params![
+                            object.id,
+                            number,
+                            archived_value,
+                            scope.project_id,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Published Version changed during archive action",
+                )?;
+            }
+            ManagementObjectKind::Pipeline => {
+                let pipeline = read_pipeline(transaction, &object.id)?;
+                record_item(
+                    transaction,
+                    operation_id,
+                    object,
+                    &pipeline_state(&pipeline),
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "UPDATE workflow_pipelines SET archived_at = ?3,
+                           lifecycle_revision = lifecycle_revision + 1, updated_at = ?4
+                         WHERE workflow_id = ?1 AND project_id = ?2 AND lifecycle_revision = ?5",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            archived_value,
+                            now,
+                            to_i64(object.expected_revision),
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline changed during archive action",
+                )?;
+            }
+            ManagementObjectKind::Run | ManagementObjectKind::Batch => {
+                unreachable!("preview blocks Run archive")
+            }
+        }
+        affected.push(incremented(object));
+    }
+    affected.sort();
+    Ok(affected)
+}
+
+fn rename_pipeline(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    object: &ManagementObjectRef,
+    operation_id: &str,
+    now: DateTime<Utc>,
+    display_name: &str,
+) -> Result<Vec<ManagementObjectRef>, StorageError> {
+    let pipeline = read_pipeline(transaction, &object.id)?;
+    record_item(
+        transaction,
+        operation_id,
+        object,
+        &pipeline_state(&pipeline),
+    )?;
+    ensure_one(
+        transaction.execute(
+            "UPDATE workflow_pipelines SET display_name = ?3,
+               lifecycle_revision = lifecycle_revision + 1, updated_at = ?4
+             WHERE workflow_id = ?1 AND project_id = ?2 AND lifecycle_revision = ?5
+               AND deleted_at IS NULL",
+            params![
+                object.id,
+                scope.project_id,
+                display_name.trim(),
+                now.to_rfc3339(),
+                to_i64(object.expected_revision),
+            ],
+        )?,
+        "revision_conflict",
+        "Pipeline changed during rename",
+    )?;
+    Ok(vec![incremented(object)])
+}
+
+fn record_default_action(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    objects: &[ManagementObjectRef],
+    operation_id: &str,
+) -> Result<Vec<ManagementObjectRef>, StorageError> {
+    for object in objects {
+        record_item(
+            transaction,
+            operation_id,
+            object,
+            &serde_json::json!({"default": read_default(transaction, &scope.project_id)?}),
+        )?;
+    }
+    Ok(objects.to_vec())
+}
+
+fn apply_default_transition(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    request: &ManagementRequest,
+    objects: &[ManagementObjectRef],
+    now: &DateTime<Utc>,
+) -> Result<(), StorageError> {
+    if request.action == ManagementAction::SetDefault {
+        let object = objects.first().expect("validated objects");
+        let version = object.version.expect("Set Default requires a Version");
+        transaction.execute(
+            "INSERT INTO project_workflow_defaults (project_id, workflow_id, version, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_id) DO UPDATE SET workflow_id = excluded.workflow_id,
+               version = excluded.version, updated_at = excluded.updated_at",
+            params![scope.project_id, object.id, version, now.to_rfc3339()],
+        )?;
+        return Ok(());
+    }
+    if request.action == ManagementAction::ClearDefault {
+        transaction.execute(
+            "DELETE FROM project_workflow_defaults WHERE project_id = ?1",
+            [&scope.project_id],
+        )?;
+        return Ok(());
+    }
+    let Some(current) = read_default(transaction, &scope.project_id)? else {
+        return Ok(());
+    };
+    let targets_default = objects.iter().any(|object| match object.kind {
+        ManagementObjectKind::WorkflowVersion => {
+            object.id == current.workflow_id && object.version == Some(current.version)
+        }
+        ManagementObjectKind::Pipeline => object.id == current.workflow_id,
+        _ => false,
+    });
+    if !targets_default {
+        return Ok(());
+    }
+    if request.clear_default {
+        transaction.execute(
+            "DELETE FROM project_workflow_defaults WHERE project_id = ?1",
+            [&scope.project_id],
+        )?;
+    } else if let Some(replacement) = &request.replacement_default_version {
+        transaction.execute(
+            "UPDATE project_workflow_defaults SET workflow_id = ?2, version = ?3, updated_at = ?4
+             WHERE project_id = ?1",
+            params![
+                scope.project_id,
+                replacement.workflow_id,
+                replacement.version,
+                now.to_rfc3339(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn pipeline_children(
+    connection: &Connection,
+    scope: &ManagementScope,
+    workflow_id: &str,
+    deleted: bool,
+    operation_id: Option<&str>,
+) -> Result<Vec<ManagementObjectRef>, StorageError> {
+    let mut children = Vec::new();
+    if let Ok(draft) = read_draft(connection, workflow_id)
+        && draft.project_id == scope.project_id
+        && draft.deleted_at.is_some() == deleted
+        && operation_id
+            .is_none_or(|operation| draft.deletion_operation_id.as_deref() == Some(operation))
+    {
+        children.push(ManagementObjectRef {
+            kind: ManagementObjectKind::WorkflowDraft,
+            id: draft.id,
+            version: None,
+            expected_revision: draft.lifecycle_revision,
+        });
+    }
+    let mut statement = connection.prepare(
+        "SELECT version FROM workflow_versions WHERE workflow_id = ?1 AND project_id = ?2",
+    )?;
+    let versions = statement
+        .query_map(params![workflow_id, scope.project_id], |row| {
+            row.get::<_, u32>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for number in versions {
+        let version = read_version(connection, workflow_id, number)?;
+        if version.deleted_at.is_some() == deleted
+            && operation_id
+                .is_none_or(|operation| version.deletion_operation_id.as_deref() == Some(operation))
+        {
+            children.push(ManagementObjectRef {
+                kind: ManagementObjectKind::WorkflowVersion,
+                id: workflow_id.to_owned(),
+                version: Some(number),
+                expected_revision: version.lifecycle_revision,
+            });
+        }
+    }
+    Ok(children)
+}
+
+fn record_and_set_child_deleted(
+    transaction: &Transaction<'_>,
+    operation_id: &str,
+    object: &ManagementObjectRef,
+    deleted_at: &str,
+    deletion_operation_id: Option<&str>,
+) -> Result<(), StorageError> {
+    match object.kind {
+        ManagementObjectKind::WorkflowDraft => {
+            let draft = read_draft(transaction, &object.id)?;
+            record_item(transaction, operation_id, object, &draft_state(&draft))?;
+            transaction.execute(
+                "UPDATE workflow_drafts SET deleted_at = ?2, deletion_operation_id = ?3,
+                   lifecycle_revision = lifecycle_revision + 1 WHERE id = ?1",
+                params![
+                    object.id,
+                    (!deleted_at.is_empty()).then_some(deleted_at),
+                    deletion_operation_id,
+                ],
+            )?;
+        }
+        ManagementObjectKind::WorkflowVersion => {
+            let number = object.version.expect("version child");
+            let version = read_version(transaction, &object.id, number)?;
+            record_item(transaction, operation_id, object, &version_state(&version))?;
+            transaction.execute(
+                "UPDATE workflow_versions SET deleted_at = ?3, deletion_operation_id = ?4,
+                   lifecycle_revision = lifecycle_revision + 1
+                 WHERE workflow_id = ?1 AND version = ?2",
+                params![
+                    object.id,
+                    number,
+                    (!deleted_at.is_empty()).then_some(deleted_at),
+                    deletion_operation_id,
+                ],
+            )?;
+        }
+        _ => unreachable!("Pipeline child kind"),
+    }
+    Ok(())
+}
+
+fn incremented(object: &ManagementObjectRef) -> ManagementObjectRef {
+    ManagementObjectRef {
+        expected_revision: object.expected_revision.saturating_add(1),
+        ..object.clone()
+    }
 }
 
 fn read_run(connection: &Connection, id: &str) -> Result<RunLifecycle, StorageError> {
@@ -863,6 +1983,359 @@ fn read_batch(connection: &Connection, id: &str) -> Result<BatchLifecycle, Stora
                 })
             },
         )
+}
+
+fn read_draft(connection: &Connection, id: &str) -> Result<DraftLifecycle, StorageError> {
+    connection
+        .query_row(
+            "SELECT id, project_id, COALESCE(json_extract(draft_json, '$.name'), id),
+                    revision, lifecycle_revision, content_hash, archived_at, deleted_at,
+                    deletion_operation_id
+             FROM workflow_drafts WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(DraftLifecycle {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    name: row.get(2)?,
+                    authoring_revision: to_u64(row.get(3)?),
+                    lifecycle_revision: to_u64(row.get(4)?),
+                    content_hash: row.get(5)?,
+                    archived_at: row.get(6)?,
+                    deleted_at: row.get(7)?,
+                    deletion_operation_id: row.get(8)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            management_error(
+                "entity_purged",
+                format!("Pipeline Draft {id} was not found"),
+            )
+        })
+}
+
+fn read_version(
+    connection: &Connection,
+    workflow_id: &str,
+    version: u32,
+) -> Result<VersionLifecycle, StorageError> {
+    connection
+        .query_row(
+            "SELECT workflow_id, version, project_id,
+                    COALESCE(display_name, json_extract(version_json, '$.draft.name'), workflow_id),
+                    lifecycle_revision, json_extract(version_json, '$.content_hash'), archived_at,
+                    deleted_at, deletion_operation_id
+             FROM workflow_versions WHERE workflow_id = ?1 AND version = ?2",
+            params![workflow_id, version],
+            |row| {
+                Ok(VersionLifecycle {
+                    workflow_id: row.get(0)?,
+                    version: u32::try_from(row.get::<_, i64>(1)?).unwrap_or(u32::MAX),
+                    project_id: row.get(2)?,
+                    name: row.get(3)?,
+                    lifecycle_revision: to_u64(row.get(4)?),
+                    content_hash: row.get(5)?,
+                    archived_at: row.get(6)?,
+                    deleted_at: row.get(7)?,
+                    deletion_operation_id: row.get(8)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            management_error(
+                "entity_purged",
+                format!("Published Version {workflow_id}@{version} was not found"),
+            )
+        })
+}
+
+fn read_pipeline(
+    connection: &Connection,
+    workflow_id: &str,
+) -> Result<PipelineLifecycle, StorageError> {
+    connection
+        .query_row(
+            "SELECT workflow_id, project_id, display_name, lifecycle_revision, archived_at,
+                    deleted_at, deletion_operation_id
+             FROM workflow_pipelines WHERE workflow_id = ?1",
+            [workflow_id],
+            |row| {
+                Ok(PipelineLifecycle {
+                    workflow_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    name: row.get(2)?,
+                    lifecycle_revision: to_u64(row.get(3)?),
+                    archived_at: row.get(4)?,
+                    deleted_at: row.get(5)?,
+                    deletion_operation_id: row.get(6)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            management_error(
+                "entity_purged",
+                format!("Pipeline {workflow_id} was not found"),
+            )
+        })
+}
+
+fn read_default(
+    connection: &Connection,
+    project_id: &str,
+) -> Result<Option<WorkflowVersionRef>, StorageError> {
+    connection
+        .query_row(
+            "SELECT workflow_id, version FROM project_workflow_defaults WHERE project_id = ?1",
+            [project_id],
+            |row| {
+                Ok(WorkflowVersionRef {
+                    workflow_id: row.get(0)?,
+                    version: u32::try_from(row.get::<_, i64>(1)?).unwrap_or(u32::MAX),
+                })
+            },
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn draft_has_active_writer(
+    connection: &Connection,
+    scope: &ManagementScope,
+    draft_id: &str,
+) -> Result<bool, StorageError> {
+    let session = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM agent_sessions
+           WHERE project_id = ?1 AND status = 'running'
+             AND (
+               json_extract(session_json, '$.draft_id') = ?2
+               OR json_extract(session_json, '$.working_draft.draft_id') = ?2
+             )
+         )",
+        params![scope.project_id, draft_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let lease = has_management_lease(
+        connection,
+        scope,
+        ManagementObjectKind::WorkflowDraft,
+        draft_id,
+        0,
+    )?;
+    Ok(session || lease)
+}
+
+fn has_management_lease(
+    connection: &Connection,
+    scope: &ManagementScope,
+    kind: ManagementObjectKind,
+    id: &str,
+    version: u32,
+) -> Result<bool, StorageError> {
+    let now = Utc::now().to_rfc3339();
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM management_entity_leases
+               WHERE project_id = ?1 AND object_kind = ?2 AND object_id = ?3
+                 AND object_version = ?4 AND expires_at > ?5
+             )",
+            params![scope.project_id, enum_json(kind)?, id, version, now],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(StorageError::from)
+}
+
+fn version_has_active_execution(
+    connection: &Connection,
+    scope: &ManagementScope,
+    workflow_id: &str,
+    version: u32,
+) -> Result<bool, StorageError> {
+    let version_i64 = i64::from(version);
+    let active_run = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM runs r
+           LEFT JOIN active_project_runs a ON a.run_id = r.id
+           WHERE r.project_id = ?1
+             AND (a.run_id IS NOT NULL OR r.status IN ('pending', 'running', 'paused', 'awaiting_review'))
+             AND json_extract(r.workflow_snapshot_json, '$.selected_workflow.workflow_id') = ?2
+             AND json_extract(r.workflow_snapshot_json, '$.selected_workflow.version') = ?3
+         )",
+        params![scope.stable_project_id.to_string(), workflow_id, version_i64],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let batch_identity = format!("{workflow_id}@{version}");
+    let active_batch = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM dataset_batches
+           WHERE project_id = ?1 AND workflow_version = ?2
+             AND (status IN ('pending', 'running', 'paused', 'awaiting_review')
+                  OR (lease_owner IS NOT NULL AND lease_expires_at > ?3))
+         )",
+        params![scope.project_id, batch_identity, Utc::now().to_rfc3339()],
+        |row| row.get::<_, bool>(0),
+    )?;
+    Ok(active_run
+        || active_batch
+        || has_management_lease(
+            connection,
+            scope,
+            ManagementObjectKind::WorkflowVersion,
+            workflow_id,
+            version,
+        )?)
+}
+
+fn pipeline_has_active_execution(
+    connection: &Connection,
+    scope: &ManagementScope,
+    workflow_id: &str,
+) -> Result<bool, StorageError> {
+    let mut statement =
+        connection.prepare("SELECT version FROM workflow_versions WHERE workflow_id = ?1")?;
+    let versions = statement
+        .query_map([workflow_id], |row| row.get::<_, u32>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for version in versions {
+        if version_has_active_execution(connection, scope, workflow_id, version)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn historical_run_references(
+    connection: &Connection,
+    scope: &ManagementScope,
+    workflow_id: &str,
+    version: Option<u32>,
+) -> Result<usize, StorageError> {
+    let value = connection.query_row(
+        "SELECT COUNT(*) FROM runs
+         WHERE project_id = ?1
+           AND json_extract(workflow_snapshot_json, '$.selected_workflow.workflow_id') = ?2
+           AND (?3 IS NULL OR json_extract(workflow_snapshot_json, '$.selected_workflow.version') = ?3)",
+        params![scope.stable_project_id.to_string(), workflow_id, version.map(i64::from)],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(usize::try_from(value.max(0)).unwrap_or(usize::MAX))
+}
+
+fn pipeline_summary(
+    connection: &Connection,
+    scope: &ManagementScope,
+    workflow_id: &str,
+    include_archived: bool,
+    include_deleted: bool,
+) -> Result<PipelineLifecycleSummary, StorageError> {
+    let pipeline = read_pipeline(connection, workflow_id)?;
+    let default = read_default(connection, &scope.project_id)?;
+    let mut draft_statement =
+        connection.prepare("SELECT id FROM workflow_drafts WHERE id = ?1 AND project_id = ?2")?;
+    let draft_ids = draft_statement
+        .query_map(params![workflow_id, scope.project_id], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let drafts = draft_ids
+        .into_iter()
+        .map(|id| {
+            let draft = read_draft(connection, &id)?;
+            if (!include_archived && draft.archived_at.is_some())
+                || (!include_deleted && draft.deleted_at.is_some())
+            {
+                return Ok(None);
+            }
+            Ok(Some(WorkflowLifecycleItem {
+                object: ManagementObjectRef {
+                    kind: ManagementObjectKind::WorkflowDraft,
+                    id: draft.id.clone(),
+                    version: None,
+                    expected_revision: draft.lifecycle_revision,
+                },
+                display_name: draft.name,
+                content_hash: draft.content_hash,
+                archived_at: optional_datetime(draft.archived_at.as_deref())?,
+                deleted_at: optional_datetime(draft.deleted_at.as_deref())?,
+                deletion_operation_id: draft.deletion_operation_id,
+                is_default: false,
+                historical_run_references: 0,
+            }))
+        })
+        .collect::<Result<Vec<_>, StorageError>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let mut version_statement = connection.prepare(
+        "SELECT version FROM workflow_versions WHERE workflow_id = ?1 AND project_id = ?2
+         ORDER BY version DESC",
+    )?;
+    let version_numbers = version_statement
+        .query_map(params![workflow_id, scope.project_id], |row| {
+            row.get::<_, u32>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let versions = version_numbers
+        .into_iter()
+        .map(|number| {
+            let version = read_version(connection, workflow_id, number)?;
+            if (!include_archived && version.archived_at.is_some())
+                || (!include_deleted && version.deleted_at.is_some())
+            {
+                return Ok(None);
+            }
+            Ok(Some(WorkflowLifecycleItem {
+                object: ManagementObjectRef {
+                    kind: ManagementObjectKind::WorkflowVersion,
+                    id: version.workflow_id.clone(),
+                    version: Some(version.version),
+                    expected_revision: version.lifecycle_revision,
+                },
+                display_name: version.name,
+                content_hash: version.content_hash,
+                archived_at: optional_datetime(version.archived_at.as_deref())?,
+                deleted_at: optional_datetime(version.deleted_at.as_deref())?,
+                deletion_operation_id: version.deletion_operation_id,
+                is_default: default.as_ref()
+                    == Some(&WorkflowVersionRef {
+                        workflow_id: version.workflow_id.clone(),
+                        version: version.version,
+                    }),
+                historical_run_references: historical_run_references(
+                    connection,
+                    scope,
+                    workflow_id,
+                    Some(number),
+                )?,
+            }))
+        })
+        .collect::<Result<Vec<_>, StorageError>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    Ok(PipelineLifecycleSummary {
+        project_id: pipeline.project_id,
+        workflow_id: pipeline.workflow_id,
+        display_name: pipeline.name,
+        lifecycle_revision: pipeline.lifecycle_revision,
+        archived_at: optional_datetime(pipeline.archived_at.as_deref())?,
+        deleted_at: optional_datetime(pipeline.deleted_at.as_deref())?,
+        deletion_operation_id: pipeline.deletion_operation_id,
+        default_version: default
+            .filter(|candidate| candidate.workflow_id == workflow_id)
+            .map(|candidate| candidate.version),
+        drafts,
+        versions,
+    })
+}
+
+fn optional_datetime(value: Option<&str>) -> Result<Option<DateTime<Utc>>, StorageError> {
+    value.map(parse_datetime).transpose()
 }
 
 fn batch_child_runs(connection: &Connection, batch_id: &str) -> Result<Vec<String>, StorageError> {
@@ -936,6 +2409,37 @@ fn batch_state(batch: &BatchLifecycle) -> serde_json::Value {
         "lease_owner": batch.lease_owner,
         "deleted_at": batch.deleted_at,
         "deletion_operation_id": batch.deletion_operation_id,
+    })
+}
+
+fn draft_state(draft: &DraftLifecycle) -> serde_json::Value {
+    serde_json::json!({
+        "authoring_revision": draft.authoring_revision,
+        "lifecycle_revision": draft.lifecycle_revision,
+        "content_hash": draft.content_hash,
+        "archived_at": draft.archived_at,
+        "deleted_at": draft.deleted_at,
+        "deletion_operation_id": draft.deletion_operation_id,
+    })
+}
+
+fn version_state(version: &VersionLifecycle) -> serde_json::Value {
+    serde_json::json!({
+        "lifecycle_revision": version.lifecycle_revision,
+        "content_hash": version.content_hash,
+        "archived_at": version.archived_at,
+        "deleted_at": version.deleted_at,
+        "deletion_operation_id": version.deletion_operation_id,
+    })
+}
+
+fn pipeline_state(pipeline: &PipelineLifecycle) -> serde_json::Value {
+    serde_json::json!({
+        "display_name": pipeline.name,
+        "lifecycle_revision": pipeline.lifecycle_revision,
+        "archived_at": pipeline.archived_at,
+        "deleted_at": pipeline.deleted_at,
+        "deletion_operation_id": pipeline.deletion_operation_id,
     })
 }
 
@@ -1018,6 +2522,24 @@ fn short_id(value: &str) -> &str {
     value.get(..8).unwrap_or(value)
 }
 
+fn trash_entry(
+    scope: &ManagementScope,
+    object: ManagementObjectRef,
+    display_name: String,
+    deleted_at: &str,
+    deletion_operation_id: String,
+) -> Result<TrashEntry, StorageError> {
+    Ok(TrashEntry {
+        project_id: scope.project_id.clone(),
+        object,
+        display_name,
+        deleted_at: parse_datetime(deleted_at)?,
+        deletion_operation_id,
+        source_project: scope.project_id.clone(),
+        recoverable: true,
+    })
+}
+
 fn ensure_one(changed: usize, code: &str, message: &str) -> Result<(), StorageError> {
     if changed == 1 {
         Ok(())
@@ -1037,7 +2559,9 @@ fn management_error(code: &str, message: impl Into<String>) -> StorageError {
 mod tests {
     use super::*;
     use annotagent_core::{
-        BatchBudgetLedger, BatchBudgetLimits, BatchId, BatchRecord, ImageId, RunId,
+        AgentBudget, AgentKind, AgentSession, BatchBudgetLedger, BatchBudgetLimits, BatchId,
+        BatchRecord, ImageId, RunId, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus,
+        WorkflowNodeKind, WorkflowSnapshot,
     };
     use annotagent_runtime::{RunRecord, RuntimeStore};
 
@@ -1286,5 +2810,308 @@ mod tests {
         assert_eq!(trash.len(), 1);
         assert_eq!(trash[0].object.id, first.to_string());
         assert_eq!(store.list_runs().expect("visible Runs").len(), 1);
+    }
+
+    fn workflow_draft(id: &str, project_id: &str) -> WorkflowDraft {
+        let now = Utc::now();
+        WorkflowDraft {
+            schema_version: 2,
+            id: id.to_owned(),
+            project_id: project_id.to_owned(),
+            name: format!("Pipeline {id}"),
+            status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: vec![WorkflowDraftNode {
+                id: "commit".to_owned(),
+                node_type: "commit".to_owned(),
+                kind: WorkflowNodeKind::Commit,
+                ..WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: std::collections::BTreeMap::new(),
+            resource_versions: std::collections::BTreeMap::new(),
+            runtime_policies: std::collections::BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            geometry_risk_acceptance: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn confirmed(
+        store: &SqliteStore,
+        scope: &ManagementScope,
+        mut request: ManagementRequest,
+    ) -> ManagementReceipt {
+        let preview = store
+            .preview_management(scope, &request)
+            .expect("management preview");
+        assert!(preview.can_execute, "{:?}", preview.blockers);
+        request.confirmation_token = Some(preview.confirmation_token);
+        store
+            .execute_management(scope, &request)
+            .expect("management action")
+    }
+
+    #[test]
+    fn pipeline_lifecycle_preserves_hash_defaults_and_exact_restore_membership() {
+        let store = SqliteStore::open_in_memory().expect("store");
+        let scope = test_scope();
+        for id in ["pipeline-a", "pipeline-b"] {
+            let draft = workflow_draft(id, &scope.project_id);
+            store.save_workflow_draft(&draft).expect("Draft");
+            store
+                .publish_workflow_draft(
+                    &draft,
+                    format!("published-hash-{id}"),
+                    WorkflowSnapshot {
+                        schema_version: 2,
+                        draft: Some(draft.clone()),
+                        ..WorkflowSnapshot::default()
+                    },
+                )
+                .expect("Version");
+        }
+        assert_eq!(
+            store
+                .project_workflow_default(&scope.project_id)
+                .expect("default"),
+            Some(WorkflowVersionRef {
+                workflow_id: "pipeline-b".to_owned(),
+                version: 1,
+            })
+        );
+
+        let default_object = ManagementObjectRef {
+            kind: ManagementObjectKind::WorkflowVersion,
+            id: "pipeline-b".to_owned(),
+            version: Some(1),
+            expected_revision: 1,
+        };
+        let blocked = request(
+            &scope.project_id,
+            default_object.clone(),
+            ManagementAction::MoveToTrash,
+            "blocked-default",
+        );
+        let preview = store
+            .preview_management(&scope, &blocked)
+            .expect("preview default");
+        assert!(
+            preview
+                .blockers
+                .iter()
+                .any(|blocker| { blocker.code == "default_replacement_required" })
+        );
+
+        let mut delete_default = request(
+            &scope.project_id,
+            default_object,
+            ManagementAction::MoveToTrash,
+            "delete-default",
+        );
+        delete_default.clear_default = true;
+        confirmed(&store, &scope, delete_default);
+        assert_eq!(
+            store
+                .project_workflow_default(&scope.project_id)
+                .expect("cleared default"),
+            None
+        );
+        assert_eq!(
+            store
+                .get_published_workflow_version("pipeline-b", 1)
+                .expect("historical Version")
+                .content_hash,
+            "published-hash-pipeline-b"
+        );
+        let trashed = store
+            .list_project_trash(&scope, Some(ManagementObjectKind::WorkflowVersion))
+            .expect("Version Trash");
+        confirmed(
+            &store,
+            &scope,
+            request(
+                &scope.project_id,
+                trashed
+                    .iter()
+                    .find(|item| item.object.id == "pipeline-b")
+                    .expect("trashed B")
+                    .object
+                    .clone(),
+                ManagementAction::Restore,
+                "restore-version-b",
+            ),
+        );
+        assert_eq!(
+            store
+                .project_workflow_default(&scope.project_id)
+                .expect("default remains cleared"),
+            None
+        );
+
+        confirmed(
+            &store,
+            &scope,
+            request(
+                &scope.project_id,
+                ManagementObjectRef {
+                    kind: ManagementObjectKind::WorkflowVersion,
+                    id: "pipeline-a".to_owned(),
+                    version: Some(1),
+                    expected_revision: 1,
+                },
+                ManagementAction::MoveToTrash,
+                "delete-version-a",
+            ),
+        );
+        confirmed(
+            &store,
+            &scope,
+            request(
+                &scope.project_id,
+                ManagementObjectRef {
+                    kind: ManagementObjectKind::Pipeline,
+                    id: "pipeline-a".to_owned(),
+                    version: None,
+                    expected_revision: 1,
+                },
+                ManagementAction::MoveToTrash,
+                "delete-pipeline-a",
+            ),
+        );
+        let pipeline_a = store
+            .list_project_trash(&scope, Some(ManagementObjectKind::Pipeline))
+            .expect("Pipeline Trash")
+            .into_iter()
+            .find(|item| item.object.id == "pipeline-a")
+            .expect("trashed Pipeline A");
+        confirmed(
+            &store,
+            &scope,
+            request(
+                &scope.project_id,
+                pipeline_a.object,
+                ManagementAction::Restore,
+                "restore-pipeline-a",
+            ),
+        );
+        let version_trash = store
+            .list_project_trash(&scope, Some(ManagementObjectKind::WorkflowVersion))
+            .expect("Version Trash");
+        assert!(
+            version_trash
+                .iter()
+                .any(|item| item.object.id == "pipeline-a")
+        );
+
+        let catalog = store
+            .list_project_pipeline_lifecycle(&scope, true, false)
+            .expect("catalog");
+        let pipeline = catalog
+            .iter()
+            .find(|pipeline| pipeline.workflow_id == "pipeline-a")
+            .expect("Pipeline A");
+        let hash = store
+            .get_published_workflow_version("pipeline-a", 1)
+            .expect("historical Version")
+            .content_hash;
+        let mut rename = request(
+            &scope.project_id,
+            ManagementObjectRef {
+                kind: ManagementObjectKind::Pipeline,
+                id: "pipeline-a".to_owned(),
+                version: None,
+                expected_revision: pipeline.lifecycle_revision,
+            },
+            ManagementAction::Rename,
+            "rename-pipeline-a",
+        );
+        rename.display_name = Some("Renamed Pipeline".to_owned());
+        confirmed(&store, &scope, rename);
+        let renamed = store
+            .list_project_pipeline_lifecycle(&scope, true, false)
+            .expect("renamed catalog")
+            .into_iter()
+            .find(|pipeline| pipeline.workflow_id == "pipeline-a")
+            .expect("renamed A");
+        assert_eq!(renamed.display_name, "Renamed Pipeline");
+        assert_eq!(
+            store
+                .get_published_workflow_version("pipeline-a", 1)
+                .expect("historical Version after rename")
+                .content_hash,
+            hash
+        );
+    }
+
+    #[test]
+    fn active_builder_and_sample_test_lease_block_draft_deletion() {
+        let store = SqliteStore::open_in_memory().expect("store");
+        let scope = test_scope();
+        let draft = workflow_draft("busy-pipeline", &scope.project_id);
+        store.save_workflow_draft(&draft).expect("Draft");
+        let object = ManagementObjectRef {
+            kind: ManagementObjectKind::WorkflowDraft,
+            id: draft.id.clone(),
+            version: None,
+            expected_revision: 1,
+        };
+        let mut session = AgentSession::start(AgentKind::PipelineBuilder, AgentBudget::default())
+            .with_project(&scope.project_id);
+        session.set_builder_draft(&draft.id);
+        store.save_agent_session(&session).expect("Builder session");
+        let preview = store
+            .preview_management(
+                &scope,
+                &request(
+                    &scope.project_id,
+                    object.clone(),
+                    ManagementAction::MoveToTrash,
+                    "builder-blocked",
+                ),
+            )
+            .expect("preview");
+        assert!(
+            preview
+                .blockers
+                .iter()
+                .any(|blocker| blocker.code == "active_builder_session")
+        );
+
+        session.status = annotagent_core::AgentSessionStatus::Succeeded;
+        session.updated_at = Utc::now();
+        store.save_agent_session(&session).expect("finish Builder");
+        store
+            .acquire_management_lease(
+                &scope,
+                &object,
+                "sample_test",
+                "test-owner",
+                chrono::Duration::minutes(5),
+            )
+            .expect("Sample Test lease");
+        let preview = store
+            .preview_management(
+                &scope,
+                &request(
+                    &scope.project_id,
+                    object.clone(),
+                    ManagementAction::MoveToTrash,
+                    "sample-blocked",
+                ),
+            )
+            .expect("preview");
+        assert!(
+            preview
+                .blockers
+                .iter()
+                .any(|blocker| blocker.code == "active_builder_session")
+        );
+        store
+            .release_management_lease(&scope, &object, "sample_test", "test-owner")
+            .expect("release lease");
     }
 }
