@@ -34,6 +34,22 @@ pub(super) async fn save_draft(
         .map_err(ApiError::bad_request)
 }
 
+pub(super) async fn draft_for_call(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<Option<annotagent_storage::ConversationSchemaDraft>>> {
+    state
+        .application
+        .conversation_schema_for_call(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn read_draft(
     State(state): State<ServerState>,
     AxumPath((project, draft)): AxumPath<(String, uuid::Uuid)>,

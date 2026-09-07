@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api } from "../api";
 import { projectWorkPath } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
@@ -25,14 +25,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
   const pending = useRef(false);
   const selectingImage = useRef(false);
   const unsent = useRef("");
+  const schemaDirty = useRef(false);
+  const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => selectingImage.current || (!pending.current && (!unsent.current || window.confirm("Leave without sending this message? Uploaded images remain saved.")));
-    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current) event.preventDefault(); };
+    const guard = () => selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current) || window.confirm("Leave with unsaved message or Schema edits? Saved workspace data remains on the server.")));
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
@@ -107,7 +109,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
-        {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} />}
+        {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />

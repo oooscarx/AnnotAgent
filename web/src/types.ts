@@ -1872,6 +1872,13 @@ export interface ConversationSchemaPreview {
   scope_hash: string; maximum_calls: number; image_count: number; estimated_cost: null;
   expires_at: string; maximum_output_tokens: number; data_scope: string; operation: string;
 }
+export interface ConversationSchemaDraft {
+  id: string; task_id: string; source_call_id: string; base_schema_revision: string; revision: number;
+  definition: { goal: string; boundary_rules: string[]; task: {
+    id: string; kind: "classification" | "bounding_box"; labels: string[]; multi_label: boolean;
+    attributes: Record<string, { type: string; required: boolean; values: string[] }>;
+  } };
+}
 export interface ConversationCallReceipt {
   id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
   evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };

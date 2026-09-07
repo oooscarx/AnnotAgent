@@ -42,6 +42,25 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    pub fn conversation_schema_for_call(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationSchemaDraft>> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_schema_for_call(&owner, task, call)?)
+    }
     /// Materialize only a validated, owned, persisted proposal. Never changes Project YAML.
     pub fn save_conversation_schema_draft(
         &self,

@@ -371,3 +371,30 @@ Builder still reads Project YAML; it must not be advertised as consuming this ne
 Schema Draft yet. Shared later-phase authorization, Human Request/outbox and the
 complete sample→processing→review→export journey remain active work. No default
 navigation switch, real-workspace restart, push or human usability test occurred.
+
+### Conversation Schema editing and read-only restoration (M2, continued)
+
+The conversation card can now explicitly materialize a saved proposal, edit labels
+and boundary rules, and restore its current revision through a new read-only lookup
+by owned task/call. Mount and reload never materialize a draft. The editor preserves
+the proposed output kind, multi-label setting and attributes; editing these additional
+fields in the UI remains pending. The model proposal remains historical evidence,
+separate from the editable revision. Neither is advertised as a running Pipeline.
+
+Unsaved edits participate in the workspace dirty guard and browser unload warning.
+Saving uses a frozen edit/idempotency key. If the server saves but its response is
+lost, the typed labels remain visible and retry returns the same revision. Rejected
+edits retain input, with a deliberate reload-latest-base action for revision conflicts.
+Initial browser testing exposed an implicit textarea label lookup problem; explicit
+unique input/label association fixed it and the same test passed afterward.
+
+Evidence: Web typecheck and **105/105** unit tests passed, Application Schema **4/4**
+passed, strict storage/Application/server Clippy passed. Isolated browser test **1/1**,
+7.0s, `/tmp/annotagent-guided-e2e-81466`, verifies materialization, editing, refresh with
+zero POST requests, and server-save/response-loss→same-request retry→revision 3 (not
+4). Existing transport consent, revision API and cancellation checks also pass.
+Updated `schema-{1440,390}.png`; mobile screenshot inspected for wrapping and input/
+action spacing. These remain TEST goal-before-upload screens, not live visual quality
+evidence. Production build has the existing large-chunk warning. Full workspace
+regression, actual Pipeline schema binding, human requests and complete golden paths
+remain pending. No real workspace data, remote or server restart was changed.

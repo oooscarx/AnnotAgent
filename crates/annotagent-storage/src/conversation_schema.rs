@@ -59,6 +59,18 @@ fn read(
     })
 }
 impl SqliteStore {
+    pub fn conversation_schema_for_call(
+        &self,
+        project: &str,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<ConversationSchemaDraft>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, task)?;
+            let id: Option<String> = db.query_row("SELECT id FROM conversation_schema_drafts WHERE task_id=?1 AND source_call_id=?2", params![task.to_string(),call.to_string()], |row| row.get(0)).optional()?;
+            id.map(|id| read(db, project, Uuid::parse_str(&id).map_err(|_| invalid("invalid Schema ID"))?, None)).transpose()
+        })
+    }
     /// Application validates the completed proposal and Core `TaskConfig` before calling.
     pub fn create_conversation_schema_draft(
         &self,

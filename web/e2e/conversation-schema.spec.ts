@@ -34,6 +34,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     expect((await (await request.get(`${taskRoot}/calls/${consent.call_id}`)).json())).toEqual(receipt);
     expect((await request.post(`${taskRoot}/schema-proposals`,{data:{...consent,call_id:randomUUID()}})).status()).toBe(400);
     const saveRoot = `${taskRoot}/calls/${consent.call_id}/schema-draft`;
+    expect(await (await request.get(saveRoot)).json()).toBeNull();
     const savedResponse = await request.post(saveRoot);
     expect(savedResponse.ok()).toBeTruthy();
     const schemaDraft = await savedResponse.json();
@@ -68,6 +69,29 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.reload();
   await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
   await expect(page.getByText("Object boxes",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Save as editable Schema Draft",exact:true}).click();
+  await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
+  await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST edited cup");
+  await expect(page.getByText("Unsaved edits · Based on revision 1",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Save Schema changes",exact:true}).click();
+  await expect(page.getByText("Schema Draft saved · Revision 2",{exact:true})).toBeVisible();
+  let reloadWrites = 0;
+  page.on("request",(req)=>{if(req.method()==="POST" && req.url().includes("/api/")) reloadWrites++;});
+  await page.reload();
+  await expect(page.getByText("Schema Draft saved · Revision 2",{exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Saved label draft"}).getByText("TEST edited cup",{exact:true})).toBeVisible();
+  expect(reloadWrites).toBe(0);
+  await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
+  await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST recovered edit");
+  await page.route("**/conversation-schema-drafts/*",async(route)=>{
+    const saved = await route.fetch(); expect(saved.ok()).toBeTruthy(); await route.abort("failed");
+  },{times:1});
+  await page.getByRole("button",{name:"Save Schema changes",exact:true}).click();
+  await expect(page.getByText("Save outcome unknown; retry the same edit",{exact:true})).toBeVisible();
+  await expect(page.getByLabel("Labels · one per line",{exact:true})).toHaveValue("TEST recovered edit");
+  await page.getByRole("button",{name:"Retry same Schema save",exact:true}).click();
+  await expect(page.getByText("Schema Draft saved · Revision 3",{exact:true})).toBeVisible();
   for (const width of [1440,390]) {
     await page.setViewportSize({width,height:width===390?844:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);

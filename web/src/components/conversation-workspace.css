@@ -22,6 +22,9 @@
 .conversation-schema-card, .conversation-consent, .conversation-proposal-result { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .conversation-schema-card { padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
 .conversation-schema-card h3 { margin: 0; }
+.conversation-schema-editor, .conversation-schema-editor label { display: grid; gap: 10px; min-width: 0; }
+.conversation-schema-editor { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
+.conversation-schema-editor textarea { width: 100%; min-width: 0; resize: vertical; }
 .conversation-consent label { display: flex; align-items: start; gap: 10px; }
 .conversation-consent input[type=checkbox] { flex-shrink: 0; margin-top: 3px; }
 .conversation-image { margin: 18px 0; display: grid; gap: 10px; }
