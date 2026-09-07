@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { expect, test } from "./fixtures";
 
 for(const kind of ["classification","bbox"] as const){
@@ -87,5 +88,40 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   await page.getByRole("button",{name:/Images \(/}).click();
   await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
   await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${kind}-390.png`,fullPage:true});
+  // HTTP integration for durable human requests. This does not claim a request card
+  // or coordinator continuation exists yet; it exercises the real saved sample.
+  const imageId=new URL(page.url()).searchParams.get("image")!;
+  const feedbackPath=`/api/workflow-sample-tests/${envelope.request_id}/images/${imageId}/feedback`;
+  const revisions=(await (await request.get(feedbackPath)).json()).revisions;
+  const previous=revisions.at(-1);
+  const savedTest=(await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test;
+  const human={id:randomUUID(),task_id:envelope.conversation.task_id,conversation_id:envelope.conversation.conversation_id,sample_test_id:envelope.request_id,image_id:imageId,content_hash:savedTest.inputs.find((input:any)=>input.image_id===imageId).content_hash,outcome_id:previous.outcome_id,expected_feedback_sequence:previous.sequence,reason_code:"poor_boundary",question:"TEST: confirm this correction",resume_checkpoint_ref:randomUUID()};
+  const humanRoot=`${taskRoot}/human-requests`;
+  expect((await request.post(humanRoot,{data:{...human,task_id:randomUUID()}})).ok()).toBe(false);
+  expect((await request.post(humanRoot,{data:human,headers:{Origin:"https://foreign.invalid"}})).status()).toBe(403);
+  const created=await request.post(humanRoot,{data:human});
+  expect(created.ok(),await created.text()).toBe(true);
+  expect((await created.json()).status).toBe("pending");
+  expect((await request.post(humanRoot,{data:human})).ok()).toBe(true);
+  const answer={...previous,revision_id:randomUUID(),sequence:previous.sequence+1,note:"TEST structured human answer",created_at:new Date().toISOString()};
+  const answered=await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer}});
+  expect(answered.ok(),await answered.text()).toBe(true);
+  expect((await answered.json()).status).toBe("answered");
+  expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer}})).ok()).toBe(true);
+  expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer:{...answer,note:"changed retry"}}})).ok()).toBe(false);
+  expect((await (await request.get(feedbackPath)).json()).revisions).toHaveLength(revisions.length+1);
+  await page.reload();
+  const restored=await (await request.get(humanRoot)).json();
+  expect(restored).toHaveLength(1);
+  expect(restored[0].answer.revision_id).toBe(answer.revision_id);
+  const cancelRequest={...human,id:randomUUID(),expected_feedback_sequence:answer.sequence};
+  expect((await request.post(humanRoot,{data:cancelRequest})).ok()).toBe(true);
+  const cancelled=await request.post(`${humanRoot}/${cancelRequest.id}/cancel`);
+  expect(cancelled.ok()).toBe(true);
+  expect((await cancelled.json()).status).toBe("cancelled");
+  expect((await request.post(`${humanRoot}/${cancelRequest.id}/cancel`)).ok()).toBe(true);
+  expect((await request.post(`${humanRoot}/${cancelRequest.id}/answer`,{data:{answer:{...answer,revision_id:randomUUID(),sequence:answer.sequence+1}}})).ok()).toBe(false);
+  expect((await (await request.get(feedbackPath)).json()).revisions).toHaveLength(revisions.length+1);
+  expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(calls);
 });
 }

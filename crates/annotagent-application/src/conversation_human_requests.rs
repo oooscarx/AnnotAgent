@@ -53,6 +53,25 @@ fn validate_subject(
 }
 
 impl LocalApplication {
+    pub fn cancel_conversation_human_request(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationHumanRequest> {
+        if !self
+            .conversation_human_requests(project, conversation, task)?
+            .iter()
+            .any(|request| request.input.id == id)
+        {
+            bail!("Human request not found in this task");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .close_conversation_human_request(&owner, id, false)?)
+    }
     pub fn conversation_human_requests(
         &self,
         project: &str,
