@@ -3,6 +3,7 @@ import { api, ApiRequestError } from "../api";
 import { t } from "../i18n";
 import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunReport } from "../types";
 import { AnnotationCanvas } from "./AnnotationCanvas";
+import { useSampleFreshness } from "../useSampleFreshness";
 
 const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["correct", "Target and boundary are correct"], ["wrong_target", "Wrong target"],
@@ -21,6 +22,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   navigation?: ReactNode;
 }) {
+  const freshness = useSampleFreshness(projectId, draftId, testId);
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
     id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.value.kind === "classification" ? outcome.value.labels.join(", ") : outcome.label,
     value: outcome.value, attributes: {}, confidence: outcome.confidence ?? undefined,
@@ -140,6 +142,9 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     setDirty(true); setSaved(false); setReason("missing_target"); setAttentionOpen(true); setShowBefore(false); setShowOriginal(false);
   };
   return <div className="sample-feedback-workspace">
+    {freshness.status === "checking" && <p role="status">{t("Checking whether this sample still matches the current plan…")}</p>}
+    {freshness.status === "stale" && <p role="alert" className="sample-risk-notice">{t("The plan or its inputs changed elsewhere. Your edits are kept and can still be saved as feedback on this sample. Test the current plan before adopting it.")}</p>}
+    {freshness.status === "unavailable" && <div role="alert"><p>{t("Cannot verify this sample right now. Your edits are kept; adopting or adjusting the plan is paused until verification succeeds.")}</p><button onClick={freshness.retry}>{t("Check sample again")}</button></div>}
     <section className="sample-feedback-image">
       <div className="button-row"><button aria-pressed={showOriginal} onClick={() => { setShowOriginal(true); setShowBefore(false); }}>{t("Original image")}</button>{before && <button aria-pressed={showBefore} onClick={() => { setShowOriginal(false); setShowBefore(true); }}>{t("Before adjustment")}</button>}<button aria-pressed={!showOriginal && !showBefore} onClick={() => { setShowOriginal(false); setShowBefore(false); }}>{t("Current candidates")}</button></div>
       {before && <p>{t("Compare two saved tests of this same image. A proposed change is not proof of improved accuracy.")}</p>}
@@ -174,7 +179,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       <label>{t("Feedback note")}<textarea aria-label={t("Feedback note")} maxLength={4000} disabled={!loaded || busy} value={note} onChange={(event) => { setNote(event.target.value); setDirty(true); setSaved(false); }} /></label>
       <div className="button-row"><button disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button><button disabled={!history.length || busy} onClick={() => { setAnnotations(history.at(-1)!); setHistory((items) => items.slice(0, -1)); setDirty(true); }}>{t("Undo edit")}</button></div>
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
-      {onImprove && <button disabled={!loaded || busy || dirty || !revisions.length} onClick={() => {
+      {onImprove && <button disabled={!loaded || busy || dirty || !revisions.length || freshness.status !== "current"} onClick={() => {
         if (copying.current) return;
         copying.current = true;
         setBusy(true); setError("");
@@ -187,7 +192,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {before && <button disabled={busy || dirty} onClick={() => onKeepOriginal(before.draftId, before.testId, image.image_id)}>{t("Keep original plan")}</button>}
       <span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span>
       <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
-      {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection} onClick={onAdopt}>{t("Continue with this plan")}</button>}
+      {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection || freshness.status !== "current"} onClick={onAdopt}>{t("Continue with this plan")}</button>}
       {saved && <span role="status">{t("Sample feedback saved")}</span>}
       {error && <p role="alert">{error}</p>}
     </div>

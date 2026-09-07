@@ -694,3 +694,32 @@ Final focused browser rerun **1/1 passed** (33.3 seconds), including a current
 persisted sample becoming read-only after disabling its model, image preservation,
 refresh without new sample calls, and the existing publication/start retry path.
 Production Web build passed; its existing >500 kB chunk warning remains.
+
+Native consent/freshness increment: `557a753`.
+
+### Open sample recovery without replacing unsaved edits
+
+The existing sample editor now rechecks its exact Project/Draft/Test via a
+read-only query on mount, window focus and visibility return. The workspace query
+cache deduplicates in-flight checks and aborts the old identity on unmount. These
+checks update only freshness: they never replace annotations, selection, undo
+history or unsaved feedback. Stale state blocks adoption and plan adjustment;
+explicitly scoped feedback may still be saved against the old immutable sample.
+An unavailable check has a local retry action and preserves edits. It does not
+restart planning, image inference, publication or processing.
+
+Verification in progress: isolated browser journey now covers a failed read and
+explicit retry with an unsaved label, a separate open Project tab and model
+disable, retained editing after focus recovery, saved feedback, stale reload and
+no additional model calls. One initial run exhausted the test's total timeout
+before the new checks; the next exposed that headless tab activation did not emit
+a native focus event. The test now explicitly dispatches the focus event to test
+the handler. This is not a native desktop tab-switch or assistive-technology claim.
+No product timeout, inference budget or security limit was raised.
+
+Final targeted browser **1/1 passed** (37.2 seconds), including reading back the
+saved correction from the server after a model was disabled in another tab. The
+previous handler-focused rerun also passed. Web typecheck, production build and
+90 unit tests passed. Rust code is unchanged in this increment; preceding native
+scope regression remains 514 passed / 5 ignored. The full E2E suite has not yet
+been rerun after these two narrowly verified freshness increments.

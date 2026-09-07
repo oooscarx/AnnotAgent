@@ -328,9 +328,33 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   // Registry changes invalidate adoption without hiding persisted sample images.
   const sampleRequestCount = sampleRequests.length;
   expect((await (await request.get(`/api/workflow-drafts/${draftId}/sample-test?test_id=${pendingId}`)).json()).current).toBe(true);
+  await page.goto(latestSampleUrl);
+  await page.getByRole("button", { name: /^Annotation list/ }).click();
+  await page.locator(".canvas-annotation-list button").first().click();
+  await page.getByLabel("Correct label", { exact: true }).fill("unsaved second-tab correction");
+  await page.route(`**/api/workflow-drafts/${draftId}/sample-test?test_id=${pendingId}`, (route) => route.abort("failed"), { times: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("button", { name: "Check sample again", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("unsaved second-tab correction");
+  await page.getByRole("button", { name: "Check sample again", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Check sample again", exact: true })).toHaveCount(0);
+  const otherTab = await page.context().newPage();
+  await otherTab.goto(`/projects/${projectId}`);
   expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: false } })).ok()).toBeTruthy();
   try {
-    await page.goto(latestSampleUrl);
+    await page.bringToFront();
+    // Headless pages may stay logically visible and do not reliably emit native
+    // tab-focus events. Exercise that handler explicitly, without a page reload.
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByRole("alert")).toContainText("The plan or its inputs changed elsewhere");
+    await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("unsaved second-tab correction");
+    await expect(page.getByRole("button", { name: "Continue with this plan", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: /^Sample feedback saved$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue with this plan", exact: true })).toBeDisabled();
+    const keptFeedback = await (await request.get(`/api/workflow-sample-tests/${pendingId}/images/${new URL(latestSampleUrl).searchParams.get("image")}/feedback`)).json();
+    expect(keptFeedback.revisions.at(-1).corrected_label).toBe("unsaved second-tab correction");
+    await page.reload();
     await expect(page.getByRole("heading", { name: "Sample Test is out of date", exact: true })).toBeVisible();
     await expect(page.locator(".annotation-canvas image")).toBeVisible();
     await expect(page.getByRole("button", { name: "Continue with this plan", exact: true })).toHaveCount(0);
@@ -338,6 +362,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     await expect(page.getByRole("heading", { name: "Sample Test is out of date", exact: true })).toBeVisible();
     expect(sampleRequests).toHaveLength(sampleRequestCount);
   } finally {
+    await otherTab.close();
     expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: true } })).ok()).toBeTruthy();
   }
 });
