@@ -322,6 +322,8 @@ impl SqliteStore {
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
+            let waiting: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
+            if waiting { return Err(invalid("Task is waiting for human input; no model call was admitted")); }
             let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)", [id.to_string()], |row| row.get(0))?;
             if cancelled { return Err(invalid("call cancelled before admission; no request sent")); }
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;

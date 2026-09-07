@@ -733,3 +733,36 @@ No real workspace mutation/restart, paid calls, push or remote changes occurred.
 
 Final increment checks: `cargo fmt --all --check`, Web typecheck and **106/106** Web
 unit tests passed. Unrelated previously regenerated screenshots remain unstaged.
+
+### Durable human correction and resume transaction (M2 foundation)
+
+Added migration 31 and task-owned Human Request storage. This increment supports a
+frozen existing Sample Test outcome (not an arbitrary formal annotation): sample/image
+hash, outcome, expected feedback sequence, reason/question and stable resume checkpoint.
+The saved sample must be linked to the exact task/conversation's Sample Operation.
+Pending, Answered, Applied, Cancelled and Stale states are explicit. Duplicate request
+IDs and answers are checked against their original content.
+
+The existing `save_sample_feedback` validation and optimistic sequence boundary now
+accept an internal transaction hook. Human answers use it to atomically persist the
+real Sandbox feedback revision, answer state and resume outbox event. Outbox delivery
+is at-least-once, with stable checkpoint/revision identity and explicit acknowledgment;
+it is not new execution authorization. Ordinary feedback writes retain their previous
+API. Pending human requests block new admissions to the task's shared model-call ledger
+without consuming a call or preventing reads of existing receipts. Cancelled/stale
+requests cannot accept late answers.
+
+Evidence: Storage all-features **51 unit + 16 integration tests passed**, strict Storage
+all-targets/all-features Clippy passed; Application conversation tests **10/10** passed.
+New tests cover duplicate submission/delivery, restart, foreign owner, changed image
+hash, stale feedback, incompatible correction type, malformed geometry deserialization,
+late answers and no new spending while pending. A SQLite trigger deliberately fails
+outbox insertion and proves feedback and request state roll back together; retry after
+recovery writes exactly one revision. Existing Sample Test predictions remain unchanged.
+
+Not yet a complete Human Request feature: no HTTP/UI admission or answer route,
+terminal-projection/current-image validation at Application boundary, coordinator
+delivery consumer, actual repair continuation or browser evidence in this increment.
+ClarifyTask/IdentifyTarget/CompareCandidates and formal Review linkage remain pending.
+The new storage API is not exposed to model tools. No real workspace was migrated or
+restarted, no model was called, no push or remote changes occurred.

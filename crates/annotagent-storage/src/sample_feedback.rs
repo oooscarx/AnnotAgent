@@ -12,13 +12,13 @@ pub enum SampleFeedbackReason {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{WorkflowSampleTest, WorkflowSampleTestInput, WorkflowSampleTestStatus};
     use annotagent_core::WorkflowDryRunReport;
     use std::collections::BTreeMap;
 
-    fn fixture(store: &SqliteStore) -> SampleFeedbackRevision {
+    pub(crate) fn fixture(store: &SqliteStore) -> SampleFeedbackRevision {
         let sample: annotagent_core::WorkflowDryRunSampleResult = serde_json::from_value(serde_json::json!({
             "image_index": 7, "image_name": "same-name.png", "width": 640, "height": 400, "nodes": [],
             "outcomes": [{"id": "final-1", "label": "ball", "confidence": 0.9, "status": "needs_review", "value": {"kind": "bounding_box", "rect": [0.5, 0.5, 0.1, 0.1]}}]
@@ -428,6 +428,15 @@ impl SqliteStore {
         &self,
         feedback: &SampleFeedbackRevision,
     ) -> Result<(), StorageError> {
+        self.save_sample_feedback_with(feedback, |_| Ok(()))
+    }
+
+    /// Keep task answer/outbox writes in the feedback transaction. No callback may infer.
+    pub(crate) fn save_sample_feedback_with(
+        &self,
+        feedback: &SampleFeedbackRevision,
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         let test = self
             .get_workflow_sample_test_by_id(&feedback.sample_test_id)?
             .ok_or_else(|| StorageError::InvalidEnum("Sample Test not found".into()))?;
@@ -530,7 +539,7 @@ impl SqliteStore {
             let json = serde_json::to_string(feedback)?;
             let existing: Option<String> = transaction.query_row("SELECT feedback_json FROM sample_feedback_revisions WHERE revision_id = ?1", [&feedback.revision_id], |row| row.get(0)).optional()?;
             if let Some(existing) = existing {
-                if existing == json { return Ok(()); }
+                if existing == json { after_write(&transaction)?; transaction.commit()?; return Ok(()); }
                 return Err(StorageError::InvalidEnum("Feedback revision conflict".into()));
             }
             let sequence: i64 = transaction.query_row("SELECT COALESCE(MAX(sequence), 0) FROM sample_feedback_revisions WHERE sample_test_id = ?1 AND image_id = ?2", params![feedback.sample_test_id, feedback.image_id], |row| row.get(0))?;
@@ -539,6 +548,7 @@ impl SqliteStore {
                 return Err(StorageError::InvalidEnum("Feedback changed in another window; reload before saving".into()));
             }
             transaction.execute("INSERT INTO sample_feedback_revisions VALUES (?1, ?2, ?3, ?4, ?5)", params![feedback.revision_id, feedback.sample_test_id, feedback.image_id, next, json])?;
+            after_write(&transaction)?;
             transaction.commit()?;
             Ok(())
         })
