@@ -13031,6 +13031,41 @@ export:
                 .1,
             saved
         );
+        let task_url = format!("{base}/{id}/tasks");
+        assert_eq!(
+            call_json(&service, Method::GET, &task_url, Value::Null)
+                .await
+                .1,
+            json!([])
+        );
+        let revision = application.project_goal("chat-a").unwrap()["revision"].clone();
+        let task_input = json!({"id": uuid::Uuid::new_v4(), "source_message_id": input["id"], "schema_revision": revision});
+        let (task_status, task) =
+            call_json(&service, Method::POST, &task_url, task_input.clone()).await;
+        assert_eq!(task_status, StatusCode::OK);
+        assert_eq!(
+            call_json(&service, Method::POST, &task_url, task_input)
+                .await
+                .1,
+            task
+        );
+        assert_eq!(
+            call_json(&service, Method::GET, &task_url, Value::Null)
+                .await
+                .1,
+            json!([task])
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                Method::GET,
+                &task_url.replace("chat-a", "chat-b"),
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
         let mut conflict = input.clone();
         conflict["text"] = json!("different");
         assert_eq!(

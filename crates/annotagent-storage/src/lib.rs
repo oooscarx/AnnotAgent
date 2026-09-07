@@ -1,7 +1,9 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
 mod batch;
+mod conversation_tasks;
 mod conversations;
+pub use conversation_tasks::{BeginConversationTask, ConversationTask};
 pub use conversations::{ConversationImageRef, ConversationMessage, ConversationMessageInput};
 mod management;
 mod processing_operations;
@@ -564,6 +566,8 @@ impl SqliteStore {
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (23, ?1, ?2)", params!["sample_plan_revisions", Utc::now().to_rfc3339()])?;
             let transaction = connection.unchecked_transaction()?;
             transaction.execute_batch(include_str!("../../../migrations/0024_project_conversations.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0025_conversation_tasks.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (25, ?1, ?2)", params!["conversation_tasks", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (24, ?1, ?2)", params!["project_conversations", Utc::now().to_rfc3339()])?;
             transaction.commit()?;
             Ok(())

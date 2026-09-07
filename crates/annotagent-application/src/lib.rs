@@ -9213,6 +9213,43 @@ impl LocalApplication {
         Ok(self.store.create_conversation(&owner)?)
     }
 
+    /// Admitting a task only freezes a saved goal. It grants no model permission.
+    pub fn begin_conversation_task(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        input: &annotagent_storage::BeginConversationTask,
+    ) -> Result<annotagent_storage::ConversationTask> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
+        let owner = self.conversation_project_identity(project_id)?;
+        // A retry may recover its original snapshot after the Project has changed.
+        let tasks = self.store.conversation_tasks(&owner, conversation)?;
+        let existing = tasks.iter().any(|task| {
+            task.input.id == input.id || task.input.source_message_id == input.source_message_id
+        });
+        if !existing
+            && self.project_goal(project_id)?["revision"].as_str()
+                != Some(input.schema_revision.as_str())
+        {
+            bail!("Project schema changed. Reload the saved goal before creating this task.");
+        }
+        Ok(self
+            .store
+            .begin_conversation_task(&owner, conversation, input)?)
+    }
+
+    pub fn conversation_tasks(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+    ) -> Result<Vec<annotagent_storage::ConversationTask>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.conversation_tasks(&owner, conversation)?)
+    }
+
     pub fn project_conversation(&self, project_id: &str) -> Result<Option<uuid::Uuid>> {
         let owner = self.conversation_project_identity(project_id)?;
         Ok(self.store.project_conversation(&owner)?)
@@ -26728,6 +26765,33 @@ export:
         let saved = app
             .append_project_conversation_message("conversation-a", id, &input)
             .unwrap();
+        let revision = app.project_goal("conversation-a").unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let task_input = annotagent_storage::BeginConversationTask {
+            id: uuid::Uuid::new_v4(),
+            source_message_id: input.id,
+            schema_revision: revision.clone(),
+        };
+        let mut stale = task_input.clone();
+        stale.schema_revision = "a".repeat(64);
+        assert!(
+            app.begin_conversation_task("conversation-a", id, &stale)
+                .is_err()
+        );
+        let task = app
+            .begin_conversation_task("conversation-a", id, &task_input)
+            .unwrap();
+        assert_eq!(
+            app.begin_conversation_task("conversation-a", id, &task_input)
+                .unwrap(),
+            task
+        );
+        assert!(
+            app.begin_conversation_task("conversation-b", id, &task_input)
+                .is_err()
+        );
         assert_eq!(
             saved,
             app.append_project_conversation_message("conversation-a", id, &input)
@@ -26743,6 +26807,10 @@ export:
         );
         let restarted = LocalApplication::new(temporary.path()).unwrap();
         assert_eq!(
+            restarted.conversation_tasks("conversation-a", id).unwrap(),
+            vec![task.clone()]
+        );
+        assert_eq!(
             restarted
                 .project_conversation_messages("conversation-a", id, 0, 10)
                 .unwrap(),
@@ -26754,6 +26822,44 @@ export:
                 .unwrap()
                 .annotation_schema
                 .is_empty()
+        );
+        restarted
+            .save_project_goal(
+                "conversation-a",
+                &revision,
+                "Find cups",
+                TaskKind::BoundingBox,
+                vec!["cup".into()],
+            )
+            .unwrap();
+        // Existing admission remains recoverable after a schema edit; a fresh goal
+        // must bind the new revision. Recovery does not imply permission to execute it.
+        assert_eq!(
+            restarted
+                .begin_conversation_task("conversation-a", id, &task_input)
+                .unwrap(),
+            task
+        );
+        let message = annotagent_storage::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "Find bottles".into(),
+            image: None,
+        };
+        restarted
+            .append_project_conversation_message("conversation-a", id, &message)
+            .unwrap();
+        assert!(
+            restarted
+                .begin_conversation_task(
+                    "conversation-a",
+                    id,
+                    &annotagent_storage::BeginConversationTask {
+                        id: uuid::Uuid::new_v4(),
+                        source_message_id: message.id,
+                        ..task_input
+                    }
+                )
+                .is_err()
         );
     }
 

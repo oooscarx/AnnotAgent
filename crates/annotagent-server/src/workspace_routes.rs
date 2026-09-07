@@ -38,6 +38,10 @@ pub(super) fn routes() -> Router<ServerState> {
             get(super::conversations::messages).post(super::conversations::append),
         )
         .route(
+            "/api/projects/{project_id}/conversations/{conversation_id}/tasks",
+            get(super::conversations::tasks).post(super::conversations::begin_task),
+        )
+        .route(
             "/api/projects/{project_id}/processing-preview",
             get(super::processing_operations::preview),
         )

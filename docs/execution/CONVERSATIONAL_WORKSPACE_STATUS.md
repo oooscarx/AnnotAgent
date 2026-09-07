@@ -136,6 +136,34 @@ M0 is not fully closed: Human Request transactional answer/resume failure tests
 and task-authorization admission tests still need to be added at their real service
 boundaries. The journal is exposed through Application/HTTP and an opt-in UI slice.
 
+### Task admission identity (M1/M2 boundary, continued)
+
+Inspection found the legacy Builder `retry_session_id` explicitly starts fresh
+budgets. The conversation coordinator must not treat that endpoint as a task-wide
+retry ledger. Added migration 25 and Project-owned task admission/list endpoints:
+`GET/POST .../conversations/:conversation/tasks`. These currently persist identity
+and references only; they do **not** call Builder or grant inference permissions.
+
+Each task binds a saved message (FK scoped to its Conversation) and exact Project
+goal/schema revision hash. Missing/foreign messages and cross-Project conversations
+are rejected. Admission locks against existing in-process Schema writes. One saved
+goal message has one root task: repeating with the same or a fresh client request
+ID recovers it; conflicts in schema/message/ID reject. Global ID collision takes
+precedence over the valid same-message recovery path. GET is read-only. New task
+admission rejects stale schema; historical admission retries recover the old
+reference without implying the old task may run against the changed Project.
+
+Validation: storage **43/43**, focused Application ownership/stale-schema/restart
+**1/1**, HTTP journal+task routes **1/1**, storage/Application/server all-target
+all-feature strict Clippy and fmt passed. Only temporary workspaces. No UI changes
+or new browser screenshots in this checkpoint. No new paid calls or server restart.
+
+Remaining before task execution: durable task-level authorization/call reservations,
+child Builder budget propagation, immutable Schema proposal/snapshot and structured
+Human Requests. The current task record is only an identity/reference, not a saved
+Schema body, task-state machine or permission receipt. These limits prevent it being
+presented as working automatic planning in the UI.
+
 M1: wire existing Project resolver, messages and typed Task/reference context to
 the real two-pane workspace, upload and existing terminal results. Do not redirect
 default navigation to an empty or fake chat shell before the vertical slice works.

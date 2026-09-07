@@ -60,3 +60,26 @@ pub(super) async fn append(
         .map(Json)
         .map_err(ApiError::bad_request)
 }
+
+pub(super) async fn tasks(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+) -> ApiResult<Json<Vec<annotagent_storage::ConversationTask>>> {
+    state
+        .application
+        .conversation_tasks(&project, conversation)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn begin_task(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::BeginConversationTask>,
+) -> ApiResult<Json<annotagent_storage::ConversationTask>> {
+    state
+        .application
+        .begin_conversation_task(&project, conversation, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
