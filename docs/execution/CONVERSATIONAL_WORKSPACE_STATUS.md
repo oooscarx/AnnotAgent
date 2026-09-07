@@ -171,6 +171,34 @@ default navigation to an empty or fake chat shell before the vertical slice work
 M2: schema proposal/patch with real configured LLM, existing Builder, shared bounded
 authorization and sample execution; classification and bbox must both work.
 
+### Bounded Schema proposal service (M2, continued)
+
+Added Application proposal service over existing `VisionModelProvider::complete`,
+not another Agent or executor. It sends one bounded text-only request (saved goal
+and existing TaskConfig context) and offers one controlled Schema proposal tool.
+Model output must be either a bbox/classification Draft or a necessary clarification.
+Labels, attributes, boundary rules and rationale have explicit type/size validation;
+duplicate labels, unsupported output kinds, unknown privilege fields and multiple
+tool actions reject. Stable internal task IDs derive from the admitted task UUID.
+Conversion returns the existing Core TaskConfig; it never writes Project YAML,
+Published Versions or annotations. Boundary rules remain in the proposal, not lost
+by pretending TaskConfig alone captures the entire semantics.
+
+Provider response/usage is retained even when decision validation fails. There is
+no automatic repair/retry or additional model call. Prompt context is user-data
+role, not extra system instructions; no images are sent or visual findings claimed.
+This service is **not HTTP/UI-wired yet**: its caller must supply a durably authorized
+and budget-limited Provider. Do not use the unconstrained legacy retry endpoint to
+work around the pending task-wide authorization/reservation integration.
+
+Validation: **3/3** isolated TEST Provider tests cover bbox, Chinese indoor/outdoor
+classification, stable Core IDs, single text-only call, clarification, invalid output
+and preserving 200 fixture tokens/request evidence on failure. These scripted tests
+prove contracts, not real LLM schema inference or live quality. Initial compile
+corrected fixture usage to the existing explicit `UsageSource::Mock` contract;
+strict Clippy caught documentation/constructor style and passed after correction.
+No new frontend behavior or screenshots, no paid calls, no user workspace mutation.
+
 M3: structured Human Requests, sandbox versus formal answer transactions, revision
 conflict handling, durable resume event/outbox and no extra "I am done" chat step.
 
