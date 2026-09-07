@@ -1,6 +1,8 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
+mod conversation_provider;
 mod conversation_schema;
+pub use conversation_provider::ConversationTaskProvider;
 mod guidance;
 pub use conversation_schema::{
     ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,

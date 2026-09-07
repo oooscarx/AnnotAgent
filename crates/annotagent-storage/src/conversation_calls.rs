@@ -17,6 +17,13 @@ pub struct ConversationCallGrant {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationCallBudget {
+    pub current_grant: ConversationCallGrant,
+    pub used_calls: u32,
+    pub revoked: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationCallStatus {
@@ -89,6 +96,53 @@ fn receipt(
 }
 
 impl SqliteStore {
+    pub fn conversation_call_budget(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Option<ConversationCallBudget>, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let row: Option<(String,String,u32,String,bool)> = db.query_row("SELECT id,scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
+            row.map(|(id,scope_hash,maximum_calls,expires,revoked)| {
+                let used_calls = db.query_row("SELECT COUNT(*) FROM conversation_model_calls WHERE task_id=?1", [task.to_string()], |row| row.get(0))?;
+                Ok(ConversationCallBudget { current_grant: ConversationCallGrant { id:Uuid::parse_str(&id).map_err(|_|invalid("invalid grant ID"))?,task_id:task,scope_hash,maximum_calls,expires_at:DateTime::parse_from_rfc3339(&expires).map_err(|_|invalid("invalid grant expiry"))?.with_timezone(&Utc) }, used_calls,revoked })
+            }).transpose()
+        })
+    }
+
+    /// Explicit next-phase consent increases a cumulative ceiling; spent/unknown calls remain charged.
+    pub fn advance_conversation_authorization(
+        &self,
+        project: &str,
+        previous: Uuid,
+        grant: &ConversationCallGrant,
+    ) -> Result<(), StorageError> {
+        if !digest(&grant.scope_hash)
+            || !(1..=128).contains(&grant.maximum_calls)
+            || grant.id == previous
+        {
+            return Err(invalid("invalid next-phase authorization"));
+        }
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?; owner(&tx, project, grant.task_id)?;
+            let saved: Option<(String,Option<String>,String,u32,String)> = tx.query_row("SELECT task_id,previous_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
+            if let Some((task,base,scope,maximum,expiry)) = saved {
+                if task != grant.task_id.to_string() || base != Some(previous.to_string()) || scope != grant.scope_hash || maximum != grant.maximum_calls || expiry != grant.expires_at.to_rfc3339() { return Err(invalid("authorization revision retry conflicts")); }
+                return Ok(());
+            }
+            let current: Option<(String,u32,bool)> = tx.query_row("SELECT id,maximum_calls,revoked FROM conversation_call_grants WHERE task_id=?1", [grant.task_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
+            let Some((id,maximum,revoked)) = current else { return Err(invalid("initial task authorization required")); };
+            if id != previous.to_string() || revoked || grant.maximum_calls < maximum || grant.expires_at <= Utc::now() {
+                return Err(invalid("authorization changed, revoked, expired or lowers its cumulative ceiling"));
+            }
+            let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_model_calls WHERE task_id=?1 AND status='reserved')",[grant.task_id.to_string()],|row|row.get(0))?;
+            if active { return Err(invalid("settle active calls before changing authorization scope")); }
+            tx.execute("INSERT INTO conversation_authorization_revisions(id,task_id,previous_id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5,?6)",params![grant.id.to_string(),grant.task_id.to_string(),previous.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
+            tx.execute("UPDATE conversation_call_grants SET id=?2,scope_hash=?3,maximum_calls=?4,expires_at=?5 WHERE task_id=?1",params![grant.task_id.to_string(),grant.id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
+            tx.commit()?; Ok(())
+        })
+    }
     /// Durable cancellation may precede HTTP admission; it is not a fake call receipt.
     pub fn request_conversation_call_cancel(
         &self,
@@ -217,6 +271,11 @@ impl SqliteStore {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owner(&tx, project, grant.task_id)?;
+            let historical: Option<(String,String,u32,String)> = tx.query_row("SELECT task_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1 AND previous_id IS NULL", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
+            if let Some((task,scope,maximum,expires)) = historical {
+                if task != grant.task_id.to_string() || scope != grant.scope_hash || maximum != grant.maximum_calls || expires != grant.expires_at.to_rfc3339() { return Err(invalid("initial authorization retry conflicts")); }
+                return Ok(());
+            }
             let existing: Option<(String,String,u32,String)> = tx.query_row("SELECT id,scope_hash,maximum_calls,expires_at FROM conversation_call_grants WHERE task_id=?1", [grant.task_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             if let Some((id,scope,maximum,expires)) = existing {
                 if id != grant.id.to_string() || scope != grant.scope_hash || maximum != grant.maximum_calls || expires != grant.expires_at.to_rfc3339() { return Err(invalid("task authorization already exists; retries cannot change its scope or reset its budget")); }
@@ -224,6 +283,7 @@ impl SqliteStore {
             }
             if grant.expires_at <= Utc::now() { return Err(invalid("task authorization expired")); }
             tx.execute("INSERT INTO conversation_call_grants(task_id,id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)", params![grant.task_id.to_string(),grant.id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
+            tx.execute("INSERT INTO conversation_authorization_revisions(id,task_id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)",params![grant.id.to_string(),grant.task_id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
             tx.commit()?; Ok(())
         })
     }
@@ -244,7 +304,7 @@ impl SqliteStore {
             owner(&tx, project, task)?;
             if let Some(saved) = receipt(&tx, id)? {
                 if saved.task_id != task || saved.request_hash != request_hash { return Err(invalid("call idempotency key belongs to a different request")); }
-                let original_scope: String = tx.query_row("SELECT scope_hash FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| row.get(0))?;
+                let original_scope: String = tx.query_row("SELECT g.scope_hash FROM conversation_call_authorizations a JOIN conversation_authorization_revisions g ON g.id=a.grant_id WHERE a.call_id=?1", [id.to_string()], |row| row.get(0))?;
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
@@ -256,6 +316,7 @@ impl SqliteStore {
             let used: u32 = tx.query_row("SELECT COUNT(*) FROM conversation_model_calls WHERE task_id=?1", [task.to_string()], |row| row.get(0))?;
             if used >= maximum { return Err(invalid("task model-call allowance exhausted; no request sent")); }
             tx.execute("INSERT INTO conversation_model_calls(id,task_id,request_hash,status,created_at) VALUES(?1,?2,?3,'reserved',?4)", params![id.to_string(),task.to_string(),request_hash,Utc::now().to_rfc3339()])?;
+            tx.execute("INSERT INTO conversation_call_authorizations(call_id,grant_id) SELECT ?1,id FROM conversation_call_grants WHERE task_id=?2", params![id.to_string(),task.to_string()])?;
             tx.commit()?; Ok(ConversationCallAdmission::Admitted)
         })
     }
@@ -319,6 +380,212 @@ mod tests {
     use super::*;
     use crate::{BeginConversationTask, ConversationMessageInput};
     use chrono::Duration;
+
+    #[test]
+    fn next_phase_keeps_spend_and_original_receipts_without_scope_or_retry_reset() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-phases.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project_id = Uuid::new_v4().to_string();
+        let project = project_id.as_str();
+        let conversation = store.create_conversation(project).unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST cups".into(),
+            image: None,
+        };
+        store
+            .append_conversation_message(project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                project,
+                conversation,
+                &BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let first = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "a".repeat(64),
+            maximum_calls: 1,
+            expires_at: Utc::now() + Duration::minutes(10),
+        };
+        store.authorize_conversation_calls(project, &first).unwrap();
+        let schema_call = Uuid::new_v4();
+        store
+            .reserve_conversation_call(
+                project,
+                task,
+                schema_call,
+                &first.scope_hash,
+                &"b".repeat(64),
+            )
+            .unwrap();
+        let next = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            scope_hash: "c".repeat(64),
+            maximum_calls: 3,
+            ..first.clone()
+        };
+        assert!(
+            store
+                .advance_conversation_authorization(project, first.id, &next)
+                .is_err()
+        );
+        store
+            .finish_conversation_call(
+                project,
+                task,
+                schema_call,
+                ConversationCallStatus::InDoubt,
+                serde_json::json!({"TEST":"unknown not refunded"}),
+            )
+            .unwrap();
+        assert!(
+            store
+                .advance_conversation_authorization("foreign", first.id, &next)
+                .is_err()
+        );
+        store
+            .advance_conversation_authorization(project, first.id, &next)
+            .unwrap();
+        store
+            .advance_conversation_authorization(project, first.id, &next)
+            .unwrap();
+        store.authorize_conversation_calls(project, &first).unwrap();
+        let budget = store
+            .conversation_call_budget(project, task)
+            .unwrap()
+            .unwrap();
+        assert_eq!(budget.current_grant, next);
+        assert_eq!(budget.used_calls, 1);
+        assert!(matches!(
+            store
+                .reserve_conversation_call(
+                    project,
+                    task,
+                    schema_call,
+                    &first.scope_hash,
+                    &"b".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Existing(_)
+        ));
+        assert!(
+            store
+                .reserve_conversation_call(
+                    project,
+                    task,
+                    schema_call,
+                    &next.scope_hash,
+                    &"b".repeat(64)
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .reserve_conversation_call(
+                    project,
+                    task,
+                    Uuid::new_v4(),
+                    &first.scope_hash,
+                    &"b".repeat(64)
+                )
+                .is_err()
+        );
+        for _ in 0..2 {
+            let id = Uuid::new_v4();
+            assert_eq!(
+                store
+                    .reserve_conversation_call(project, task, id, &next.scope_hash, &"d".repeat(64))
+                    .unwrap(),
+                ConversationCallAdmission::Admitted
+            );
+            store
+                .finish_conversation_call(
+                    project,
+                    task,
+                    id,
+                    ConversationCallStatus::Failed,
+                    serde_json::json!({"TEST":"failed not refunded"}),
+                )
+                .unwrap();
+        }
+        assert!(
+            store
+                .reserve_conversation_call(
+                    project,
+                    task,
+                    Uuid::new_v4(),
+                    &next.scope_hash,
+                    &"d".repeat(64)
+                )
+                .is_err()
+        );
+        drop(store);
+        let store = SqliteStore::open(path).unwrap();
+        let budget = store
+            .conversation_call_budget(project, task)
+            .unwrap()
+            .unwrap();
+        assert_eq!(budget.used_calls, 3);
+        assert_eq!(budget.current_grant, next);
+        assert!(matches!(
+            store
+                .reserve_conversation_call(
+                    project,
+                    task,
+                    schema_call,
+                    &first.scope_hash,
+                    &"b".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Existing(_)
+        ));
+        assert!(
+            store
+                .advance_conversation_authorization(
+                    project,
+                    first.id,
+                    &ConversationCallGrant {
+                        id: Uuid::new_v4(),
+                        maximum_calls: 4,
+                        ..next.clone()
+                    }
+                )
+                .is_err()
+        );
+        store.revoke_conversation_calls(project, task).unwrap();
+        store
+            .advance_conversation_authorization(project, first.id, &next)
+            .unwrap();
+        assert!(
+            store
+                .conversation_call_budget(project, task)
+                .unwrap()
+                .unwrap()
+                .revoked
+        );
+        assert!(
+            store
+                .advance_conversation_authorization(
+                    project,
+                    next.id,
+                    &ConversationCallGrant {
+                        id: Uuid::new_v4(),
+                        maximum_calls: 4,
+                        ..next
+                    }
+                )
+                .is_err()
+        );
+    }
 
     #[test]
     fn allowance_and_unknown_outcomes_survive_retries_revocation_and_restart() {

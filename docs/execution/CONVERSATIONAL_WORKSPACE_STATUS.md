@@ -434,3 +434,33 @@ old-editor/compilation preservation edits, Application/all-features tests reran:
 **89 passed, 1 ignored**, and targeted Schema **4/4** plus strict Application Clippy
 passed. No new screenshots: this change is backend-only. Full goal remains active;
 no push, remote edits, real-data writes or real-user usability testing.
+
+### Cumulative phase authorization and Provider adapter (M2, continued)
+
+Migration 29 records immutable authorization revisions and each call's original
+grant. Explicit next-phase consent uses an expected previous grant, retains all
+spent/failed/unknown calls and changes only the cumulative ceiling/scope/expiry.
+Active reservations prevent scope replacement. Stale confirmations cannot fork a
+grant chain, exact retries do not reset budgets or revive revoked authority, and
+historical call retries still resolve against their original scope after advancement.
+Existing single-phase rows are backfilled without changing their call receipts.
+
+The Application now provides a task-ledger adapter implementing the existing
+VisionModelProvider trait for Builder text completions. It checks the fixed model,
+rejects images, reserves before dispatch and retains completed or unknown receipts;
+dropping an unresolved handler conditionally settles it as unknown. Caller must
+still disable underlying transport retries. This counts completion calls, not an
+enforced monetary cap, and is not yet wired into the conversation Builder launch
+endpoint. Native vision tools/sample execution still need the shared allowance
+integration; no claim that all task phases are already covered.
+
+Evidence: storage **45/45**, Application Schema **4/4** and strict storage/Application
+Clippy passed. Tests cover old-scope receipts after restart, no spend reset, two
+additional calls under a cumulative cap of three, active-call transition rejection,
+foreign owners, revocation and stale/idempotent consent. Adapter regression starts
+with one consumed Schema call, explicitly advances to a total of two, rejects an
+unapproved model/image without dispatch, allows one further completion and rejects
+the next before calling the fixture. Isolated conversation HTTP/browser regression
+**1/1**, 18.8s, `/tmp/annotagent-guided-e2e-83700`, also passed after the migration.
+Production Web build retains its known chunk-size warning. No Live credentials,
+real workspace migration/restart, push or real-user testing was performed.

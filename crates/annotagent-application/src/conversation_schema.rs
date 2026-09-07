@@ -997,6 +997,73 @@ mod tests {
                 .is_err()
         );
         assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        let previous = reopened
+            .store
+            .conversation_call_budget(&owner, task)
+            .unwrap()
+            .unwrap();
+        let next = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            scope_hash: "f".repeat(64),
+            maximum_calls: 2,
+            ..previous.current_grant.clone()
+        };
+        reopened
+            .store
+            .advance_conversation_authorization(&owner, previous.current_grant.id, &next)
+            .unwrap();
+        let metered = reopened
+            .conversation_text_provider(
+                "schema-test",
+                conversation,
+                task,
+                &next.scope_hash,
+                "TEST model",
+                &provider,
+            )
+            .unwrap();
+        let request = provider.requests.lock().unwrap()[0].clone();
+        let mut wrong_model = request.clone();
+        wrong_model.model = "unapproved".into();
+        assert!(
+            metered
+                .complete(wrong_model, CancellationToken::default())
+                .await
+                .is_err()
+        );
+        let mut with_image = request.clone();
+        with_image.images.push(annotagent_core::ModelImage {
+            id: "TEST image".into(),
+            mime_type: "image/png".into(),
+            data_base64: "TEST not pixels".into(),
+        });
+        assert!(
+            metered
+                .complete(with_image, CancellationToken::default())
+                .await
+                .is_err()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        metered
+            .complete(request.clone(), CancellationToken::default())
+            .await
+            .unwrap();
+        assert!(
+            metered
+                .complete(request, CancellationToken::default())
+                .await
+                .is_err()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 2);
+        assert_eq!(
+            reopened
+                .store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            2
+        );
         let message = ConversationMessageInput {
             id: Uuid::new_v4(),
             text: "TEST cancellation".into(),

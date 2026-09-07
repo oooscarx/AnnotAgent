@@ -6,8 +6,8 @@ pub use conversation_calls::ConversationCallCancellation;
 mod conversation_schema;
 mod conversation_tasks;
 pub use conversation_calls::{
-    ConversationCallAdmission, ConversationCallGrant, ConversationCallReceipt,
-    ConversationCallStatus,
+    ConversationCallAdmission, ConversationCallBudget, ConversationCallGrant,
+    ConversationCallReceipt, ConversationCallStatus,
 };
 pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDraft};
 mod conversations;
@@ -578,6 +578,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0026_conversation_call_ledger.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0027_conversation_call_cancellations.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0028_conversation_schema_drafts.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0029_conversation_authorization_revisions.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (29, ?1, ?2)", params!["conversation_authorization_revisions", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (28, ?1, ?2)", params!["conversation_schema_drafts", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (27, ?1, ?2)", params!["conversation_call_cancellations", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (26, ?1, ?2)", params!["conversation_call_ledger", Utc::now().to_rfc3339()])?;
